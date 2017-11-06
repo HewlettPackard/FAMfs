@@ -86,9 +86,6 @@ log
 # editor
 *.swp
 
-# nfs files
-*.nfs0*
-
 # cmocka unit tests
 *.log
 *.trs
@@ -96,6 +93,10 @@ log
 
 # project files
 # FAMfsd
+
+# generated package files
+client/unifycr-config
+client/unifycr.pc
 
 # generated package files
 client/unifycr-config
