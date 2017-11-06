@@ -95,7 +95,7 @@ log
 *_unittest
 
 # project files
-FAMfsd
+# FAMfsd
 
 # generated package files
 client/unifycr-config
