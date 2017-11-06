@@ -83,6 +83,9 @@ test-driver
 log
 *.vol
 
+# editor
+*.swp
+
 # cmocka unit tests
 *.log
 *.trs
@@ -90,4 +93,8 @@ log
 
 # project files
 FAMfsd
+
+# generated package files
+client/unifycr-config
+client/unifycr.pc
 
