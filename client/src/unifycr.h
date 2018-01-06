@@ -73,10 +73,21 @@ typedef struct {
     int rank;
 } name_rank_pair_t;
 
+static int get_del_cnt();
+static int compare_int(const void *a, const void *b);
+static int compare_name_rank_pair(const void *a, const void *b);
+static int find_rank_idx(int rank,
+                         int *local_rank_lst, int local_rank_cnt);
+static int unifycr_init_socket(int proc_id,
+                               int l_num_procs_per_node,
+                               int l_num_del_per_node);
+static int CountTasksPerNode(int rank, int numTasks);
+static int unifycr_init_req_shm(int local_rank_idx, int app_id);
 int unifycr_mount(const char prefix[], int rank, size_t size,
                   int l_app_id, int subtype);
 int unifycr_unmount(void);
 int compare_fattr(const void *a, const void *b);
+
 
 /* mount memfs at some prefix location */
 int unifycrfs_mount(const char prefix[], size_t size, int rank);
