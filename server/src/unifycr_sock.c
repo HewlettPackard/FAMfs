@@ -77,6 +77,7 @@ int sock_init_server(int local_rank_idx)
     if (rc != 0) {
         return -1;
     }
+    chmod(tmp_str, 0777);
 
     rc = listen(server_sockfd, MAX_NUM_CLIENTS);
     if (rc != 0) {
