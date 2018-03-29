@@ -49,6 +49,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <sys/vfs.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <string.h>
@@ -484,6 +485,9 @@ int unifycr_fid_is_dir(int fid);
  * returns 1 for yes it is empty
  * returns 0 for no */
 int unifycr_fid_is_dir_empty(const char *path);
+
+unsigned long unifycr_fid_is_dir_used(const char *path, unsigned long* max_files);
+int unifycr_report_storage(int fid, size_t *total, size_t *free);
 
 /* return current size of given file id */
 off_t unifycr_fid_size(int fid);

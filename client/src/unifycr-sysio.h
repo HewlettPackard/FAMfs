@@ -58,6 +58,7 @@ UNIFYCR_DECL(truncate, int, (const char *path, off_t length));
 UNIFYCR_DECL(stat, int, (const char *path, struct stat *buf));
 UNIFYCR_DECL(__lxstat, int, (int vers, const char *path, struct stat *buf));
 UNIFYCR_DECL(__xstat, int, (int vers, const char *path, struct stat *buf));
+UNIFYCR_DECL(statfs, int, (const char *path, struct statfs *buf));
 
 /* ---------------------------------------
  * POSIX wrappers: file descriptors

@@ -381,6 +381,55 @@ int UNIFYCR_WRAP(__lxstat)(int vers, const char *path, struct stat *buf)
     }
 }
 
+#define UNIFYCR_OPT_TRSF_BZ (1024*1024)
+int UNIFYCR_WRAP(statfs)(const char *path, struct statfs *buf)
+{
+    /* check whether we should intercept this path */
+    if (unifycr_intercept_path(path)) {
+        if (strcmp(path, unifycr_mount_prefix) && !unifycr_use_spillover) {
+            /* ERROR: fn not yet supported */
+            fprintf(stderr, "Function not yet supported @ %s:%d path:%s\n", __FILE__, __LINE__, path);
+            errno = ENOSYS;
+            return -1;
+        }
+        /* check if path exists */
+        int fid = unifycr_get_fid_from_path(path);
+        if (fid < 0) {
+            errno = ENOENT;
+            return -1;
+        }
+        /* is it a directory? */
+        if (! unifycr_fid_is_dir(fid)) {
+            errno = ENOTDIR;
+            return -1;
+        }
+
+        fprintf(stderr, "WARNING: Function simulated @ %s:%d\n", __FILE__, __LINE__);
+        struct statfs *stats = (struct statfs *)buf;
+        memset(stats, 0, sizeof(struct statfs));
+        stats->f_bsize = UNIFYCR_OPT_TRSF_BZ;
+        /* total fs size */
+        size_t total, free;
+        int ret = unifycr_report_storage(fid, &total, &free);
+        if (ret) {
+            errno = ENOENT;
+            return -1;
+        }
+        stats->f_blocks = total / stats->f_bsize;
+        stats->f_bfree = free / stats->f_bsize;
+        /* inodes */
+        unsigned long maxfiles;
+        unsigned long nfiles = unifycr_fid_is_dir_used(path, &maxfiles);
+        stats->f_files = maxfiles;
+        stats->f_ffree = stats->f_files - nfiles;
+        return 0;
+    } else {
+        MAP_OR_FAIL(statfs);
+        int ret = UNIFYCR_REAL(statfs)(path, buf);
+        return ret;
+    }
+}
+
 /* ---------------------------------------
  * POSIX wrappers: file descriptors
  * --------------------------------------- */

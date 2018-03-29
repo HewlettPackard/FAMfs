@@ -168,6 +168,7 @@ CP_WRAPPERS+=",-wrap,truncate"
 CP_WRAPPERS+=",-wrap,stat"
 CP_WRAPPERS+=",-wrap,__lxstat"
 CP_WRAPPERS+=",-wrap,__xstat"
+CP_WRAPPERS+=",-wrap,statfs"
 
 CP_WRAPPERS+=",-wrap,creat"
 CP_WRAPPERS+=",-wrap,creat64"

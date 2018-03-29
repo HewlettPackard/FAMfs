@@ -13,6 +13,7 @@ UNIFYCR_DEF(remove, int, (const char *path));
 UNIFYCR_DEF(stat, int, (const char *path, struct stat *buf));
 UNIFYCR_DEF(__xstat, int, (int vers, const char *path, struct stat *buf));
 UNIFYCR_DEF(__lxstat, int, (int vers, const char *path, struct stat *buf));
+UNIFYCR_DEF(statfs, int, (const char *path, struct statfs *buf));
 UNIFYCR_DEF(creat, int, (const char *path, mode_t mode));
 UNIFYCR_DEF(creat64, int, (const char *path, mode_t mode));
 UNIFYCR_DEF(open, int, (const char *path, int flags, ...));
@@ -99,6 +100,7 @@ struct gotcha_binding_t wrap_unifycr_list[] = {
     { "stat", UNIFYCR_WRAP(stat), &UNIFYCR_REAL(stat) },
     { "__xstat", UNIFYCR_WRAP(__xstat), &UNIFYCR_REAL(__xstat) },
     { "__lxstat", UNIFYCR_WRAP(__lxstat), &UNIFYCR_REAL(__lxstat) },
+    { "statfs", UNIFYCR_WRAP(statfs), &UNIFYCR_REAL(statfs) },
     { "creat", UNIFYCR_WRAP(creat), &UNIFYCR_REAL(creat) },
     { "creat64", UNIFYCR_WRAP(creat64), &UNIFYCR_REAL(creat64) },
     { "open", UNIFYCR_WRAP(open), &UNIFYCR_REAL(open) },

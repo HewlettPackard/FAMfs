@@ -566,6 +566,19 @@ static int unifycr_fid_store_free(int fid)
     return UNIFYCR_SUCCESS;
 }
 
+/* total, free data in FS */
+int unifycr_report_storage(int fid, size_t *total, size_t *free)
+{
+    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    if (!meta || meta->storage != FILE_STORAGE_LOGIO || !unifycr_use_spillover)
+        return UNIFYCR_FAILURE;
+
+    *total = unifycr_spillover_size * glb_size;
+    /* TODO; Gather spillover free blocks globally */
+    *free = *total;
+    return UNIFYCR_SUCCESS;
+}
+
 /* ---------------------------------------
  * Operations on file ids
  * --------------------------------------- */
@@ -612,6 +625,37 @@ int unifycr_fid_is_dir_empty(const char *path)
 
     /* couldn't find any files with this prefix, dir must be empty */
     return 1;
+}
+
+/* checks to see if a directory is used
+ * assumes that check for is_dir has already been made
+ * only checks for full path matches, does not check relative paths,
+ * e.g. ../dirname will not work
+ * returns 0 for empty */
+unsigned long unifycr_fid_is_dir_used(const char *path, unsigned long* max_files)
+{
+    int i = 0;
+    unsigned long used = 0;
+    while (i < unifycr_max_files) {
+        if (unifycr_filelist[i].in_use) {
+            /* if the file starts with the path, it is inside of that directory
+             * also check to make sure that it's not the directory entry itself */
+            char *strptr = strstr(path, unifycr_filelist[i].filename);
+            if (strptr == unifycr_filelist[i].filename
+                && strcmp(path, unifycr_filelist[i].filename)) {
+                DEBUG("File found: unifycr_filelist[%d].filename = %s\n",
+                      i, (char *)&unifycr_filelist[i].filename);
+                used++;
+            }
+        }
+        ++i;
+    }
+
+    if (max_files)
+        *max_files = unifycr_max_files;
+
+    /* return the number of files with this prefix */
+    return used;
 }
 
 /* return current size of given file id */
