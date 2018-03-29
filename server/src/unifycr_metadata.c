@@ -324,6 +324,8 @@ int meta_process_fsync(int sock_id)
     unsigned long num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset));
+    if (num_entries == 0)
+        goto _process_fattr;
 
     /* indices are stored in the superblock shared memory
      *  created by the client*/
@@ -373,11 +375,14 @@ int meta_process_fsync(int sock_id)
 
     }
 
+_process_fattr:
     md->primary_index = unifycr_indexes[1];
 
     num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->fmeta_offset));
+    if (num_entries == 0)
+        return ret;
 
     /* file attributes are stored in the superblock shared memory
      * created by the client*/
