@@ -83,7 +83,7 @@ int UNIFYCR_WRAP(access)(const char *path, int mode)
         if (unifycr_get_fid_from_path(path) < 0) {
             DEBUG("access: unifycr_get_id_from path failed, returning -1, %s\n",
                   path);
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -140,7 +140,7 @@ int UNIFYCR_WRAP(rmdir)(const char *path)
         /* check if path exists */
         int fid = unifycr_get_fid_from_path(path);
         if (fid < 0) {
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -189,7 +189,7 @@ int UNIFYCR_WRAP(rename)(const char *oldpath, const char *newpath)
         if (fid < 0) {
             /* ERROR: oldname does not exist */
             DEBUG("Couldn't find entry for %s in UNIFYCR\n", oldpath);
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -237,7 +237,7 @@ int UNIFYCR_WRAP(truncate)(const char *path, off_t length)
         if (fid < 0) {
             /* ERROR: file does not exist */
             DEBUG("Couldn't find entry for %s in UNIFYCR\n", path);
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -266,7 +266,7 @@ int UNIFYCR_WRAP(unlink)(const char *path)
         if (fid < 0) {
             /* ERROR: file does not exist */
             DEBUG("Couldn't find entry for %s in UNIFYCR\n", path);
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -298,7 +298,7 @@ int UNIFYCR_WRAP(remove)(const char *path)
         if (fid < 0) {
             /* ERROR: file does not exist */
             DEBUG("Couldn't find entry for %s in UNIFYCR\n", path);
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -329,7 +329,7 @@ int UNIFYCR_WRAP(stat)(const char *path, struct stat *buf)
     if (unifycr_intercept_path(path)) {
         int fid = unifycr_get_fid_from_path(path);
         if (fid < 0) {
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -351,7 +351,7 @@ int UNIFYCR_WRAP(__xstat)(int vers, const char *path, struct stat *buf)
         int fid = unifycr_get_fid_from_path(path);
         if (fid < 0) {
             /* file doesn't exist */
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
 
@@ -395,7 +395,7 @@ int UNIFYCR_WRAP(statfs)(const char *path, struct statfs *buf)
         /* check if path exists */
         int fid = unifycr_get_fid_from_path(path);
         if (fid < 0) {
-            errno = ENOENT;
+            /* ENOENT */
             return -1;
         }
         /* is it a directory? */
@@ -404,7 +404,6 @@ int UNIFYCR_WRAP(statfs)(const char *path, struct statfs *buf)
             return -1;
         }
 
-        fprintf(stderr, "WARNING: Function simulated @ %s:%d\n", __FILE__, __LINE__);
         struct statfs *stats = (struct statfs *)buf;
         memset(stats, 0, sizeof(struct statfs));
         stats->f_bsize = UNIFYCR_OPT_TRSF_BZ;
@@ -419,13 +418,54 @@ int UNIFYCR_WRAP(statfs)(const char *path, struct statfs *buf)
         stats->f_bfree = free / stats->f_bsize;
         /* inodes */
         unsigned long maxfiles;
-        unsigned long nfiles = unifycr_fid_is_dir_used(path, &maxfiles);
+        unsigned long nfiles = unifycr_fid_is_dir_used(fid, &maxfiles);
         stats->f_files = maxfiles;
         stats->f_ffree = stats->f_files - nfiles;
         return 0;
     } else {
         MAP_OR_FAIL(statfs);
         int ret = UNIFYCR_REAL(statfs)(path, buf);
+        return ret;
+    }
+}
+
+char *UNIFYCR_WRAP(__realpath_chk)(const char* path, char* buf, size_t size)
+{
+    /* determine whether we should intercept this path or not */
+    if (unifycr_intercept_path(path) && size >= PATH_MAX) {
+        /* get file id for path name */
+        int fid = unifycr_get_fid_from_path(path);
+        if (fid < 0) {
+            /* ERROR: file does not exist */
+            DEBUG("Couldn't find entry for %s in UNIFYCR\n", path);
+            /* ENOENT */
+            return NULL;
+        }
+        return normalized_path(path, buf, size);
+    } else {
+        /* if size < PATH_MAX, log "buffer underflow" error and abort */
+        MAP_OR_FAIL(__realpath_chk);
+        char *ret = UNIFYCR_REAL(__realpath_chk)(path, buf, size);
+        return ret;
+    }
+}
+
+char *UNIFYCR_WRAP(realpath)(const char* path, char* buf)
+{
+    /* determine whether we should intercept this path or not */
+    if (unifycr_intercept_path(path)) {
+        /* get file id for path name */
+        int fid = unifycr_get_fid_from_path(path);
+        if (fid < 0) {
+            /* ERROR: file does not exist */
+            DEBUG("Couldn't find entry for %s in UNIFYCR\n", path);
+            /* ENOENT */
+            return NULL;
+        }
+        return normalized_path(path, buf, PATH_MAX);
+    } else {
+        MAP_OR_FAIL(realpath);
+        char *ret = UNIFYCR_REAL(realpath)(path, buf);
         return ret;
     }
 }
@@ -585,7 +625,6 @@ int UNIFYCR_WRAP(creat)(const char *path, mode_t mode)
         off_t pos;
         int rc = unifycr_fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, mode, &fid, &pos);
         if (rc != UNIFYCR_SUCCESS) {
-            errno = unifycr_err_map_to_errno(rc);
             return -1;
         }
 
@@ -641,7 +680,6 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
         off_t pos;
         int rc = unifycr_fid_open(path, flags, mode, &fid, &pos);
         if (rc != UNIFYCR_SUCCESS) {
-            errno = unifycr_err_map_to_errno(rc);
             return -1;
         }
 
@@ -667,6 +705,11 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
         }
         return ret;
     }
+}
+
+int UNIFYCR_WRAP(__open_2)(const char *path, int flags)
+{
+    return UNIFYCR_WRAP(open)(path, flags);
 }
 
 int UNIFYCR_WRAP(open64)(const char *path, int flags, ...)

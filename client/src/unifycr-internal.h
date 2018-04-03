@@ -345,7 +345,6 @@ extern unifycr_fattr_buf_t unifycr_fattrs;
 extern int glb_superblock_size;
 extern int dbg_rank;
 extern int app_id;
-extern int glb_size;
 extern int reqbuf_fd;
 extern int recvbuf_fd;
 extern int superblock_fd;
@@ -442,6 +441,9 @@ int unifycr_stack_lock();
 
 int unifycr_stack_unlock();
 
+/* normalize full path of a file or directory */
+char *normalized_path(const char *path, char *buf, size_t buf_sz);
+
 /* sets flag if the path is a special path */
 int unifycr_intercept_path(const char *path);
 
@@ -486,7 +488,7 @@ int unifycr_fid_is_dir(int fid);
  * returns 0 for no */
 int unifycr_fid_is_dir_empty(const char *path);
 
-unsigned long unifycr_fid_is_dir_used(const char *path, unsigned long* max_files);
+unsigned long unifycr_fid_is_dir_used(int fid, unsigned long* max_files);
 int unifycr_report_storage(int fid, size_t *total, size_t *free);
 
 /* return current size of given file id */

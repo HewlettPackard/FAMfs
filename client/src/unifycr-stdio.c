@@ -926,7 +926,6 @@ FILE *UNIFYCR_WRAP(fopen)(const char *path, const char *mode)
         FILE *stream;
         int rc = unifycr_fopen(path, mode, &stream);
         if (rc != UNIFYCR_SUCCESS) {
-            errno = unifycr_err_map_to_errno(rc);
             return NULL;
         }
         return stream;

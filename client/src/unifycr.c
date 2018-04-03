@@ -132,7 +132,7 @@ char ack_msg[3] = {0};
 
 int dbg_rank;
 int app_id;
-int glb_size;
+static int glb_size = 0;
 int reqbuf_fd = -1;
 int recvbuf_fd = -1;
 int superblock_fd = -1;
@@ -485,8 +485,7 @@ inline int unifycr_intercept_stream(FILE *stream)
     return 0;
 }
 
-/* given a path, return the file id */
-inline int unifycr_get_fid_from_path(const char *path)
+static inline int _unifycr_get_fid_from_path(const char *path)
 {
     int i = 0;
     while (i < unifycr_max_files) {
@@ -501,6 +500,21 @@ inline int unifycr_get_fid_from_path(const char *path)
 
     /* couldn't find specified path */
     return -1;
+}
+
+/* given a path, return the file id */
+inline int unifycr_get_fid_from_path(const char *path)
+{
+    char *norm_path, buf[PATH_MAX];
+
+    norm_path = normalized_path(path, buf, PATH_MAX);
+    if (norm_path == NULL)
+        return -1; /* ENAMETOOLONG */
+
+    int rc = _unifycr_get_fid_from_path(norm_path);
+    if (rc < 0)
+        errno = ENOENT;
+    return rc;
 }
 
 /* given a file descriptor, return the file id */
@@ -570,7 +584,10 @@ static int unifycr_fid_store_free(int fid)
 int unifycr_report_storage(int fid, size_t *total, size_t *free)
 {
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
-    if (!meta || meta->storage != FILE_STORAGE_LOGIO || !unifycr_use_spillover)
+    if (!meta || !unifycr_use_spillover)
+        return UNIFYCR_FAILURE;
+    if ((meta->is_dir && meta->storage != FILE_STORAGE_NULL)
+      ||(!meta->is_dir && meta->storage != FILE_STORAGE_LOGIO))
         return UNIFYCR_FAILURE;
 
     *total = unifycr_spillover_size * glb_size;
@@ -608,13 +625,19 @@ int unifycr_fid_is_dir(int fid)
 int unifycr_fid_is_dir_empty(const char *path)
 {
     int i = 0;
+    char *norm_path, buf[PATH_MAX];
+
+    norm_path = normalized_path(path, buf, PATH_MAX);
+    if (norm_path == NULL)
+        return 1;
+
     while (i < unifycr_max_files) {
         if (unifycr_filelist[i].in_use) {
             /* if the file starts with the path, it is inside of that directory
              * also check to make sure that it's not the directory entry itself */
-            char *strptr = strstr(path, unifycr_filelist[i].filename);
+            char *strptr = strstr(norm_path, unifycr_filelist[i].filename);
             if (strptr == unifycr_filelist[i].filename
-                && strcmp(path, unifycr_filelist[i].filename)) {
+                && strcmp(norm_path, unifycr_filelist[i].filename)) {
                 DEBUG("File found: unifycr_filelist[%d].filename = %s\n",
                       i, (char *)&unifycr_filelist[i].filename);
                 return 0;
@@ -632,10 +655,12 @@ int unifycr_fid_is_dir_empty(const char *path)
  * only checks for full path matches, does not check relative paths,
  * e.g. ../dirname will not work
  * returns 0 for empty */
-unsigned long unifycr_fid_is_dir_used(const char *path, unsigned long* max_files)
+unsigned long unifycr_fid_is_dir_used(int fid, unsigned long* max_files)
 {
     int i = 0;
     unsigned long used = 0;
+    const char *path = unifycr_filelist[fid].filename;
+
     while (i < unifycr_max_files) {
         if (unifycr_filelist[i].in_use) {
             /* if the file starts with the path, it is inside of that directory
@@ -731,6 +756,11 @@ int unifycr_fid_free(int fid)
  * returns the new fid, or negative value on error */
 int unifycr_fid_create_file(const char *path)
 {
+    char *norm_path, buf[PATH_MAX];
+    norm_path = normalized_path(path, buf, PATH_MAX);
+    if (norm_path == NULL)
+        return -1; /* ENAMETOOLONG */
+
     int fid = unifycr_fid_alloc();
     if (fid < 0)  {
         /* was there an error? if so, return it */
@@ -743,7 +773,7 @@ int unifycr_fid_create_file(const char *path)
     /* TODO: check path length to see if it is < 128 bytes
      * and return appropriate error if it is greater
      */
-    strcpy((void *)&unifycr_filelist[fid].filename, path);
+    strcpy((void *)&unifycr_filelist[fid].filename, norm_path);
     DEBUG("Filename %s got unifycr fd %d\n",
           unifycr_filelist[fid].filename, fid);
 
@@ -769,7 +799,7 @@ int unifycr_fid_create_directory(const char *path)
     int fid = unifycr_fid_create_file(path);
     if (fid < 0) {
         /* was there an error? if so, return it */
-        errno = ENOSPC;
+        //errno = ENOSPC;
         return fid;
     }
 
@@ -1165,26 +1195,33 @@ static int ins_file_meta(unifycr_fattr_buf_t *ptr_f_meta_log,
 int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                      off_t *outpos)
 {
+    char *norm_path, buf[PATH_MAX];
+    norm_path = normalized_path(path, buf, PATH_MAX);
+    if (norm_path == NULL)
+        return -1; /* ENAMETOOLONG */
+
     /* check that path is short enough */
-    size_t pathlen = strlen(path) + 1;
+    size_t pathlen = strlen(norm_path) + 1;
     if (pathlen > UNIFYCR_MAX_FILENAME) {
-        return UNIFYCR_ERR_NAMETOOLONG;
+        errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NAMETOOLONG);
+        return -1;
     }
 
     /* assume that we'll place the file pointer at the start of the file */
     off_t pos = 0;
 
     /* check whether this file already exists */
-    int fid = unifycr_get_fid_from_path(path);
+    int fid = _unifycr_get_fid_from_path(norm_path);
     DEBUG("unifycr_get_fid_from_path() gave %d\n", fid);
 
     int gfid = -1, rc = 0;
     if (fs_type == UNIFYCR_LOG) {
         if (fid < 0) {
-            rc = unifycr_get_global_fid(path, &gfid);
+            rc = unifycr_get_global_fid(norm_path, &gfid);
             if (rc != UNIFYCR_SUCCESS) {
                 DEBUG("Failed to generate fid for file %s\n", path);
-                return UNIFYCR_ERR_IO;
+                errno = unifycr_err_map_to_errno(UNIFYCR_ERR_IO);
+                return -1;
             }
 
             gfid = abs(gfid);
@@ -1197,17 +1234,19 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                 /* other process has created this file, but its
                  * attribute is not cached locally,
                  * allocate a file id slot for this existing file */
-                fid = unifycr_fid_create_file(path);
+                fid = unifycr_fid_create_file(norm_path);
                 if (fid < 0) {
                     DEBUG("Failed to create new file %s\n", path);
-                    return UNIFYCR_ERR_NFILE;
+                    errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NFILE);
+                    return -1;
                 }
 
                 /* initialize the storage for the file */
                 int store_rc = unifycr_fid_store_alloc(fid);
                 if (store_rc != UNIFYCR_SUCCESS) {
                     DEBUG("Failed to create storage for file %s\n", path);
-                    return UNIFYCR_ERR_IO;
+                    errno = unifycr_err_map_to_errno(UNIFYCR_ERR_IO);
+                    return -1;
                 }
                 /* initialize the global metadata
                  * */
@@ -1236,24 +1275,26 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                   free_chunk_stack, unifycr_filelist, unifycr_chunks);
 
             /* allocate a file id slot for this new file */
-            fid = unifycr_fid_create_file(path);
+            fid = unifycr_fid_create_file(norm_path);
             if (fid < 0) {
                 DEBUG("Failed to create new file %s\n", path);
-                return UNIFYCR_ERR_NFILE;
+                errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NFILE);
+                return -1;
             }
 
             /* initialize the storage for the file */
             int store_rc = unifycr_fid_store_alloc(fid);
             if (store_rc != UNIFYCR_SUCCESS) {
                 DEBUG("Failed to create storage for file %s\n", path);
-                return UNIFYCR_ERR_IO;
+                errno = unifycr_err_map_to_errno(UNIFYCR_ERR_IO);
+                return -1;
             }
 
             if (fs_type == UNIFYCR_LOG) {
                 /*create a file and send its attribute to key-value store*/
                 unifycr_fattr_t *new_fmeta =
                     (unifycr_fattr_t *)malloc(sizeof(unifycr_fattr_t));
-                strcpy(new_fmeta->filename, path);
+                strcpy(new_fmeta->filename, norm_path);
                 new_fmeta->fid = fid;
                 new_fmeta->gfid = gfid;
 
@@ -1266,7 +1307,8 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
         } else {
             /* ERROR: trying to open a file that does not exist without O_CREATE */
             DEBUG("Couldn't find entry for %s in UNIFYCR\n", path);
-            return UNIFYCR_ERR_NOENT;
+            errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NOENT);
+            return -1;
         }
     } else {
         /* file already exists */
@@ -1274,17 +1316,15 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
         /* if O_CREAT and O_EXCL are set, this is an error */
         if ((flags & O_CREAT) && (flags & O_EXCL)) {
             /* ERROR: trying to open a file that exists with O_CREATE and O_EXCL */
-            return UNIFYCR_ERR_EXIST;
+            errno = unifycr_err_map_to_errno(UNIFYCR_ERR_EXIST);
+            return -1;
         }
 
         /* if O_DIRECTORY is set and fid is not a directory, error */
-        if ((flags & O_DIRECTORY) && !unifycr_fid_is_dir(fid)) {
-            return UNIFYCR_ERR_NOTDIR;
-        }
-
         /* if O_DIRECTORY is not set and fid is a directory, error */
-        if (!(flags & O_DIRECTORY) && unifycr_fid_is_dir(fid)) {
-            return UNIFYCR_ERR_NOTDIR;
+        if (!(flags & O_DIRECTORY) != !unifycr_fid_is_dir(fid)) {
+            errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NOTDIR);
+            return -1;
         }
 
         /* if O_TRUNC is set with RDWR or WRONLY, need to truncate file */
@@ -2059,6 +2099,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 
     dbg_rank = rank;
     app_id = l_app_id;
+    glb_size = size;
     return unifycrfs_mount(prefix, size, rank);
 }
 

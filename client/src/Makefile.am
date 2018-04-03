@@ -18,6 +18,7 @@ libunifycr_la_SOURCES = \
   unifycr-defs.h \
   unifycr-internal.h \
   unifycr-wrap.h \
+  unifycr-path_utils.c \
   uthash.h \
   utlist.h
 
@@ -40,6 +41,7 @@ libunifycr_gotcha_la_SOURCES = \
   unifycr-defs.h \
   unifycr-internal.h \
   unifycr-wrap.h \
+  unifycr-path_utils.c \
   uthash.h \
   utlist.h
 

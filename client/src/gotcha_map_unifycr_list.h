@@ -14,9 +14,12 @@ UNIFYCR_DEF(stat, int, (const char *path, struct stat *buf));
 UNIFYCR_DEF(__xstat, int, (int vers, const char *path, struct stat *buf));
 UNIFYCR_DEF(__lxstat, int, (int vers, const char *path, struct stat *buf));
 UNIFYCR_DEF(statfs, int, (const char *path, struct statfs *buf));
+UNIFYCR_DEF(realpath, char *, (const char* path, char* buf));
+UNIFYCR_DEF(__realpath_chk, char *, (const char* path, char* buf, size_t size));
 UNIFYCR_DEF(creat, int, (const char *path, mode_t mode));
 UNIFYCR_DEF(creat64, int, (const char *path, mode_t mode));
 UNIFYCR_DEF(open, int, (const char *path, int flags, ...));
+UNIFYCR_DEF(__open_2, int, (const char *path, int flags));
 UNIFYCR_DEF(open64, int, (const char *path, int flags, ...));
 UNIFYCR_DEF(lseek, off_t, (int fd, off_t offset, int whence));
 UNIFYCR_DEF(lseek64, off64_t, (int fd, off64_t offset, int whence));
@@ -101,9 +104,12 @@ struct gotcha_binding_t wrap_unifycr_list[] = {
     { "__xstat", UNIFYCR_WRAP(__xstat), &UNIFYCR_REAL(__xstat) },
     { "__lxstat", UNIFYCR_WRAP(__lxstat), &UNIFYCR_REAL(__lxstat) },
     { "statfs", UNIFYCR_WRAP(statfs), &UNIFYCR_REAL(statfs) },
+    { "realpath", UNIFYCR_WRAP(realpath), &UNIFYCR_REAL(realpath) },
+    { "__realpath_chk", UNIFYCR_WRAP(__realpath_chk), &UNIFYCR_REAL(__realpath_chk) },
     { "creat", UNIFYCR_WRAP(creat), &UNIFYCR_REAL(creat) },
     { "creat64", UNIFYCR_WRAP(creat64), &UNIFYCR_REAL(creat64) },
     { "open", UNIFYCR_WRAP(open), &UNIFYCR_REAL(open) },
+    { "__open_2", UNIFYCR_WRAP(__open_2), &UNIFYCR_REAL(__open_2) },
     { "open64", UNIFYCR_WRAP(open64), &UNIFYCR_REAL(open64) },
     { "lseek", UNIFYCR_WRAP(lseek), &UNIFYCR_REAL(lseek) },
     { "lseek64", UNIFYCR_WRAP(lseek64), &UNIFYCR_REAL(lseek64) },
