@@ -1609,6 +1609,58 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
     }
 }
 
+static int unifycr_fsync(void)
+{
+    if (unifycr_use_spillover)
+        if (__real_fsync(unifycr_spilloverblock))
+            return -1; /* EIO */
+
+    if (fs_type == UNIFYCR_LOG) {
+        /*put indices to key-value store*/
+        int cmd = COMM_META;
+        memcpy(cmd_buf, &cmd, sizeof(int));
+        int flag = 3;
+        memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
+        int res = __real_write(client_sockfd, cmd_buf, sizeof(cmd_buf));
+
+        if (res != 0) {
+            int rc;
+            cmd_fd.events = POLLIN | POLLPRI;
+            cmd_fd.revents = 0;
+             rc = poll(&cmd_fd, 1, -1);
+            if (rc == 0) {
+                /*time out event*/
+            } else if (rc > 0) {
+                if (cmd_fd.revents != 0) {
+                    if (cmd_fd.revents == POLLIN) {
+                        int bytes_read = 0;
+                        bytes_read = __real_read(client_sockfd,
+                                                 cmd_buf, sizeof(cmd_buf));
+                        if (bytes_read == 0) {
+                            return -1;
+                        } else {
+                            /**/
+                            if (*((int *)cmd_buf) != COMM_META ||
+                                *((int *)cmd_buf + 1) != ACK_SUCCESS) {
+                                return -1;
+                            } else {
+
+                            }
+                        }
+                    } else {
+                        return -1;
+                    }
+                }
+
+            } else {
+                return -1;
+            }
+        }
+        /* TODO: if using spill over we may have some fsyncing to do */
+    }
+    return 0;
+}
+
 int UNIFYCR_WRAP(fsync)(int fd)
 {
     /* check whether we should intercept this file descriptor */
@@ -1620,83 +1672,8 @@ int UNIFYCR_WRAP(fsync)(int fd)
             return -1;
         }
 
-        if (unifycr_use_spillover) {
-            int ret = __real_fsync(unifycr_spilloverblock);
-            if (ret != 0) {
-                return errno;
-            }
-        }
-
-        if (fs_type == UNIFYCR_LOG) {
-            /*put indices to key-value store*/
-            int cmd = COMM_META;
-            memcpy(cmd_buf, &cmd, sizeof(int));
-            int flag = 3;
-            memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
-            int res = __real_write(client_sockfd, cmd_buf, sizeof(cmd_buf));
-
-            if (res != 0) {
-                int rc;
-                cmd_fd.events = POLLIN | POLLPRI;
-                cmd_fd.revents = 0;
-
-                rc = poll(&cmd_fd, 1, -1);
-                if (rc == 0) {
-                    /*time out event*/
-                } else if (rc > 0) {
-                    if (cmd_fd.revents != 0) {
-                        if (cmd_fd.revents == POLLIN) {
-                            int bytes_read = 0;
-                            bytes_read = __real_read(client_sockfd,
-                                                     cmd_buf, sizeof(cmd_buf));
-                            if (bytes_read == 0) {
-                                return -1;
-                            } else {
-                                /**/
-                                if (*((int *)cmd_buf) != COMM_META ||
-                                    *((int *)cmd_buf + 1) != ACK_SUCCESS) {
-                                    return -1;
-                                } else {
-
-                                }
-                            }
-                        } else {
-                            return -1;
-                        }
-                    }
-
-                } else {
-                    return -1;
-                }
-            }
-            /* TODO: if using spill over we may have some fsyncing to do */
-
-            /* nothing to do in our case */
-            return 0;
-        } else {
-            MAP_OR_FAIL(fsync);
-            int ret = UNIFYCR_REAL(fsync)(fd);
-            return ret;
-        }
-    }
-
-
-
-
-    /* check whether we should intercept this file descriptor */
-    if (unifycr_intercept_fd(&fd)) {
-        /* get the file id for this file descriptor */
-        int fid = unifycr_get_fid_from_fd(fd);
-        if (fid < 0) {
-            /* ERROR: invalid file descriptor */
-            errno = EBADF;
-            return -1;
-        }
-
-        /* TODO: if using spill over we may have some fsyncing to do */
-
-        /* nothing to do in our case */
-        return 0;
+        /* transfer ("flush") all modified in-core data to backend device */
+        return unifycr_fsync();
     } else {
         MAP_OR_FAIL(fsync);
         int ret = UNIFYCR_REAL(fsync)(fd);
@@ -1886,6 +1863,10 @@ int UNIFYCR_WRAP(close)(int fd)
             errno = EBADF;
             return -1;
         }
+
+        /* transfer ("flush") all modified in-core data to backend device */
+        if(unifycr_fsync())
+		return -1; /* EIO */
 
         /* close the file id */
         int close_rc = unifycr_fid_close(fid);
