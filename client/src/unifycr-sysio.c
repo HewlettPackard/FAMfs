@@ -889,9 +889,9 @@ ssize_t UNIFYCR_WRAP(read)(int fd, void *buf, size_t count)
 
             int ret = unifycr_fd_logreadlist(&tmp_req, 1);
             if (!ret) {
-                retcount = 0;
-            } else {
                 retcount = count;
+            } else {
+                retcount = 0;
             }
         }
         /* update position */
