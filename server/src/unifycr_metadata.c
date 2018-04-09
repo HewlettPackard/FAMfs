@@ -353,6 +353,20 @@ int meta_process_fsync(int sock_id)
 
     // print_fsync_indices(unifycr_keys, unifycr_vals, num_entries);
 
+    if (num_entries == 1) {
+        brm = mdhimPut(md, unifycr_keys[0], sizeof(unifycr_key_t),
+                       unifycr_vals[0], sizeof(unifycr_val_t),
+                       NULL, NULL);
+        if (!brm || brm->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
+        } else {
+            ret = ULFS_SUCCESS;
+        }
+        mdhim_full_release_msg(brm);
+    } else {
+
     brm = mdhimBPut(md, (void **)(&unifycr_keys[0]), unifycr_key_lens,
                     (void **)(&unifycr_vals[0]), unifycr_val_lens, num_entries,
                     NULL, NULL);
@@ -372,6 +386,8 @@ int meta_process_fsync(int sock_id)
         brm = brmp;
         brmp = brmp->next;
         mdhim_full_release_msg(brm);
+
+    }
 
     }
 
@@ -400,6 +416,20 @@ _process_fattr:
         fattr_val_lens[i] = sizeof(fattr_val_t);
     }
 
+    if (num_entries == 1) {
+        brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+                       fattr_vals[0], sizeof(fattr_val_t),
+                       NULL, NULL);
+        if (!brm || brm->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
+        } else {
+            ret = ULFS_SUCCESS;
+        }
+        mdhim_full_release_msg(brm);
+    } else {
+
     brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
                     (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
                     NULL, NULL);
@@ -419,6 +449,8 @@ _process_fattr:
         brm = brmp;
         brmp = brmp->next;
         mdhim_full_release_msg(brm);
+
+    }
 
     }
 
