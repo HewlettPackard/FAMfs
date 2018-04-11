@@ -683,7 +683,7 @@ static void vmlog(int flags, const char *fmt, va_list ap)
      * 2: log it to the log file
      */
     if (mst.logfd >= 0) {
-        if (write(mst.logfd, b, tlen) != 0)
+        if (write(mst.logfd, b, tlen) == -1)
             fprintf(stderr, "mlog: Failed to write(): %s", strerror(errno));
     }
     /*
