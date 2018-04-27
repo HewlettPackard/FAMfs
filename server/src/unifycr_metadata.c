@@ -107,7 +107,7 @@ int meta_init_store()
     db_opts->num_paths = 0;
     db_opts->num_wthreads = 1;
 
-    int path_len = strlen(db_opts->db_path) + strlen(MANIFEST_FILE_NAME) + 1;
+    int path_len = strlen(db_opts->db_path) + strlen(MANIFEST_FILE_NAME) + 2;
 
 
     manifest_path = malloc(path_len);
