@@ -387,13 +387,9 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 
 		break;
 	default:
-		return 0;
+		//return 0;
 		break;
 	}
-
-
-	/* Convert the key to a slice number  */
-	slice_num = key_num/index->mdhim_max_recs_per_slice;
 
 	if (key_type == MDHIM_UNIFYCR_KEY) {
 		unsigned long *meta_pair = get_meta_pair(key, key_len);
@@ -405,7 +401,11 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 */
 		slice_num = highval * (multiply/index->mdhim_max_recs_per_slice) + surplus/index->mdhim_max_recs_per_slice;
 		free(meta_pair);
+	} else {
+		/* Convert the key to a slice number  */
+		slice_num = key_num/index->mdhim_max_recs_per_slice;
 	}
+
 	//Return the slice number
 	return slice_num;
 }
