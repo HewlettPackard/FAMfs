@@ -26,7 +26,7 @@ unifycrd_LDFLAGS = -static
 
 unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.a \
                  $(LEVELDB_LIBS) \
-                 -lpthread -lm -lstdc++ -lrt
+                 -lpthread -lm -lstdc++ -lrt -lmpi
 
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
               -I$(top_srcdir)/meta/src/uthash \

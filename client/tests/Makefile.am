@@ -1,7 +1,7 @@
 libexec_PROGRAMS = test_write_gotcha test_read_gotcha test_write_static test_read_static
 
-test_gotcha_ldadd = ../src/libunifycr_gotcha.la
-test_static_ldadd = ../src/libunifycr.la
+test_gotcha_ldadd = ../src/libunifycr_gotcha.la -lmpi
+test_static_ldadd = ../src/libunifycr.la -lmpi
 test_static_ldflags = -static $(CP_WRAPPERS) $(AM_LDFLAGS)
 test_cppflags = $(AM_CPPFLAGS) -I$(top_srcdir)/client/src
 

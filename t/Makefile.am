@@ -35,7 +35,8 @@ libexec_PROGRAMS = \
 test_ldadd = \
 	$(top_builddir)/t/lib/libtap.la \
 	$(top_builddir)/t/lib/libtestutil.la \
-	$(top_builddir)/client/src/libunifycr_gotcha.la
+	$(top_builddir)/client/src/libunifycr_gotcha.la \
+	-lmpi
 
 test_cppflags = \
 	-I$(top_srcdir) \
