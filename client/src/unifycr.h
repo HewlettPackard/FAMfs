@@ -49,6 +49,10 @@
 #include <sys/un.h>
 /* TODO: namespace C */
 
+#ifndef _POSIX_C_SOURCE
+# define HOST_NAME_MAX 64
+#endif
+
 /* linked list of chunk information given to an external library wanting
  * to RDMA out a file from UNIFYCR */
 typedef struct {
