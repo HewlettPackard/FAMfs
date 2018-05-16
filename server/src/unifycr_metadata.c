@@ -58,6 +58,8 @@ int fattr_val_lens[MAX_FILE_CNT_PER_NODE] = {0};
 
 struct index_t *unifycr_indexes[2];
 long max_recs_per_slice;
+int page_sz;
+
 /**
 * initialize the key-value store
 */
@@ -167,6 +169,7 @@ int meta_init_store()
         return -1;
     }
 
+    page_sz = getpagesize();
     return 0;
 
 }
@@ -329,7 +332,6 @@ int meta_process_fsync(int sock_id)
 
     /* indices are stored in the superblock shared memory
      *  created by the client*/
-    int page_sz = getpagesize();
     unifycr_index_t *meta_payload =
         (unifycr_index_t *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset + page_sz);
