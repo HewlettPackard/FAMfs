@@ -92,6 +92,7 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 	
 	//Open mlog - stolen from plfs
 	ret = mlog_open((char *)"mdhim", 0,
+	        //MLOG_INFO, opts->debug_level, "/opt/ramdisk/mdhimDb.log", 0, MLOG_LOGPID, 0);
 	        opts->debug_level, opts->debug_level, NULL, 0, MLOG_LOGPID, 0);
 
 	//Check if MPI has been initialized
