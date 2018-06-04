@@ -669,6 +669,7 @@ static void vmlog(int flags, const char *fmt, va_list ap)
             }
         }
     }
+ mlog_unlock();   /* drop lock here */
     /*
      * locking options: b[] is current an auto var on the stack.
      * this costs stack space, but means we can unlock earlier.
@@ -696,7 +697,7 @@ static void vmlog(int flags, const char *fmt, va_list ap)
                           (struct sockaddr *)&mst.ucons[ncpy],
                           sizeof(mst.ucons[ncpy]));
     }
-    mlog_unlock();   /* drop lock here */
+ // mlog_unlock();   /* drop lock here */
     /*
      * 4: log it to stderr and/or stdout.  skip part one of the header
      * if the output channel is a tty
