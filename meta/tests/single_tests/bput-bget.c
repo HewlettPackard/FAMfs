@@ -10,23 +10,16 @@
 //#define TOTAL 100000000
 #define GEN_STR_LEN 1024
 
-extern double memgettime, ssdgettime, get_other_time, find_table_time;
-extern double imemgettime, maytime, get_result_time;
+extern double memgettime, ssdgettime;
+extern double imemgettime, maytime;
 extern double synctime, myseektime, roomtime, \
-batchtime, key_put_time, addtime, \
 bgtime, bartime, nbstoretime, newnodetime,\
  nbnexttime, findtime, judgetime, \
 heighttime, allfindtime, recordtime, \
-inserttime, waittime, block_reader_time, \
-seek_result_time, get_match_time, get_decode_time;
-extern double valassigntime, keyptrtime, get_internal_time, find_tale_time, seek_iter_time;
+inserttime, waittime;
+extern double valassigntime, keyptrtime;
 
 extern long nr_mem_get, nr_ssd_get, nr_hit, nr_miss;
-extern double mem_get_time, ssd_get_time, cache_get_time, \
-  read_compact_time, read_cache_time, read_block_time, \
-    seek_block_time, mem_put_time, writeahead_time, \
-      write_compact_time, sstable_time, tablecache_time;
-
 
 typedef struct {
   unsigned long fid;
@@ -231,7 +224,7 @@ int main(int argc, char **argv) {
 	while (total != segnum) {
 		//Get the values back for each key inserted
 		bgrm = mdhimBGet(md, md->primary_index,\
-		 &key_lst[total], key_lens, 
+		 (void**)&key_lst[total], key_lens, 
 				 bulknum, MDHIM_GET_EQ);
 		bgrmp = bgrm;
 		while (bgrmp) {
@@ -279,59 +272,32 @@ if (md->mdhim_rank == 0) {
 }
 	MPI_Barrier(MPI_COMM_WORLD);
 	if(md->mdhim_rank == 0) {
-		printf("put time is %lf, get time is %lf, \ 
-			network_put is %lf, network_get is %lf, \ 
-				,dbputtime:%lf, dbgettime:%lf, packputtime:%lf, \
-					packgettime:%lf, localcpytime:%lf, \
-						resp_put_comm_time:%lf, \
-							resp_get_comm_time:%lf, \
-								stat_time:%lf, packretputtime:%lf, \
-								packretgettime:%lf, \
-									localgetcpytime:%lf, \
-										packmpiputtime:%lf, \
-											localassigntime:%lf, \
-												localmalloctime:%lf, \
-														localbpmtime:%lf, \
-															localrangetime:%lf\n", \
-								put_time/1000000,\
-					 get_time/1000000, \
-						msgputtime/1000000, msggettime/1000000,\
-							 dbbputtime/1000000, \
-								dbgettime/1000000, packputtime/1000000, \
-									packgettime/1000000, localcpytime/1000000, \
-										resp_put_comm_time/1000000,	\
-											resp_get_comm_time/1000000, \
-												stat_time/1000000, \
-													packretputtime/1000000, \
-														packretgettime/1000000, \
-															localgetcpytime/1000000, \
-																packmpiputtime/1000000, \
-																	localassigntime/1000000, \
-																		localmalloctime/1000000, \
-																			localbpmtime/1000000, \
-																				localrangetime/1000000);
-
-	printf("mem_get_time:%lf, ssd_get_time:%lf, \
-		read_compact_time:%lf, read_cache_time:%lf, \
-			read_block_time:%lf, seek_block_time:%lf, hit:%ld, miss:%ld, nr_mem_get:%ld, nr_ssd_get:%ld, sstabletime:%lf, tablecache_time:%lf, cache_get_time:%lf, get_other_time:%lf, getresulttime:%lf, findtime:%lf, internaltime:%lf, decodetime:%lf, seekresulttime:%lf, matchtime:%lf, blockreadtime:%lf, seekitertime:%lf\n\n", \
-				mem_get_time/1000000, ssd_get_time/1000000, \
-					read_compact_time/1000000, read_cache_time/1000000, \
-						read_block_time/1000000, seek_block_time/1000000, nr_hit, \
-							nr_miss, nr_mem_get, nr_ssd_get, sstable_time/1000000, \
-								tablecache_time/1000000, cache_get_time/1000000, \
-										get_other_time/1000000, \
-											get_result_time/1000000, find_table_time/1000000,\
-												get_internal_time/1000000,\
-													 get_decode_time/1000000, \
-															seek_result_time/1000000, \
-																get_match_time/1000000, \
-																	block_reader_time/1000000, \
-																		seek_iter_time/1000000);
-
-  printf("mem_put_time:%lf, writeahead_time:%lf, \
-    write_compact_time:%lf\n", mem_put_time/1000000, \
-      writeahead_time/1000000, write_compact_time/1000000);
-
+		printf("put time is %lf, get time is %lf, \n"
+			"network_put is %lf, network_get is %lf, \n"
+			"dbputtime:%lf, dbgettime:%lf, packputtime:%lf, \n"
+			"packgettime:%lf, localcpytime:%lf, \n"
+			"resp_put_comm_time:%lf, \n"
+			"resp_get_comm_time:%lf, \n"
+			"stat_time:%lf, packretputtime:%lf, packretgettime:%lf, \n"
+			"localgetcpytime:%lf, \n"
+			"packmpiputtime:%lf, \n"
+			"localassigntime:%lf, \n"
+			"localmalloctime:%lf, \n"
+			"localbpmtime:%lf, \n"
+			"localrangetime:%lf\n",
+		put_time/1000000, get_time/1000000, \
+		msgputtime/1000000, msggettime/1000000,\
+		dbbputtime/1000000, dbgettime/1000000, packputtime/1000000, \
+		packgettime/1000000, localcpytime/1000000, \
+		resp_put_comm_time/1000000,	\
+		resp_get_comm_time/1000000, \
+		stat_time/1000000, packretputtime/1000000, packretgettime/1000000, \
+		localgetcpytime/1000000, \
+		packmpiputtime/1000000, \
+		localassigntime/1000000, \
+		localmalloctime/1000000, \
+		localbpmtime/1000000, \
+		localrangetime/1000000);
 
 		fflush(stdout);
 //	printf("Took: %u seconds to insert and get %u keys/values\n", 

@@ -8,7 +8,7 @@ all:	put-get bput-bget put-del bput-bdel put-getn \
 	put-getn_secondary put-getn_secondary_local \
 	put-del_secondary put-getp_secondary put-get_2secondary_local \
 	put-del_secondary_local plfs-put-get index_name range_test \
-	range_bget
+	range_bget put-bget
 
 put-get: put-get.c 
 	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
@@ -80,6 +80,9 @@ bput-bdel: bput-bdel.c
 index_name: index_name.c
 	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
 
+put-bget: put-bget.c
+	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
+
 clean:
 	rm -rf put-get bput-bget put-del bput-bdel\
 		put-getn put-getp range_test\
@@ -89,5 +92,5 @@ clean:
 		bput-bget_secondary_local put-getn_secondary_local \
 		put-getn_secondary put-del_secondary put-getp_secondary \
 		put-get_2secondary_local put-del_secondary_local plfs-put-get index_name \
-	  range_test range_bget
+	  range_test range_bget put-bget
 

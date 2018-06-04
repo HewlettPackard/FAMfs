@@ -126,7 +126,7 @@ int main(int argc, char **argv) {
 	    }
 	}
 
-	printf("gettransz:%ld,transz:%ld,num:%d\n", gettransz, transz, segnum);
+	printf("gettransz:%ld,transz:%ld,num:%ld\n", gettransz, transz, segnum);
 	fflush(stdout);
 
 	db_opts = malloc(sizeof(struct mdhim_options_t));
@@ -251,9 +251,9 @@ int main(int argc, char **argv) {
 	ulfs_key_t **get_key_lst = (ulfs_key_t **)malloc(2 * segnum\
 			* transz / gettransz * sizeof(ulfs_key_t *));
 	int *get_key_lens =\
-			(long *)malloc(2 * segnum * transz / gettransz * sizeof(int));
+			(int *)malloc(2 * segnum * transz / gettransz * sizeof(int));
 	int *get_val_lens = \
-			(long *)malloc(2 * segnum * transz / gettransz * sizeof(int));
+			(int *)malloc(2 * segnum * transz / gettransz * sizeof(int));
 
 	init_get_key_lst(get_key_lst, get_key_lens, get_val_lens,\
 			segnum * transz / gettransz,\
@@ -265,7 +265,7 @@ int main(int argc, char **argv) {
 	total_keys = 0;
 
 	bgrm = mdhimBGet(md, md->primary_index,\
-	 &get_key_lst[total_keys], get_key_lens,
+	 (void **)&get_key_lst[total_keys], get_key_lens,
 	 	 segnum * transz / gettransz* 2, MDHIM_RANGE_BGET);
 	bgrmp = bgrm;
 	while (bgrmp) {
