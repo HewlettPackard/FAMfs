@@ -396,6 +396,8 @@ int mdhim_leveldb_put(void *dbh, void *key, int key_len, void *data, int32_t dat
     gettimeofday(&start, NULL);
     options = mdhimdb->write_options;    	    
     leveldb_put(mdhimdb->db, options, key, key_len, data, data_len, &err);
+    gettimeofday(&end, NULL);
+    dbputtime+=1000000*(end.tv_sec-start.tv_sec)+end.tv_usec-start.tv_usec;
     /*
      * temporarily mute the error message until the file metadata
      * operation is fully defined and implemented */
@@ -407,9 +409,6 @@ int mdhim_leveldb_put(void *dbh, void *key, int key_len, void *data, int32_t dat
 	    mlog(MDHIM_SERVER_CRIT, "Error putting key/value in leveldb");
 	    return MDHIM_DB_ERROR;
     }
-
-    mlog(MDHIM_SERVER_DBG, "Took: %d seconds to put the record", 
-	 (int) (end.tv_sec - start.tv_sec));
 
     return MDHIM_SUCCESS;
 }
@@ -430,7 +429,6 @@ int mdhim_leveldb_put(void *dbh, void *key, int key_len, void *data, int32_t dat
  */
 int mdhim_leveldb_batch_put(void *dbh, void **keys, int32_t *key_lens, 
 			    void **data, int32_t *data_lens, int num_records) {
-	gettimeofday(&dbbputstart, NULL);
 	leveldb_writeoptions_t *options;
 	char *err = NULL;
 	struct mdhim_leveldb_t *mdhimdb = (struct mdhim_leveldb_t *) dbh;
@@ -457,12 +455,9 @@ int mdhim_leveldb_batch_put(void *dbh, void **keys, int32_t *key_lens,
 		mlog(MDHIM_SERVER_CRIT, "Error in batch put in leveldb");
 		return MDHIM_DB_ERROR;
 	}
-	
-	gettimeofday(&end, NULL);
-    gettimeofday(&end, NULL);
 
-    gettimeofday(&dbbputend, NULL);
-	dbbputtime+=1000000*(dbbputend.tv_sec-dbbputstart.tv_sec)+dbbputend.tv_usec-dbbputstart.tv_usec;
+	gettimeofday(&end, NULL);
+	dbbputtime+=1000000*(end.tv_sec-start.tv_sec)+end.tv_usec-start.tv_usec;
 	mlog(MDHIM_SERVER_DBG, "Took: %d seconds to put %d records", 
 	     (int) (end.tv_sec - start.tv_sec), num_records);
 	
