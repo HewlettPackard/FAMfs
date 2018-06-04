@@ -57,6 +57,7 @@ struct mdhim_rm_t *client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
 	int return_code;
 	struct mdhim_rm_t *rm;       
 
+	gettimeofday(&msgputstart, NULL);
 	return_code = send_rangesrv_work(md, pm->basem.server_rank, pm);
 	// If the send did not succeed then log the error code and return MDHIM_ERROR
 	if (return_code != MDHIM_SUCCESS) {
@@ -64,6 +65,8 @@ struct mdhim_rm_t *client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
 		     "put record request",  md->mdhim_rank, return_code);
 		return NULL;
 	}
+	gettimeofday(&msgputend, NULL);
+	msgputtime += 1000000*(msgputend.tv_sec-msgputstart.tv_sec) + msgputend.tv_usec - msgputstart.tv_usec;
 
 	return_code = receive_client_response(md, pm->basem.server_rank, (void **) &rm);
 	// If the receive did not succeed then log the error code and return MDHIM_ERROR
@@ -72,7 +75,15 @@ struct mdhim_rm_t *client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
 		     "put record request",  md->mdhim_rank, return_code);
 		rm->error = MDHIM_ERROR;	
 	}
-        
+ /*
+ struct timeval en;
+ gettimeofday(&en, NULL);
+ mlog(MDHIM_CLIENT_INFO, "  client_put time send:%ld (total:%.0lf) recv:%ld",
+  1000000L*(msgputend.tv_sec-msgputstart.tv_sec) + msgputend.tv_usec - msgputstart.tv_usec,
+  msgputtime,
+  1000000L*(en.tv_sec-msgputend.tv_sec)+en.tv_usec-msgputend.tv_usec);
+ */
+
 	// Return response message
 	return rm;
 }
@@ -216,6 +227,13 @@ struct mdhim_bgetrm_t *client_bget(struct mdhim_t *md, struct index_t *index,
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error: %d from server while receiving "
 		     "bget record requests",  md->mdhim_rank, return_code);
 	}
+ /*
+ struct timeval en;
+ gettimeofday(&en, NULL);
+ mlog(MDHIM_CLIENT_INFO, "  client_bget time send:%ld recv:%ld",
+  1000000L*(msggetend.tv_sec-msggetstart.tv_sec)+msggetend.tv_usec-msggetstart.tv_usec,
+  1000000L*(en.tv_sec-msggetend.tv_sec)+en.tv_usec-msggetend.tv_usec);
+ */
 
 	bgrm_head = bgrm_tail = NULL;
 	for (i = 0; i < num_srvs; i++) {

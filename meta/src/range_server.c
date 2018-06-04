@@ -65,13 +65,16 @@ struct timeval resp_get_comm_start, resp_get_comm_end;
 double resp_get_comm_time = 0;
 struct index_t *tmp_index;
 
-struct timeval worker_start, worker_end;
+ //struct timeval worker_start, worker_end;
 double worker_time=0;
 
-struct timeval worker_get_start, worker_get_end;
+struct timeval listener_start, listener_end;
+double listener_time=0;
+
+ //struct timeval worker_get_start, worker_get_end;
 double worker_get_time=0;
 
-struct timeval worker_put_start, worker_put_end;
+ //struct timeval worker_put_start, worker_put_end;
 double worker_put_time=0;
 
 struct timeval stat_start, stat_end;
@@ -141,41 +144,20 @@ void add_timing(struct timeval start, struct timeval end, int num,
  */
 int send_locally_or_remote(struct mdhim_t *md, int dest, void *message) {
 	int ret = MDHIM_SUCCESS;
-	MPI_Request **size_req, **msg_req;
-	int *sizebuf;
-	void **sendbuf;
 
 	if (md->mdhim_rank != dest) {
-		//Sends the message remotely
-		size_req = malloc(sizeof(MPI_Request *));
-		msg_req = malloc(sizeof(MPI_Request *));
-		sendbuf = malloc(sizeof(void *));
-		sizebuf = malloc(sizeof(int));
-		ret = send_client_response(md, dest, message, sizebuf, 
-					   sendbuf, size_req, msg_req);
+		int sizebuf;
+		void *sendbuf;
 
-		if (*size_req) {
-			range_server_add_oreq(md, *size_req, sizebuf);
-		} else {
-		  free(sizebuf);
-		}
-
-		if (*msg_req) {
-			range_server_add_oreq(md, *msg_req, *sendbuf);
-		} else if (*sendbuf) {
-			free(*sendbuf);
-		}
-		
-		free(sendbuf);
+		ret = send_client_response(md, dest, message,
+			&sizebuf, &sendbuf, (MPI_Request**)NULL, (MPI_Request**)NULL);
 		mdhim_full_release_msg(message);
-		free(size_req);
-		free(msg_req);
 	} else {
 		//Sends the message locally
 		pthread_mutex_lock(md->receive_msg_mutex);
 		md->receive_msg = message;
-		pthread_mutex_unlock(md->receive_msg_mutex);
 		pthread_cond_signal(md->receive_msg_ready_cv);
+		pthread_mutex_unlock(md->receive_msg_mutex);
 	}
 
 	return ret;
@@ -233,8 +215,8 @@ int range_server_add_work(struct mdhim_t *md, work_item *item) {
 	}
 
 	//Signal the waiting thread that there is work available
-	pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);
 	pthread_cond_signal(md->mdhim_rs->work_ready_cv);
+	pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);
 
 	return MDHIM_SUCCESS;
 }
@@ -276,6 +258,10 @@ int range_server_stop(struct mdhim_t *md) {
 
 	//Signal to the listener thread that it needs to shutdown
 	md->shutdown = 1;
+	i = 0;
+	ret = MPI_Send(&i, 1, MPI_INT, md->mdhim_rank, RANGESRV_WORK_SIZE_MSG, md->mdhim_comm);
+	mlog(MDHIM_SERVER_INFO, "Rank: %d - Signal listener shutdown, ret:%d",
+	     md->mdhim_rank, ret);
 
 	/* Wait for the threads to finish */
 	pthread_cond_broadcast(md->mdhim_rs->work_ready_cv);
@@ -302,7 +288,7 @@ int range_server_stop(struct mdhim_t *md) {
 	free(md->mdhim_rs->work_queue_mutex);
 		
 	//Clean outstanding sends
-	range_server_clean_oreqs(md);
+	/* TODO: Clean outstanding sends! */
 	//Destroy the out req mutex
 	if ((ret = pthread_mutex_destroy(md->mdhim_rs->out_req_mutex)) != 0) {
 	  mlog(MDHIM_SERVER_DBG, "Rank: %d - Error destroying work queue mutex", 
@@ -344,22 +330,27 @@ int range_server_put(struct mdhim_t *md, struct mdhim_putm_t *im, int source) {
 	int ret;
 	struct mdhim_rm_t *rm;
 	int error = 0;
+ /*
 	void **value;
 	int32_t *value_len;
+ */
 	int exists = 0;
 	void *new_value;
 	int32_t new_value_len;
+ /*
 	void *old_value;
 	int32_t old_value_len;
+ */
 	struct timeval start, end;
 	int inserted = 0;
 	struct index_t *index;
 
+ /*
 	value = malloc(sizeof(void *));
 	*value = NULL;
 	value_len = malloc(sizeof(int32_t));
 	*value_len = 0;
-
+ */
 	//Get the index referenced the message
 	index = find_index(md, (struct mdhim_basem_t *) im);
 	if (!index) {
@@ -375,6 +366,7 @@ int range_server_put(struct mdhim_t *md, struct mdhim_putm_t *im, int source) {
 				       im->key, im->key_len, value, 
 				       value_len);
 */
+ /*
 	//The key already exists
 	if (*value && *value_len) {
 		exists = 1;
@@ -389,8 +381,10 @@ int range_server_put(struct mdhim_t *md, struct mdhim_putm_t *im, int source) {
 		memcpy(new_value, old_value, old_value_len);
 		memcpy(new_value + old_value_len, im->value, im->value_len);
 	} else {
+ */
 		new_value = im->value;
 		new_value_len = im->value_len;
+ /*
 	}
     
 	if (*value && *value_len) {
@@ -398,6 +392,7 @@ int range_server_put(struct mdhim_t *md, struct mdhim_putm_t *im, int source) {
 	}
 	free(value);
 	free(value_len);
+ */
         //Put the record in the database
 	if ((ret = 
 	     index->mdhim_store->put(index->mdhim_store->db_handle, 
@@ -432,12 +427,24 @@ done:
 	rm->basem.server_rank = md->mdhim_rank;
 	
 	//Send response
+	gettimeofday(&resp_put_comm_start, NULL);	
 	ret = send_locally_or_remote(md, source, rm);
+ /*
+ struct timeval en, tm, tm2;
+ gettimeofday(&en, NULL);
+ timersub(&stat_start, &start, &tm);
+ timersub(&en, &resp_put_comm_start, &tm2);
+ mlog(MDHIM_SERVER_INFO, ".. range_server_put key:%08x put:%ld send:%ld (%s)",
+  *((unsigned int*)im->key), tm.tv_usec, tm2.tv_usec,
+  (md->mdhim_rank == source)?"l":"R");
+ */
 
 	//Free memory
+ /*
 	if (exists && md->db_opts->db_value_append == MDHIM_DB_APPEND) {
 		free(new_value);
 	}
+ */
 	if (source != md->mdhim_rank) {
 		free(im->key);
 		free(im->value);
@@ -943,7 +950,16 @@ done:
 
 	//Send response
 	gettimeofday(&resp_get_comm_start, NULL);
+ unsigned int key0 = *((unsigned int*)bgrm->keys[0]);
 	ret = send_locally_or_remote(md, source, bgrm);
+ struct timeval en, tm_get, tm_send;
+ gettimeofday(&en, NULL);
+ timersub(&end, &start, &tm_get);
+ double t_get = tm_get.tv_sec + tm_get.tv_usec/1000000.0L;
+ timersub(&en, &resp_get_comm_start, &tm_send);
+ double t_send = tm_send.tv_sec + tm_send.tv_usec/1000000.0L;
+ mlog(MDHIM_SERVER_INFO, ".. range_server_bget key:%4.4x time get:%lf send:%lf",
+  key0, t_get, t_send);
 
 	//Release the bget message
 	free(bgm);
@@ -1212,17 +1228,17 @@ void *listener_thread(void *data) {
 		}	
 
 		//Clean outstanding sends
-		range_server_clean_oreqs(md);
 
 		//Receive messages sent to this server
 		ret = receive_rangesrv_work(md, &source, &message);
 		if (ret < MDHIM_SUCCESS) {		
 			continue;
 		}
+		gettimeofday(&listener_start, NULL);
 		//printf("Rank: %d - Received message from rank: %d of type: %d", 
 		//     md->mdhim_rank, source, mtype);
 		recv_counter++;
-        //Create a new work item
+		//Create a new work item
 		item = malloc(sizeof(work_item));
 		memset(item, 0, sizeof(work_item));
 		             
@@ -1232,6 +1248,13 @@ void *listener_thread(void *data) {
 		item->source = source;
 		//Add the new item to the work queue
 		range_server_add_work(md, item);
+		gettimeofday(&listener_end, NULL);
+		listener_time += 1000000L*(listener_end.tv_sec-listener_start.tv_sec)+listener_end.tv_usec-listener_start.tv_usec;
+ /*
+ mlog(MDHIM_SERVER_INFO, ".  listener - message from rank:%d of type:%d, time:%ld",
+  source, ((struct mdhim_basem_t *)item->message)->mtype,
+  1000000L*(listener_end.tv_sec-listener_start.tv_sec)+listener_end.tv_usec-listener_start.tv_usec);
+ */
 	}
 
 	return NULL;
@@ -1247,15 +1270,33 @@ void *worker_thread(void *data) {
 	work_item *item, *item_tmp;
 	int mtype;
 	int op, num_records, num_keys;
+#define DEBUG_WRK_THREAD
+#ifdef DEBUG_WRK_THREAD
+	struct timeval worker_start, worker_end;
+	struct timeval worker_get_start, worker_get_end;
+	struct timeval worker_put_start, worker_put_end;
+	struct timeval worker_zero;
 
+	/* Get worker id */
+	int i, worker_id = -1;
+	pthread_t thId = pthread_self();
+	for (i = 0; i < md->db_opts->num_wthreads; i++) {
+		if (pthread_equal(*md->mdhim_rs->workers[i], thId)) {
+			worker_id = i;
+			break;
+		}
+	}
+
+	gettimeofday(&worker_zero, NULL);
+#endif
 	while (1) {
 		if (md->shutdown) {
 			break;
 		}
-		//Lock the work queue mutex
-		pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);
 		pthread_cleanup_push((void (*)(void *)) pthread_mutex_unlock,
 				     (void *) md->mdhim_rs->work_queue_mutex);
+		//Lock the work queue mutex
+		pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);
 
 		//Wait until there is work to be performed
 		if ((item = get_work(md)) == NULL) {
@@ -1263,15 +1304,8 @@ void *worker_thread(void *data) {
 			item = get_work(md);
 		}
 	       
-		pthread_cleanup_pop(0);
-		if (!item) {
-			pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);			
-			continue;
-		}
 		pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);
-
-		//Clean outstanding sends
-		range_server_clean_oreqs(md);
+		pthread_cleanup_pop(0);
 
 		gettimeofday(&worker_start, NULL);
 		while (item) {
@@ -1279,12 +1313,27 @@ void *worker_thread(void *data) {
 			//Get the message type
 			mtype = ((struct mdhim_basem_t *) item->message)->mtype;
 
+#ifdef DEBUG_WRK_THREAD
+			mlog(MDHIM_SERVER_INFO, ". worker[%d] - msg from rank:%d of type:%d (%s), current time:%ld",
+			     worker_id, item->source, mtype,
+			     (mtype==MDHIM_PUT)?"PUT":((mtype==MDHIM_BULK_GET)?"BGET":"?"),
+			     1000000L*(worker_start.tv_sec-worker_zero.tv_sec)+worker_start.tv_usec-worker_zero.tv_usec);
+#endif
+
 			switch(mtype) {
 			case MDHIM_PUT:
+				gettimeofday(&worker_put_start, NULL);
 				//Pack the put message and pass to range_server_put
 				range_server_put(md, 
 						 item->message, 
 						 item->source);
+				gettimeofday(&worker_put_end, NULL);
+				worker_put_time += 1000000*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec;
+#ifdef DEBUG_WRK_THREAD
+				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_PUT time:%ld",
+				     worker_id,
+				     1000000L*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec);
+#endif
 				break;
 			case MDHIM_BULK_PUT:
 				//Pack the bulk put message and pass to range_server_put
@@ -1313,6 +1362,11 @@ void *worker_thread(void *data) {
 
 				gettimeofday(&worker_get_end, NULL);
 				worker_get_time += 1000000*(worker_get_end.tv_sec-worker_get_start.tv_sec)+worker_get_end.tv_usec-worker_get_start.tv_usec;
+#ifdef DEBUG_WRK_THREAD
+				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_GET num_records:%d num_keys:%d time:%ld",
+				worker_id, num_records, num_keys,
+				1000000L*(worker_get_end.tv_sec-worker_get_start.tv_sec)+worker_get_end.tv_usec-worker_get_start.tv_usec);
+#endif
 				break;
 			case MDHIM_DEL:
 				range_server_del(md, item->message, item->source);
@@ -1328,16 +1382,16 @@ void *worker_thread(void *data) {
 				       " from: %d\n", md->mdhim_rank, mtype, item->source);
 				break;
 			}
-			
+
 			item_tmp = item;
+			pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);			
 			item = item->next;
+			pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);
 			free(item_tmp);
 		}
 
 		//Clean outstanding sends
-		range_server_clean_oreqs(md);			
 		if (putflag == 0) {	
-			gettimeofday(&worker_end, NULL);
 			gettimeofday(&resp_get_comm_end, NULL);
 			resp_get_comm_time+=1000000*(resp_get_comm_end.tv_sec\
 			-resp_get_comm_start.tv_sec)+resp_get_comm_end.tv_usec\
@@ -1349,93 +1403,17 @@ void *worker_thread(void *data) {
 			-resp_put_comm_start.tv_sec)+resp_put_comm_end.tv_usec\
 			-resp_put_comm_start.tv_usec;	
 		}
+		gettimeofday(&worker_end, NULL);
 		worker_time += 1000000*(worker_end.tv_sec-worker_start.tv_sec)+worker_end.tv_usec-worker_start.tv_usec;	
+#ifdef DEBUG_WRK_THREAD
+		mlog(MDHIM_SERVER_INFO, ". worker[%d] time:%ld (total:%.0lf) current:%ld",
+		     worker_id,
+		     1000000L*(worker_end.tv_sec-worker_start.tv_sec)+worker_end.tv_usec-worker_start.tv_usec,
+		     worker_time,
+		     1000000L*(worker_end.tv_sec-worker_zero.tv_sec)+worker_end.tv_usec-worker_zero.tv_usec);
+#endif
 	}
 	return NULL;
-}
-
-int range_server_add_oreq(struct mdhim_t *md, MPI_Request *req, void *msg) {
-	out_req *oreq;
-	out_req *item;
-
-	pthread_mutex_lock(md->mdhim_rs->out_req_mutex);
-	item = md->mdhim_rs->out_req_list;
-	oreq = malloc(sizeof(out_req));
-	oreq->next = NULL;
-	oreq->prev = NULL;
-	oreq->message = msg;
-	oreq->req = req;
-
-	if (!item) {
-		md->mdhim_rs->out_req_list = oreq;
-		pthread_mutex_unlock(md->mdhim_rs->out_req_mutex);
-		return MDHIM_SUCCESS;
-	}
-
-	item->prev = oreq;
-	oreq->next = item;
-	md->mdhim_rs->out_req_list = oreq;
-	pthread_mutex_unlock(md->mdhim_rs->out_req_mutex);
-
-	return MDHIM_SUCCESS;	
-}
-
-int range_server_clean_oreqs(struct mdhim_t *md) {
-	out_req *item;
-	out_req *t;
-	int ret = MDHIM_SUCCESS;
-	int flag = 0;
-	MPI_Status status;
-
-	pthread_mutex_lock(md->mdhim_rs->out_req_mutex);
-	item = md->mdhim_rs->out_req_list;
-	while (item) {
-		if (!item->req) {
-			item = item->next;
-			continue;
-		}
-
-		pthread_mutex_lock(md->mdhim_comm_lock);
-		ret = MPI_Test((MPI_Request *)item->req, &flag, &status); 
-		pthread_mutex_unlock(md->mdhim_comm_lock);
-
-		if (ret != MPI_SUCCESS) {
-			ret = MDHIM_ERROR;
-			break;
-		}
-
-		if (!flag) {
-			item = item->next;
-			continue;
-		}
-		
-		if (item == md->mdhim_rs->out_req_list) {
-			md->mdhim_rs->out_req_list = item->next;
-			if (item->next) {
-				item->next->prev = NULL;
-			}
-		} else {
-			if (item->next) {
-				item->next->prev = item->prev;
-			}
-			if (item->prev) {
-				item->prev->next = item->next;
-			}
-		}
-
-		t = item->next;
-		free(item->req);
-		if (item->message) {
-			free(item->message);
-		}
-
-		free(item);
-		item = t;
-	}
-
-	pthread_mutex_unlock(md->mdhim_rs->out_req_mutex);
-
-	return ret;
 }
 
 /**
