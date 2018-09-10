@@ -70,6 +70,18 @@ extern void *unifycr_superblock;
 extern unsigned long unifycr_max_index_entries;
 extern int unifycr_spillover_max_chunks;
 
+//
+// === libfabric stuff =============
+//
+
+#include "libfabric.h"
+
+static uint64_t wevents = 1;
+
+//
+// =================================
+//
+
 /* given a file id and logical chunk id, return pointer to meta data
  * for specified chunk, return NULL if not found */
 static unifycr_chunkmeta_t *unifycr_get_chunkmeta(int fid, int cid)
@@ -348,6 +360,26 @@ int unifycr_split_index(unifycr_index_t *cur_idx, index_set_t *index_set,
     return 0;
 }
 
+#define SRV_MR_KEY 1
+int lf_write(char *buf, size_t len, off_t off) {
+    int err;
+    struct timeval start = now(0);
+
+    // Do RMA
+    ON_ERROR(fi_write(ep, buf, len, NULL, srv_addr, off, SRV_MR_KEY, &wctx), "fi_write failed");
+    err = fi_cntr_wait(wcnt, wevents, 10000);
+    if (err == -FI_ETIMEDOUT) {
+        printf("Timeout on RM write\n");
+    } else if (err) {
+        printf("cruise-fixed lf_write: fi_cntr_wait failed: %d - %s\n", -err, fi_strerror(-err));
+    }
+    wevents++;
+
+    UPDATE_STATS(lf_wr_stat, 1, len, start);
+     
+    return err;
+}
+
 /* read data from specified chunk id, chunk offset, and count into user buffer,
  * count should fit within chunk starting from specified offset */
 static int unifycr_logio_chunk_write(
@@ -441,9 +473,17 @@ static int unifycr_logio_chunk_write(
         /*  printf("spill_offset is %ld, count:%ld, chunk_offset is %ld\n",
                   spill_offset, count, chunk_offset);
           fflush(stdout); */
+#if 0
         ssize_t rc = __real_pwrite(unifycr_spilloverblock, buf, count, spill_offset);
         if (rc < 0)  {
             perror("pwrite failed");
+        }
+#endif
+
+        off_t fam_off = my_srv_rank*mem_per_srv + local_rank_idx*mem_per_cln + spill_offset;
+        //printf("write(%d:%d) %u bytes @%u FAM:%u\n", my_srv_rank, local_rank_idx, count, spill_offset, fam_off);
+        if (lf_write((char *)buf, count, fam_off)) {
+            perror("lf-write faild\n");
         }
 
 

@@ -64,6 +64,16 @@
 #include "unifycr-sysio.h"
 #include "unifycr-internal.h"
 
+//
+// === libfabric stuff =============
+//
+
+#include "libfabric.h"
+
+//
+// =================================
+//
+
 /* -------------------
  * define external variables
  * --------------------*/
@@ -1648,6 +1658,9 @@ static int unifycr_fsync(void)
                 return -1;
             }
         }
+
+        DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
+
         /* TODO: if using spill over we may have some fsyncing to do */
     }
     return 0;

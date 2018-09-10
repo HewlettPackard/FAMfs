@@ -130,6 +130,8 @@ char *shm_reqbuf;
 char cmd_buf[GEN_STR_LEN] = {0};
 char ack_msg[3] = {0};
 
+int my_srv_rank;
+int my_srv_size;
 int dbg_rank;
 int app_id;
 static int glb_size = 0;
@@ -211,6 +213,69 @@ pthread_mutex_t unifycr_stack_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 char external_data_dir[1024] = {0};
 char external_meta_dir[1024] = {0};
+
+//
+// === libfabric stuff =============
+//
+
+#include "libfabric.h"
+
+struct fi_info      *hints, *fi;
+struct fid_fabric   *fabric;
+struct fi_eq_attr   eq_attr;
+struct fid_eq       *eq;
+struct fid_domain   *domain;
+struct fid_ep       *ep;
+struct fi_av_attr   av_attr;
+struct fid_av       *av;
+struct fi_cq_attr   cq_attr;
+struct fid_cq       *cq;
+struct fid_mr       *mr;
+struct fi_cntr_attr cntr_attr;
+struct fid_cntr     *rcnt, *wcnt;
+struct fi_context   wctx, rctx;
+fi_addr_t           srv_addr;
+
+size_t              mem_per_srv;
+size_t              mem_per_cln;
+
+static size_t get_evv(char *name, size_t df) {
+    size_t  val = 0;
+    char    *evv, *last;
+
+    evv = getenv(name);
+    if (evv) {
+        val = strtod(evv, &last);
+        if (*last) {
+            switch (*last) {
+            case 'k':
+            case 'K':
+                val *= 1024;
+                break;
+            case 'm':
+            case 'M':
+                val *= 1024*1024;
+                break;
+            case 'g':
+            case 'G':
+                val *= 1024*1024*1024L;
+                break;
+            }
+        }
+    }
+
+    return val ? val : df;
+
+}
+
+
+lfio_stats_t        lf_wr_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+
+int do_lf_stats = 0;
+
+//
+// ===========================================
+//
 
 /* single function to route all unsupported wrapper calls through */
 int unifycr_vunsupported(
@@ -2215,7 +2280,11 @@ static int unifycr_sync_to_del()
                                 unifycr_key_slice_range =
                                     *((long *)(cmd_buf + 2 * sizeof(int)));
                                 /*success*/
-
+                                my_srv_rank = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long)));
+                                my_srv_size = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long) + sizeof(int)));
+                                printf("*** connected to server: %d/%d\n", my_srv_rank, my_srv_size);
+                                mem_per_cln = get_evv("CRUISE_SPILLOVER_SIZE", 256*1024*1024L);
+                                mem_per_srv = get_evv("FAM_PART_SIZE", 1024*1024*1024L);
                             }
                         }
                     } else {
@@ -2866,3 +2935,124 @@ chunk_list_t *unifycr_get_chunk_list(char *path)
 void unifycr_print_chunk_list(char *path)
 {
 }
+
+int lf_connect(char *addr, char *service) {
+    //int  i, n, err, events;
+    int  n;
+    char name[128], svc[32], *p;
+
+    gethostname(name, 128);
+    if (service) {
+        if (!(p = strstr(service, name)))
+            goto default_svc;
+        p += strlen(name);
+        if (*p != ':')
+            goto default_svc;
+        int port = atoi(++p);
+	port += local_rank_idx;
+        sprintf(svc, "%d", port);
+    } else if ((p = strchr(name, '-')) && getenv("LFSRV_MT")) {
+        sprintf(svc, "%d", 660 + atoi(++p));
+    } else {
+default_svc:
+        strcpy(svc, "666");
+    }
+    
+    // Provider discovery
+    hints = fi_allocinfo();
+    hints->caps                 = FI_RMA | FI_RMA_EVENT | FI_MSG;
+    hints->mode                 = FI_CONTEXT;
+    hints->domain_attr->mr_mode = FI_MR_SCALABLE;
+    hints->ep_attr->type        = FI_EP_RDM;
+
+    DEBUG("connecting to LF server %s:%s", addr, svc);
+    ON_ERROR(fi_getinfo(FI_VERSION(1, 5), addr, svc, 0, hints, &fi), "fi_getinfo failed");
+    fi_freeinfo(hints);
+
+    // Create fabric object
+    ON_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "fi_fabric failed");
+    
+    // Create completion queue
+    memset(&eq_attr, 0, sizeof(eq_attr));
+    eq_attr.size = 64;
+    eq_attr.wait_obj = FI_WAIT_UNSPEC;
+    ON_ERROR(fi_eq_open(fabric, &eq_attr, &eq, NULL), "fi_eq_open failed");
+
+    // Create domain object
+    ON_ERROR(fi_domain(fabric, fi, &domain, NULL), "fi_domain failed");
+
+    // Create endpoint
+    fi->caps = FI_RMA;
+    ON_ERROR(fi_endpoint(domain, fi, &ep, NULL), "fi_endpoint failed");
+
+    // Create address vector bind to endpoint and event queue
+    memset(&av_attr, 0, sizeof(av_attr));
+    av_attr.type = FI_AV_MAP;
+    ON_ERROR(fi_av_open(domain, &av_attr, &av, NULL), "fi_av_open failed");
+    ON_ERROR(fi_ep_bind(ep, (fid_t)av, 0), "fi_ep_bind failed");
+    ON_ERROR(fi_av_bind(av, (fid_t)eq, 0), "fi_av_bind failed");
+
+    // Create completion queue and bind to endpoint
+    memset(&cq_attr, 0, sizeof(cq_attr));
+    cq_attr.format = FI_CQ_FORMAT_TAGGED;
+    cq_attr.size = 100;
+    ON_ERROR(fi_cq_open(domain, &cq_attr, &cq, NULL), "fi_cq_open failed");
+    ON_ERROR(fi_ep_bind(ep, (fid_t)cq, FI_TRANSMIT|FI_RECV), "fi_ep_bind failed");
+
+    // Create counter and bind to endpoint
+    memset(&cntr_attr, 0, sizeof(cntr_attr));
+    ON_ERROR(fi_cntr_open(domain, &cntr_attr, &rcnt, NULL), "fi_cntr_open failed");
+    ON_ERROR(fi_ep_bind(ep, (fid_t)rcnt, FI_READ),  "fi_ep_bind failed");
+    ON_ERROR(fi_cntr_open(domain, &cntr_attr, &wcnt, NULL), "fi_cntr_open failed");
+    ON_ERROR(fi_ep_bind(ep, (fid_t)wcnt, FI_WRITE),  "fi_ep_bind failed");
+
+    // Enable endpoint
+    ON_ERROR(fi_enable(ep), "fi_enale failed");
+
+    // Perform address translation
+    if (1 != (n= fi_av_insert(av, fi->dest_addr, 1, &srv_addr, 0, NULL))) {
+        DEBUG("ft_av_insert failed, returned %d", n);
+        return(-EADDRNOTAVAIL);
+    }
+
+#if 0
+
+    int w = 0;
+    char *buf;
+    size_t len = 4096;
+
+    posix_memalign((void **)&buf, len, 4096);
+    memset(buf, 0, 4096);
+    if (!w) {
+        ON_ERROR(fi_read(ep, buf, 4096, NULL, srv_addr, 0, SRV_MR_KEY, &wctx), "fi_read failed");
+        err = fi_cntr_wait(rcnt, 1, 10000);
+        if (err == -FI_ETIMEDOUT) {
+            printf("Timeout on RM read\n");
+            exit(1);
+        } else if (err) {
+            printf("cruise lf_connect: fi_cntr_wait failed: %d\n", err);
+            exit(1);
+        }
+        printf("Read \"%s\" from server\n", buf);
+    } else {
+        strcpy(buf, "Hello, world!");
+        ON_ERROR(fi_write(ep, buf, strlen(buf), NULL, srv_addr, 0, SRV_MR_KEY, &wctx), "fi_write failed");
+        err = fi_cntr_wait(wcnt, 1, 10000);
+        if (err == -FI_ETIMEDOUT) {
+            printf("Timeout on RM write\n");
+            exit(1);
+        } else if (err) {
+            printf("fi_cntr_wait failed: %d\n", err);
+            exit(1);
+        }
+        printf("wrote \"%s\" to server\n", buf);
+    }
+
+#endif
+
+    if (getenv("LF_SRV_STATS"))
+        do_lf_stats = 1;
+
+    return 0;
+}
+
