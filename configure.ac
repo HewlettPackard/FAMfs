@@ -155,6 +155,13 @@ PKG_CHECK_MODULES([LEVELDB], [leveldb], ,
 # look for gotcha library, sets GOTCHA_INCLUDE, GOTCHA_LIB
 UNIFYCR_AC_GOTCHA
 
+# check libfabric
+PKG_CHECK_MODULES([LIBFABRIC], [libfabric], ,
+    AC_MSG_ERROR(['pkg-config: libfabric not found.']))
+AC_CHECK_HEADER(rdma/fabric.h, , AC_MSG_ERROR(['libfabric header not found.']))
+AC_CHECK_LIB([fabric], fi_getinfo, , AC_MSG_ERROR(['libfabric not found.']))
+
+
 # libc functions wrapped by unifycr
 
 CP_WRAPPERS+="-Wl,-wrap,access"

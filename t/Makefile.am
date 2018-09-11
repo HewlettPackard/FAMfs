@@ -24,6 +24,8 @@ EXTRA_DIST = \
 	tap-driver.sh
 
 AM_CFLAGS = -Wall
+AM_CPPFLAGS = $(LIBFABRIC_CFLAGS)
+AM_LDFLAGS = $(LIBFABRIC_LIBS)
 
 clean-local:
 	rm -fr trash-directory.* test-results *.log test_run_env.sh
