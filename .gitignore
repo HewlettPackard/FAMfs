@@ -64,6 +64,8 @@ ltmain.sh
 Makefile
 Makefile.in
 missing
+config.guess
+config.sub
 stamp-h[0-9]
 test-driver
 *compile
