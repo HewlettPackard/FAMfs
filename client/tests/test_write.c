@@ -73,8 +73,8 @@ int main(int argc, char *argv[]) {
 
 	static const char * opts = "b:s:t:f:p:u:";
 	char tmpfname[GEN_STR_LEN], fname[GEN_STR_LEN];
-	long blk_sz, seg_num, tran_sz, num_reqs;
-	int pat, c, rank_num, rank, direction, fd, \
+	long blk_sz, seg_num, tran_sz;
+	int pat, c, rank_num, rank, fd, \
 		to_unmount = 0;
 
 	MPI_Init(&argc, &argv);
@@ -187,4 +187,5 @@ int main(int argc, char *argv[]) {
 	free(buf);
 
 	MPI_Finalize();
+	return 0;
 }

@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
 	static const char * opts = "b:s:t:f:p:u:";
 
 	char tmpfname[GEN_STR_LEN], fname[GEN_STR_LEN];
-	long blk_sz, seg_num, tran_sz, num_reqs;
+	long blk_sz, seg_num, tran_sz;
 	int pat, c, rank_num, rank, fd, to_unmount = 0;
 
 	MPI_Init(&argc, &argv);
@@ -68,12 +68,7 @@ int main(int argc, char *argv[]) {
 		  }
 	}
 
-	num_reqs = blk_sz*seg_num/tran_sz;
 	char *read_buf = malloc(blk_sz * seg_num); /*read buffer*/
-    struct aiocb *aiocb_list = (struct aiocb *)malloc(num_reqs\
-        * sizeof(struct aiocb));
-    struct aiocb **cb_list = (struct aiocb **)malloc (num_reqs * \
-      sizeof (struct aiocb *)); /*list of read requests in lio_listio*/
 
     int mnt_success = unifycr_mount("/tmp", rank, rank_num, 1, 1);
 
@@ -151,5 +146,5 @@ int main(int argc, char *argv[]) {
 	}
 
 	MPI_Finalize();
-
+	return 0;
 }
