@@ -73,6 +73,8 @@ typedef struct {
     int rank;
 } name_rank_pair_t;
 
+#if 0
+/* TODO: Separate common code for server and client */
 static int get_del_cnt();
 static int compare_int(const void *a, const void *b);
 static int compare_name_rank_pair(const void *a, const void *b);
@@ -83,6 +85,8 @@ static int unifycr_init_socket(int proc_id,
                                int l_num_del_per_node);
 static int CountTasksPerNode(int rank, int numTasks);
 static int unifycr_init_req_shm(int local_rank_idx, int app_id);
+#endif
+
 int unifycr_mount(const char prefix[], int rank, size_t size,
                   int l_app_id, int subtype);
 int unifycr_unmount(void);
