@@ -175,13 +175,15 @@ void *sm_service_reads(void *ctx)
                         return (void *)&sm_rc;
                     }
 
+#if 0
                     if (glb_rank == glb_rank) {
-                        //  print_service_msgs(&service_msgs);
+                        print_service_msgs(&service_msgs);
                     }
 
                     if (glb_rank == dbg_rank) {
-                        //  print_task_set(&read_task_set, &service_msgs);
+                        print_task_set(&read_task_set, &service_msgs);
                     }
+#endif
                     rc = sm_read_send_pipe(&read_task_set,
                                            &service_msgs, &rank_ack_task);
                     if (rc != 0) {
@@ -484,9 +486,11 @@ int sm_wait_until_digested(task_set_t *read_task_set,
     }
 
     arraylist_reset(pended_reads);
+#if 0
     if (glb_rank == glb_rank) {
-        //  print_ack_meta(read_ack_task);
+        print_ack_meta(read_ack_task);
     }
+#endif
 
     /*Send back the remaining acks*/
     rank_ack_meta_t *ptr_ack_meta = NULL;

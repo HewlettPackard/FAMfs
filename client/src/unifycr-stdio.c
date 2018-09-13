@@ -1327,6 +1327,7 @@ size_t UNIFYCR_WRAP(fwrite)(const void *ptr, size_t size, size_t nitems,
     }
 }
 
+#if 0 /* Don't implemented yet -- Enable the wrapper when done in configure.ac */
 int UNIFYCR_WRAP(fprintf)(FILE *stream, const char *format, ...)
 {
     /* check whether we should intercept this stream */
@@ -1447,6 +1448,7 @@ int UNIFYCR_WRAP(vfscanf)(FILE *stream, const char *format, va_list ap)
         return ret;
     }
 }
+#endif
 
 /* TODO: return error if new position overflows long */
 int UNIFYCR_WRAP(fseek)(FILE *stream, long offset, int whence)

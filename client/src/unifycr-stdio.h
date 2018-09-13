@@ -56,10 +56,12 @@ UNIFYCR_DECL(freopen, FILE *, (const char *path, const char *mode,
 UNIFYCR_DECL(setbuf, void, (FILE *stream, char *buf));
 UNIFYCR_DECL(setvbuf, int, (FILE *stream, char *buf, int type, size_t size));
 
+#if 0
 UNIFYCR_DECL(fprintf,  int, (FILE *stream, const char *format, ...));
 UNIFYCR_DECL(fscanf,   int, (FILE *stream, const char *format, ...));
 UNIFYCR_DECL(vfprintf, int, (FILE *stream, const char *format, va_list ap));
 UNIFYCR_DECL(vfscanf,  int, (FILE *stream, const char *format, va_list ap));
+#endif
 
 UNIFYCR_DECL(fgetc,  int, (FILE *stream));
 UNIFYCR_DECL(fgets,  char *, (char *s, int n, FILE *stream));

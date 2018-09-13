@@ -35,7 +35,8 @@ def read_functions_file(filename):
 	functions = []
 	f = open(filename, 'r')
 	for line in f:
-		functions.append(func(line))
+		if not line.startswith('#'):
+			functions.append(func(line))
 	f.close()
 	return functions
 

@@ -72,7 +72,7 @@ typedef struct {
 int main(int argc, char *argv[]) {
 
 	static const char * opts = "b:s:t:f:p:u:";
-	char tmpfname[GEN_STR_LEN], fname[GEN_STR_LEN];
+	char tmpfname[GEN_STR_LEN+12], fname[GEN_STR_LEN];
 	long blk_sz, seg_num, tran_sz;
 	int pat, c, rank_num, rank, fd, \
 		to_unmount = 0;
