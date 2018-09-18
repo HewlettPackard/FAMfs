@@ -74,7 +74,8 @@ extern int unifycr_spillover_max_chunks;
 // === libfabric stuff =============
 //
 
-#include "libfabric.h"
+//#include "libfabric.h"
+#include "lf_client.h"
 
 static uint64_t wevents = 1;
 
@@ -359,7 +360,7 @@ int unifycr_split_index(unifycr_index_t *cur_idx, index_set_t *index_set,
 
     return 0;
 }
-
+#if 0
 #define SRV_MR_KEY 1
 int lf_write(char *buf, size_t len, off_t off) {
     int err;
@@ -379,6 +380,7 @@ int lf_write(char *buf, size_t len, off_t off) {
      
     return err;
 }
+#endif
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,
  * count should fit within chunk starting from specified offset */
@@ -478,13 +480,15 @@ static int unifycr_logio_chunk_write(
         if (rc < 0)  {
             perror("pwrite failed");
         }
-#endif
 
         off_t fam_off = my_srv_rank*mem_per_srv + local_rank_idx*mem_per_cln + spill_offset;
         //printf("write(%d:%d) %u bytes @%u FAM:%u\n", my_srv_rank, local_rank_idx, count, spill_offset, fam_off);
         if (lf_write((char *)buf, count, fam_off)) {
             perror("lf-write faild\n");
         }
+#endif
+
+// *** -->  new lf_write goes here
 
 
         unifycr_index_t cur_idx;

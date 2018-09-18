@@ -169,6 +169,29 @@ typedef struct w_private_ {
 	struct lf_cl_		**lf_clients; /* array of references */
 } W_PRIVATE_t;
 
+typedef struct {
+    pthread_mutex_t lck;
+    uint64_t        cnt;
+    uint64_t        ttl;
+    uint64_t        min;
+    uint64_t        max;
+    uint64_t        bcnt;
+    uint64_t        bmin;
+    uint64_t        bmax;
+    uint64_t        ett;
+    uint64_t        emin;
+    uint64_t        emax;
+} lfio_stats_t;
+
+extern lfio_stats_t        lf_wr_stat;  // libfaric write
+extern lfio_stats_t        lf_rd_stat;  // libfaric read
+extern lfio_stats_t        md_fg_stat;  // MDHIM file position get
+extern lfio_stats_t        md_fp_stat;  // MDHIM file position put
+extern lfio_stats_t        md_ag_stat;  // MDHIM file attr get
+extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
+
+
+
 // char** getstrlist(const char *buf, int *count);
 
 static inline const char *cmd2str(W_TYPE_t type)
@@ -234,5 +257,93 @@ static inline const char *str_tk(const char *buf, const char *accept)
 	}
 	return p;
 }
+
+#define N_XFER_SZ	1*1024*1024L 
+#define LFCLN_ITER	1
+#define LFSRV_PORT	50666
+#define LF_PROV_NAME	"sockets"
+#define LFSRV_BUF_SZ	32*1024*1024*1024L
+#define	N_PARITY	1
+#define N_CHUNK_SZ	1*1024*1024L
+#define N_WRK_COUNT	1
+#define N_EXTENT_SZ	1*1024*1024*1024L
+#define CMD_MAX		16
+#define	IO_TIMEOUT_MS	30*1000 /* single I/O execution timeout, 30 sec */
+#define LFSRV_RCTX_BITS 8	/* LF SRV: max number of rx contexts, bits */
+#define LFSRV_START_TMO 15000	/* the timeout for start all LF servers */
+#define LFS_COMMAND     ""      /* default configuration command line */
+#define LFS_MAXARGS     64
+
+#define LF_MR_MODEL_SCALABLE	"scalable"
+#define LF_MR_MODEL_LOCAL	"local"	/* BASIC and FI_Mr_LOCAL */
+#define LF_MR_MODEL_BASIC	"basic" /* FI_MR_ALLOCATED [| FI_MR_PROV_KEY | FI_MR_VIRT_ADDR - not now] */
+//#define LF_MR_MODEL	LF_MR_MODEL_BASIC /* Default: local memory registration */
+#define LF_MR_MODEL	LF_MR_MODEL_SCALABLE /* Default: local memory registration */
+
+//#define LF_TARGET_RMA_EVENT	/* Require generation of completion events when target of RMA and/or atomics */
+
+#if CKPFS_STATS
+
+#define DUMP_STATS(name, sb) if (do_lf_stats) {\
+    char *__ev = getenv("##name");\
+    if (!__ev)\
+        __ev = name;\
+    printf("dumping %s\n", __ev);\
+    pthread_mutex_lock(&sb.lck);\
+    FILE *__fp = fopen(__ev, "a+");\
+    if (__fp) {\
+        fprintf(__fp, "%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n", \
+                sb.bcnt, sb.ttl, sb.min, sb.max, \
+                sb.cnt, sb.bmin, sb.bmax,\
+                sb.ett, sb.emin, sb.emax);\
+        fclose(__fp);\
+    }\
+    pthread_mutex_unlock(&sb.lck);\
+}
+
+#define UPDATE_STATS(sb, n, s, ts) if (do_lf_stats) {\
+    int _n_ = (n), _s_ = (s);\
+    uint64_t _e_ = elapsed(&(ts));\
+    if (_n_) {\
+        pthread_mutex_lock(&sb.lck);\
+        sb.bcnt++;\
+        sb.cnt += _n_;\
+        sb.ttl += _s_;\
+        if (_s_ < sb.min || !sb.min)\
+           sb.min = _s_;\
+        if (_s_ > sb.max)\
+            sb.max = _s_;\
+        if (_n_ < sb.bmin || !sb.bmin)\
+            sb.bmin = _n_;\
+        if (_n_ > sb.bmax)\
+            sb.bmax = _n_;\
+        pthread_mutex_unlock(&sb.lck);\
+    }\
+    if (_e_) {\
+        sb.ett += _e_;\
+        if (_e_ < sb.emin || !sb.emin)\
+            sb.emin = _e_;\
+        if (_e_ > sb.emax)\
+            sb.emax = _e_;\
+    }\
+}
+
+#else
+#define DUMP_STATS(name, sb) do {;} while (0);
+#define UPDATE_STATS(sb, n, s, ts) do {;} while(0);
+#endif
+
+#define LF_WR_STATS_FN  "lf-writes.csv"
+#define LF_RD_STATS_FN  "lf-reads.csv"
+#define MD_FG_STATS_FN  "md-fget.csv"
+#define MD_FP_STATS_FN  "md-fput.csv"
+#define MD_AG_STATS_FN  "md-aget.csv"
+#define MD_AP_STATS_FN  "md-aput.csv"
+
+
+int str2argv(char *str, char **argvp[], int argmax);
+int arg_parser(int argc, char **argv, N_PARAMS_t **params_p);
+void free_lf_clients(N_PARAMS_t **params_p);
+int lfs_connect(char *cmd);
 
 #endif /* LF_CLIENT_H */

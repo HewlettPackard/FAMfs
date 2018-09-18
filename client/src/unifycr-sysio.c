@@ -68,7 +68,8 @@
 // === libfabric stuff =============
 //
 
-#include "libfabric.h"
+//#include "libfabric.h"
+#include "lf_client.h"
 
 //
 // =================================

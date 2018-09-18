@@ -218,8 +218,12 @@ char external_meta_dir[1024] = {0};
 // === libfabric stuff =============
 //
 
-#include "libfabric.h"
+//#include "libfabric.h"
+#include "lf_client.h"
 
+N_PARAMS_t *lfs_params;
+
+#if 0
 struct fi_info      *hints, *fi;
 struct fid_fabric   *fabric;
 struct fi_eq_attr   eq_attr;
@@ -235,6 +239,7 @@ struct fi_cntr_attr cntr_attr;
 struct fid_cntr     *rcnt, *wcnt;
 struct fi_context   wctx, rctx;
 fi_addr_t           srv_addr;
+#endif
 
 size_t              mem_per_srv;
 size_t              mem_per_cln;
@@ -2117,6 +2122,8 @@ static int unifycr_init(int rank)
 int unifycr_mount(const char prefix[], int rank, size_t size,
                   int l_app_id, int subtype)
 {
+    int rc;
+
     switch (subtype) {
     case UNIFYCRFS:
         fs_type = UNIFYCRFS;
@@ -2135,7 +2142,16 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     dbg_rank = rank;
     app_id = l_app_id;
     glb_size = size;
-    return unifycrfs_mount(prefix, size, rank);
+
+    if ((rc = unifycrfs_mount(prefix, size, rank)))
+        return rc;
+
+    char *cmdline = getstr("LFS_COMMAND");
+    if ((rc = lfs_connect(cmdline))) {
+        printf("lf-connect failed on mount\n");
+        return rc;
+    }
+    return 0;
 }
 
 /**
@@ -2936,6 +2952,7 @@ void unifycr_print_chunk_list(char *path)
 {
 }
 
+#if 0
 int lf_connect(char *addr, char *service) {
     //int  i, n, err, events;
     int  n;
@@ -3015,7 +3032,7 @@ default_svc:
         return(-EADDRNOTAVAIL);
     }
 
-#if 0
+/*
 
     int w = 0;
     char *buf;
@@ -3048,11 +3065,23 @@ default_svc:
         printf("wrote \"%s\" to server\n", buf);
     }
 
-#endif
+*/
 
     if (getenv("LF_SRV_STATS"))
         do_lf_stats = 1;
 
     return 0;
 }
+#endif
+
+int lfs_connect(char *param_str) {
+    char *argv[LFS_MAXARGS];
+    int argc;
+
+    argc = str2argv(param_str, (char ***)&argv, LFS_MAXARGS);
+    return arg_parser(argc, argv, &lfs_params);
+
+}
+
+
 

@@ -16,35 +16,10 @@
 
 #include "lf_client.h"
 
-#define N_XFER_SZ	1*1024*1024L 
-#define LFCLN_ITER	1
-#define LFSRV_PORT	50666
-#define LF_PROV_NAME	"sockets"
-#define LFSRV_BUF_SZ	32*1024*1024*1024L
-#define	N_PARITY	1
-#define N_CHUNK_SZ	1*1024*1024L
-#define N_WRK_COUNT	1
-#define N_EXTENT_SZ	1*1024*1024*1024L
-#define CMD_MAX		16
-#define	IO_TIMEOUT_MS	30*1000 /* single I/O execution timeout, 30 sec */
-#define LFSRV_RCTX_BITS 8	/* LF SRV: max number of rx contexts, bits */
-#define LFSRV_START_TMO 15000	/* the timeout for start all LF servers */
-
-#define LF_MR_MODEL_SCALABLE	"scalable"
-#define LF_MR_MODEL_LOCAL	"local"	/* BASIC and FI_Mr_LOCAL */
-#define LF_MR_MODEL_BASIC	"basic" /* FI_MR_ALLOCATED [| FI_MR_PROV_KEY | FI_MR_VIRT_ADDR - not now] */
-//#define LF_MR_MODEL	LF_MR_MODEL_BASIC /* Default: local memory registration */
-#define LF_MR_MODEL	LF_MR_MODEL_SCALABLE /* Default: local memory registration */
-
-//#define LF_TARGET_RMA_EVENT	/* Require generation of completion events when target of RMA and/or atomics */
 
 #define PR_BUF_SZ	12
 
 static int rank, rank_size;
-
-
-int arg_parser(int argc, char **argv, N_PARAMS_t **params_p);
-void free_lf_clients(N_PARAMS_t **params_p);
 
 static int lf_client_init(LF_CL_t *lf_node_p, N_PARAMS_t *params);
 static void lf_client_free(LF_CL_t *cl);
@@ -202,6 +177,18 @@ static void usage(const char *name) {
 	    name);
 }
 
+int str2argv(char *str, char **argvp[], int argmax) {
+    int argc = 0;
+    char *tok, *p = str;
+
+    while ((tok = strsep(&p, " \t")) && argc < argmax) {
+        (*argvp)[argc++] = tok;
+        printf("tok[%d]=%s\n", argc - 1, tok);
+    }
+
+    (*argvp)[argc] = 0;
+    return --argc;
+}
 
 int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     int			opt, opt_idx = 0;
