@@ -341,7 +341,7 @@ static inline const char *str_tk(const char *buf, const char *accept)
 #define MD_AP_STATS_FN  "md-aput.csv"
 
 
-int str2argv(char *str, char **argvp[], int argmax);
+int str2argv(char *str, char **argv, int argmax);
 int arg_parser(int argc, char **argv, N_PARAMS_t **params_p);
 void free_lf_clients(N_PARAMS_t **params_p);
 int lfs_connect(char *cmd);

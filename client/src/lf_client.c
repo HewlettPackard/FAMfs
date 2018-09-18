@@ -177,16 +177,16 @@ static void usage(const char *name) {
 	    name);
 }
 
-int str2argv(char *str, char **argvp[], int argmax) {
+int str2argv(char *str, char **argv, int argmax) {
     int argc = 0;
     char *tok, *p = str;
 
     while ((tok = strsep(&p, " \t")) && argc < argmax) {
-        (*argvp)[argc++] = tok;
-        printf("tok[%d]=%s\n", argc - 1, tok);
+        argv[argc++] = tok;
+        //printf("tok[%d]=%s\n", argc - 1, tok);
     }
 
-    (*argvp)[argc] = 0;
+    argv[argc] = 0;
     return --argc;
 }
 

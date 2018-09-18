@@ -3080,7 +3080,7 @@ int lfs_connect(char *param_str) {
     char *argv[LFS_MAXARGS];
     int argc;
 
-    argc = str2argv(param_str, (char ***)&argv, LFS_MAXARGS);
+    argc = str2argv(param_str, argv, LFS_MAXARGS);
     return arg_parser(argc, argv, &lfs_params);
 
 }
