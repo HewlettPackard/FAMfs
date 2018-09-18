@@ -15,7 +15,7 @@
 #include <mpi.h>
 
 #include "lf_client.h"
-
+#include "unifycr-internal.h"
 
 #define PR_BUF_SZ	12
 
@@ -183,7 +183,7 @@ int str2argv(char *str, char **argv, int argmax) {
 
     while ((tok = strsep(&p, " \t")) && argc < argmax) {
         argv[argc++] = tok;
-        //printf("tok[%d]=%s\n", argc - 1, tok);
+        DEBUG("tok[%d]=%s", argc - 1, tok);
     }
 
     argv[argc] = 0;
@@ -559,9 +559,14 @@ _free:
 void free_lf_clients(N_PARAMS_t **params_p)
 {
     N_PARAMS_t *params = *params_p;
-    LF_CL_t **lf_all_clients = params->lf_clients;
-    int i, count = params->node_cnt * params->node_servers;
+    LF_CL_t **lf_all_clients;
+    int i, count;
 
+    if (params == NULL)
+	return;
+
+    lf_all_clients = params->lf_clients;
+    count = params->node_cnt * params->node_servers;
     for (i = 0; i < count; i++)
 	lf_client_free(lf_all_clients[i]);
     free(lf_all_clients);

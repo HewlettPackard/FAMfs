@@ -240,7 +240,7 @@ static inline size_t _getval(char *name, char *v, size_t df) {
 
 static inline char *_getstr(char *name, char *dfl) {
     char *str =  getenv(name);
-    return str ? str : dfl;
+    return str ? str : strdup(dfl);
 }
 
 #define getstr(name) _getstr("" #name "", name)
@@ -271,7 +271,8 @@ static inline const char *str_tk(const char *buf, const char *accept)
 #define	IO_TIMEOUT_MS	30*1000 /* single I/O execution timeout, 30 sec */
 #define LFSRV_RCTX_BITS 8	/* LF SRV: max number of rx contexts, bits */
 #define LFSRV_START_TMO 15000	/* the timeout for start all LF servers */
-#define LFS_COMMAND     ""      /* default configuration command line */
+//#define LFS_COMMAND     "-H o186i126 -P0 --memreg scalable --provider 'sockets' --cmd_trigger ENCODE"	/* default configuration command line */
+#define LFS_COMMAND     "-H o186i126 -P0 --memreg scalable --provider 'sockets' ENCODE"	/* default configuration command line */
 #define LFS_MAXARGS     64
 
 #define LF_MR_MODEL_SCALABLE	"scalable"

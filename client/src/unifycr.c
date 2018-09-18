@@ -221,7 +221,7 @@ char external_meta_dir[1024] = {0};
 //#include "libfabric.h"
 #include "lf_client.h"
 
-N_PARAMS_t *lfs_params;
+N_PARAMS_t *lfs_params = NULL;
 
 #if 0
 struct fi_info      *hints, *fi;
@@ -2146,7 +2146,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     if ((rc = unifycrfs_mount(prefix, size, rank)))
         return rc;
 
-    char *cmdline = getstr("LFS_COMMAND");
+    char *cmdline = getstr(LFS_COMMAND);
     if ((rc = lfs_connect(cmdline))) {
         printf("lf-connect failed on mount\n");
         return rc;
