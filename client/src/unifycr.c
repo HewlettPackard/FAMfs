@@ -2193,6 +2193,8 @@ int unifycr_unmount()
             return UNIFYCR_FAILURE;
     }
 
+    free_lf_clients(&lfs_params);
+
     return UNIFYCR_SUCCESS;
 }
 
