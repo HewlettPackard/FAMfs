@@ -187,7 +187,7 @@ int str2argv(char *str, char **argv, int argmax) {
     }
 
     argv[argc] = 0;
-    return --argc;
+    return argc;
 }
 
 int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
@@ -214,8 +214,8 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     ASSERT(sizeof(size_t) == 8);
 
     rc = 1; /* parser error */
-    // MPI_Comm_size(MPI_COMM_WORLD, &rank_size);
-    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+     MPI_Comm_size(MPI_COMM_WORLD, &rank_size);
+     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     enum opt_long_ {
 	OPT_PROVIDER = 1000,
@@ -249,6 +249,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 	{0, 0, 0, 0}
     };
 
+    optind = 0;
     while ((opt = getopt_long(argc, argv, "avhp:i:t:T:H:P:R:M:C:E:w:",
 	    long_opts, &opt_idx)) != -1)
     {
