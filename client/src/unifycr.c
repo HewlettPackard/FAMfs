@@ -100,6 +100,10 @@ int local_rank_idx = 0;
 typedef int64_t off64_t;
 #endif
 
+#include "fam_stripe.h"
+#include "lf_client.h"
+
+
 static int unifycr_fpos_enabled   = 1;  /* whether we can use fgetpos/fsetpos */
 /*
  * unifycr variable:
@@ -214,32 +218,10 @@ pthread_mutex_t unifycr_stack_mutex = PTHREAD_MUTEX_INITIALIZER;
 char external_data_dir[1024] = {0};
 char external_meta_dir[1024] = {0};
 
-//
-// === libfabric stuff =============
-//
-
-//#include "libfabric.h"
-#include "lf_client.h"
-
+/* FAM */
 N_PARAMS_t *lfs_params = NULL;
+N_STRIPE_t *fam_stripe = NULL;
 
-#if 0
-struct fi_info      *hints, *fi;
-struct fid_fabric   *fabric;
-struct fi_eq_attr   eq_attr;
-struct fid_eq       *eq;
-struct fid_domain   *domain;
-struct fid_ep       *ep;
-struct fi_av_attr   av_attr;
-struct fid_av       *av;
-struct fi_cq_attr   cq_attr;
-struct fid_cq       *cq;
-struct fid_mr       *mr;
-struct fi_cntr_attr cntr_attr;
-struct fid_cntr     *rcnt, *wcnt;
-struct fi_context   wctx, rctx;
-fi_addr_t           srv_addr;
-#endif
 
 size_t              mem_per_srv;
 size_t              mem_per_cln;
@@ -2193,6 +2175,9 @@ int unifycr_unmount()
             return UNIFYCR_FAILURE;
     }
 
+    free(fam_stripe->chunks);
+    //free(fam_stripe->lf_buffer);
+    free(fam_stripe);
     free_lf_clients(&lfs_params);
 
     return UNIFYCR_SUCCESS;
@@ -3077,13 +3062,57 @@ default_svc:
 #endif
 
 int lfs_connect(char *param_str) {
+    N_STRIPE_t *stripe = NULL;
+    N_CHUNK_t *chunk, *chunks = NULL;
     char *argv[LFS_MAXARGS];
-    int argc;
+    int i, size, argc;
+    int rc = 1; /* OOM error */
 
     argc = str2argv(param_str, argv, LFS_MAXARGS);
-    return arg_parser(argc, argv, &lfs_params);
+    if ((rc = arg_parser(argc, argv, &lfs_params)))
+	return rc;
 
+    stripe = (N_STRIPE_t *)malloc(sizeof(N_STRIPE_t));
+    if (stripe == NULL)
+	goto _free;
+    size = lfs_params->node_cnt;
+#if 0
+    /* stripe buffer for libfabric I/O */
+    posix_memalign((void **)&stripe->lf_buffer, getpagesize(),
+		   lfs_params->chunk_sz * size);
+    if (stripe->lf_buffer == NULL)
+	goto _free;
+#endif
+    /* array of chunks */
+    chunks = (N_CHUNK_t *)malloc(size * sizeof(N_CHUNK_t));
+    if (chunks == NULL)
+	goto _free;
+
+    chunk = chunks;
+    for (i = 0; i < size; i++, chunk++) {
+	chunk->r_event = 0;
+	chunk->w_event = 0;
+    }
+    stripe->p	= lfs_params->parities;
+    stripe->d	= lfs_params->node_cnt - lfs_params->parities;
+    stripe->extent_stipes	= lfs_params->extent_sz / lfs_params->chunk_sz;
+    stripe->srv_extents		= lfs_params->srv_extents;
+    stripe->part_count		= lfs_params->node_servers;
+    stripe->node_id		= lfs_params->node_id;
+
+    stripe->chunks = chunks;
+    /* initial mapping */
+    get_fam_chunk(0, stripe, NULL);
+
+    fam_stripe	= stripe;
+    return 0;
+
+_free:
+    free(chunks);
+    //free(stripe->lf_buffer);
+    free(stripe);
+    free_lf_clients(&lfs_params);
+    lfs_params = NULL;
+    return rc;
 }
-
-
 

@@ -9,6 +9,8 @@
 
 #include <string.h>
 #include <sys/time.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
@@ -130,44 +132,13 @@ typedef struct n_params_ {
         //unsigned char   *dec_tbl;	/* EC decode table */
         //unsigned char   *rs_a;		/* R-S matrix for encode->decode conversion */
 
+	/* Per node partition array, look at to_lf_client_id() for the index */
 	char		**stripe_buf;	/* [0]: stripe buffer */
 	LF_CL_t		**lf_clients;	/* LF client per node, partition */
 			/* arrays per LF client (node, partition): */
 	uint64_t	*mr_prov_keys;	/* provider memory registration key */
 	uint64_t	*mr_virt_addrs;	/* MR virtual address */
 } N_PARAMS_t;
-
-/* Chunk attributes */
-typedef struct n_chunk_ {
-	char		*lf_buf;	/* reference to libfabric I/O buffer */
-//	const char	*lf_pname;	/* libfabric node name */
-//	int		lf_port;	/* libfabric port number */
-//	off_t		lf_stripe0_off;	/* libfabric address of [first stripe in] extent */
-	off_t		p_stripe0_off;	/* libfabric offset of the first stripe in partition */
-	uint64_t	r_event;	/* read transfer complete counter */
-	uint64_t	w_event;	/* write transfer complete counter */
-	int		parity;		/* parity chunk number (0...) or -1 */
-	int		data;		/* data chunk number or -1 */
-	int		node;		/* libfabric node index in nodelist */
-} N_CHUNK_t;
-
-typedef struct b_stripes_ {
-	uint64_t	extent;		/* extent # */
-	uint64_t	phy_stripe;	/* physical stripe number */
-	uint64_t	l_stripe;	/* logical stripe */
-	uint64_t	stripes;	/* stripe count */
-	uint64_t	ext_stripes;	/* extent size in stripes */
-} B_STRIPES_t;
-
-typedef struct w_private_ {
-	struct n_params_	*params;	/* reference to struct n_params_ */
-	struct b_stripes_	bunch;		/* bunch of stripes belongs to the same extent */
-	//struct perf_stat_	perf_stat;	/* per thread data transfer/encode/decode statistic */
-	int			thr_id;		/* worker's thread id */
-	/* Arrays of pointers to chunk and libfabric client for this stripe */
-	struct n_chunk_		**chunks;	
-	struct lf_cl_		**lf_clients; /* array of references */
-} W_PRIVATE_t;
 
 typedef struct {
     pthread_mutex_t lck;
@@ -191,6 +162,9 @@ extern lfio_stats_t        md_ag_stat;  // MDHIM file attr get
 extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
 
 
+static inline int to_lf_client_id(int node, int part, unsigned int part_count) {
+    return node * part_count + part;
+}
 
 // char** getstrlist(const char *buf, int *count);
 
@@ -257,6 +231,30 @@ static inline const char *str_tk(const char *buf, const char *accept)
 	}
 	return p;
 }
+
+// current time in timespec
+static inline struct timeval now(struct timeval *tvp) {
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    if (tvp) *tvp = tv;
+    return tv;
+}
+
+// elapsed time
+static inline uint64_t elapsed(struct timeval *ts) {
+    int64_t sec, usec;
+    struct timeval tv = now(0);
+    
+    sec =  tv.tv_sec - ts->tv_sec;
+    usec = tv.tv_usec - ts->tv_usec;
+    if (sec > 0 && usec < 0) {
+        sec--;
+        usec += 1000000UL;
+    }
+    if (sec < 0 || (sec == 0 && usec < 0)) return 0;
+    return sec * 1000000UL + usec;
+}
+
 
 #define N_XFER_SZ	1*1024*1024L 
 #define LFCLN_ITER	1

@@ -22,7 +22,9 @@ libunifycr_la_SOURCES = \
   uthash.h \
   utlist.h \
   lf_client.c \
-  lf_client.h
+  lf_client.h \
+  fam_stripe.c \
+  fam_stripe.h
 
 libunifycr_la_CPPFLAGS = -I$(top_builddir)/client
 libunifycr_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) -lcrypto -lrt -lpthread
@@ -47,7 +49,9 @@ libunifycr_gotcha_la_SOURCES = \
   uthash.h \
   utlist.h \
   lf_client.c \
-  lf_client.h
+  lf_client.h \
+  fam_stripe.c \
+  fam_stripe.h
 
 libunifycr_gotcha_la_CPPFLAGS = -DUNIFYCR_GOTCHA -I$(top_builddir)/client $(GOTCHA_CFLAGS)
 libunifycr_gotcha_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(GOTCHA_LDFLAGS) -lgotcha -lcrypto -lrt -lpthread

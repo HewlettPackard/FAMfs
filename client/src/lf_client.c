@@ -14,10 +14,10 @@
 
 #include <mpi.h>
 
+#include "fam_stripe.h"
 #include "lf_client.h"
 #include "unifycr-internal.h"
 
-#define PR_BUF_SZ	12
 
 static int rank, rank_size;
 
@@ -583,63 +583,7 @@ void free_lf_clients(N_PARAMS_t **params_p)
     *params_p = NULL;
 }
 
-/*
- * Calculate chunk's logical block number in given stripe.
- * Where blocks - number of blocks per chunk.
- **/
-static inline uint64_t chunk_to_lba(uint64_t stripe, int data, int chunk, uint64_t blocks)
-{
-	return (stripe * (unsigned int)data + (unsigned int)chunk) * blocks;
-}
-
-/* Get partition number by extent */
-static inline unsigned int extent_to_part(unsigned int e, unsigned int srv_extents) {
-	return srv_extents? (e / srv_extents) : 0;
-}
-
-static int assign_map_chunk(N_CHUNK_t **chunk_p, N_PARAMS_t *params,
-    int extent_n, unsigned int part, int chunk_n)
-{
-	N_CHUNK_t	*chunk;
-	int		e, p, node_cnt;
-
-	node_cnt = params->node_cnt;
-	chunk = (N_CHUNK_t *)calloc(1, sizeof(N_CHUNK_t));
-	if(!chunk)
-		return 1;
-
-	chunk->node = chunk_n;
-	/* p = (chunk_n - extent_n) mod node_cnt */
-	p = (chunk_n - extent_n) % node_cnt;
-	p = (p < 0)? (p + node_cnt) : p;
-	if (p < params->parities) {
-		chunk->parity = p;
-		chunk->data = -1;
-	} else {
-		chunk->data = p - params->parities;
-		ASSERT(chunk->data >= 0 && chunk->data < (node_cnt - params->parities));
-		chunk->parity = -1;
-	}
-	//chunk->lf_stripe0_off = extent_n * params->extent_sz;
-	e = extent_n - part * params->srv_extents;
-	ASSERT(e >= 0);
-	chunk->p_stripe0_off = e * params->extent_sz;
-
-	*chunk_p = chunk;
-	return 0;
-}
-
 #if 0
-static inline char* pr_chunk(char *buf, int d, int p) {
-	if (d >= 0)
-		snprintf(buf, PR_BUF_SZ, "D%d", d);
-	else if (p >= 0)
-		snprintf(buf, PR_BUF_SZ, "P%d", p);
-	else
-		sprintf(buf, "???");
-	return buf;
-}
-
 static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_POOL_t* pool,
     LF_CL_t **all_clients, uint64_t *done)
 {

@@ -75,9 +75,13 @@ extern int unifycr_spillover_max_chunks;
 //
 
 //#include "libfabric.h"
+#include "fam_stripe.h"
 #include "lf_client.h"
 
-static uint64_t wevents = 1;
+extern N_PARAMS_t *lfs_params;
+extern N_STRIPE_t *fam_stripe;
+
+//static uint64_t wevents = 1;
 
 //
 // =================================
@@ -131,6 +135,11 @@ static inline void *unifycr_compute_chunk_buf(
     /* now add offset */
     char *buf = start + logical_offset;
     return (void *)buf;
+}
+
+static inline int physical_chunk_id(const unifycr_filemeta_t *meta, int logical_id)
+{
+    return meta->chunk_meta[logical_id].id;
 }
 
 /* given a chunk id and an offset within that chunk, return the offset
@@ -381,6 +390,61 @@ int lf_write(char *buf, size_t len, off_t off) {
     return err;
 }
 #endif
+int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
+{
+    struct timeval start = now(0);
+    N_CHUNK_t *chunk;
+    LF_CL_t *node;
+    struct fid_cntr *cntr;
+    fi_addr_t *tgt_srv_addr;
+    struct fid_ep *tx_ep;
+    //size_t transfer_sz;
+    off_t off;
+    //int i, blocks;
+    int dst_node, rc;
+
+    /* to FAM chunk */
+    chunk = get_fam_chunk(chunk_phy_id, fam_stripe, &dst_node);
+    node = lfs_params->lf_clients[chunk->lf_client_idx];
+
+    /* Do RMA synchronous write */
+    cntr = node->wcnts[0];
+    tgt_srv_addr = &node->tgt_srv_addr[0];
+    tx_ep =  node->tx_epp[0];
+    chunk->w_event = fi_cntr_read(cntr);
+    //transfer_sz = params->transfer_sz;
+    //int blocks = len / transfer_sz;
+    ASSERT(chunk_offset + len <= unifycr_chunk_size);
+    ASSERT(dst_node == node->node_id);
+    ASSERT(dbgrank == lfs_params->node_id);
+    off = chunk_offset + fam_stripe->extent_in_part * (off_t)lfs_params->extent_sz;
+    //for (i = 0; i < blocks; i++) {
+	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc, *tgt_srv_addr, off,
+				node->mr_key, (void*)buf /* NULL */),
+			"%d: fi_write failed on %s dest: %s (p%d)",
+			dbgrank, lfs_params->nodelist[lfs_params->node_id],
+			lfs_params->nodelist[dst_node], fam_stripe->partition);
+	//off += transfer_sz;
+	//buf += transfer_sz;
+	chunk->w_event++;
+    //}
+
+    rc = fi_cntr_wait(cntr, chunk->w_event, 10000);
+    if (rc == -FI_ETIMEDOUT) {
+        DEBUG("lf_write timeout ");
+    } else if (rc) {
+	DEBUG("lf_write has %lu error(s): %d( - %m) on %s in extent %u (p%d) cnt:%lu/%lu",
+		fi_cntr_readerr(cntr), rc, lfs_params->nodelist[dst_node],
+		fam_stripe->extent, fam_stripe->partition,
+		fi_cntr_read(cntr), chunk->w_event);
+	ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
+    }	
+
+    UPDATE_STATS(lf_wr_stat, 1, len, start);
+     
+    return rc;
+}
+
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,
  * count should fit within chunk starting from specified offset */
@@ -469,6 +533,8 @@ static int unifycr_logio_chunk_write(
 
 
     } else if (chunk_meta->location == CHUNK_LOCATION_SPILLOVER) {
+	int i;
+
         /* spill over to a file, so write to file descriptor */
         //MAP_OR_FAIL(pwrite);
         off_t spill_offset = unifycr_compute_spill_offset(meta, chunk_id, chunk_offset);
@@ -489,7 +555,15 @@ static int unifycr_logio_chunk_write(
 #endif
 
 // *** -->  new lf_write goes here
+	/* to file chunk id */
+	int chunk_phy_id = physical_chunk_id(meta, chunk_id);
+	printf("srv_rank:%d:%d write %u bytes @%jd/%jd phy_chunk:%d\n",
+		my_srv_rank, local_rank_idx, count, spill_offset, chunk_offset, chunk_phy_id);
+	if (lf_write((char *)buf, count, chunk_phy_id, chunk_offset)) {
+	    perror("lf-write failed\n");
+	}
 
+// *** <--- 
 
         unifycr_index_t cur_idx;
         cur_idx.file_pos = pos;
@@ -514,7 +588,7 @@ static int unifycr_logio_chunk_write(
          * */
         unifycr_split_index(&cur_idx, &tmp_index_set,
                             unifycr_key_slice_range);
-        int i = 0;
+        i = 0;
         if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
             < unifycr_max_index_entries) {
             /*coalesce contiguous indices*/

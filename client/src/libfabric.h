@@ -16,6 +16,7 @@
 // === macro definitions ===========
 //
 
+#if 0
 #define ON_ERROR(action, msg)               \
     do {                                    \
         int __err;                          \
@@ -24,6 +25,7 @@
             return (-ECANCELED);            \
         }                                   \
     } while (0);
+#endif
 
 #define CKPFS_STATS 1
 
@@ -109,7 +111,7 @@ typedef struct {
 //
 // === globals =====================
 //
-
+#if 0
 extern struct fi_info      *hints, *fi;
 extern struct fid_fabric   *fabric;
 extern struct fi_eq_attr   eq_attr;
@@ -125,7 +127,7 @@ extern struct fi_cntr_attr cntr_attr;
 extern struct fid_cntr     *rcnt, *wcnt;
 extern struct fi_context   wctx, rctx;
 extern fi_addr_t           srv_addr;
-
+#endif
 extern size_t              mem_per_srv;
 extern size_t              mem_per_cln;
 
@@ -145,7 +147,7 @@ extern int                 do_lf_stats;
 // === prototypes ==================
 //
 
-int lf_connect(char *addr, char *srvc);
+//int lf_connect(char *addr, char *srvc);
 
 // current time in timespec
 static inline struct timeval now(struct timeval *tvp) {
