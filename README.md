@@ -16,6 +16,14 @@ support for N-1 write/read. It efficiently accelerates scientific I/O based on
 scalable metadata indexing, co-located I/O delegation, and server-side read
 clustering and pipelining.
 
+## Set ENV
+source /etc/profile.d/modules.sh && source /lvol/${USER}/spack/share/spack/setup-env.sh && source /ibnfs/${USER}/scripts/mpich-env && spack load leveldb && spack load gotcha && spack load libfabric
+cd ~/FAMfs
+source scripts/setup-env.sh
+
+## Run Server
+mpirun -hosts 127.0.0.1 -np 1 -env LFS_COMMAND "x -H 172.24.186.96 -P0 --memreg scalable --provider sockets ENCODE" /bin/bash -c 'unifycrd'
+
 ## Documentation
 Full UnifyCR documentation is contained [here](http://unifycr.readthedocs.io).
 

@@ -223,8 +223,8 @@ N_PARAMS_t *lfs_params = NULL;
 N_STRIPE_t *fam_stripe = NULL;
 
 
-size_t              mem_per_srv;
-size_t              mem_per_cln;
+//size_t              mem_per_srv;
+//size_t              mem_per_cln;
 
 static size_t get_evv(char *name, size_t df) {
     size_t  val = 0;
@@ -2286,8 +2286,8 @@ static int unifycr_sync_to_del()
                                 my_srv_rank = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long)));
                                 my_srv_size = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long) + sizeof(int)));
                                 printf("*** connected to server: %d/%d\n", my_srv_rank, my_srv_size);
-                                mem_per_cln = get_evv("CRUISE_SPILLOVER_SIZE", 256*1024*1024L);
-                                mem_per_srv = get_evv("FAM_PART_SIZE", 1024*1024*1024L);
+                                //mem_per_cln = get_evv("CRUISE_SPILLOVER_SIZE", 256*1024*1024L);
+                                //mem_per_srv = get_evv("FAM_PART_SIZE", 1024*1024*1024L);
                             }
                         }
                     } else {
