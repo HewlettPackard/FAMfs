@@ -402,9 +402,12 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     off_t off;
     //int i, blocks;
     int dst_node, rc;
+    char pr_buf[PR_BUF_SZ];
 
     /* to FAM chunk */
     chunk = get_fam_chunk(chunk_phy_id, fam_stripe, &dst_node);
+    ASSERT(chunk);
+    ASSERT(chunk->lf_client_idx < lfs_params->node_cnt * lfs_params->node_servers);
     node = lfs_params->lf_clients[chunk->lf_client_idx];
 
     /* Do RMA synchronous write */
@@ -419,7 +422,8 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     ASSERT(my_srv_rank == lfs_params->node_id);
     off = chunk_offset + fam_stripe->extent_in_part * (off_t)lfs_params->extent_sz;
     //for (i = 0; i < blocks; i++) {
-    DEBUG("dst node:%d(p%d) %s:%d len:%zu desc:%p srv_addr:%p off:%jd mr_key:%d",
+    DEBUG("write chunk %s dst node:%d(p%d) %s:%d len:%zu desc:%p srv_addr:%p off:%jd mr_key:%d",
+	  pr_chunk(pr_buf, chunk->data, chunk->parity),
 	  dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
 	  len, node->local_desc[0], *tgt_srv_addr, off, node->mr_key);
 	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,

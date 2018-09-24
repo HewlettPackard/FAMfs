@@ -31,7 +31,7 @@ static void map_stripe_chunks(N_STRIPE_t *stripe, unsigned int extent)
     for (chunk_n = 0; chunk_n < chunks; chunk_n++, chunk++) {
 	chunk->node = chunk_n;
 	/* p = (chunk_n - extent) mod chunks */
-	p = (chunk_n - extent) % chunks;
+	p = (chunk_n - (int)extent) % chunks;
 	p = (p < 0)? (p + chunks) : p;
 	if (p < parities) {
 		chunk->parity = p;
@@ -76,7 +76,7 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
     extent = stripe_n / stripe->extent_stipes;
 
     /* Is this stripe mapped? */
-    if (stripe->extent != extent)
+    if (stripe->extent != extent || index == NULL)
 	map_stripe_chunks(stripe, extent);
 
     /* find chunk index by D# */
