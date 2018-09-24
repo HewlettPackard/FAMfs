@@ -63,17 +63,14 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
 {
     N_CHUNK_t *chunk;
     unsigned int i, data, size;
-    unsigned int extent, part_extents;
-    unsigned int stripe_n, stripe_chunk_id;
+    unsigned int extent, stripe_n, stripe_chunk_id;
     uint64_t fam_chunk;
+
+    /* Convert I/O node log physical chunk to FAM logical chunk */
+    fam_chunk = ionode_chunk_id * stripe->node_size + (unsigned int)stripe->node_id;
 
     data = stripe->d;
     size = data + stripe->p;
-    part_extents = stripe->srv_extents;
-
-    /* Convert I/O node log physical chunk to FAM logical chunk */
-    fam_chunk = ionode_chunk_id * size + (unsigned int)stripe->node_id;
-
     stripe_n = fam_chunk / data;
     stripe_chunk_id = fam_chunk - ((uint64_t)stripe_n * data);
     extent = stripe_n / stripe->extent_stipes;

@@ -416,16 +416,16 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     //int blocks = len / transfer_sz;
     ASSERT(chunk_offset + len <= unifycr_chunk_size);
     ASSERT(dst_node == node->node_id);
-    ASSERT(dbgrank == lfs_params->node_id);
+    ASSERT(my_srv_rank == lfs_params->node_id);
     off = chunk_offset + fam_stripe->extent_in_part * (off_t)lfs_params->extent_sz;
     //for (i = 0; i < blocks; i++) {
     DEBUG("dst node:%d(p%d) %s:%d len:%zu desc:%p srv_addr:%p off:%jd mr_key:%d",
-	  dst_node, node->partition, lfs_params->nodelist[lfs_params->node_id], node->service,
+	  dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
 	  len, node->local_desc[0], *tgt_srv_addr, off, node->mr_key);
 	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,
 				node->mr_key, (void*)buf /* NULL */),
 			"%d: fi_write failed on %s dest: %s (p%d)",
-			dbgrank, lfs_params->nodelist[lfs_params->node_id],
+			lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id],
 			lfs_params->nodelist[dst_node], fam_stripe->partition);
 	//off += transfer_sz;
 	//buf += transfer_sz;

@@ -160,7 +160,10 @@ static void usage(const char *name) {
 	    "\t   --provider <libfabric provider name>\n"
 	    "\t   --domain <libfabric domain>\n"
 	    "\t   --rxctx <number of rx contexts in lf server>\n"
+	    "\t   --srv_extents <partition size, in extents>\n"
+	    "\t   --cmd_trigger - trigger command execution by LF remote access\n"
 	    "\t   --memreg basic|local|scalable\n"
+	    "\t-c --clients <node name list>\n"
 	    "\t-a [--affinity]\n"
 	    "\t-v [--verbose]\n"
 	    "  Command is one of:\n"
@@ -187,8 +190,9 @@ int str2argv(char *str, char **argv, int argmax) {
 
 int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     int			opt, opt_idx = 0;
-    char		port[6], **nodelist = NULL;
+    char		port[6], **nodelist = NULL, **clientlist = NULL;
     int			node_cnt = 0, recover = 0, verbose = 0;
+    int			cmd_trigger = 0, client_cnt = 0;
     int			iters = -1, parities = -1, workers = -1, lf_port = -1;
     size_t		vmem_sz = 0, chunk_sz = 0, extent_sz = 0;
     uint64_t            transfer_len = 0; /* transfer [block] size */
@@ -218,6 +222,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 	OPT_RXCTX,
 	OPT_SRV_EXTENTS,
 	OPT_MEMREG,
+	OPT_CMD_TRIGGER,
     };
     static struct option long_opts[] =
     {
@@ -233,6 +238,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 	{"recover",	1, 0, 'R'},
 	{"memory",	1, 0, 'M'},
 	{"chunk",	1, 0, 'C'},
+	{"clients",	1, 0, 'c'},
 	{"extent",	1, 0, 'E'},
 	{"workers",	1, 0, 'w'},
 	/* no short option */
@@ -240,12 +246,13 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 	{"domain",	1, 0, OPT_DOMAIN},
 	{"rxctx",	1, 0, OPT_RXCTX},
 	{"srv_extents",	1, 0, OPT_SRV_EXTENTS},
+	{"cmd_trigger",	0, 0, OPT_CMD_TRIGGER},
 	{"memreg",	1, 0, OPT_MEMREG},
 	{0, 0, 0, 0}
     };
 
     optind = 0;
-    while ((opt = getopt_long(argc, argv, "avhp:i:t:T:H:P:R:M:C:E:w:",
+    while ((opt = getopt_long(argc, argv, "avhp:i:t:T:H:P:R:M:C:c:E:w:",
 	    long_opts, &opt_idx)) != -1)
     {
         switch (opt) {
@@ -300,6 +307,13 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 	    case 'v':
 		verbose++;
 		break;
+	    case 'c':
+		clientlist = getstrlist(optarg, &client_cnt);
+		if (!clientlist) {
+		    printf("Client name list - bad delimiter!");
+		    goto _free;
+		}
+		break;
 	    case OPT_PROVIDER:
 		lf_provider_name = strdup(optarg);
 		break;
@@ -314,6 +328,9 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 		break;
 	    case OPT_MEMREG:
 		memreg = strdup(optarg);
+		break;
+	    case OPT_CMD_TRIGGER:
+		cmd_trigger++;
 		break;
             case '?':
             case 'h':
@@ -384,9 +401,14 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     extents = (vmem_sz * node_cnt) / extent_sz;
     stripes = vmem_sz / chunk_sz;
 
+    /* Find my node */
+    if (clientlist)
+	node_id = find_my_node(clientlist, client_cnt);
+    else
+        node_id = find_my_node(nodelist, node_cnt);
+    ON_ERROR (node_id < 0, "Cannot find my node in the list (-%c)!", client_cnt?'c':'H');
+
     /* Sanity check */
-    node_id = find_my_node(nodelist, node_cnt);
-    ON_ERROR (node_id < 0, "Cannot find my node in node list (-H)!");
 
     /* Default: srv_cnt=1 (single partition) */
     if (srv_extents == 0)
@@ -428,16 +450,30 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 		memreg, LF_MR_MODEL_BASIC, LF_MR_MODEL_LOCAL, LF_MR_MODEL_SCALABLE);
 	    goto _free;
 	}
+	if (cmd_trigger > cmdc) {
+	    err("Wrong command trigger:%d - there is no such command!", cmd_trigger);
+	    goto _free;
+	}
 
 	printf("Commands: ");
 	for (i = 0; i < cmdc; i++)
 	    printf("%s%s", (i>0)?",":"", cmd2str(cmdv[i]));
 	printf("\n");
+	if (cmd_trigger > 0) {
+	    printf("\tthis command will be triggered by LF remote access: %s\n",
+		cmd2str(cmdv[cmd_trigger-1]));
+	}
 
-	printf("Nodelist: ");
+	printf("Servers: ");
 	for (i = 0; i < node_cnt; i++)
 	    printf("%s%s", (i>0)?",":"", nodelist[i]);
 	printf("\n");
+	if (clientlist) {
+	    printf("Clients: ");
+	    for (i = 0; i < client_cnt; i++)
+		printf("%s%s", (i>0)?",":"", clientlist[i]);
+	    printf("\n");
+	}
 
 	printf("Chunk %dD+%dP=%d %zu bytes\n", data, parities, node_cnt, chunk_sz);
 	printf("Number data chunk(s) to recover:%d (starting with chunk 0)\n", recover);
@@ -476,6 +512,8 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     params->chunk_sz = chunk_sz;
     params->extent_sz = extent_sz;
     params->node_cnt = node_cnt;
+    params->clientlist = clientlist;
+    params->client_cnt = clientlist? client_cnt : node_cnt;
     /* TODO: Find my node in nodelist */
     params->node_id = node_id;
     params->parities = parities;
@@ -497,6 +535,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     params->part_sz = (off_t)vmem_sz / srv_cnt;
     params->mr_prov_keys = mr_prov_keys;
     params->mr_virt_addrs = mr_virt_addrs;
+    params->cmd_trigger = cmd_trigger;
 
     //MPI_Barrier(MPI_COMM_WORLD);
 
@@ -549,6 +588,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 
 _free:
     nodelist_free(nodelist, node_cnt);
+    nodelist_free(clientlist, client_cnt);
     return rc;
 }
 

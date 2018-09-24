@@ -3098,7 +3098,8 @@ int lfs_connect(char *param_str) {
     stripe->extent_stipes	= lfs_params->extent_sz / lfs_params->chunk_sz;
     stripe->srv_extents		= lfs_params->srv_extents;
     stripe->part_count		= lfs_params->node_servers;
-    stripe->node_id		= lfs_params->node_id;
+    stripe->node_id		= my_srv_rank;
+    stripe->node_size		= my_srv_size;
 
     stripe->chunks = chunks;
     /* initial mapping */

@@ -32,7 +32,8 @@ typedef struct n_stripe_ {
 	/* constants */
 	int		d;		/* number of data chunks */
 	int 		p;		/* number of parity chunks */
-	int		node_id;	/* my node index in .nodelist */
+	int		node_id;	/* client node index in clientlist */
+	unsigned int	node_size;	/* client node count */
 	unsigned int	extent_stipes;	/* extent size, in stripes */
 	unsigned int	srv_extents;	/* partition size, in extents */
 	unsigned int	part_count;	/* number of partitions on ION */

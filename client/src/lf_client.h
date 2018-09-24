@@ -37,11 +37,11 @@
         }                                   \
     } while (0);
 
-#define ON_ERROR(action, msg)               \
+#define ON_ERROR(action, msg, ...)          \
     do {                                    \
         int __err;                          \
         if ((__err = (action))) {           \
-            printf("%s: %d - %m\n", msg, __err); \
+            printf(#msg ": %d - %m\n", ## __VA_ARGS__, __err); \
             exit(1);                        \
         }                                   \
     } while (0);
@@ -105,6 +105,7 @@ typedef struct lf_cl_ {
 
 typedef struct n_params_ {
 	char	    **nodelist;		/* Array of node names; size is .node_cnt */
+	char	    **clientlist;	/* Array of client node names; size is client_cnt */
 	size_t	    vmem_sz;		/* Size of FAM (single partition) per node, bytes */
 	size_t	    chunk_sz;		/* Chunk size, bytes */
 	size_t	    extent_sz;		/* Extent size, bytes */
@@ -113,7 +114,8 @@ typedef struct n_params_ {
 	uint64_t    cmd_timeout_ms;	/* single command execution timeout, ms */
 	uint64_t    io_timeout_ms;	/* I/O block timeout, ms */
 	int	    node_cnt;		/* Number of nodes */
-	int	    node_id;		/* My node index in .nodelist */
+	int	    client_cnt;		/* Number of nodes */
+	int	    node_id;		/* My node index in clientlist if any otherwise in nodelist */
 	int	    parities;		/* Number of parity chunks */
 	int	    recover;		/* Number of data chunks to recover */
 	int	    w_thread_cnt;	/* Size of working thread pool */
@@ -131,6 +133,8 @@ typedef struct n_params_ {
         //unsigned char   *enc_tbl;	/* EC encode table */
         //unsigned char   *dec_tbl;	/* EC decode table */
         //unsigned char   *rs_a;		/* R-S matrix for encode->decode conversion */
+        int		cmd_trigger;	/* >0: trigget this command by LF server remote access */
+	int		client_only;	/* Run only LF client(s) */
 
 	/* Per node partition array, look at to_lf_client_id() for the index */
 	char		**stripe_buf;	/* [0]: stripe buffer */
