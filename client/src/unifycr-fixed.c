@@ -419,7 +419,10 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     ASSERT(dbgrank == lfs_params->node_id);
     off = chunk_offset + fam_stripe->extent_in_part * (off_t)lfs_params->extent_sz;
     //for (i = 0; i < blocks; i++) {
-	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc, *tgt_srv_addr, off,
+    DEBUG("dst node:%d(p%d) %s:%d len:%zu desc:%p srv_addr:%p off:%jd mr_key:%d",
+	  dst_node, node->partition, lfs_params->nodelist[lfs_params->node_id], node->service,
+	  len, node->local_desc[0], *tgt_srv_addr, off, node->mr_key);
+	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,
 				node->mr_key, (void*)buf /* NULL */),
 			"%d: fi_write failed on %s dest: %s (p%d)",
 			dbgrank, lfs_params->nodelist[lfs_params->node_id],
@@ -557,8 +560,8 @@ static int unifycr_logio_chunk_write(
 // *** -->  new lf_write goes here
 	/* to file chunk id */
 	int chunk_phy_id = physical_chunk_id(meta, chunk_id);
-	printf("srv_rank:%d:%d write %u bytes @%jd/%jd phy_chunk:%d\n",
-		my_srv_rank, local_rank_idx, count, spill_offset, chunk_offset, chunk_phy_id);
+	DEBUG("srv_rank:%d:%d write %u bytes @%jd/%jd phy_chunk:%d\n",
+	      my_srv_rank, local_rank_idx, count, spill_offset, chunk_offset, chunk_phy_id);
 	if (lf_write((char *)buf, count, chunk_phy_id, chunk_offset)) {
 	    perror("lf-write failed\n");
 	}

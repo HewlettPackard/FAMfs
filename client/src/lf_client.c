@@ -142,11 +142,6 @@ static void alloc_affinity(int **affp, int size, int pos)
     *affp = affinity;
 }
 
-static uint64_t get_batch_stripes(uint64_t stripes, int servers) {
-    uint64_t batch = stripes / (unsigned int)servers;
-    return (batch == 0)? 1:batch;
-}
-
 static void usage(const char *name) {
 	if (rank) return;
 	printf("\nUsage:\n%s <mandatory options> [<more options>] <command> [<command>...]\n"
@@ -584,6 +579,11 @@ void free_lf_clients(N_PARAMS_t **params_p)
 }
 
 #if 0
+static uint64_t get_batch_stripes(uint64_t stripes, int servers) {
+    uint64_t batch = stripes / (unsigned int)servers;
+    return (batch == 0)? 1:batch;
+}
+
 static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_POOL_t* pool,
     LF_CL_t **all_clients, uint64_t *done)
 {
@@ -841,7 +841,7 @@ static int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	}
 
 	/* Get local descriptors */
-	local_desc[i] = fi_mr_desc(local_mr[0]);
+	local_desc[0] = fi_mr_desc(local_mr[0]);
     }
 
     {
@@ -1092,7 +1092,7 @@ static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
 
     // Do RMA
     for (ii = 0; ii < blocks; ii++) {
-	ON_FI_ERROR(fi_write(tx_ep, buf, transfer_sz, node->local_desc, *tgt_srv_addr, off,
+	ON_FI_ERROR(fi_write(tx_ep, buf, transfer_sz, node->local_desc[0], *tgt_srv_addr, off,
 			     node->mr_key, (void*)buf /* NULL */),
 		    "%d: block:%d fi_write failed on %s (p%d)",
 		    rank, ii, params->nodelist[chunk_n], node->partition);
@@ -1142,7 +1142,7 @@ static int read_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
 
     // Do RMA
     for (ii = 0; ii < blocks; ii++) {
-	ON_FI_ERROR(fi_read(tx_ep, buf, transfer_sz, node->local_desc, *tgt_srv_addr, off,
+	ON_FI_ERROR(fi_read(tx_ep, buf, transfer_sz, node->local_desc[0], *tgt_srv_addr, off,
 			    node->mr_key, (void*)buf /* NULL */),
 		    "fi_read failed");
 	off += transfer_sz;

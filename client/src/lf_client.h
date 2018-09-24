@@ -162,7 +162,7 @@ extern lfio_stats_t        md_ag_stat;  // MDHIM file attr get
 extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
 
 
-static inline int to_lf_client_id(int node, int part, unsigned int part_count) {
+static inline int to_lf_client_id(int node, unsigned int part_count, unsigned int part) {
     return node * part_count + part;
 }
 
