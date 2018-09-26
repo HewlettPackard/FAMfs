@@ -27,7 +27,7 @@ typedef struct n_chunk_ {
 typedef struct n_stripe_ {
 	unsigned int	extent;		/* I/O node FAM extent */
 	/* calculated from 'extent' for convenience */
-	unsigned int	extent_in_part;	/* extent in the partition */
+	unsigned int	stripe_in_part;	/* stripe in the partition */
 	int 		partition;	/* libfabric target partition */
 	/* constants */
 	int		d;		/* number of data chunks */

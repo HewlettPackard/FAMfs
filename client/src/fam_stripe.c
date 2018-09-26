@@ -17,14 +17,14 @@
 static void map_stripe_chunks(N_STRIPE_t *stripe, unsigned int extent)
 {
     N_CHUNK_t *chunk;
-    unsigned int partition, part_extents, e;
+    unsigned int partition;
     int chunk_n, chunks;
     int p, parities;
 
     parities = stripe->p;
     chunks = stripe->d + parities;
-    part_extents = stripe->srv_extents;
-    partition = extent_to_part(extent, part_extents);
+    partition = extent_to_part(extent, stripe->srv_extents);
+    ASSERT(partition < stripe->part_count);
 
     /* Map each chunk in the stripe for this extent */
     chunk = stripe->chunks;
@@ -46,9 +46,6 @@ static void map_stripe_chunks(N_STRIPE_t *stripe, unsigned int extent)
 	chunk->w_event = 0;
     }
 
-    e = extent - partition * part_extents;
-    ASSERT(e >= 0);
-    stripe->extent_in_part = e;
     stripe->extent = extent;
     stripe->partition = partition;
 }
@@ -63,7 +60,7 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
 {
     N_CHUNK_t *chunk;
     unsigned int i, data, size;
-    unsigned int extent, stripe_n, stripe_chunk_id;
+    unsigned int e, extent, total_extents, stripe_n, extent_stipes, stripe_chunk_id;
     uint64_t fam_chunk;
 
     /* Convert I/O node log physical chunk to FAM logical chunk */
@@ -75,6 +72,10 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
     stripe_chunk_id = fam_chunk - ((uint64_t)stripe_n * data);
     extent = stripe_n / stripe->extent_stipes;
 
+    total_extents = stripe->srv_extents * stripe->part_count;
+    if (extent >= total_extents)
+	return NULL; /* ENOSPC */
+
     /* Is this stripe mapped? */
     if (stripe->extent != extent || index == NULL)
 	map_stripe_chunks(stripe, extent);
@@ -85,8 +86,13 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
 	if (chunk->data == stripe_chunk_id)
 	    break;
     }
-    if (i == size)
-	return NULL; /* ASSERT */
+    ASSERT(i < size);
+
+    /* Offset in partition */
+    e = extent - stripe->partition * stripe->srv_extents;
+    ASSERT(e >= 0);
+    extent_stipes = stripe->extent_stipes;
+    stripe->stripe_in_part = (e * extent_stipes) + (stripe_n % extent_stipes);
 
     if (index)
 	*index = (int)i;

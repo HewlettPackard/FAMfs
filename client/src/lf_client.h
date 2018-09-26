@@ -48,7 +48,7 @@
 
 #define    ASSERT(x)    if (!(x))    { printf("%s:%s(%d) " #x "\n", __FILE__, __FUNCTION__, __LINE__); exit(1); }
 
-#define err(str, ...) fprintf(stderr, #str "\n", ## __VA_ARGS__)
+#define err(str, ...) fprintf(stderr, #str ": %m\n", ## __VA_ARGS__)
 
 #ifndef min
 #define min(a,b)			\
