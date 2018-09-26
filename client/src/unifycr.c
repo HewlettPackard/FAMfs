@@ -3098,8 +3098,9 @@ int lfs_connect(char *param_str) {
     stripe->extent_stipes	= lfs_params->extent_sz / lfs_params->chunk_sz;
     stripe->srv_extents		= lfs_params->srv_extents;
     stripe->part_count		= lfs_params->node_servers;
-    stripe->node_id		= my_srv_rank;
-    stripe->node_size		= my_srv_size;
+    /* TODO: Allocate stripes to clients. Now the clients must me evenly distributed. */
+    stripe->node_id		= my_srv_rank * local_rank_cnt + local_rank_idx;
+    stripe->node_size		= my_srv_size * local_rank_cnt;
 
     stripe->chunks = chunks;
     /* initial mapping */
