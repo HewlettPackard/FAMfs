@@ -1,4 +1,5 @@
 libexec_PROGRAMS = test_write_gotcha test_read_gotcha test_write_static test_read_static
+libexec_PROGRAMS += test_prw_gotcha test_prw_static
 
 AM_CPPFLAGS = -Wall $(LIBFABRIC_CFLAGS)
 AM_LDFLAGS = $(LIBFABRIC_LIBS)
@@ -18,6 +19,11 @@ test_read_gotcha_CPPFLAGS = $(test_cppflags)
 test_read_gotcha_LDADD   = $(test_gotcha_ldadd)
 test_read_gotcha_LDFLAGS = $(AM_LDFLAGS)
 
+test_prw_gotcha_SOURCES = test_prw.c
+test_prw_gotcha_CPPFLAGS = $(test_cppflags)
+test_prw_gotcha_LDADD   = $(test_gotcha_ldadd)
+test_prw_gotcha_LDFLAGS = $(AM_LDFLAGS)
+
 test_write_static_SOURCES = test_write.c
 test_write_static_CPPFLAGS = $(test_cppflags)
 test_write_static_LDADD   = $(test_static_ldadd)
@@ -27,4 +33,9 @@ test_read_static_SOURCES = test_read.c
 test_read_static_CPPFLAGS = $(test_cppflags)
 test_read_static_LDADD   = $(test_static_ldadd)
 test_read_static_LDFLAGS = $(test_static_ldflags)
+
+test_prw_static_SOURCES = test_prw.c
+test_prw_static_CPPFLAGS = $(test_cppflags)
+test_prw_static_LDADD   = $(test_static_ldadd)
+test_prw_static_LDFLAGS = $(test_static_ldflags)
 

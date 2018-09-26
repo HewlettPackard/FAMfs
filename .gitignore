@@ -97,18 +97,19 @@ log
 # FAMfsd
 
 # generated package files
+client/unifycr-runtime-config.h
 client/unifycr-config
 client/unifycr.pc
 
-# generated package files
-client/unifycr-config
-client/unifycr.pc
 
 # test files
 client/tests/test_read_gotcha
 client/tests/test_read_static
 client/tests/test_write_gotcha
 client/tests/test_write_static
+client/tests/test_prw_gotcha
+client/tests/test_prw_static
+
 t/sys/open.t
 t/test-results/
 t/unifycr_unmount.t
