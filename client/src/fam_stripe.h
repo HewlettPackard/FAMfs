@@ -33,6 +33,7 @@ typedef struct n_stripe_ {
 	int		d;		/* number of data chunks */
 	int 		p;		/* number of parity chunks */
 	int		node_id;	/* client node index in clientlist */
+	int		part_mreg;	/* 1: LF dest address starts with 0 at a partition; 1: single buffer per node */
 	unsigned int	node_size;	/* client node count */
 	unsigned int	extent_stipes;	/* extent size, in stripes */
 	unsigned int	srv_extents;	/* partition size, in extents */

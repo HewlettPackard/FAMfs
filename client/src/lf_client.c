@@ -162,6 +162,7 @@ static void usage(const char *name) {
 	    "\t   --rxctx <number of rx contexts in lf server>\n"
 	    "\t   --srv_extents <partition size, in extents>\n"
 	    "\t   --cmd_trigger - trigger command execution by LF remote access\n"
+	    "\t   --part_mreg - every partition registers own memory buffer for remote access\n"
 	    "\t   --memreg basic|local|scalable\n"
 	    "\t-c --clients <node name list>\n"
 	    "\t-a [--affinity]\n"
@@ -192,7 +193,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     int			opt, opt_idx = 0;
     char		port[6], **nodelist = NULL, **clientlist = NULL;
     int			node_cnt = 0, recover = 0, verbose = 0;
-    int			cmd_trigger = 0, client_cnt = 0;
+    int			cmd_trigger = 0, client_cnt = 0, part_mreg = 0;
     int			iters = -1, parities = -1, workers = -1, lf_port = -1;
     size_t		vmem_sz = 0, chunk_sz = 0, extent_sz = 0;
     uint64_t            transfer_len = 0; /* transfer [block] size */
@@ -223,6 +224,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 	OPT_SRV_EXTENTS,
 	OPT_MEMREG,
 	OPT_CMD_TRIGGER,
+	OPT_PART_MREG,
     };
     static struct option long_opts[] =
     {
@@ -246,8 +248,9 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 	{"domain",	1, 0, OPT_DOMAIN},
 	{"rxctx",	1, 0, OPT_RXCTX},
 	{"srv_extents",	1, 0, OPT_SRV_EXTENTS},
-	{"cmd_trigger",	0, 0, OPT_CMD_TRIGGER},
 	{"memreg",	1, 0, OPT_MEMREG},
+	{"cmd_trigger",	0, 0, OPT_CMD_TRIGGER},
+	{"part_mreg",	0, 0, OPT_PART_MREG},
 	{0, 0, 0, 0}
     };
 
@@ -331,6 +334,9 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
 		break;
 	    case OPT_CMD_TRIGGER:
 		cmd_trigger++;
+		break;
+	    case OPT_PART_MREG:
+		part_mreg = 1;
 		break;
             case '?':
             case 'h':
@@ -536,6 +542,7 @@ int arg_parser(int argc, char **argv, N_PARAMS_t **params_p) {
     params->mr_prov_keys = mr_prov_keys;
     params->mr_virt_addrs = mr_virt_addrs;
     params->cmd_trigger = cmd_trigger;
+    params->part_mreg = part_mreg;
 
     //MPI_Barrier(MPI_COMM_WORLD);
 

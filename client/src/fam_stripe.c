@@ -60,7 +60,7 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
 {
     N_CHUNK_t *chunk;
     unsigned int i, data, size;
-    unsigned int e, extent, total_extents, stripe_n, extent_stipes, stripe_chunk_id;
+    unsigned int extent, total_extents, stripe_n, extent_stipes, stripe_chunk_id;
     uint64_t fam_chunk;
 
     /* Convert I/O node log physical chunk to FAM logical chunk */
@@ -68,9 +68,10 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
 
     data = stripe->d;
     size = data + stripe->p;
+    extent_stipes = stripe->extent_stipes;
     stripe_n = fam_chunk / data;
     stripe_chunk_id = fam_chunk - ((uint64_t)stripe_n * data);
-    extent = stripe_n / stripe->extent_stipes;
+    extent = stripe_n / extent_stipes;
 
     total_extents = stripe->srv_extents * stripe->part_count;
     if (extent >= total_extents)
@@ -88,11 +89,16 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
     }
     ASSERT(i < size);
 
-    /* Offset in partition */
-    e = extent - stripe->partition * stripe->srv_extents;
-    ASSERT(e >= 0);
-    extent_stipes = stripe->extent_stipes;
-    stripe->stripe_in_part = (e * extent_stipes) + (stripe_n % extent_stipes);
+    if (stripe->part_mreg == 0) {
+	/* Stripe # on the node */
+	stripe->stripe_in_part = stripe_n;
+    } else {
+	/* Offset in partition */
+	unsigned int e = extent - stripe->partition * stripe->srv_extents;
+	ASSERT(e >= 0);
+	/* Stripe # in partition */
+	stripe->stripe_in_part = (e * extent_stipes) + (stripe_n % extent_stipes);
+    }
 
     if (index)
 	*index = (int)i;
