@@ -2033,7 +2033,7 @@ static int unifycr_init(int rank)
             DEBUG("unifycr_superblock_shmget() failed\n");
             return UNIFYCR_FAILURE;
         }
-        char spillfile_prefix[100];
+        char spillfile_prefix[128];
 
         env = getenv("UNIFYCR_EXTERNAL_DATA_DIR");
         if (env) {
@@ -2044,7 +2044,7 @@ static int unifycr_init(int rank)
             return UNIFYCR_FAILURE;
         }
 
-        sprintf(spillfile_prefix, "%s/spill_%d_%d.log",
+        sprintf(spillfile_prefix, "%.108s/spill_%d_%d.log",
                 external_data_dir, app_id, local_rank_idx);
 
         /* initialize spillover store */
@@ -2070,7 +2070,7 @@ static int unifycr_init(int rank)
         }
 
         /*ToDo: add the spillover feature for the index metadata*/
-        sprintf(spillfile_prefix, "%s/spill_index_%d_%d.log",
+        sprintf(spillfile_prefix, "%.87s/spill_index_%d_%d.log",
                 external_meta_dir, app_id, local_rank_idx);
         if (fs_type == UNIFYCR_LOG) {
             unifycr_spillmetablock =
