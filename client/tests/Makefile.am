@@ -1,8 +1,7 @@
 libexec_PROGRAMS = test_write_gotcha test_read_gotcha test_write_static test_read_static
 libexec_PROGRAMS += test_prw_gotcha test_prw_static
 
-AM_CPPFLAGS = -Wall $(LIBFABRIC_CFLAGS)
-AM_LDFLAGS = $(LIBFABRIC_LIBS)
+AM_CFLAGS = -Wall
 
 test_gotcha_ldadd = ../src/libunifycr_gotcha.la -lmpi
 test_static_ldadd = ../src/libunifycr.la -lmpi
