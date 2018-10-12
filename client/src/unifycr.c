@@ -100,6 +100,8 @@ int local_rank_idx = 0;
 typedef int64_t off64_t;
 #endif
 
+#include "famfs_env.h"
+#include "famfs_stats.h"
 #include "fam_stripe.h"
 #include "lf_client.h"
 

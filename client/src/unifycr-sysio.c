@@ -64,6 +64,8 @@
 #include "unifycr-sysio.h"
 #include "unifycr-internal.h"
 
+#include "famfs_stats.h"
+#include "famfs_env.h"
 //
 // === libfabric stuff =============
 //

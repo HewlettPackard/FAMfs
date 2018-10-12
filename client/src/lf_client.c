@@ -14,6 +14,7 @@
 
 #include <mpi.h>
 
+#include "famfs_env.h"
 #include "fam_stripe.h"
 #include "lf_client.h"
 #include "unifycr-internal.h"

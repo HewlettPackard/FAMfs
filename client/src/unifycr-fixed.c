@@ -70,6 +70,9 @@ extern void *unifycr_superblock;
 extern unsigned long unifycr_max_index_entries;
 extern int unifycr_spillover_max_chunks;
 
+#include "famfs_stats.h"
+#include "famfs_env.h"
+
 //
 // === libfabric stuff =============
 //
