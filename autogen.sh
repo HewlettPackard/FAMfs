@@ -75,6 +75,10 @@ if [ "x$MISSING" != "x" ]; then
   exit 1
 fi
 
+ISAL_DIR=node/isa-l
+echo Running autoreconf for $ISAL_DIR
+autoreconf --install --symlink -f $ISAL_DIR
+
 ## Do the autogeneration
 echo Running ${ACLOCAL}...
 $ACLOCAL

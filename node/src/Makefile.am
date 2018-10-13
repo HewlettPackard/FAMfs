@@ -1,0 +1,18 @@
+bin_PROGRAMS	= node
+
+node_SOURCES	= queue.h w_pool.h w_pool.c \
+		node.h node.c \
+		ec_perf.h ec_perf.c
+
+node_LDFLAGS	= -L$(top_builddir)/node/isa-l/.libs/ $(MPI_CLDFLAGS) $(LIBFABRIC_LIBS)
+
+node_LDADD	= -lfabric -lpthread -lisal
+
+# AM_CPPFLAGS	= -I$(top_srcdir)/common/src
+AM_CPPFLAGS	= -D_GNU_SOURCE=1 \
+		$(MPI_CFLAGS) $(LIBFABRIC_CFLAGS) \
+		-I$(top_srcdir)/node/isa-l/include/ -I$(top_srcdir)/node/isa-l/erasure_code/erasure_code
+
+AM_CFLAGS	= -std=gnu99 -Wall -Wextra
+
+CLEANFILES	= $(bin_PROGRAMS)

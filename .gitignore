@@ -53,6 +53,7 @@ dkms.conf
 
 # package-specific
 clocal.m4
+aclocal.m4
 autom4te.cache
 build
 cscope.*
@@ -64,8 +65,8 @@ ltmain.sh
 Makefile
 Makefile.in
 missing
-config.guess
-config.sub
+config.*
+configure
 stamp-h[0-9]
 test-driver
 *compile

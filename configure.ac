@@ -7,6 +7,7 @@ AC_INIT([unifycr],
         m4_esyscmd([git describe --always |
                    awk '/.*/{sub(/^v/,""); printf "%s",$1; exit}']),
         [unifycr@llnl.gov])
+# AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_SRCDIR([configure.ac])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
@@ -144,6 +145,9 @@ CFLAGS="$old_cflags"
 
 AC_CHECK_HEADERS(mntent.h sys/mount.h)
 
+# look for MPI and set flags
+LX_FIND_MPI
+
 # check leveldb
 PKG_CHECK_MODULES([LEVELDB], [leveldb], ,
     AC_CHECK_LIB([leveldb], [leveldb_create_default_env],
@@ -161,6 +165,14 @@ PKG_CHECK_MODULES([LIBFABRIC], [libfabric], ,
 AC_CHECK_HEADER(rdma/fabric.h, , AC_MSG_ERROR(['libfabric header not found.']))
 AC_CHECK_LIB([fabric], fi_getinfo, , AC_MSG_ERROR(['libfabric not found.']))
 
+# probe CPU feature
+CPU_HAS_AVX2=$(grep -q avx2 /proc/cpuinfo && echo 1 || echo 0)
+CPU_HAS_SSE2=$(grep -q sse2 /proc/cpuinfo && echo 1 || echo 0)
+if test $CPU_HAS_AVX2 == "0" -a $CPU_HAS_SSE2 == "0"; then
+  AC_MSG_ERROR(required CPU feature not supported: sse2 or avx2)
+fi
+# define CPP symbol
+AC_DEFINE_UNQUOTED(HAVE_CPU_FEATURE_AVX2, $CPU_HAS_AVX2, Define if CPU has AVX2 feature)
 
 # libc functions wrapped by unifycr
 
@@ -301,7 +313,12 @@ AC_CONFIG_FILES([Makefile
                  client/tests/Makefile
                  t/Makefile
                  t/lib/Makefile
+                 node/Makefile
+                 node/src/Makefile
                  client/unifycr.pc])
+
+# Call node/isa-l configure script recursively
+AC_CONFIG_SUBDIRS([node/isa-l])
 
 UNIFYCR_VERSION=${PACKAGE_VERSION}
 AC_SUBST(UNIFYCR_VERSION)
