@@ -6,6 +6,7 @@ echo
 
 ## Check all dependencies are present
 MISSING=""
+SUGGEST="Please install them and try again."
 
 # Check for aclocal
 env aclocal --version > /dev/null 2>&1
@@ -60,6 +61,19 @@ if [ $? -ne 0 ]; then
   MISSING="$MISSING tar"
 fi
 
+# Check for ISA-L
+ISAL_DIR=node/isa-l
+if [ ! -f ${ISAL_DIR}/configure.ac ]; then
+  MISSING="$MISSING isa-l"
+  SUGGEST="$SUGGEST\n (try to run 'git submodule update --init')"
+fi
+
+# Check for yasm
+env yasm --version > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+  MISSING="$MISSING yasm"
+fi
+
 ## If dependencies are missing, warn the user and abort
 if [ "x$MISSING" != "x" ]; then
   echo "Aborting."
@@ -70,14 +84,13 @@ if [ "x$MISSING" != "x" ]; then
     echo "  * $pkg"
   done
   echo
-  echo "Please install them and try again."
+  echo "${SUGGEST}"
   echo
   exit 1
 fi
 
-ISAL_DIR=node/isa-l
 echo Running autoreconf for $ISAL_DIR
-autoreconf --install --symlink -f $ISAL_DIR
+autoreconf --install --symlink -f $ISAL_DIR || { echo "FAILED to auto-configure ISA-L package!"; exit 1; }
 
 ## Do the autogeneration
 echo Running ${ACLOCAL}...
