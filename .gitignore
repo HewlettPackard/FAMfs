@@ -96,6 +96,7 @@ log
 
 # project files
 # FAMfsd
+.dirstamp
 
 # generated package files
 client/unifycr-runtime-config.h
