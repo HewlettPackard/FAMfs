@@ -62,11 +62,11 @@ char** getstrlist(const char *buf, int *count)
 }
 
 void nodelist_free(char **nodelist, int size) {
-	int i;
-
-	for (i = 0; i < size; i++)
-		free(nodelist[i]);
-	free(nodelist);
+	if (nodelist) {
+		for (int i = 0; i < size; i++)
+			free(nodelist[i]);
+		free(nodelist);
+	}
 }
 
 int find_my_node(char* const* nodelist, int node_cnt) {
