@@ -149,7 +149,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define LFSRV_START_TMO 15000	/* the timeout for start all LF servers */
 
 /* default configuration command line */
-#define LFS_COMMAND     "x -H 127.0.0.1 -P0 --memreg scalable --provider sockets ENCODE"
+#define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -P0 --memreg scalable --provider sockets ENCODE"
 #define LFS_MAXARGS     64
 #define LFS_MAXCLIENTS	64
 
