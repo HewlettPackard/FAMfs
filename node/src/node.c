@@ -118,6 +118,7 @@ int main(int argc, char **argv) {
 	err("Error parsing command arguments");
 	usage(argv[0]);
     }
+    ON_ERROR( pthread_spin_init(&pstats_lock, PTHREAD_PROCESS_SHARED), "pthr spin init");
     node_cnt = params->node_cnt;
     parities = params->parities;
     data = node_cnt - parities;
