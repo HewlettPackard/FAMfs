@@ -9,6 +9,15 @@
 
 #include <sys/time.h>
 
+#define KiB (1024L)
+#define MiB (KiB*1024L)
+#define GiB (MiB*1024L)
+#define TiB (GiB*1024L)
+
+#define mSec (1000L)
+#define uSec (mSec*1000L)
+
+
 #if CKPFS_STATS
 
 #define DUMP_STATS(name, sb) if (do_lf_stats) {\
@@ -81,7 +90,7 @@ static inline struct timeval now(struct timeval *tvp) {
 static inline uint64_t elapsed(struct timeval *ts) {
     int64_t sec, usec;
     struct timeval tv = now(0);
-    
+
     sec =  tv.tv_sec - ts->tv_sec;
     usec = tv.tv_usec - ts->tv_usec;
     if (sec > 0 && usec < 0) {

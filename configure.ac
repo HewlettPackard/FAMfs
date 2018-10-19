@@ -313,6 +313,8 @@ AC_CONFIG_FILES([Makefile
                  client/tests/Makefile
                  t/Makefile
                  t/lib/Makefile
+                 common/Makefile
+                 common/src/Makefile
                  node/Makefile
                  node/src/Makefile
                  client/unifycr.pc])

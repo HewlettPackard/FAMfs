@@ -4,20 +4,52 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
 */
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <stdint.h>
 //#include <numa.h>
 #include "erasure_code.h"
 #include "raid.h"
 
+#include "famfs_env.h"
+#include "famfs_stats.h"
 #include "ec_perf.h"
 
+#define MMAX        64
+#define PMAX        8
+#define KMAX        (MMAX - PMAX)
+#define WMAX        128
+
 //#define MAKE_MAIN
+#ifdef MAKE_MAIN
+struct run_arg {
+    int             s;
+    int             k;
+    int             p;
+    int             n;
+    int             hw;
+    int             en;
+    int             in;
+    u8              *ev;
+    pthread_mutex_t lock;
+    pthread_cond_t  go;
+    int             ready;
+};
+
+struct wrk_ctl {
+    pthread_t       id;
+    int             ix;
+    double          enc_bw;
+    double          dec_bw;
+    pthread_attr_t  attr;
+    struct run_arg  *par;
+};
+#endif /* ifdef MAKE_MAIN */
+
 
 u8 *make_encode_matrix(int k, int p, u8 **pa) {
     u8 *ecm, *a;
@@ -28,7 +60,7 @@ u8 *make_encode_matrix(int k, int p, u8 **pa) {
 
     if (!(a = malloc(KMAX*MMAX)))
         return 0;
-    
+
     // Generate R-S codes matrix accoridng to chosen geometry
     gf_gen_rs_matrix(a, m, k);
 
@@ -59,11 +91,11 @@ u8 *make_decode_matrix(int k, int n, u8 *eix, u8 *a) {
             b[k*i + j] = a[k*r + j];
     }
     // Invert b -> d
-    if (gf_invert_matrix(b, d, k) < 0) 
+    if (gf_invert_matrix(b, d, k) < 0)
         return 0;
 
     // Construct c
-    for (i = 0; i < n; i++) 
+    for (i = 0; i < n; i++)
         for (j = 0; j < k; j++)
             c[k*i + j] = d[k*eix[i] + j];
 
@@ -74,8 +106,8 @@ u8 *make_decode_matrix(int k, int n, u8 *eix, u8 *a) {
 }
 
 void encode_data(int how, int len, int ndata, int npar, u8 *enc_tbl, u8 **data, u8 **par) {
-    int raid = how & FORCE_RAID;
-    int hw = how & HW_MASK;
+    int raid = how & ION_FORCE_RAID;
+    int hw = how & ION_HW_MASK;
 
     if (!raid || npar > 2){
         if (hw == 0)
@@ -123,8 +155,8 @@ void encode_data(int how, int len, int ndata, int npar, u8 *enc_tbl, u8 **data, 
 }
 
 void decode_data(int how, int len, int ndata, int nerr, u8 *dec_tbl, u8 **data, u8 **rst) {
-    int raid = how & FORCE_RAID;
-    int hw = how & HW_MASK;
+    int raid = how & ION_FORCE_RAID;
+    int hw = how & ION_HW_MASK;
 
     // Recover data
     if (!raid || nerr > 1) {
@@ -144,7 +176,7 @@ void decode_data(int how, int len, int ndata, int nerr, u8 *dec_tbl, u8 **data, 
         int i;
 
         for (i = 0; i < ndata; i++)
-           dp[i] = data[i]; 
+           dp[i] = data[i];
         dp[ndata] = rst[0];
 
         if (hw == 0)
@@ -161,12 +193,25 @@ void decode_data(int how, int len, int ndata, int nerr, u8 *dec_tbl, u8 **data, 
 
 #ifdef MAKE_MAIN
 
+#define vprintf(l, ...) if (VERBOSE >= l) printf(__VA_ARGS__)
+#define dprintf(...) vprintf(3, __VA_ARGS__)
+
+
 int EXCEL = 0;
 int RAID = 0;
 int VERBOSE = 0;
 
 u8 *ec_tbls, *dc_tbls, *a;
 u8 src_err_ix[MMAX], src_err_list[MMAX];
+
+static inline double ec_perf_bw(struct ec_perf *p, long long dsize){
+    u64 secs = p->stop.tv_sec - p->start.tv_sec;
+    u64 usecs = secs * 1000000 + p->stop.tv_usec - p->start.tv_usec;
+    double sec = ((double)usecs)/1000000.0;
+    double mb = (double)dsize;
+
+    return mb/sec;
+}
 
 int usage(void) {
     printf( "Usage: ec_perf [-v w<thrd> -a<isa> -k<data> -p<parity> -l<size> {-e<err>} -s{size}] [seed]\n"
@@ -190,7 +235,7 @@ void *worker(void *you) {
     int i, j, rtest = 0, m, k, nerrs, r, p, s, hw, str_cnt, ii, iter = 0;
     void *buf;
     u8 *temp_buffs[MMAX], *buffs[MMAX], *dmem[MMAX], *tmem[MMAX], *recov[MMAX];
-    struct perf stat;
+    struct ec_perf stat;
 
     k = me->par->k;
     p = me->par->p;
@@ -200,7 +245,7 @@ void *worker(void *you) {
     str_cnt = me->par->n;
     m = k + p;
 
-    // Allocate data memory 
+    // Allocate data memory
     for (i = 0; i < m; i++) {
         if (posix_memalign(&buf, 64, s*str_cnt)) {
             printf("alloc error: Fail\n");
@@ -234,7 +279,7 @@ void *worker(void *you) {
     pthread_mutex_unlock(&me->par->lock);
 
     // Start encode test
-    perf_start(&stat);
+    ec_perf_start(&stat);
     for (iter = 0; iter < me->par->in; iter++) {
         for (rtest = 0; rtest < str_cnt; rtest++) {
             // Assign work buffers
@@ -244,10 +289,10 @@ void *worker(void *you) {
             encode_data(hw, s, k, p, ec_tbls, buffs, &buffs[k]);
         }
     }
-    me->enc_bw = perf_bw(&stat, (long long)s*m*rtest*iter);
+    me->enc_bw = ec_perf_bw(&stat, (long long)s*m*rtest*iter);
 
     // Start decode test
-    perf_start(&stat);
+    ec_perf_start(&stat);
     for (iter = 0; iter < me->par->in; iter++) {
         for (rtest = 0; rtest < str_cnt; rtest++) {
             // Assign input buffers
@@ -268,7 +313,7 @@ void *worker(void *you) {
 
         }
     }
-    me->dec_bw = perf_bw(&stat, (long long)s*(k + nerrs)*rtest*iter);
+    me->dec_bw = ec_perf_bw(&stat, (long long)s*(k + nerrs)*rtest*iter);
 
     for (rtest = 0; rtest < str_cnt; rtest++) {
         // Assign work buffers
@@ -393,7 +438,7 @@ int main(int argc, char *argv[]) {
         srand(atoi(argv[optind]));
 
     if (RAID && p <= 2)
-        hw |= FORCE_RAID;
+        hw |= ION_FORCE_RAID;
 
 
     args.k = k;

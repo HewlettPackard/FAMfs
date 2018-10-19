@@ -9,7 +9,8 @@
 #include <malloc.h>
 //#include <sys/prctl.h>
 
-#include "node.h"
+//#include "node.h"
+#include "famfs_error.h"
 #include "w_pool.h"
 
 #define timespecadd(t, inc)				\
@@ -20,7 +21,7 @@
 			(t)->tv_sec++;			\
 			(t)->tv_nsec -= 1000000000U;	\
 		}					\
-	} while (0)	
+	} while (0)
 
 static int pool_wait(W_POOL_t* pool);
 
@@ -44,7 +45,7 @@ W_POOL_t* pool_init(int size, w_func_ work_func_p, int *affinity)
 		cpumask = (cpu_set_t *)malloc(sizeof(cpu_set_t));
 		ON_ERROR(!cpumask, "OOM cpumask");
 	}
- 
+
 	pool = (W_POOL_t *)malloc(sizeof(W_POOL_t));
 	ON_ERROR(!pool, "OOM pool");
 	pool->size = 0;
@@ -249,7 +250,7 @@ int pool_exit(W_POOL_t* pool, int cancel)
 	w_queue_free(&pool->out_queue);
 
 	free(pool);
-	return rc;	
+	return rc;
 }
 
 static void w_queue_init(W_QUEUE_t* q)
@@ -278,7 +279,7 @@ static int thread_init(W_POOL_t *pool, W_THREAD_t **threads, int id, const cpu_s
 {
 	pthread_attr_t	attr;
 	W_THREAD_t	*threadp;
- 
+
 	ON_ERROR( pthread_attr_init(&attr), "pthread attr init");
 	ON_ERROR( pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE), "pthread set attr");
 	if (cpuset)

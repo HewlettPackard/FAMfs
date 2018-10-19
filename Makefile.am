@@ -1,4 +1,4 @@
-SUBDIRS = meta server client t node
+SUBDIRS = common meta node server client t
 
 CONFIG = ordered
 

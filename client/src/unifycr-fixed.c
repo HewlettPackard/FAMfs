@@ -72,17 +72,11 @@ extern int unifycr_spillover_max_chunks;
 
 #include "famfs_stats.h"
 #include "famfs_env.h"
-
-//
-// === libfabric stuff =============
-//
-
-//#include "libfabric.h"
 #include "fam_stripe.h"
 #include "lf_client.h"
 
-extern N_PARAMS_t *lfs_params;
-extern N_STRIPE_t *fam_stripe;
+/* FAM */
+extern LFS_CTX_t *lfs_ctx;
 
 //static uint64_t wevents = 1;
 
@@ -372,30 +366,12 @@ int unifycr_split_index(unifycr_index_t *cur_idx, index_set_t *index_set,
 
     return 0;
 }
-#if 0
-#define SRV_MR_KEY 1
-int lf_write(char *buf, size_t len, off_t off) {
-    int err;
-    struct timeval start = now(0);
 
-    // Do RMA
-    ON_ERROR(fi_write(ep, buf, len, NULL, srv_addr, off, SRV_MR_KEY, &wctx), "fi_write failed");
-    err = fi_cntr_wait(wcnt, wevents, 10000);
-    if (err == -FI_ETIMEDOUT) {
-        printf("Timeout on RM write\n");
-    } else if (err) {
-        printf("cruise-fixed lf_write: fi_cntr_wait failed: %d - %s\n", -err, fi_strerror(-err));
-    }
-    wevents++;
-
-    UPDATE_STATS(lf_wr_stat, 1, len, start);
-     
-    return err;
-}
-#endif
 int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 {
     struct timeval start = now(0);
+    N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
+    N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
     N_CHUNK_t *chunk;
     LF_CL_t *node;
     struct fid_cntr *cntr;
@@ -405,7 +381,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     off_t off;
     //int i, blocks;
     int dst_node, rc;
-    char pr_buf[PR_BUF_SZ];
+    ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     /* to FAM chunk */
     chunk = get_fam_chunk(chunk_phy_id, fam_stripe, &dst_node);
@@ -460,7 +436,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 		dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
 		fi_cntr_read(cntr), chunk->w_event);
 	ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
-    }	
+    }
 
     UPDATE_STATS(lf_wr_stat, 1, len, start);
 
@@ -585,7 +561,7 @@ static int unifycr_logio_chunk_write(
 	    perror("lf-write failed");
 	}
 
-// *** <--- 
+// *** <---
 
         unifycr_index_t cur_idx;
         cur_idx.file_pos = pos;
@@ -800,6 +776,8 @@ int unifycr_fid_store_fixed_write(int fid, unifycr_filemeta_t *meta, off_t pos,
                                   const void *buf, size_t count)
 {
     int rc;
+
+    /* TODO: Add memory region cache for libfabric and translate 'buf' to local descriptor */
 
     /* get pointer to position within first chunk */
     int chunk_id;

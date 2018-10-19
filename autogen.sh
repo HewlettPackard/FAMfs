@@ -102,7 +102,7 @@ $TOOL --automake --copy --force
 echo Running ${AUTOCONF}...
 $AUTOCONF
 echo Running ${AUTOMAKE}...
-$AUTOMAKE --add-missing --force-missing --copy --foreign
+$AUTOMAKE --add-missing --force-missing --copy --foreign || exit 1
 
 # Instruct user on next steps
 echo

@@ -7,8 +7,9 @@
 #include <malloc.h>
 
 #include "famfs_env.h"
+#include "famfs_stripe.h"
+#include "famfs_lf_connect.h"
 #include "fam_stripe.h"
-#include "lf_client.h"
 
 
 /*
@@ -31,17 +32,8 @@ static void map_stripe_chunks(N_STRIPE_t *stripe, unsigned int extent)
     chunk = stripe->chunks;
     for (chunk_n = 0; chunk_n < chunks; chunk_n++, chunk++) {
 	chunk->node = chunk_n;
-	/* p = (chunk_n - extent) mod chunks */
-	p = (chunk_n - (int)extent) % chunks;
-	p = (p < 0)? (p + chunks) : p;
-	if (p < parities) {
-		chunk->parity = p;
-		chunk->data = -1;
-	} else {
-		chunk->data = p - parities;
-		ASSERT(chunk->data >= 0 && chunk->data < (chunks - parities));
-		chunk->parity = -1;
-	}
+	map_stripe_chunk(chunk, extent, chunks, parities);
+
         chunk->lf_client_idx = to_lf_client_id(chunk_n, stripe->part_count, partition);
 	chunk->r_event = 0;
 	chunk->w_event = 0;
@@ -104,5 +96,10 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
     if (index)
 	*index = (int)i;
     return chunk;
+}
+
+void free_fam_stripe(N_STRIPE_t *stripe) {
+    free(stripe->chunks);
+    free(stripe);
 }
 

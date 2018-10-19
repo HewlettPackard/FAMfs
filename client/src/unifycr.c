@@ -102,7 +102,6 @@ typedef int64_t off64_t;
 
 #include "famfs_env.h"
 #include "famfs_stats.h"
-#include "fam_stripe.h"
 #include "lf_client.h"
 
 
@@ -221,8 +220,7 @@ char external_data_dir[1024] = {0};
 char external_meta_dir[1024] = {0};
 
 /* FAM */
-N_PARAMS_t *lfs_params = NULL;
-N_STRIPE_t *fam_stripe = NULL;
+LFS_CTX_t *lfs_ctx = NULL;
 
 
 //size_t              mem_per_srv;
@@ -2131,7 +2129,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
         return rc;
 
     char *cmdline = getstr(LFS_COMMAND);
-    if ((rc = lfs_connect(cmdline))) {
+    if ((rc = lfs_connect(cmdline, rank, size, &lfs_ctx))) {
         printf("lf-connect failed on mount\n");
         return rc;
     }
@@ -2177,10 +2175,7 @@ int unifycr_unmount()
             return UNIFYCR_FAILURE;
     }
 
-    free(fam_stripe->chunks);
-    //free(fam_stripe->lf_buffer);
-    free(fam_stripe);
-    free_lf_clients(&lfs_params);
+    free_lfs_ctx(&lfs_ctx);
 
     return UNIFYCR_SUCCESS;
 }
@@ -2939,185 +2934,5 @@ chunk_list_t *unifycr_get_chunk_list(char *path)
  * and to test above function*/
 void unifycr_print_chunk_list(char *path)
 {
-}
-
-#if 0
-int lf_connect(char *addr, char *service) {
-    //int  i, n, err, events;
-    int  n;
-    char name[128], svc[32], *p;
-
-    gethostname(name, 128);
-    if (service) {
-        if (!(p = strstr(service, name)))
-            goto default_svc;
-        p += strlen(name);
-        if (*p != ':')
-            goto default_svc;
-        int port = atoi(++p);
-	port += local_rank_idx;
-        sprintf(svc, "%d", port);
-    } else if ((p = strchr(name, '-')) && getenv("LFSRV_MT")) {
-        sprintf(svc, "%d", 660 + atoi(++p));
-    } else {
-default_svc:
-        strcpy(svc, "666");
-    }
-    
-    // Provider discovery
-    hints = fi_allocinfo();
-    hints->caps                 = FI_RMA | FI_RMA_EVENT | FI_MSG;
-    hints->mode                 = FI_CONTEXT;
-    hints->domain_attr->mr_mode = FI_MR_SCALABLE;
-    hints->ep_attr->type        = FI_EP_RDM;
-
-    DEBUG("connecting to LF server %s:%s", addr, svc);
-    ON_ERROR(fi_getinfo(FI_VERSION(1, 5), addr, svc, 0, hints, &fi), "fi_getinfo failed");
-    fi_freeinfo(hints);
-
-    // Create fabric object
-    ON_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "fi_fabric failed");
-    
-    // Create completion queue
-    memset(&eq_attr, 0, sizeof(eq_attr));
-    eq_attr.size = 64;
-    eq_attr.wait_obj = FI_WAIT_UNSPEC;
-    ON_ERROR(fi_eq_open(fabric, &eq_attr, &eq, NULL), "fi_eq_open failed");
-
-    // Create domain object
-    ON_ERROR(fi_domain(fabric, fi, &domain, NULL), "fi_domain failed");
-
-    // Create endpoint
-    fi->caps = FI_RMA;
-    ON_ERROR(fi_endpoint(domain, fi, &ep, NULL), "fi_endpoint failed");
-
-    // Create address vector bind to endpoint and event queue
-    memset(&av_attr, 0, sizeof(av_attr));
-    av_attr.type = FI_AV_MAP;
-    ON_ERROR(fi_av_open(domain, &av_attr, &av, NULL), "fi_av_open failed");
-    ON_ERROR(fi_ep_bind(ep, (fid_t)av, 0), "fi_ep_bind failed");
-    ON_ERROR(fi_av_bind(av, (fid_t)eq, 0), "fi_av_bind failed");
-
-    // Create completion queue and bind to endpoint
-    memset(&cq_attr, 0, sizeof(cq_attr));
-    cq_attr.format = FI_CQ_FORMAT_TAGGED;
-    cq_attr.size = 100;
-    ON_ERROR(fi_cq_open(domain, &cq_attr, &cq, NULL), "fi_cq_open failed");
-    ON_ERROR(fi_ep_bind(ep, (fid_t)cq, FI_TRANSMIT|FI_RECV), "fi_ep_bind failed");
-
-    // Create counter and bind to endpoint
-    memset(&cntr_attr, 0, sizeof(cntr_attr));
-    ON_ERROR(fi_cntr_open(domain, &cntr_attr, &rcnt, NULL), "fi_cntr_open failed");
-    ON_ERROR(fi_ep_bind(ep, (fid_t)rcnt, FI_READ),  "fi_ep_bind failed");
-    ON_ERROR(fi_cntr_open(domain, &cntr_attr, &wcnt, NULL), "fi_cntr_open failed");
-    ON_ERROR(fi_ep_bind(ep, (fid_t)wcnt, FI_WRITE),  "fi_ep_bind failed");
-
-    // Enable endpoint
-    ON_ERROR(fi_enable(ep), "fi_enale failed");
-
-    // Perform address translation
-    if (1 != (n= fi_av_insert(av, fi->dest_addr, 1, &srv_addr, 0, NULL))) {
-        DEBUG("ft_av_insert failed, returned %d", n);
-        return(-EADDRNOTAVAIL);
-    }
-
-/*
-
-    int w = 0;
-    char *buf;
-    size_t len = 4096;
-
-    posix_memalign((void **)&buf, len, 4096);
-    memset(buf, 0, 4096);
-    if (!w) {
-        ON_ERROR(fi_read(ep, buf, 4096, NULL, srv_addr, 0, SRV_MR_KEY, &wctx), "fi_read failed");
-        err = fi_cntr_wait(rcnt, 1, 10000);
-        if (err == -FI_ETIMEDOUT) {
-            printf("Timeout on RM read\n");
-            exit(1);
-        } else if (err) {
-            printf("cruise lf_connect: fi_cntr_wait failed: %d\n", err);
-            exit(1);
-        }
-        printf("Read \"%s\" from server\n", buf);
-    } else {
-        strcpy(buf, "Hello, world!");
-        ON_ERROR(fi_write(ep, buf, strlen(buf), NULL, srv_addr, 0, SRV_MR_KEY, &wctx), "fi_write failed");
-        err = fi_cntr_wait(wcnt, 1, 10000);
-        if (err == -FI_ETIMEDOUT) {
-            printf("Timeout on RM write\n");
-            exit(1);
-        } else if (err) {
-            printf("fi_cntr_wait failed: %d\n", err);
-            exit(1);
-        }
-        printf("wrote \"%s\" to server\n", buf);
-    }
-
-*/
-
-    if (getenv("LF_SRV_STATS"))
-        do_lf_stats = 1;
-
-    return 0;
-}
-#endif
-
-int lfs_connect(char *param_str) {
-    N_STRIPE_t *stripe = NULL;
-    N_CHUNK_t *chunk, *chunks = NULL;
-    char *argv[LFS_MAXARGS];
-    int i, size, argc;
-    int rc = 1; /* OOM error */
-
-    argc = str2argv(param_str, argv, LFS_MAXARGS);
-    if ((rc = arg_parser(argc, argv, &lfs_params)))
-	return rc;
-
-    stripe = (N_STRIPE_t *)malloc(sizeof(N_STRIPE_t));
-    if (stripe == NULL)
-	goto _free;
-    size = lfs_params->node_cnt;
-#if 0
-    /* stripe buffer for libfabric I/O */
-    posix_memalign((void **)&stripe->lf_buffer, getpagesize(),
-		   lfs_params->chunk_sz * size);
-    if (stripe->lf_buffer == NULL)
-	goto _free;
-#endif
-    /* array of chunks */
-    chunks = (N_CHUNK_t *)malloc(size * sizeof(N_CHUNK_t));
-    if (chunks == NULL)
-	goto _free;
-
-    chunk = chunks;
-    for (i = 0; i < size; i++, chunk++) {
-	chunk->r_event = 0;
-	chunk->w_event = 0;
-    }
-    stripe->p	= lfs_params->parities;
-    stripe->d	= lfs_params->node_cnt - lfs_params->parities;
-    stripe->extent_stipes	= lfs_params->extent_sz / lfs_params->chunk_sz;
-    stripe->srv_extents		= lfs_params->srv_extents;
-    stripe->part_count		= lfs_params->node_servers;
-    stripe->part_mreg		= lfs_params->part_mreg;
-    /* TODO: Allocate stripes to clients. Now the clients must me evenly distributed. */
-    stripe->node_id		= my_srv_rank * local_rank_cnt + local_rank_idx;
-    stripe->node_size		= my_srv_size * local_rank_cnt;
-
-    stripe->chunks = chunks;
-    /* initial mapping */
-    get_fam_chunk(0, stripe, NULL);
-
-    fam_stripe	= stripe;
-    return 0;
-
-_free:
-    free(chunks);
-    //free(stripe->lf_buffer);
-    free(stripe);
-    free_lf_clients(&lfs_params);
-    lfs_params = NULL;
-    return rc;
 }
 
