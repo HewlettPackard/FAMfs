@@ -751,10 +751,12 @@ static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
     if (params->verbose) {
 	ALLOCA_CHUNK_PR_BUF(pr_buf);
 
-	printf("will write %d blocks of %lu bytes to %s chunk of stripe %lu on %s p%d @%p desc:%p\n",
+	printf("will write %d blocks of %lu bytes to %s chunk of stripe %lu on %s p%d @%p"
+	       " desc:%p mr_key:%lu\n",
 		blocks, transfer_sz,
 		pr_chunk(pr_buf, chunk->data, chunk->parity), stripe,
-		params->nodelist[chunk_n], node->partition, (void*)off, node->local_desc[thread_id]);
+		params->nodelist[chunk_n], node->partition, (void*)off,
+		node->local_desc[thread_id], node->mr_key);
     }
 
     // Do RMA
