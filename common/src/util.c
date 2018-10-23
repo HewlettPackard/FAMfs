@@ -69,7 +69,7 @@ void nodelist_free(char **nodelist, int size) {
 	}
 }
 
-int find_my_node(char* const* nodelist, int node_cnt) {
+int find_my_node(char* const* nodelist, int node_cnt, int silent) {
 	char *p, *hostname = NULL;
 	size_t len;
 	int i, idx = -1;
@@ -113,7 +113,7 @@ int find_my_node(char* const* nodelist, int node_cnt) {
 		}
 	}
 
-	if (idx < 0)
+	if (idx < 0 && !silent)
 		printf("Cannot find my node %s in the node list (-H)!\n",
 			hostname?hostname:"?");
 	free(hostname);
@@ -382,12 +382,12 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 
     /* Find my node */
     if (client_rank_size > 0) {
-	node_id = find_my_node(clientlist, client_cnt);
+	node_id = find_my_node(clientlist, client_cnt, 0);
 	ON_ERROR ((node_id < 0) && (client_cnt > client_rank_size),
 		  "Bad node count %d > %d, please check -c [--clientlist]",
 		  client_cnt, client_rank_size);
     } else {
-        node_id = find_my_node(nodelist, node_cnt);
+        node_id = find_my_node(nodelist, node_cnt, 0);
 	if (clientlist) {
 	    /* Ignore clientlist */
 	    nodelist_free(clientlist, client_cnt);

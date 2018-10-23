@@ -135,7 +135,7 @@ struct index_t *create_global_index(struct mdhim_t *md, int server_factor,
 				    uint64_t max_recs_per_slice, int db_type, 
 				    int key_type, char *index_name);
 int get_rangesrvs(struct mdhim_t *md, struct index_t *index);
-uint32_t is_range_server(struct mdhim_t *md, int rank, struct index_t *index);
+int is_range_server(struct mdhim_t *md, int rank, struct index_t *index);
 int index_init_comm(struct mdhim_t *md, struct index_t *bi);
 int get_stat_flush(struct mdhim_t *md, struct index_t *index);
 struct index_t *get_index(struct mdhim_t *md, int index_id);

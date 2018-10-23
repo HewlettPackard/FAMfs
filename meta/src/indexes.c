@@ -60,6 +60,10 @@ double metatime=0;
 
 struct timeval sleepstart, sleepend;
 double sleeptime=0;
+
+extern char *mds_vec;
+extern int  num_mds;
+
 /**
  * to_lower
  * convert strings to all lower case
@@ -654,6 +658,9 @@ uint32_t get_num_range_servers(struct mdhim_t *md, struct index_t *rindex) {
 	int i = 0;
 	int ret;
 
+        if (mds_vec && num_mds)
+            return num_mds;
+
 	if ((ret = MPI_Comm_size(md->mdhim_comm, &size)) != MPI_SUCCESS) {
 		mlog(MPI_EMERG, "Rank: %d - Couldn't get the size of the comm in get_num_range_servers", 
 		     md->mdhim_rank);
@@ -1030,10 +1037,10 @@ int get_rangesrvs(struct mdhim_t *md, struct index_t *index) {
  * @param rank    rank to find out if it is a range server
  * @return        MDHIM_ERROR on error, 0 on false, 1 or greater to represent the range server number otherwise
  */
-uint32_t is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
+int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 	int size;
 	int ret;
-	uint64_t rangesrv_num = 0;
+	int rangesrv_num = 0;
 
 	//If a local index, check to see if the rank is a range server for the primary index
 	if (index->type == LOCAL_INDEX) {
@@ -1041,6 +1048,20 @@ uint32_t is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 
 		return rangesrv_num;
 	}
+
+        if (mds_vec && num_mds && rank < num_mds) {
+            int n = 0;
+
+            if (!mds_vec[rank])
+                return 0;
+
+            for (int i = 0; i <= rank; i++) {
+                if (mds_vec[i])
+                    n++;
+            }
+            printf("rangeser_num is %d, rank is %d, mdhim_rank is %d\n", rangesrv_num, rank, md->mdhim_rank);
+            return n;
+        }
 
 	if ((ret = MPI_Comm_size(md->mdhim_comm, &size)) != MPI_SUCCESS) {
 		mlog(MPI_EMERG, "Rank: %d - Couldn't get the size of the comm in is_range_server", 
@@ -1075,7 +1096,7 @@ uint32_t is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 	if (rangesrv_num > index->num_rangesrvs) {
 		rangesrv_num = 0;
 	}
-//	printf("rangeser_num is %d, rank is %d\n", rangesrv_num, md->mdhim_rank);
+        printf("rangeser_num is %d, rank is %d, mdhim_rank is %d\n", rangesrv_num, rank, md->mdhim_rank);
 	return rangesrv_num;
 }
 

@@ -16,6 +16,8 @@ libfamfs_common_la_LIBADD = -lm
 AM_CFLAGS = -std=gnu99 -Wall -Wextra
 
 
-## lib_LIBRARIES = libfamfs_common.a
+lib_LIBRARIES = libfamfs_common.a
 
-## libfamfs_common_a_SOURCES = $(BASE_SRCS)
+libfamfs_common_a_SOURCES = $(BASE_SRCS)
+libfamfs_common_a_CPPFLAGSS = -D_GNU_SOURCE=1 $(LIBFABRIC_CFLAGS)
+libfamfs_common_a_LDFLAGS = -static -version-info $(LIBUNIFYCR_LT_VERSION) $(LIBFABRIC_LIBS)

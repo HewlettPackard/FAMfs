@@ -33,6 +33,11 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
 #include "unifycr_metadata.h"
 #include "log.h"
 #include "unifycr_debug.h"
@@ -44,6 +49,8 @@
 #include "unifycr_cmd_handler.h"
 #include "unifycr_service_manager.h"
 #include "unifycr_request_manager.h"
+#include "famfs_env.h"
+#include "famfs_error.h"
 
 int *local_rank_lst;
 int local_rank_cnt;
@@ -56,6 +63,64 @@ arraylist_t *thrd_list;
 
 int invert_sock_ids[MAX_NUM_CLIENTS]; /*records app_id for each sock_id*/
 int log_print_level = 5;
+
+char *mds_vec = NULL;
+int  num_mds = 0;
+
+int mds_by_name() {
+    static char **nlist = NULL;
+    static int ncnt = 0;
+    char *ev;
+
+    if (ncnt < 0)
+        return -1;
+
+    if (!(ev = getenv("FAMFS_MDS_LIST"))) 
+        return  ncnt = -1;
+    
+    if (!ncnt) {
+        int m = 64;
+        char *tok, *p = ev;
+        nlist = (char **)malloc(m*sizeof(char *));
+
+        while ((tok = strsep(&p, ", "))) {
+            nlist[ncnt++] = tok;
+            if (ncnt == m) {
+                m += 64;
+                nlist = (char **)realloc(nlist, m*sizeof(char *));
+            }
+        }
+    }
+
+    return find_my_node(nlist, ncnt, 1);
+}
+
+int make_mds_vec(int wsize, int rank) {
+    int n = 0;
+    char is_mds = (char)mds_by_name();
+
+    if (!(mds_vec = malloc(wsize))) {
+        LOG(LOG_ERR, "memory error");
+        return -1;
+    }
+    memset(mds_vec, 0, wsize);
+    MPI_Barrier(MPI_COMM_WORLD);
+    mds_vec[rank] = is_mds;
+    ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
+             mds_vec, 1, MPI_BYTE, MPI_COMM_WORLD),
+            "MPI_Allgather");
+    for (int i = 0; i < wsize; i++) {
+        if (mds_vec[i] < 0) {
+            free(mds_vec);
+            mds_vec = NULL;
+            return 0;
+        } else if (mds_vec[i]) {
+            n++;
+        }
+    }
+
+    return n;
+}
 
 int main(int argc, char *argv[])
 {
@@ -136,6 +201,14 @@ int main(int argc, char *argv[])
         if (sock_id != 0) {
             exit(1);
         }
+    }
+
+    if ((rc = make_mds_vec(glb_size, glb_rank)) > 0) {
+        LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
+    } else if (rc < 0) {
+        LOG(LOG_ERR, "Error obtaining MDS vector");
+    } else {
+        num_mds = rc;
     }
 
     rc = meta_init_store();

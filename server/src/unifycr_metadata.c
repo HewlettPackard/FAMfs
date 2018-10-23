@@ -60,6 +60,9 @@ struct index_t *unifycr_indexes[2];
 long max_recs_per_slice;
 int page_sz;
 
+extern char *mds_vec;
+extern int  num_mds;
+
 /**
 * initialize the key-value store
 */
@@ -96,12 +99,16 @@ int meta_init_store()
         number of processes/META_SERVER_RATIO */
 
     int ser_ratio;
-    env = getenv("UNIFYCR_META_SERVER_RATIO");
-    if (!env) {
-        ser_ratio = DEF_SERVER_RATIO;
-    }
+    if (mds_vec == NULL) {
+        env = getenv("UNIFYCR_META_SERVER_RATIO");
+        if (!env) {
+            ser_ratio = DEF_SERVER_RATIO;
+        }
 
-    ser_ratio = atoi(env);
+        ser_ratio = atoi(env);
+    } else {
+        ser_ratio = 1;
+    }
 
 
     db_opts->rserver_factor = ser_ratio;

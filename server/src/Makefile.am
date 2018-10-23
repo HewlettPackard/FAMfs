@@ -22,16 +22,18 @@ unifycrd_SOURCES = arraylist.c \
                    unifycr_setup.h \
                    log.h
 
-unifycrd_LDFLAGS = -static
+unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS)
 
 unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.a \
+                 $(top_builddir)/common/src/libfamfs_common.a \
                  $(LEVELDB_LIBS) \
-                 -lpthread -lm -lstdc++ -lrt -lmpi
+                 -lpthread -lm -lstdc++ -lrt -lmpi -lfabric
 
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
               -I$(top_srcdir)/meta/src/uthash \
-              -I$(top_srcdir)/meta/src/Mlog2
+              -I$(top_srcdir)/meta/src/Mlog2 \
+              -I$(top_builddir)/common/src
 
-AM_CFLAGS = -Wall
+AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS)
 
 CLEANFILES = $(bin_PROGRAMS)
