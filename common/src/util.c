@@ -435,7 +435,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    fprintf(stderr, "Wrong number of chunks to recover %d parities\n", parities);
 	    goto _free;
 	}
-	if (!lf_mr_scalable && !lf_mr_local && lf_mr_basic) {
+	if (!lf_mr_scalable && !lf_mr_local && !lf_mr_basic) {
 	    fprintf(stderr, "Wrong LF memory registration type:%s (expect %s, %s or/and %s)\n",
 		memreg, LF_MR_MODEL_SCALABLE, LF_MR_MODEL_BASIC, LF_MR_MODEL_LOCAL);
 	    goto _free;

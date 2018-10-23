@@ -178,9 +178,11 @@ int main(int argc, char **argv) {
     if (params->lf_mr_flags.prov_key) {
 	size_t len = srv_cnt * sizeof(uint64_t);
 
-	for (i = 0; i < srv_cnt; i++)
-	    params->mr_prov_keys[srv_cnt * node_id + i] = lf_servers[i]->lf_client->mr_key;
-
+	/* For each partition */
+	for (part = 0; part < srv_cnt; part++) {
+	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
+	    params->mr_prov_keys[lf_client_idx] = lf_servers[part]->lf_client->mr_key;
+	}
 	ON_ERROR( MPI_Allgather(/* &mr_prov_keys[srv_cnt*node_id] */ MPI_IN_PLACE, len, MPI_BYTE,
 				params->mr_prov_keys, len, MPI_BYTE, MPI_COMM_WORLD),
 		 "MPI_Allgather");
@@ -192,8 +194,7 @@ int main(int argc, char **argv) {
 	/* For each partition */
 	for (part = 0; part < srv_cnt; part++) {
 	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
-
-	    params->mr_virt_addrs[part] = (uint64_t) lf_servers[part]->virt_addr;
+	    params->mr_virt_addrs[lf_client_idx] = (uint64_t) lf_servers[part]->virt_addr;
 	}
 	ON_ERROR( MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
 				params->mr_virt_addrs, len, MPI_BYTE, MPI_COMM_WORLD),
