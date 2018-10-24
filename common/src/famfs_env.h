@@ -169,6 +169,6 @@ static inline const char *cmd2str(W_TYPE_t type)
 
 #define ION_FORCE_RAID	256
 #define ION_HW_MASK	0xff
-//#define LF_TARGET_RMA_EVENT	/* Require generation of completion events when target of RMA and/or atomics */
+#define LF_TARGET_RMA_EVENT	/* Require generation of completion events when target of RMA and/or atomics */
 
 #endif /* FAMFS_ENV_H */

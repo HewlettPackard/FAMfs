@@ -65,7 +65,10 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 
     // Provider discovery
     hints = fi_allocinfo();
-    hints->caps                 = FI_RMA;
+    hints->caps			= FI_RMA;
+#ifdef LF_TARGET_RMA_EVENT
+    hints->caps			|= FI_RMA_EVENT;
+#endif
     if (params->lf_srv_rx_ctx)
 	hints->caps		|= FI_NAMED_RX_CTX;
     hints->mode                 = FI_CONTEXT;
