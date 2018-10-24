@@ -24,7 +24,10 @@
 #include "famfs_env.h"
 
 
-#define node2lf_mr_pkey(node_id, node_servers, partition) (node_id*node_servers + partition + 1)
+/* Workaround for zhpe provider issue: MR_PROV_KEY=0 is broken */
+//#define node2lf_mr_pkey(node_id, node_servers, partition) (node_id*node_servers + partition + 1)
+#define node2lf_mr_pkey(node_id, node_servers, partition) (0)
+
 #define node2service(base, node_id, part_id) (base + part_id + node_id*100)
 
 typedef struct lf_mr_mode_ {
