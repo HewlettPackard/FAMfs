@@ -530,7 +530,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 #ifdef MR_MODEL_BASIC_SYM
 	params->lf_mr_flags.prov_key = 1;
 	params->lf_mr_flags.allocated = 1;
-	params->lf_mr_flags.virt_addr = 1;
+	params->lf_mr_flags.virt_addr = 0;
 #else
 	params->lf_mr_flags.basic = 1;
 	/* basic registration is equivalent to FI_MR_VIRT_ADDR, FI_MR_ALLOCATED, and FI_MR_PROV_KEY set to 1 */
