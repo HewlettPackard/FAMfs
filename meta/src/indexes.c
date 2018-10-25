@@ -1049,7 +1049,7 @@ int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 		return rangesrv_num;
 	}
 
-        if (mds_vec && num_mds && rank < num_mds) {
+        if (mds_vec && num_mds) {
             int n = 0;
 
             if (mds_vec[rank]) {
@@ -1095,6 +1095,7 @@ int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 	if (rangesrv_num > index->num_rangesrvs) {
 		rangesrv_num = 0;
 	}
+
         printf("rangeser_num is %d, rank is %d, mdhim_rank is %d\n", rangesrv_num, rank, md->mdhim_rank);
 	return rangesrv_num;
 }

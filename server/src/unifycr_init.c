@@ -119,7 +119,7 @@ int make_mds_vec(int wsize, int rank) {
         }
     }
     if (rank == 0) {
-        printf("MDS ranks are: ");
+        printf("MDS rank(s): ");
         for (int i = 0; i < wsize; i++)
             if (mds_vec[i])
                 printf("%d ", i);
