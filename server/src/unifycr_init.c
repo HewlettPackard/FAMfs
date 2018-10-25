@@ -119,11 +119,12 @@ int make_mds_vec(int wsize, int rank) {
         }
     }
     if (rank == 0) {
-        printf("MDS rank(s): ");
+        char buf[1024];
+        int l = snprintf(buf, sizeof(buf), "MDS rank(s): ");
         for (int i = 0; i < wsize; i++)
             if (mds_vec[i])
-                printf("%d ", i);
-        printf("\n");
+                l += snprintf(&buf[l], sizeof(buf), "%d ", i);
+        LOG(LOG_INFO, "%s\n", buf);
     }
     return n;
 }

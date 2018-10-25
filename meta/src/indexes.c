@@ -1058,7 +1058,7 @@ int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
                         n++;
                 }
             }
-            printf("[%c] rangeser_num=%d, rank=%d, mdhim_rank=%d\n", mds_vec[rank] ? '*' : ' ', n, rank, md->mdhim_rank);
+            mlog(MPI_DBG, "[%c] rangeser_num=%d, rank=%d, mdhim_rank=%d\n", mds_vec[rank] ? '*' : ' ', n, rank, md->mdhim_rank);
             return n;
         }
 
