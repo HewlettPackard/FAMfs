@@ -32,7 +32,7 @@ unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.a \
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
               -I$(top_srcdir)/meta/src/uthash \
               -I$(top_srcdir)/meta/src/Mlog2 \
-              -I$(top_builddir)/common/src
+              -I$(top_srcdir)/common/src
 
 AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS)
 

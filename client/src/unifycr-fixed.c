@@ -386,7 +386,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     /* to FAM chunk */
     chunk = get_fam_chunk(chunk_phy_id, fam_stripe, &dst_node);
     if (chunk == NULL) {
-	DEBUG("%d:%d chunk:%d - ENOSPC\n", my_srv_rank, local_rank_idx, chunk_phy_id);
+	DEBUG("%d chunk:%d - ENOSPC\n", lfs_params->node_id, chunk_phy_id);
 	/* TODO: Propagate the error to a client */
 	return -ENOSPC;
     }
@@ -402,19 +402,19 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     //int blocks = len / transfer_sz;
     ASSERT(chunk_offset + len <= unifycr_chunk_size);
     ASSERT(dst_node == node->node_id);
-    ASSERT(my_srv_rank == lfs_params->node_id);
+    ASSERT(dst_node < lfs_params->node_cnt);
     off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
     //for (i = 0; i < blocks; i++) {
-    DEBUG("%d/%d: write chunk:%d @%jd to %u/%u/%s on node %d(p%d) %s:%d len:%zu desc:%p off:%jd mr_key:%lu",
-	  my_srv_rank, local_rank_idx, chunk_phy_id, chunk_offset,
+    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s on node %d(p%d) %s:%d len:%zu desc:%p off:%jd mr_key:%lu",
+	  lfs_params->node_id, chunk_phy_id, chunk_offset,
 	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
 	  dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
 	  len, node->local_desc[0], off, node->mr_key);
 
 	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,
 				node->mr_key, (void*)buf /* NULL */),
-			"%d/%d: fi_write failed on %s dest: %s (p%d)",
-			my_srv_rank, local_rank_idx, lfs_params->nodelist[lfs_params->node_id],
+			"%d (%s): fi_write failed on dest: %s (p%d)",
+			lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id],
 			lfs_params->nodelist[dst_node], fam_stripe->partition);
 	//off += transfer_sz;
 	//buf += transfer_sz;
@@ -423,14 +423,14 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 
     rc = fi_cntr_wait(cntr, chunk->w_event, 10000);
     if (rc == -FI_ETIMEDOUT) {
-        err("%d/%d: lf_write timeout chunk:%d to %u/%u/%s on node %d(p%d) %s:%d len:%zu off:%jd",
-	    my_srv_rank, local_rank_idx, chunk_phy_id,
+        err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on node %d(p%d) %s:%d len:%zu off:%jd",
+	    lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id], chunk_phy_id,
 	    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
 	    dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
 	    len, off);
     } else if (rc) {
-	err("%d/%d: lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on node %d(p%d) %s:%d cnt:%lu/%lu",
-		my_srv_rank, local_rank_idx, chunk_phy_id,
+	err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on node %d(p%d) %s:%d cnt:%lu/%lu",
+		lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id], chunk_phy_id,
 		fi_cntr_readerr(cntr), rc,
 		fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
 		dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
@@ -544,19 +544,13 @@ static int unifycr_logio_chunk_write(
         if (rc < 0)  {
             perror("pwrite failed");
         }
-
-        off_t fam_off = my_srv_rank*mem_per_srv + local_rank_idx*mem_per_cln + spill_offset;
-        //printf("write(%d:%d) %u bytes @%u FAM:%u\n", my_srv_rank, local_rank_idx, count, spill_offset, fam_off);
-        if (lf_write((char *)buf, count, fam_off)) {
-            perror("lf-write faild\n");
-        }
 #endif
 
 // *** -->  new lf_write goes here
 	/* to file chunk id */
 	int chunk_phy_id = physical_chunk_id(meta, chunk_id);
-	DEBUG("%d/%d: write %zu bytes @%jd phy_chunk:%d @%jd\n",
-	      my_srv_rank, local_rank_idx, count, spill_offset, chunk_phy_id, chunk_offset);
+	DEBUG("%d: write %zu bytes @%jd phy_chunk:%d @%jd\n",
+	      lfs_ctx->lfs_params->node_id, count, spill_offset, chunk_phy_id, chunk_offset);
 	if (lf_write((char *)buf, count, chunk_phy_id, chunk_offset)) {
 	    perror("lf-write failed");
 	}
