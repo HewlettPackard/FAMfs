@@ -135,8 +135,11 @@ char *shm_reqbuf;
 char cmd_buf[GEN_STR_LEN] = {0};
 char ack_msg[3] = {0};
 
+#if 0
 int my_srv_rank;
 int my_srv_size;
+#endif
+
 int dbg_rank;
 int app_id;
 static int glb_size = 0;
@@ -2279,12 +2282,14 @@ static int unifycr_sync_to_del()
                             } else {
                                 unifycr_key_slice_range =
                                     *((long *)(cmd_buf + 2 * sizeof(int)));
+#if 0
                                 /*success*/
                                 my_srv_rank = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long)));
                                 my_srv_size = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long) + sizeof(int)));
                                 printf("*** connected to server: %d/%d\n", my_srv_rank, my_srv_size);
                                 //mem_per_cln = get_evv("CRUISE_SPILLOVER_SIZE", 256*1024*1024L);
                                 //mem_per_srv = get_evv("FAM_PART_SIZE", 1024*1024*1024L);
+#endif
                             }
                         }
                     } else {

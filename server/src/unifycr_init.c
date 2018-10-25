@@ -118,7 +118,13 @@ int make_mds_vec(int wsize, int rank) {
             n++;
         }
     }
-
+    if (rank == 0) {
+        printf("MDS ranks are: ");
+        for (int i = 0; i < wsize; i++)
+            if (mds_vec[i])
+                printf("%d ", i);
+        printf("\n");
+    }
     return n;
 }
 

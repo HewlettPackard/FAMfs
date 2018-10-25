@@ -1052,14 +1052,13 @@ int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
         if (mds_vec && num_mds && rank < num_mds) {
             int n = 0;
 
-            if (!mds_vec[rank])
-                return 0;
-
-            for (int i = 0; i <= rank; i++) {
-                if (mds_vec[i])
-                    n++;
+            if (mds_vec[rank]) {
+                for (int i = 0; i <= rank; i++) {
+                    if (mds_vec[i])
+                        n++;
+                }
             }
-            printf("rangeser_num is %d, rank is %d, mdhim_rank is %d\n", rangesrv_num, rank, md->mdhim_rank);
+            printf("[%c] rangeser_num=%d, rank=%d, mdhim_rank=%d\n", mds_vec[rank] ? '*' : ' ', n, rank, md->mdhim_rank);
             return n;
         }
 

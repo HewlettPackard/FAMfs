@@ -74,10 +74,12 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
         ptr_ack = sock_get_ack_buf(sock_id);
         ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
                               &max_recs_per_slice, sizeof(long));
+#if 0
         *((int *)&ptr_ack[ret_sz]) = glb_rank;
         ret_sz += sizeof(int);
         *((int *)&ptr_ack[ret_sz]) = glb_size;
         ret_sz += sizeof(int);
+#endif
         rc = sock_ack_cli(sock_id, ret_sz);
         return rc;
 
