@@ -25,7 +25,7 @@ unifycrd_SOURCES = arraylist.c \
 unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS)
 
 unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.a \
-                 $(top_builddir)/common/src/libfamfs_common.a \
+                 $(top_builddir)/common/src/.libs/libfamfs_common.a \
                  $(LEVELDB_LIBS) \
                  -lpthread -lm -lstdc++ -lrt -lmpi -lfabric
 
