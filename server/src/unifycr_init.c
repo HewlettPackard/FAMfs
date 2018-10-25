@@ -92,7 +92,7 @@ int mds_by_name() {
         }
     }
 
-    return find_my_node(nlist, ncnt, 1);
+    return find_my_node(nlist, ncnt, 1) >= 0;
 }
 
 int make_mds_vec(int wsize, int rank) {
@@ -211,10 +211,11 @@ int main(int argc, char *argv[])
 
     if ((rc = make_mds_vec(glb_size, glb_rank)) > 0) {
         LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
+        num_mds = rc;
     } else if (rc < 0) {
         LOG(LOG_ERR, "Error obtaining MDS vector");
     } else {
-        num_mds = rc;
+        num_mds = 0;
     }
 
     rc = meta_init_store();
