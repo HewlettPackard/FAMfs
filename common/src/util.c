@@ -528,7 +528,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     if (lf_mr_basic) {
 	/* LF_MR_MODEL_BASIC */
 #ifdef MR_MODEL_BASIC_SYM
-	params->lf_mr_flags.prov_key = 1;
+	params->lf_mr_flags.prov_key = 0;
 	params->lf_mr_flags.allocated = 1;
 	params->lf_mr_flags.virt_addr = 0;
 #else

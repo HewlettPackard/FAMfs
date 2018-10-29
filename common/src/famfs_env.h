@@ -160,7 +160,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 //#define LF_MR_MODEL	LF_MR_MODEL_BASIC
 #define LF_MR_MODEL	LF_MR_MODEL_SCALABLE
 
-//#define MR_MODEL_BASIC_SYM    /* Replace FI_MR_BASIC with (FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_VIRT_ADDR) */
+#define MR_MODEL_BASIC_SYM    /* Don't set FI_MR_BASIC but (FI_MR_ALLOCATED, FI_MR_PROV_KEY, FI_MR_VIRT_ADDR) */
 
 /*
  * Defaults and constants

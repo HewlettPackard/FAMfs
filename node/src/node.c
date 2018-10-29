@@ -1272,6 +1272,8 @@ static int lf_srv_init(LF_SRV_t *priv)
 	hints->domain_attr->mr_mode |= FI_MR_LOCAL;
 
     // hints->domain_attr->threading = FI_THREAD_ENDPOINT;
+    if (!strcmp(params->prov_name, "zhpe"))
+	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
     hints->ep_attr->type        = FI_EP_RDM;
     free(hints->fabric_attr->prov_name);
     hints->fabric_attr->prov_name = strdup(params->prov_name);

@@ -89,6 +89,8 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	hints->domain_attr->mr_mode |= FI_MR_LOCAL;
 
     // hints->domain_attr->threading = FI_THREAD_ENDPOINT; /* FI_THREAD_FID */
+    if (!strcmp(params->prov_name, "zhpe"))
+	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
     hints->ep_attr->type        = FI_EP_RDM;
     free(hints->fabric_attr->prov_name);
     hints->fabric_attr->prov_name = strdup(params->prov_name);
