@@ -451,7 +451,7 @@ static void perf_stats_print_bw(PERF_STAT_t *stats, int mask, const char *msg, u
 	int i;
 
 	for (i = 0; i < 4; i++, p++)
-		if (1 << i & mask)
+		if (1 << i & mask && p->elapsed)
 			printf("\t %s %s %.3lf\n",
 				PERF_NAME[i], msg, ((double)p->data/bu)/((double)p->elapsed/tu));
 }
