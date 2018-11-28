@@ -180,9 +180,10 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     W_TYPE_t		cmd, cmdv[ION_CMD_MAX];
     unsigned int	srv_extents = 0;
     int			set_affinity = 0, lf_srv_rx_ctx = 0;
-    int			lf_mr_scalable, lf_mr_local, lf_mr_basic;
+    int			lf_mr_scalable, lf_mr_local, lf_mr_basic, zhpe_support = 0;
     uint64_t		*mr_prov_keys = NULL, *mr_virt_addrs = NULL;
     char		*lf_provider_name = NULL, *lf_domain = NULL, *memreg = NULL;
+    const char		*env_zhpe_backend = NULL;
     N_PARAMS_t		*params = NULL;
     int			cmdc, i, data, node_id, srv_cnt, rc;
     uint64_t		cmd_timeout, io_timeout = 0;
@@ -358,6 +359,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     if (lf_provider_name == NULL)
 	if ((lf_provider_name = getstr(LF_PROV_NAME)))
 		lf_provider_name = strdup(lf_provider_name);
+    if (!strcmp(lf_provider_name, "zhpe") && (env_zhpe_backend = getenv("ZHPE_BACKEND_LIBFABRIC_PROV")))
+	if (!strcmp(env_zhpe_backend, "zhpe"))
+	    zhpe_support = 1;
     if (memreg == NULL)
 	if ((memreg = getstr(LF_MR_MODEL)))
 		memreg = strdup(memreg);
@@ -472,7 +476,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	printf("Extent %zu bytes\n", extent_sz);
 	printf("VMEM %zu bytes in %d partition(s) per node\n", vmem_sz, srv_cnt);
 	printf("Transfer block size %zu bytes\n", transfer_len);
-	printf("libfabric mr_mode:%s%s%s",
+	printf("libfabric provider:%s/%s mr_mode:%s%s%s",
+	       lf_provider_name, env_zhpe_backend?env_zhpe_backend:"?",
 	       lf_mr_scalable?LF_MR_MODEL_SCALABLE:(lf_mr_basic?LF_MR_MODEL_BASIC:""),
 	       (lf_mr_basic&&lf_mr_local)?",":"",
 	       lf_mr_local?LF_MR_MODEL_LOCAL:"");
@@ -542,6 +547,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	params->lf_mr_flags.scalable = 1;
 
     params->lf_mr_flags.local = lf_mr_local;
+    params->lf_mr_flags.zhpe_support = zhpe_support;
 
     params->verbose = verbose;
     params->set_affinity = set_affinity;

@@ -90,8 +90,8 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 	}
     }
     if (verbose) {
-	printf("LF initiator local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
-		params->lf_mr_flags.local, params->lf_mr_flags.basic,
+	printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
 		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
     }
 

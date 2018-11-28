@@ -14,12 +14,9 @@
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
-
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_endpoint.h>
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
+#include <rdma/fi_ext_zhpe.h>
 
 #include "famfs_env.h"
 
@@ -38,7 +35,8 @@ typedef struct lf_mr_mode_ {
 	unsigned int prov_key:1;
 	unsigned int virt_addr:1;
 	unsigned int allocated:1;
-	unsigned int _f:26;
+	unsigned int zhpe_support:1;
+	unsigned int _f:25;
 } __attribute__((packed)) LF_MR_MODE_t;
 
 /* libfabric client data */

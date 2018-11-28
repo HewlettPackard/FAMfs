@@ -15,10 +15,6 @@
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
-
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_endpoint.h>
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
 
@@ -51,6 +47,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     struct fid_mr	**local_mr = NULL;
     void		**local_desc;
 
+    void		*fi_dest_addr;
     char		port[6] = { 0 };
     int			node, partition_id, thread_cnt, service;
     int			*cq_affinity = NULL;
@@ -123,6 +120,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 
     // Create fabric object
     ON_FI_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "fi_fabric failed");
+    fi_dest_addr = fi->dest_addr;
 
     // Check support for scalable endpoint
     if (fi->domain_attr->max_ep_tx_ctx > 1) {
@@ -183,7 +181,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     local_desc = (void **) calloc(thread_cnt, sizeof(void*));
 
     /* Register the local buffers */
-    if (params->lf_mr_flags.local) {
+    if (params->lf_mr_flags.local || params->lf_mr_flags.zhpe_support) {
 	local_mr = (struct fid_mr **) malloc(thread_cnt * sizeof(void*));
 	ASSERT(local_mr);
 	for (i = 0; i < thread_cnt; i++) {
@@ -256,11 +254,25 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     if (params->lf_srv_rx_ctx)
 	ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
 
+    // zhpe support
+    if (params->lf_mr_flags.zhpe_support) {
+	struct fi_zhpe_ext_ops_v1 *ext_ops;
+	size_t sa_len;
+	char url[16];
+	unsigned long long fam_id = partition_id;
+
+	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
+		"srv open_ops failed");
+	// FAM lookup
+	sprintf(url, "zhpe:///fam%4Lu", fam_id);
+	ON_FI_ERROR( ext_ops->lookup(url, &fi_dest_addr, &sa_len), "fam:%4Lu lookup failed", fam_id);
+    }
+
     // Perform address translation
     srv_addr = (fi_addr_t *)malloc(sizeof(fi_addr_t));
     ASSERT(srv_addr);
-    if (1 != (i = fi_av_insert(av, fi->dest_addr, 1, srv_addr, 0, NULL))) {
-        printf("ft_av_insert failed, returned %d\n", i);
+    if (1 != (i = fi_av_insert(av, fi_dest_addr, 1, srv_addr, 0, NULL))) {
+        err("ft_av_insert failed, returned %d\n", i);
         return 1;
     }
 
@@ -290,7 +302,8 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     lf_node->local_desc = local_desc;
     lf_node->size = thread_cnt;
     if (!params->lf_mr_flags.prov_key)
-	lf_node->mr_key = node2lf_mr_pkey(node, params->node_servers, partition_id);
+	lf_node->mr_key = params->lf_mr_flags.zhpe_support? FI_ZHPE_FAM_RKEY : \
+			  node2lf_mr_pkey(node, params->node_servers, partition_id);
     lf_node->cq_affinity = cq_affinity;
     lf_node->service = service;
 

@@ -167,8 +167,8 @@ int main(int argc, char **argv) {
 	node_exit(1);
     }
     if (rank == 0) {
-	printf("LF target local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
-		params->lf_mr_flags.local, params->lf_mr_flags.basic,
+	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
 		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
     }
 
@@ -252,8 +252,8 @@ int main(int argc, char **argv) {
 	}
     }
     if (rank == 0) {
-	printf("LF initiator local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
-		params->lf_mr_flags.local, params->lf_mr_flags.basic,
+	printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
 		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
     }
 
@@ -1409,16 +1409,19 @@ static int lf_srv_init(LF_SRV_t *priv)
 
     // Create memory region
     if (!params->lf_mr_flags.prov_key)
-	mr_key = node2lf_mr_pkey(my_node_id, params->node_servers, cl->partition);
+	mr_key = params->lf_mr_flags.zhpe_support? FI_ZHPE_FAM_RKEY : \
+		 node2lf_mr_pkey(my_node_id, params->node_servers, cl->partition);
 
     char **bufp, *buf;
     if (params->part_mreg == 0) {
 	len = params->vmem_sz;
 	bufp = &fam_buf;
     } else {
-	len = priv->length;
+	unsigned int page_size = getpagesize();
+
+	len = params->lf_mr_flags.zhpe_support? page_size : priv->length;
 	bufp = &buf;
-	ON_ERROR(posix_memalign((void **)bufp, getpagesize(), len), "srv memory alloc failed");
+	ON_ERROR(posix_memalign((void **)bufp, page_size, len), "srv memory alloc failed");
 	priv->virt_addr = buf;
     }
     ON_FI_ERROR( fi_mr_reg(domain, *bufp, len, FI_REMOTE_READ|FI_REMOTE_WRITE, 0, mr_key, 0, &mr, NULL),
@@ -1444,6 +1447,21 @@ static int lf_srv_init(LF_SRV_t *priv)
 
     // Enable endpoint
     ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
+
+    // zhpe support
+    if (params->lf_mr_flags.zhpe_support) {
+	struct fi_zhpe_ext_ops_v1 *ext_ops;
+	size_t sa_len;
+	void *fam_sa;
+	char url[16];
+	unsigned long long fam_id = cl->partition;
+
+	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
+		"srv open_ops failed");
+	sprintf(url, "zhpe:///fam%4Lu", fam_id);
+	ON_FI_ERROR( ext_ops->lookup(url, &fam_sa, &sa_len), "fam:%4Lu lookup failed", fam_id);
+    }
+
     n = 128;
     ON_FI_ERROR(fi_getname((fid_t)ep, name, &n), "srv fi_getname failed");
     if (n >=128) {
