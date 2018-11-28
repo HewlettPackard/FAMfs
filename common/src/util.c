@@ -120,6 +120,37 @@ int find_my_node(char* const* nodelist, int node_cnt, int silent) {
 	return idx;
 }
 
+int is_module_loaded(const char *name)
+{
+    FILE *modules;
+    char buf[128]; /* the buffer size is arbitrary */
+    size_t len;
+    int skip_end = 0, found = 0;
+
+    len = strlen(name);
+    if (len == 0U || len >= sizeof(buf))
+	return 0; /* bad module name arg */
+
+    modules = fopen("/proc/modules", "r");
+    if (modules) {
+	while (fgets(buf, sizeof(buf)-1, modules)) {
+	    /* skip line ends w/o '\n' */
+	    if (!skip_end && len < strlen(buf)) {
+		/* at the line start */
+		if (!strncmp(name, buf, len) && \
+		    buf[len] == ' ') {
+			found = 1;
+			break;
+		}
+	    }
+	    /* go to the end of line */
+	    skip_end = (strchr(buf, '\n') == NULL);
+	}
+	fclose(modules);
+    }
+    return found;
+}
+
 void alloc_affinity(int **affp, int size, int pos)
 {
     int		i, cpu_setsize, *affinity = NULL;
@@ -183,7 +214,6 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     int			lf_mr_scalable, lf_mr_local, lf_mr_basic, zhpe_support = 0;
     uint64_t		*mr_prov_keys = NULL, *mr_virt_addrs = NULL;
     char		*lf_provider_name = NULL, *lf_domain = NULL, *memreg = NULL;
-    const char		*env_zhpe_backend = NULL;
     N_PARAMS_t		*params = NULL;
     int			cmdc, i, data, node_id, srv_cnt, rc;
     uint64_t		cmd_timeout, io_timeout = 0;
@@ -359,9 +389,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     if (lf_provider_name == NULL)
 	if ((lf_provider_name = getstr(LF_PROV_NAME)))
 		lf_provider_name = strdup(lf_provider_name);
-    if (!strcmp(lf_provider_name, "zhpe") && (env_zhpe_backend = getenv("ZHPE_BACKEND_LIBFABRIC_PROV")))
-	if (!strcmp(env_zhpe_backend, "zhpe"))
-	    zhpe_support = 1;
+    if (!strcmp(lf_provider_name, "zhpe"))
+	zhpe_support = is_module_loaded(ZHPE_MODULE_NAME);
     if (memreg == NULL)
 	if ((memreg = getstr(LF_MR_MODEL)))
 		memreg = strdup(memreg);
@@ -477,7 +506,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	printf("VMEM %zu bytes in %d partition(s) per node\n", vmem_sz, srv_cnt);
 	printf("Transfer block size %zu bytes\n", transfer_len);
 	printf("libfabric provider:%s/%s mr_mode:%s%s%s",
-	       lf_provider_name, env_zhpe_backend?env_zhpe_backend:"?",
+	       lf_provider_name, zhpe_support? "zhpe" : "sockets",
 	       lf_mr_scalable?LF_MR_MODEL_SCALABLE:(lf_mr_basic?LF_MR_MODEL_BASIC:""),
 	       (lf_mr_basic&&lf_mr_local)?",":"",
 	       lf_mr_local?LF_MR_MODEL_LOCAL:"");

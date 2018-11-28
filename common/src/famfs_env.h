@@ -40,6 +40,7 @@ typedef enum w_type_ {
 char** getstrlist(const char *buf, int *count);
 int find_my_node(char* const* nodelist, int node_cnt, int silent);
 void nodelist_free(char **nodelist, int size);
+//int is_module_loaded(const char *name);
 void alloc_affinity(int **affp, int size, int pos);
 void ion_usage(const char *name);
 
@@ -147,6 +148,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define	IO_TIMEOUT_MS	30*1000 /* single I/O execution timeout, 30 sec */
 #define LFSRV_RCTX_BITS 8	/* LF SRV: max number of rx contexts, bits */
 #define LFSRV_START_TMO 15000	/* the timeout for start all LF servers */
+#define ZHPE_MODULE_NAME "zhpe"	/* libfabric provider's backend driver name */
 
 /* default configuration command line */
 #define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -P0 --memreg scalable --provider sockets ENCODE"
