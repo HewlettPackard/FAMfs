@@ -1454,7 +1454,7 @@ static int lf_srv_init(LF_SRV_t *priv)
 	size_t sa_len;
 	void *fam_sa;
 	char url[16];
-	unsigned long long fam_id = cl->partition;
+	unsigned long long fam_id = part2fam_id(my_node_id, params->node_servers, cl->partition);
 
 	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
 		"srv open_ops failed");

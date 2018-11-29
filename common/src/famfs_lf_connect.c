@@ -259,7 +259,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	char url[16];
-	unsigned long long fam_id = partition_id;
+	unsigned long long fam_id = part2fam_id(node, params->node_servers, partition_id);
 
 	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
 		"srv open_ops failed");
