@@ -405,9 +405,9 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     ASSERT(dst_node < lfs_params->node_cnt);
     off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
     //for (i = 0; i < blocks; i++) {
-    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s on node %d(p%d) %s:%d len:%zu desc:%p off:%jd mr_key:%lu",
+    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on node %d(p%d) %s:%d len:%zu desc:%p off:%jd mr_key:%lu",
 	  lfs_params->node_id, chunk_phy_id, chunk_offset,
-	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long) *tgt_srv_addr,
 	  dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
 	  len, node->local_desc[0], off, node->mr_key);
 

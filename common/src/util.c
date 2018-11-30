@@ -438,7 +438,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	srv_extents = vmem_sz/extent_sz;
     srv_cnt = vmem_sz/extent_sz/srv_extents;
 
-    printf("Running on node:%d\n", node_id);
+    if (verbose)
+	printf("Running on node:%d\n", node_id);
 
     if (be_verbose) {
 	unsigned int exts = vmem_sz/extent_sz;

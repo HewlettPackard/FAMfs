@@ -54,7 +54,7 @@ static int lf_srv_trigger(LF_SRV_t *priv);
 static void lf_srv_wait(W_POOL_t* srv_pool, LF_SRV_t **servers, N_PARAMS_t *params);
 static int worker_srv_func(W_TYPE_t type, void *arg, int thread_id);
 static int worker_func(W_TYPE_t type, void *params, int thread_id);
-static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_POOL_t* pool, LF_CL_t **lf_clients, uint64_t *done);
+static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_POOL_t* pool, uint64_t *done);
 static void perf_stats_init(PERF_STAT_t *stats);
 static void perf_stats_reduce(PERF_STAT_t *src, PERF_STAT_t *dst, size_t off, MPI_Op op);
 static void perf_stats_print(PERF_STAT_t *stats, size_t off, int mask, const char *msg, uint64_t units);
@@ -251,6 +251,8 @@ int main(int argc, char **argv) {
 			rank, i, part, params->nodelist[i], cl->service, cl->mr_key);
 	}
     }
+    params->lf_clients = lf_all_clients;
+
     if (rank == 0) {
 	printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
 		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
@@ -297,7 +299,7 @@ int main(int argc, char **argv) {
 	case W_T_VERIFY:
 	    phy_stripe = 0;
 	    while (phy_stripe < stripes)
-		do_phy_stripes(&phy_stripe, cmd, params, w_pool, lf_all_clients, &dsize);
+		do_phy_stripes(&phy_stripe, cmd, params, w_pool, &dsize);
 	    dsize *= chunk_sz * data;
 
 	    mask = (cmd == W_T_LOAD)? PERF_STAT_W : PERF_STAT_R;
@@ -313,7 +315,7 @@ int main(int argc, char **argv) {
 	    }
 	    phy_stripe = 0;
 	    while (phy_stripe < stripes)
-		do_phy_stripes(&phy_stripe, cmd, params, w_pool, lf_all_clients, &dsize);
+		do_phy_stripes(&phy_stripe, cmd, params, w_pool, &dsize);
 	    dsize *= chunk_sz * (data + parities);
 
 	    mask = (cmd == W_T_ENCODE ? PERF_STAT_ENC : PERF_STAT_REC) | PERF_STAT_W | PERF_STAT_R;
@@ -369,6 +371,7 @@ int main(int argc, char **argv) {
     /* Wait all jobs */
     rc = pool_exit(w_pool, 0); /* 0: don't cancel */
 
+#if 0
     lf_clients_free(lf_all_clients, node_cnt * srv_cnt);
     for (i = 0; i < workers; i++) {
 	if (params->lf_mr_flags.allocated)
@@ -377,7 +380,7 @@ int main(int argc, char **argv) {
     }
     free(params->stripe_buf);
     params->stripe_buf = NULL;
-
+#endif
 exit_srv_thr:
     pool_exit(w_srv_pool, 0); /* 0: don't cancel */
     for (i = 0; i < srv_cnt; i++) {
@@ -396,6 +399,7 @@ exit_srv_thr:
     else
 	printf("%d: ERROR %d\n", rank, rc);
 
+    /* free params->lf_clients and params->stripe_buf */
     free_lf_params(&params);
     node_exit(rc);
     return rc;
@@ -474,9 +478,9 @@ static int assign_map_chunk(N_CHUNK_t **chunk_p, N_PARAMS_t *params,
 	return 0;
 }
 
-static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_POOL_t* pool,
-    LF_CL_t **all_clients, uint64_t *done)
+static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_POOL_t* pool, uint64_t *done)
 {
+    LF_CL_t	**all_clients = params->lf_clients;
     int		node_cnt = params->node_cnt;
     int		node_id = params->node_id;
     int		workers = params->w_thread_cnt;
