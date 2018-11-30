@@ -399,9 +399,11 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     if (!strcmp(lf_provider_name, "zhpe")) {
 	zhpe_support = is_module_loaded(ZHPE_MODULE_NAME);
 	if (zhpe_support && !lf_mr_local \
-	    && !is_module_loaded(UMMUNOTIFY_MODULE_NAME))
-	    err("zhpe privider requires %s module for local buffer registartion cache!",
+	    && !is_module_loaded(UMMUNOTIFY_MODULE_NAME)) {
+	    fprintf(stderr, "zhpe privider requires %s module for local buffer registartion cache!",
 		UMMUNOTIFY_MODULE_NAME);
+	    goto _free;
+	}
     }
     if (!transfer_len)
 	transfer_len = getval(N_XFER_SZ, NULL);
@@ -431,7 +433,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    nodelist_free(clientlist, client_cnt);
 	    client_cnt = 0;
 	    clientlist = NULL;
-	    err("Ignore clientlist (-c) option on IO node %d of %d", node_id, node_cnt);
+	    fprintf(stderr, "Ignore clientlist (-c) option on IO node %d of %d", node_id, node_cnt);
 	}
     }
     ON_ERROR (node_id < 0, "Cannot find my node in the list (-%c)!", client_cnt?'c':'H');
@@ -480,7 +482,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    goto _free;
 	}
 	if (cmd_trigger > cmdc) {
-	    err("Wrong command trigger:%d - there is no such command!", cmd_trigger);
+	    fprintf(stderr, "Wrong command trigger:%d - there is no such command!", cmd_trigger);
 	    goto _free;
 	}
 
