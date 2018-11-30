@@ -389,8 +389,6 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     if (lf_provider_name == NULL)
 	if ((lf_provider_name = getstr(LF_PROV_NAME)))
 		lf_provider_name = strdup(lf_provider_name);
-    if (!strcmp(lf_provider_name, "zhpe"))
-	zhpe_support = is_module_loaded(ZHPE_MODULE_NAME);
     if (memreg == NULL)
 	if ((memreg = getstr(LF_MR_MODEL)))
 		memreg = strdup(memreg);
@@ -398,6 +396,13 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     lf_mr_basic = strncasecmp(memreg, LF_MR_MODEL_BASIC, strlen(LF_MR_MODEL_BASIC))? 0:1;
     lf_mr_local = strcasecmp(memreg + lf_mr_basic*(strlen(LF_MR_MODEL_BASIC)+1),
 	LF_MR_MODEL_LOCAL)? 0:1;
+    if (!strcmp(lf_provider_name, "zhpe")) {
+	zhpe_support = is_module_loaded(ZHPE_MODULE_NAME);
+	if (zhpe_support && !lf_mr_local \
+	    && !is_module_loaded(UMMUNOTIFY_MODULE_NAME))
+	    err("zhpe privider requires %s module for local buffer registartion cache!",
+		UMMUNOTIFY_MODULE_NAME);
+    }
     if (!transfer_len)
 	transfer_len = getval(N_XFER_SZ, NULL);
     if (io_timeout == 0)

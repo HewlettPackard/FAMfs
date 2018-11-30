@@ -181,7 +181,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     local_desc = (void **) calloc(thread_cnt, sizeof(void*));
 
     /* Register the local buffers */
-    if (params->lf_mr_flags.local || params->lf_mr_flags.zhpe_support) {
+    if (params->lf_mr_flags.local) {
 	local_mr = (struct fid_mr **) malloc(thread_cnt * sizeof(void*));
 	ASSERT(local_mr);
 	for (i = 0; i < thread_cnt; i++) {
