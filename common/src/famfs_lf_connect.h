@@ -20,7 +20,7 @@
 
 #include "famfs_env.h"
 
-#define part2fam_id(node_id, partitions, part) (node_id*partitions + part + 1)
+#define part2fam_id(node_id, partitions, part) (node_id*partitions + part)
 #if 1 /* TODO: Remove me */
 #define node2lf_mr_pkey(node_id, node_servers, partition) (node_id*node_servers + partition + 1)
 #else
