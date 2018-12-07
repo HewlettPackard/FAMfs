@@ -39,7 +39,8 @@
         }                               \
     } while (0);
 
-#define err(str, ...) fprintf(stderr, #str ": %m\n", ## __VA_ARGS__)
+#define err(str, ...) fprintf(stderr, #str "\n", ## __VA_ARGS__)
+#define ioerr(str, ...) fprintf(stderr, #str ": %m\n", ## __VA_ARGS__)
 
 
 #endif /* ifndef FAMFS_ERROR_H */

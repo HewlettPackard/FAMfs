@@ -390,7 +390,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 	/* TODO: Propagate the error to a client */
 	return -ENOSPC;
     }
-    ASSERT(chunk->lf_client_idx < lfs_params->node_cnt * lfs_params->node_servers);
+    ASSERT(chunk->lf_client_idx < lfs_params->fam_cnt * lfs_params->node_servers);
     node = lfs_params->lf_clients[chunk->lf_client_idx];
 
     /* Do RMA synchronous write */
@@ -402,20 +402,20 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     //int blocks = len / transfer_sz;
     ASSERT(chunk_offset + len <= unifycr_chunk_size);
     ASSERT(dst_node == node->node_id);
-    ASSERT(dst_node < lfs_params->node_cnt);
+    ASSERT(dst_node < lfs_params->fam_cnt);
     off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
     //for (i = 0; i < blocks; i++) {
-    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on node %d(p%d) %s:%d len:%zu desc:%p off:%jd mr_key:%lu",
+    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM node %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
 	  lfs_params->node_id, chunk_phy_id, chunk_offset,
 	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long) *tgt_srv_addr,
-	  dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
+	  dst_node, node->partition,
 	  len, node->local_desc[0], off, node->mr_key);
 
 	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,
 				node->mr_key, (void*)buf /* NULL */),
-			"%d (%s): fi_write failed on dest: %s (p%d)",
+			"%d (%s): fi_write failed on FAM node %d(p%d)",
 			lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id],
-			lfs_params->nodelist[dst_node], fam_stripe->partition);
+			dst_node, fam_stripe->partition);
 	//off += transfer_sz;
 	//buf += transfer_sz;
 	chunk->w_event++;
@@ -423,17 +423,16 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 
     rc = fi_cntr_wait(cntr, chunk->w_event, 10000);
     if (rc == -FI_ETIMEDOUT) {
-        err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on node %d(p%d) %s:%d len:%zu off:%jd",
+        err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on node %d(p%d) len:%zu off:%jd",
 	    lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id], chunk_phy_id,
 	    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-	    dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
-	    len, off);
+	    dst_node, node->partition, len, off);
     } else if (rc) {
-	err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on node %d(p%d) %s:%d cnt:%lu/%lu",
+	err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on node %d(p%d) cnt:%lu/%lu",
 		lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id], chunk_phy_id,
 		fi_cntr_readerr(cntr), rc,
 		fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-		dst_node, node->partition, lfs_params->nodelist[dst_node], node->service,
+		dst_node, node->partition,
 		fi_cntr_read(cntr), chunk->w_event);
 	ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
     }

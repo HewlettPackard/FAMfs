@@ -20,7 +20,7 @@
 
 #include "famfs_env.h"
 
-#define part2fam_id(node_id, partitions, part) (node_id*partitions + part)
+#define to_lf_client_id(node, part_count, part) (node*part_count + part)
 #if 1 /* TODO: Remove me */
 #define node2lf_mr_pkey(node_id, node_servers, partition) (node_id*node_servers + partition + 1)
 #else
@@ -28,6 +28,13 @@
 #define node2lf_mr_pkey(node_id, node_servers, partition) (0)
 #endif
 #define node2service(base, node_id, part_id) (base + part_id + node_id*100)
+
+typedef struct fam_map_ {
+	int	ionode_cnt;		/* IO node count */
+	int	total_fam_cnt;		/* Total FAM count */
+	int	*node_fams;		/* [node]: <number of FAMs> */
+	unsigned long long **fam_ids;	/* [node]->[fam] = <FAM Id> */
+} FAM_MAP_t;
 
 typedef struct lf_mr_mode_ {
 	unsigned int scalable:1;
@@ -42,10 +49,13 @@ typedef struct lf_mr_mode_ {
 
 /* libfabric client data */
 typedef struct lf_cl_ {
-	struct fi_info		*fi;
+	/* Index for including this in a top structure */
+	int			node_id;	/* node ID for FAM emulation */
+//	struct fi_info		*fi;
 	struct fid_fabric	*fabric;
 	struct fid_domain	*domain;
-	struct fid_eq		*eq;		/* event queues associated with control operations */
+//	struct fid_eq		*eq;		/* event queues associated with control operations */
+
 	struct fid_ep		*ep;		/* scalable endpoint */
 	struct fid_av		*av;
 	struct fid_mr		*mr;		/* memory region */
@@ -65,8 +75,10 @@ typedef struct lf_cl_ {
 	void			**local_desc;	/* ocal buffer descriptors */
 
 	int			service;	/* remote port number */
-	unsigned int		partition;	/* partition number served on this node */
-	int			node_id;	/* remote node Id */
+	//int			chunk;		/* stripe chunk index: 0:D0... P0... */
+	unsigned int		partition;	/* fam (or partition) number served on this node */
+	int			free_domain_fl;	/* flag: free the domain */
+	unsigned long long	fam_id;		/* FAM region ID */
 	int			size;		/* Compute: # of workers; IO node: # of contexts or zero */
 	uint64_t		dst_virt_addr;	/* remote buffer virtual address */
 } LF_CL_t;
@@ -81,9 +93,11 @@ typedef struct n_params_ {
 	off_t	    part_sz;		/* partition size if srv_extents>0 else vmem_sz */
 	uint64_t    cmd_timeout_ms;	/* single command execution timeout, ms */
 	uint64_t    io_timeout_ms;	/* I/O block timeout, ms */
-	int	    node_cnt;		/* Number of nodes */
-	int	    client_cnt;		/* Number of nodes */
+//	int	    ionode_cnt;		/* Number of IO nodes */
+	int	    client_cnt;		/* Number of LF client nodes */
+	int	    node_cnt;		/* nodelist size */
 	int	    node_id;		/* My node index in clientlist if any otherwise in nodelist */
+	int	    nchunks;		/* Number of chunks in a stripe */
 	int	    parities;		/* Number of parity chunks */
 	int	    recover;		/* Number of data chunks to recover */
 	int	    w_thread_cnt;	/* Size of working thread pool */
@@ -92,8 +106,9 @@ typedef struct n_params_ {
 	LF_MR_MODE_t lf_mr_flags;	/* libfabric: 1 - use scalable memory registration model */
 	int	    verbose;		/* debug flag */
 	int	    set_affinity;	/* set CPU affinity to workers and CQ */
-	char	    *prov_name;		/* libfabric provider name */
+	char	    *lf_fabric;		/* libfabric fabric */
 	char	    *lf_domain;		/* libfabric domain */
+	char	    *prov_name;		/* libfabric provider name */
 	unsigned int	srv_extents;	/* number of extents served by one LF SRV */
 	unsigned int	node_servers;	/* number of LF servers per node */
 
@@ -103,6 +118,9 @@ typedef struct n_params_ {
 
 	W_TYPE_t	cmdv[ION_CMD_MAX]; /* parsed commands */
 	int		cmdc;		/* parsed command count */
+
+	FAM_MAP_t	*fam_map;	/* Node FAM IDs */
+	int		fam_cnt;	/* IO node count */
 
 	/* Per node partition array, look at to_lf_client_id() for the index */
 	LF_CL_t		**lf_clients;	/* LF client per node, partition */
@@ -123,12 +141,8 @@ void lf_client_free(LF_CL_t *client);
 int arg_parser(int argc, char **argv, int verbose, int client_rank_size, N_PARAMS_t **params_p);
 void free_lf_params(N_PARAMS_t **params_p);
 
-static inline int to_lf_client_id(int node, unsigned int part_count, unsigned int part) {
-    return node * part_count + part;
-}
-
 static inline void lf_clients_free(LF_CL_t **all_clients, int count) {
-    for (int i = 0; i < count; i++)
+    for (int i = count-1; i >= 0; i--)
 	lf_client_free(all_clients[i]);
     free(all_clients);
 }
@@ -136,6 +150,21 @@ static inline void lf_clients_free(LF_CL_t **all_clients, int count) {
 static inline uint64_t get_batch_stripes(uint64_t stripes, int servers) {
     uint64_t batch = stripes / (unsigned int)servers;
     return (batch == 0)? 1:batch;
+}
+
+static inline unsigned long long fam_id_by_index(FAM_MAP_t *m, int index)
+{
+    if (m) {
+	unsigned long long *ids;
+	int ionode, i, idx = 0;
+
+	ids = m->fam_ids[0];
+	for (ionode = 0; ionode < m->ionode_cnt; ionode++, ids++)
+	    for (i = 0; i < m->node_fams[ionode]; i++, idx++)
+		if (idx == index)
+		    return ids[i];
+    }
+    return 0ULL;
 }
 
 #endif /* FAMFS_LF_CONNECT_H */

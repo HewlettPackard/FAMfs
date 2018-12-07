@@ -23,7 +23,7 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
     LF_CL_t **lf_all_clients;
     char **stripe_buf = NULL;
     int i, part, verbose;
-    int node_cnt, srv_cnt, psize, rc;
+    int nchunks, fam_cnt, srv_cnt, psize, rc;
 
     verbose = (rank == 0);
     if ((rc = arg_parser(argc, argv, verbose, LFS_MAXCLIENTS, params_p))) {
@@ -34,7 +34,8 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
     params = *params_p;
     ASSERT(params);
     params->w_thread_cnt = 1;
-    node_cnt = params->node_cnt;
+    nchunks = params->nchunks;
+    fam_cnt = params->fam_cnt;
     srv_cnt = params->node_servers;
 
     /* Pre-allocate LF client stripe buffer */
@@ -44,18 +45,19 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
     for (i = 0; i < params->w_thread_cnt; i++) {
 	/* Stripe I/O buffer */
 	ON_ERROR(posix_memalign((void **)&stripe_buf[i], psize,
-				params->chunk_sz * node_cnt),
+				params->chunk_sz * nchunks),
 		"stripe buffer memory alloc failed");
 	if (params->lf_mr_flags.allocated)
-	    mlock(stripe_buf[i], params->chunk_sz * params->node_cnt);
+	    mlock(stripe_buf[i], params->chunk_sz * nchunks);
     }
     params->stripe_buf = stripe_buf;
 
     /* Allocate one LF_CL_t structure per FAM partition */
-    lf_all_clients = (LF_CL_t **)malloc(node_cnt * srv_cnt * sizeof(void*));
+    lf_all_clients = (LF_CL_t **)malloc(fam_cnt * srv_cnt * sizeof(void*));
     ASSERT(lf_all_clients);
+    params->lf_clients = lf_all_clients;
     /* Setup fabric for each node */
-    for (i = 0; i < node_cnt; i++) {
+    for (i = 0; i < fam_cnt; i++) {
 	for (part = 0; part < srv_cnt; part++) {
 	    LF_CL_t *cl;
 	    int lf_client_idx = to_lf_client_id(i, srv_cnt, part);
@@ -63,6 +65,7 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 	    cl = (LF_CL_t *) malloc(sizeof(LF_CL_t));
 	    ASSERT(cl);
 	    cl->node_id = i;
+	    cl->fam_id = fam_id_by_index(params->fam_map, i);
 	    cl->partition = (unsigned int)part;
 #if 0 /* TODO: Exchange prov_keys & virt_addr */
 	    if (params->lf_mr_flags.prov_key)
@@ -78,6 +81,15 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 	    cl->mr_key = 0;
 	    cl->dst_virt_addr = 0;
 #endif
+	    if (!params->fam_map || (i == 0 && part == 0)) {
+		/* Join the fabric and domain */
+		cl->fabric = NULL;
+	    } else {
+		LF_CL_t *fab = lf_all_clients[0];
+		cl->fabric = fab->fabric;
+		cl->domain = fab->domain;
+		cl->av = fab->av;
+	    }
 
 	    /* Create tx contexts */
 	    ON_ERROR( lf_client_init(cl, params),
@@ -85,8 +97,8 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 
 	    lf_all_clients[lf_client_idx] = cl;
 	    if (params->verbose)
-		printf("%d CL attached to node %d(p%d) on %s:%5d mr_key:%lu\n",
-			rank, i, part, params->nodelist[i], cl->service, cl->mr_key);
+		printf("%d %s:%5d CL attached to FAM node %d(p%d) mr_key:%lu\n",
+			rank, params->nodelist[params->node_id], cl->service, i, part, cl->mr_key);
 	}
     }
     if (verbose) {
@@ -101,7 +113,6 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 	printf("\n");
     }
 
-    params->lf_clients = lf_all_clients;
     *params_p = params;
     return 0;
 }
@@ -113,7 +124,7 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
     LFS_CTX_t *lfs_ctx_p;
     N_CHUNK_t *chunk, *chunks = NULL;
     char *argv[LFS_MAXARGS];
-    int i, size, argc;
+    int i, nchunks, argc;
     int rc = 1; /* OOM error */
 
     lfs_ctx_p = (LFS_CTX_t *)malloc(sizeof(LFS_CTX_t));
@@ -128,26 +139,26 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
     if (stripe == NULL)
 	goto _free;
 
-    size = lfs_params->node_cnt;
+    nchunks = lfs_params->nchunks;
 #if 0
     /* stripe buffer for libfabric I/O */
     posix_memalign((void **)&stripe->lf_buffer, getpagesize(),
-		   lfs_params->chunk_sz * size);
+		   lfs_params->chunk_sz * nchunks);
     if (stripe->lf_buffer == NULL)
 	goto _free;
 #endif
     /* array of chunks */
-    chunks = (N_CHUNK_t *)malloc(size * sizeof(N_CHUNK_t));
+    chunks = (N_CHUNK_t *)malloc(nchunks * sizeof(N_CHUNK_t));
     if (chunks == NULL)
 	goto _free;
 
     chunk = chunks;
-    for (i = 0; i < size; i++, chunk++) {
+    for (i = 0; i < nchunks; i++, chunk++) {
 	chunk->r_event = 0;
 	chunk->w_event = 0;
     }
     stripe->p	= lfs_params->parities;
-    stripe->d	= lfs_params->node_cnt - lfs_params->parities;
+    stripe->d	= lfs_params->nchunks - lfs_params->parities;
     stripe->extent_stipes	= lfs_params->extent_sz / lfs_params->chunk_sz;
     stripe->srv_extents		= lfs_params->srv_extents;
     stripe->part_count		= lfs_params->node_servers;

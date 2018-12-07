@@ -35,6 +35,7 @@
 #define SRV_WK_TRIGGER	1
 
 static int rank, rank_size;
+static W_POOL_t *w_srv_pool = NULL;	/* FAM target emulation thread pool */
 static char *fam_buf = NULL; 		/* FAM target RAM buffer */
 
 static const char *PERF_NAME[] = { "Enc", "Rec", "Write", "Read", 0 };
@@ -61,73 +62,14 @@ static void perf_stats_print(PERF_STAT_t *stats, size_t off, int mask, const cha
 static void perf_stats_print_bw(PERF_STAT_t *stats, int mask, const char *msg, uint64_t tu, uint64_t bu);
 
 
-static void node_exit(int rc) {
-	if (rc) {
-		sleep(10);
-		MPI_Abort(MPI_COMM_WORLD, (rc>0)?rc:-rc);
-	}
-	MPI_Finalize();
-	if (rank == 0) {
-		exit(rc);
-	} else if (rc != 0) {
-		{ sleep(10); } while (1);
-	ASSERT(0); /* Should not reach this */
-	}
-}
+static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
+{
+    LF_SRV_t **lf_servers;
+    int srv_cnt, node_id, lf_client_idx;
+    int i, part, rc;
 
-static void usage(const char *name) {
-    if (rank == 0)
-	ion_usage(name);
-    node_exit(1);
-}
-
-int main(int argc, char **argv) {
-    PERF_STAT_t		stats_agg_bw;
-    struct ec_perf	node_stat;
-    LF_CL_t		**lf_all_clients = NULL;
-    LF_SRV_t		**lf_servers = NULL;
-    W_POOL_t		*w_pool, *w_srv_pool = NULL;
-    N_PARAMS_t		*params = NULL;
-    size_t		chunk_sz;
-    char		**stripe_buf = NULL;
-    int			i, k, node_cnt, data, parities, node_id, srv_cnt, rc;
-    int			initialized = 0, provided;
-    int			psize, workers, part, lf_client_idx;
-    uint64_t		stripes, node_stat_max, node_stat_agg;
-
-
-    ASSERT(sizeof(size_t) == 8);
-    ASSERT(sizeof(PERF_STAT_t) == 4*sizeof(struct ec_perf));
-
-    rc = MPI_Initialized(&initialized);
-    if (rc == MPI_SUCCESS) {
-	if (!initialized)
-	    rc = MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
-	else
-	    rc = MPI_Query_thread(&provided);
-    }
-    if (rc != MPI_SUCCESS || provided < MPI_THREAD_MULTIPLE) {
-	printf("MPI_Init failure\n");
-	exit(1);
-    }
-    MPI_Comm_size(MPI_COMM_WORLD, &rank_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    /* Parse command */
-    if ((rc = arg_parser(argc, argv, (rank == 0), -1, &params))) {
-	err("Error parsing command arguments");
-	usage(argv[0]);
-    }
-    ON_ERROR( pthread_spin_init(&pstats_lock, PTHREAD_PROCESS_SHARED), "pthr spin init");
-    node_cnt = params->node_cnt;
-    parities = params->parities;
-    data = node_cnt - parities;
     node_id = params->node_id;
     srv_cnt = params->node_servers;
-    chunk_sz = params->chunk_sz;
-    stripes = params->vmem_sz / chunk_sz;
-
-    /* ION FAM target */
 
     if (params->part_mreg == 0)
 	ON_ERROR(posix_memalign((void **)&fam_buf, getpagesize(), params->vmem_sz), "srv memory alloc failed");
@@ -144,6 +86,7 @@ int main(int argc, char **argv) {
 	lf_servers[i]->virt_addr = NULL;
 	cl = (LF_CL_t*) calloc(1, sizeof(LF_CL_t));
 	cl->partition = i;
+	//cl->fam_id = fam_id_by_index(params->fam_map, i);
 	cl->service = node2service(params->lf_port, node_id, i);
 	if ( params->set_affinity)
 	    alloc_affinity(&cl->cq_affinity, srv_cnt, i + 1);
@@ -153,7 +96,7 @@ int main(int argc, char **argv) {
     w_srv_pool = pool_init(srv_cnt, &worker_srv_func, lf_servers[0]->lf_client->cq_affinity);
     if (w_srv_pool == NULL) {
 	err("Error initializing LF server threads");
-	node_exit(1);
+	return 1;
     }
     for (i = 0; i < srv_cnt; i++) {
 	ON_ERROR( pool_add_work(w_srv_pool, SRV_WK_INIT, lf_servers[i]),
@@ -163,8 +106,8 @@ int main(int argc, char **argv) {
     /* Wait for all LF servers started */
     rc = pool_wait_works_done(w_srv_pool, LFSRV_START_TMO);
     if (rc) {
-	err("LF SRV start timeout on %s", params->nodelist[params->node_id]);
-	node_exit(1);
+	err("LF SRV start timeout on %s", params->nodelist[node_id]);
+	return 1;
     }
     if (rank == 0) {
 	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
@@ -201,6 +144,87 @@ int main(int argc, char **argv) {
 		 "MPI_Allgather");
     }
 
+    *lf_servers_p = lf_servers;
+    return 0;
+}
+
+static void node_exit(int rc) {
+	if (rc) {
+		sleep(10);
+		MPI_Abort(MPI_COMM_WORLD, (rc>0)?rc:-rc);
+	}
+	MPI_Finalize();
+	if (rank == 0) {
+		exit(rc);
+	} else if (rc != 0) {
+		{ sleep(10); } while (1);
+	ASSERT(0); /* Should not reach this */
+	}
+}
+
+static void usage(const char *name) {
+    if (rank == 0)
+	ion_usage(name);
+    node_exit(1);
+}
+
+int main(int argc, char **argv) {
+    PERF_STAT_t		stats_agg_bw;
+    struct ec_perf	node_stat;
+    LF_CL_t		**lf_all_clients = NULL;
+    LF_SRV_t		**lf_servers = NULL;
+    W_POOL_t		*w_pool;
+    N_PARAMS_t		*params = NULL;
+    size_t		chunk_sz;
+    char		**stripe_buf = NULL;
+    int			i, k, fam_cnt, node_id, srv_cnt, rc;
+    int			nchunks, data, parities;
+    int			initialized = 0, provided;
+    int			psize, workers, part, lf_client_idx;
+    uint64_t		stripes, node_stat_max, node_stat_agg;
+
+
+    ASSERT(sizeof(size_t) == 8);
+    ASSERT(sizeof(PERF_STAT_t) == 4*sizeof(struct ec_perf));
+
+    rc = MPI_Initialized(&initialized);
+    if (rc == MPI_SUCCESS) {
+	if (!initialized)
+	    rc = MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+	else
+	    rc = MPI_Query_thread(&provided);
+    }
+    if (rc != MPI_SUCCESS || provided < MPI_THREAD_MULTIPLE) {
+	printf("MPI_Init failure\n");
+	exit(1);
+    }
+    MPI_Comm_size(MPI_COMM_WORLD, &rank_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    /* Parse command */
+    if ((rc = arg_parser(argc, argv, (rank == 0), -1, &params))) {
+	err("Error parsing command arguments");
+	usage(argv[0]);
+    }
+    ON_ERROR( pthread_spin_init(&pstats_lock, PTHREAD_PROCESS_SHARED), "pthr spin init");
+    fam_cnt = params->fam_cnt;
+    nchunks = params->nchunks;
+    parities = params->parities;
+    data = nchunks - parities;
+    node_id = params->node_id;
+    srv_cnt = params->node_servers;
+    chunk_sz = params->chunk_sz;
+    stripes = params->vmem_sz / chunk_sz;
+
+    /* Emulate ION FAMs with libfabric targets */
+    if (!params->fam_map) {
+	rc = lf_target_init(&lf_servers, params);
+	if (rc) {
+	    err("Can't start FAM emulation target on %s",
+		params->nodelist[node_id]);
+	    node_exit(1);
+	}
+    }
 
     /* Standalone: FAM clients */
 
@@ -212,18 +236,18 @@ int main(int argc, char **argv) {
     for (i = 0; i < workers; i++) {
 	/* Stripe I/O buffer */
 	ON_ERROR(posix_memalign((void **)&stripe_buf[i], psize,
-				chunk_sz * node_cnt),
+				chunk_sz * nchunks),
 		 "stripe buffer memory alloc failed");
 	if (params->lf_mr_flags.allocated)
-	    mlock(stripe_buf[i], chunk_sz * node_cnt);
+	    mlock(stripe_buf[i], chunk_sz * nchunks);
     }
     params->stripe_buf = stripe_buf;
 
-    /* Allocate one LF_CL_t structure per FAM partition */
-    lf_all_clients = (LF_CL_t **)malloc(node_cnt * srv_cnt * sizeof(void*));
+    /* Allocate one LF_CL_t structure per FAM */
+    lf_all_clients = (LF_CL_t **)malloc(fam_cnt * srv_cnt * sizeof(void*));
     ASSERT(lf_all_clients);
     /* Setup fabric for each node */
-    for (i = 0; i < node_cnt; i++) {
+    for (i = 0; i < fam_cnt; i++) {
 	for (part = 0; part < srv_cnt; part++) {
 	    LF_CL_t *cl;
 	    lf_client_idx = to_lf_client_id(i, srv_cnt, part);
@@ -232,8 +256,20 @@ int main(int argc, char **argv) {
 	    ASSERT(cl);
 	    cl->node_id = i;
 	    cl->partition = (unsigned int)part;
+	    cl->fam_id = fam_id_by_index(params->fam_map, i);
 	    if (params->lf_mr_flags.prov_key)
 		cl->mr_key = params->mr_prov_keys[lf_client_idx];
+
+	    if (!params->fam_map || (i == 0 && part == 0)) {
+		/* Join the fabric and domain */
+		cl->fabric = NULL;
+	    } else {
+		LF_CL_t *fab = lf_all_clients[0];
+		cl->fabric = fab->fabric;
+		cl->domain = fab->domain;
+		cl->av = fab->av;
+	    }
+
 	    /* FI_MR_VIRT_ADDR? */
 	    if (params->lf_mr_flags.virt_addr) {
 		if (params->part_mreg == 0)
@@ -246,9 +282,14 @@ int main(int argc, char **argv) {
 	    ON_ERROR( lf_client_init(cl, params), "Error in libfabric client init");
 
 	    lf_all_clients[lf_client_idx] = cl;
-	    if (params->verbose)
-		printf("%d CL attached to node %d(p%d) on %s:%5d mr_key:%lu\n",
-			rank, i, part, params->nodelist[i], cl->service, cl->mr_key);
+	    if (params->verbose) {
+		if (params->fam_map)
+		    printf("%d CL attached to FAM node %d(p%d) mr_key:%lu\n",
+			   rank, i, part, cl->mr_key);
+		else
+		    printf("%d CL attached to node %d(p%d) on %s:%5d mr_key:%lu\n",
+			   rank, i, part, params->nodelist[i], cl->service, cl->mr_key);
+	    }
 	}
     }
     params->lf_clients = lf_all_clients;
@@ -308,15 +349,15 @@ int main(int argc, char **argv) {
 	case W_T_DECODE:
 	    if (params->parities > 2) {
 		u8 err_ix_list[16];
-		enc_tbl = make_encode_matrix(node_cnt - params->parities, params->parities, &rs_a);
+		enc_tbl = make_encode_matrix(data, params->parities, &rs_a);
 		for (i = 0; i < params->recover; i++)
 		    err_ix_list[i] = i;
-		dec_tbl = make_decode_matrix(node_cnt - params->parities, params->recover, err_ix_list, (u8 *)rs_a);
+		dec_tbl = make_decode_matrix(data, params->recover, err_ix_list, (u8 *)rs_a);
 	    }
 	    phy_stripe = 0;
 	    while (phy_stripe < stripes)
 		do_phy_stripes(&phy_stripe, cmd, params, w_pool, &dsize);
-	    dsize *= chunk_sz * (data + parities);
+	    dsize *= chunk_sz * nchunks;
 
 	    mask = (cmd == W_T_ENCODE ? PERF_STAT_ENC : PERF_STAT_REC) | PERF_STAT_W | PERF_STAT_R;
 	    if (params->parities > 2) {
@@ -334,8 +375,8 @@ int main(int argc, char **argv) {
 	/* Wait for all jobs done */
 	rc = pool_wait_works_done(w_pool, params->cmd_timeout_ms);
 	if (rc) {
-		fprintf(stderr, "Command timeout on %s\n",
-			params->nodelist[params->node_id]);
+		err("Command timeout on %s",
+		    params->nodelist[params->node_id]);
 		node_exit(1);
 	}
 	ec_perf_add(&node_stat, dsize);
@@ -359,7 +400,7 @@ int main(int argc, char **argv) {
 	    dsize = ((mask&PERF_STAT_W) ? stats_agg_bw.lw_bw.data:0) +
 		    ((mask&PERF_STAT_R) ? stats_agg_bw.lr_bw.data:0);
 	    if ( node_stat_agg != dsize ) {
-		fprintf(stderr, "Data accounting error, actual:%lu submitted:%lu bytes\n",
+		err("Data accounting error, actual:%lu submitted:%lu bytes",
 			dsize, node_stat_agg);
 		node_exit(1);
 	    }
@@ -371,29 +412,21 @@ int main(int argc, char **argv) {
     /* Wait all jobs */
     rc = pool_exit(w_pool, 0); /* 0: don't cancel */
 
-#if 0
-    lf_clients_free(lf_all_clients, node_cnt * srv_cnt);
-    for (i = 0; i < workers; i++) {
-	if (params->lf_mr_flags.allocated)
-	    munlock(params->stripe_buf[i], chunk_sz * node_cnt);
-	free(params->stripe_buf[i]);
-    }
-    free(params->stripe_buf);
-    params->stripe_buf = NULL;
-#endif
 exit_srv_thr:
-    pool_exit(w_srv_pool, 0); /* 0: don't cancel */
-    for (i = 0; i < srv_cnt; i++) {
-	LF_CL_t *cl = lf_servers[i]->lf_client;
+    if (!params->fam_map) {
+	pool_exit(w_srv_pool, 0); /* 0: don't cancel */
+	for (i = 0; i < srv_cnt; i++) {
+	    LF_CL_t *cl = lf_servers[i]->lf_client;
 
-	lf_client_free(cl);
-	free(lf_servers[i]->virt_addr);
-    	free(lf_servers[i]);
+	    lf_client_free(cl);
+	    free(lf_servers[i]->virt_addr);
+    	    free(lf_servers[i]);
+	}
+	free(fam_buf);
+	free(lf_servers);
+
+	MPI_Barrier(MPI_COMM_WORLD);
     }
-    free(fam_buf);
-    free(lf_servers);
-
-    MPI_Barrier(MPI_COMM_WORLD);
     if (rc == 0)
 	printf("%d: SUCCESS!!!\n", rank);
     else
@@ -464,15 +497,13 @@ static int assign_map_chunk(N_CHUNK_t **chunk_p, N_PARAMS_t *params,
     int extent_n, int chunk_n)
 {
 	N_CHUNK_t	*chunk;
-	int		node_cnt;
 
-	node_cnt = params->node_cnt;
 	chunk = (N_CHUNK_t *)calloc(1, sizeof(N_CHUNK_t));
 	if(!chunk)
 		return 1;
 
 	chunk->node = chunk_n;
-	map_stripe_chunk(chunk, extent_n, node_cnt, params->parities);
+	map_stripe_chunk(chunk, extent_n, params->nchunks, params->parities);
 
 	*chunk_p = chunk;
 	return 0;
@@ -481,8 +512,10 @@ static int assign_map_chunk(N_CHUNK_t **chunk_p, N_PARAMS_t *params,
 static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_POOL_t* pool, uint64_t *done)
 {
     LF_CL_t	**all_clients = params->lf_clients;
-    int		node_cnt = params->node_cnt;
-    int		node_id = params->node_id;
+    int		node_cnt = params->node_cnt;	/* worker's node count */
+    int		node_id = params->node_id;	/* my node */
+    int		nchunks = params->nchunks;
+    int		fam_cnt = params->fam_cnt;	/* FAM count */
     int		workers = params->w_thread_cnt;
     uint64_t	stripes = params->vmem_sz / params->chunk_sz;
     uint64_t	stripe0 = *stripe;
@@ -491,6 +524,7 @@ static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_
     unsigned int srv_cnt = params->node_servers;
     unsigned int tmo;
     int		j;
+    int		fam_idx = 0;
 
     /* Queuing timeout */
     tmo = params->cmd_timeout_ms / 1000U;
@@ -535,9 +569,9 @@ static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_
 		ASSERT(priv);
 		priv->params = params;
 		priv->thr_id = -1; /* not set */
-		priv->chunks = (N_CHUNK_t **) malloc(node_cnt * sizeof(void*));
+		priv->chunks = (N_CHUNK_t **) malloc(nchunks * sizeof(void*));
 		/* Allocate the array (per node) of LF client context references */
-		priv->lf_clients = (LF_CL_t **) calloc(node_cnt, sizeof(void*));
+		priv->lf_clients = (LF_CL_t **) calloc(nchunks, sizeof(void*));
 		ASSERT(priv->chunks && priv->lf_clients);
 		partition = extent_to_part(e, params->srv_extents);
 
@@ -549,8 +583,11 @@ static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_
                 perf_stats_init(&priv->perf_stat);
 
 		/* Setup fabric for extent on each node */
-		for (n = 0; n < node_cnt; n++) {
-			int lf_client_idx = to_lf_client_id(n, srv_cnt, partition);
+		for (n = 0; n < nchunks; n++) {
+			/* TODO: Fix FAM allocation */
+			int lf_client_idx = to_lf_client_id(fam_idx++, srv_cnt, partition);
+			if (fam_idx == fam_cnt)
+				fam_idx = 0;
 
 			priv->lf_clients[n] = all_clients[lf_client_idx];
 			ASSERT(partition == priv->lf_clients[n]->partition);
@@ -575,7 +612,7 @@ static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_
 
 		/* Queue job */
 		if (params->verbose) {
-			printf("%s: add_work %s in extent %d for stripes %lu..%lu\n",
+			printf("%s: add_work %s in slab %d for stripes %lu..%lu\n",
 				params->nodelist[node_id], cmd2str(op), e, start, start+j_count-1);
 		}
 		{
@@ -625,7 +662,7 @@ static void stripe_io_counter_clear(W_PRIVATE_t *priv, enum cntr_op_ op)
     int			i, thread_id;
 
     thread_id = priv->thr_id;
-    for (i = 0; i < params->node_cnt; i++) {
+    for (i = 0; i < params->nchunks; i++) {
     	LF_CL_t		*node = priv->lf_clients[i];
 	N_CHUNK_t	*chunk = priv->chunks[i];
 	struct fid_cntr	*cntr;
@@ -649,7 +686,7 @@ static void stripe_io_counter_clear(W_PRIVATE_t *priv, enum cntr_op_ op)
     int ms_sleep = 10000;
     do {
 	c = 0;
-	for (i = 0; i < params->node_cnt; i++) {
+	for (i = 0; i < params->nchunks; i++) {
     	    LF_CL_t *node = priv->lf_clients[i];
 	    struct fid_cntr *cntr = NULL;
 
@@ -680,7 +717,7 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
     int			i, thread_id, rc;
 
     thread_id = priv->thr_id;
-    for (i = 0; i < params->node_cnt; i++) {
+    for (i = 0; i < params->nchunks; i++) {
     	LF_CL_t		*node = priv->lf_clients[i];
 	N_CHUNK_t	*chunk = priv->chunks[i];
 	struct fid_cntr	*cntr;
@@ -703,20 +740,20 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 
 	rc = fi_cntr_wait(cntr, *event, params->io_timeout_ms);
 	if (rc == -FI_ETIMEDOUT) {
-		printf("%d/%d: Timeout on %s in extent %lu (p%d) node %d cnt:%lu/%lu\n",
+		printf("%d/%d: Timeout on %s in extent %lu on FAM node %d(p%d) - cnt:%lu/%lu\n",
 			rank, thread_id, cntr_op_to_str(op), priv->bunch.extent,
-			node->partition,
-			i, fi_cntr_read(cntr), *event);
+			node->node_id, node->partition,
+			fi_cntr_read(cntr), *event);
 		return 1;
 #if 0
 	} else if (rc == -FI_EAVAIL) { /* 259 */
 		printf("FI_EAVAIL on %s\n", params->nodelist[chunk_n]);
 #endif
 	} else if (rc) {
-		printf("%d/%d: %lu %s error(s):%d on %s extent %lu (p%d) cnt:%lu/%lu\n",
+		printf("%d/%d: %lu %s error(s):%d in %s extent %lu on FAM node %d(p%d) - cnt:%lu/%lu\n",
 			rank, thread_id, fi_cntr_readerr(cntr), cntr_op_to_str(op),
 			rc, params->nodelist[i],
-			priv->bunch.extent, node->partition,
+			priv->bunch.extent, node->node_id, node->partition,
 			fi_cntr_read(cntr), *event);
 		return 1;
 	}
@@ -755,11 +792,11 @@ static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
     if (params->verbose) {
 	ALLOCA_CHUNK_PR_BUF(pr_buf);
 
-	printf("will write %d blocks of %lu bytes to %s chunk of stripe %lu on %s p%d @%p"
+	printf("will write %d blocks of %lu bytes to %s chunk of stripe %lu in FAM node %d(p%d) @%p"
 	       " desc:%p mr_key:%lu\n",
 		blocks, transfer_sz,
 		pr_chunk(pr_buf, chunk->data, chunk->parity), stripe,
-		params->nodelist[chunk_n], node->partition, (void*)off,
+		node->node_id, node->partition, (void*)off,
 		node->local_desc[thread_id], node->mr_key);
     }
 
@@ -767,8 +804,8 @@ static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
     for (ii = 0; ii < blocks; ii++) {
 	ON_FI_ERROR(fi_write(tx_ep, buf, transfer_sz, node->local_desc[thread_id], *tgt_srv_addr, off,
 			     node->mr_key, (void*)buf /* NULL */),
-		    "%d: block:%d fi_write failed on %s (p%d)",
-		    rank, ii, params->nodelist[chunk_n], node->partition);
+		    "%d: block:%d fi_write failed on FAM node %d(p%d)",
+		    rank, ii, node->node_id, node->partition);
 	off += transfer_sz;
 	buf += transfer_sz;
 	chunk->w_event++;
@@ -807,17 +844,18 @@ static int read_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
     if (params->verbose) {
 	ALLOCA_CHUNK_PR_BUF(pr_buf);
 
-	printf("will read %d blocks of %lu bytes from %s chunk of stripe %lu on %s p%d @%ld\n",
+	printf("will read %d blocks of %lu bytes from %s chunk of stripe %lu on FAM node %d(p%d) @%ld\n",
 		blocks, transfer_sz,
 		pr_chunk(pr_buf, chunk->data, chunk->parity), stripe,
-		params->nodelist[chunk_n], node->partition, off);
+		node->node_id, node->partition, off);
     }
 
     // Do RMA
     for (ii = 0; ii < blocks; ii++) {
 	ON_FI_ERROR(fi_read(tx_ep, buf, transfer_sz, node->local_desc[thread_id], *tgt_srv_addr, off,
 			    node->mr_key, (void*)buf /* NULL */),
-		    "fi_read failed");
+		    "fi_read failed on FAM node %d(p%d)",
+		    node->node_id, node->partition);
 	off += transfer_sz;
 	buf += transfer_sz;
 	chunk->r_event++;
@@ -827,7 +865,7 @@ static int read_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
 
 static void encode_stripe(W_PRIVATE_t *priv) {
     int i, j, k;
-    int n = priv->params->node_cnt;
+    int n = priv->params->nchunks;
     int p = priv->params->parities;
     u8  *dvec[n], *pvec[n];
 
@@ -849,7 +887,7 @@ static void encode_stripe(W_PRIVATE_t *priv) {
 
 static void recover_stripe(W_PRIVATE_t *priv) {
     int i, j, k;
-    int n = priv->params->node_cnt;
+    int n = priv->params->nchunks;
     int p = priv->params->parities;
     int r = priv->params->recover;
     u8  *dvec[n], *rvec[r];
@@ -883,7 +921,7 @@ static void populate_stripe(W_PRIVATE_t *priv, uint64_t stripe) {
     transfer_sz = params->transfer_sz;	/* LB size */
     chunk_sz = params->chunk_sz;
     blocks = chunk_sz / transfer_sz;	/* logical blocks per chunk */
-    n = params->node_cnt;
+    n = params->nchunks;
     data = n - params->parities;
     for (i = 0; i < n; i++) {
 	N_CHUNK_t	*chunk = priv->chunks[i];
@@ -911,7 +949,7 @@ static uint64_t verify_stripe(W_PRIVATE_t *priv, uint64_t stripe) {
     transfer_sz = params->transfer_sz;	/* LB size */
     chunk_sz = params->chunk_sz;
     blocks = chunk_sz / transfer_sz;	/* logical blocks per chunk */
-    n = params->node_cnt;
+    n = params->nchunks;
     data = n - params->parities;
     for (i = 0; i < n; i++) {
 	N_CHUNK_t	*chunk = priv->chunks[i];
@@ -942,13 +980,10 @@ static uint64_t verify_stripe(W_PRIVATE_t *priv, uint64_t stripe) {
 
 static void work_free(W_PRIVATE_t *priv)
 {
-    int n, node_cnt;
-
     if (priv == NULL)
 	return;
 
-    node_cnt = priv->params->node_cnt;
-    for (n = 0; n < node_cnt; n++) {
+    for (int n = 0; n < priv->params->nchunks; n++) {
 	N_CHUNK_t *chunk = priv->chunks[n];
 
 	free(chunk);
@@ -965,14 +1000,14 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
     N_CHUNK_t		*chunk;
     B_STRIPES_t		*bunch = &priv->bunch;
     uint64_t		stripe, ver_err, ver_errors;
-    int			rc = 0, node_cnt, i, data;
+    int			rc = 0, nchunks, i, data;
 
-    node_cnt = params->node_cnt;
+    nchunks = params->nchunks;
     priv->thr_id = thread_id;
-    data = params->node_cnt - params->parities;
+    data = nchunks - params->parities;
 
     /* Copy reference to the worker's I/O buffer */
-    for (i = 0; i < node_cnt; i++)
+    for (i = 0; i < nchunks; i++)
 	priv->chunks[i]->lf_buf = params->stripe_buf[thread_id] + i * params->chunk_sz;
 
     switch (cmd) {
@@ -980,7 +1015,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 	if (params->verbose) {
 		printf("Populate data in %lu stripes @%lu for extent %lu on node %d, chunks: ",
 			bunch->stripes, bunch->phy_stripe, bunch->extent, params->node_id);
-		for (i = 0; i < node_cnt; i++) {
+		for (i = 0; i < nchunks; i++) {
 			chunk = priv->chunks[i];
 			if (chunk->data >= 0)
 				printf("%d:D%d ", i, chunk->data);
@@ -996,7 +1031,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 
 	    /* Write all data chunks of one stripe */
 	    ec_perf_start(&priv->perf_stat.lw_bw);
-	    for (i = 0; i < node_cnt; i++) {
+	    for (i = 0; i < nchunks; i++) {
 		chunk = priv->chunks[i];
 		if (chunk->data >= 0) {
 		    /* Read chunk from fabric */
@@ -1017,7 +1052,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 	if (params->verbose) {
 		printf("Verifying data in %lu stripes @%lu for extent %lu on node %d, chunks: ",
 			bunch->stripes, bunch->phy_stripe, bunch->extent, params->node_id);
-		for (i = 0; i < node_cnt; i++) {
+		for (i = 0; i < nchunks; i++) {
 			chunk = priv->chunks[i];
 			if (chunk->data >= 0)
 				printf("%d:D%d ", i, chunk->data);
@@ -1032,7 +1067,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 	{
 	    /* Read all data chunks of one stripe */
 	    ec_perf_start(&priv->perf_stat.lr_bw);
-	    for (i = 0; i < node_cnt; i++) {
+	    for (i = 0; i < nchunks; i++) {
 		chunk = priv->chunks[i];
 		if (chunk->data >= 0) {
 		    /* Read chunk from fabric */
@@ -1062,14 +1097,14 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
     case W_T_ENCODE:
 	if (params->verbose) {
 		printf("Encode %d parities ", params->parities);
-		for (i = 0; i < node_cnt; i++) {
+		for (i = 0; i < nchunks; i++) {
 			chunk = priv->chunks[i];
 			if (chunk->parity >= 0)
 				printf("%d:P%d ", i, chunk->parity);
 		}
 		printf("on %lu stripes @%lu for extent %lu on node %d from chunks: ",
 			bunch->stripes, bunch->phy_stripe, bunch->extent, params->node_id);
-		for (i = 0; i < node_cnt; i++) {
+		for (i = 0; i < nchunks; i++) {
 			chunk = priv->chunks[i];
 			if (chunk->data >= 0)
 				printf("%d:D%d ", i, chunk->data);
@@ -1084,7 +1119,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 	{
 	    /* Encode one stripe */
 	    ec_perf_start(&priv->perf_stat.lr_bw);
-	    for (i = 0; i < node_cnt; i++) {
+	    for (i = 0; i < nchunks; i++) {
 		chunk = priv->chunks[i];
 		if (chunk->data >= 0) {
 		    /* Read chunk from fabric */
@@ -1099,7 +1134,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
             encode_stripe(priv);
 
 	    ec_perf_start(&priv->perf_stat.lw_bw);
-	    for (i = 0; i < node_cnt; i++) {
+	    for (i = 0; i < nchunks; i++) {
 		chunk = priv->chunks[i];
 		if (chunk->parity >= 0) {
 		    /* Write chunk to fabric */
@@ -1123,14 +1158,14 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 	/* Recover 'recover' data chunks (D0..) */
 	if (params->verbose) {
 		printf("Decode %d data chunks: ", params->recover);
-		for (i = 0; i < node_cnt; i++) {
+		for (i = 0; i < nchunks; i++) {
 			chunk = priv->chunks[i];
 			if (chunk->data >= 0 && chunk->data < params->recover)
 				printf("%d:D%d ", i, chunk->data);
 		}
 		printf("on %lu stripes starting at %lu for extent %lu on node %d from: ",
 			bunch->stripes, bunch->phy_stripe, bunch->extent, params->node_id);
-		for (i = 0; i < node_cnt; i++) {
+		for (i = 0; i < nchunks; i++) {
 			chunk = priv->chunks[i];
 			if (chunk->data >= params->recover || chunk->data < 0) {
 				if (chunk->data >= 0)
@@ -1149,7 +1184,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 	{
 	    /* Dncode one stripe */
 	    ec_perf_start(&priv->perf_stat.lr_bw);
-	    for (i = 0; i < node_cnt; i++) {
+	    for (i = 0; i < nchunks; i++) {
 		chunk = priv->chunks[i];
 		/* read valid data chunks and all parity chunks */
 		if (chunk->data >= params->recover || chunk->data < 0) {
@@ -1167,7 +1202,7 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
             recover_stripe(priv);
 
 	    ec_perf_start(&priv->perf_stat.lw_bw);
-	    for (i = 0; i < node_cnt; i++) {
+	    for (i = 0; i < nchunks; i++) {
 		chunk = priv->chunks[i];
 		if (chunk->data >= 0 && chunk->data < params->recover) {
 		    /* Write recovered chunk to fabric */
@@ -1223,8 +1258,6 @@ static int lf_srv_init(LF_SRV_t *priv)
 
     struct fi_info      *hints, *fi;
     struct fid_fabric   *fabric;
-    //struct fi_eq_attr   eq_attr;
-    //struct fid_eq       *eq;
     struct fid_domain   *domain;
     struct fid_ep       *ep;
     struct fi_av_attr   av_attr;
@@ -1242,11 +1275,12 @@ static int lf_srv_init(LF_SRV_t *priv)
     uint64_t            mr_key = 0;
 
     int			i, rx_ctx_n, my_node_id, *cq_affinity;
-    const char		*pname;
+    const char		*pname, *fabname;
 
     rx_ctx_n = params->lf_srv_rx_ctx;
     my_node_id = params->node_id;
     pname = params->nodelist[my_node_id];
+    fabname = params->lf_fabric? params->lf_fabric : pname;
     cq_affinity = cl->cq_affinity;
     sprintf(port, "%5d", cl->service);
 
@@ -1286,15 +1320,16 @@ static int lf_srv_init(LF_SRV_t *priv)
 	hints->domain_attr->name = strdup(params->lf_domain);
     }
 
-    ON_FI_ERROR(fi_getinfo(FI_VERSION(1, 5), pname, port, FI_SOURCE, hints, &fi), "srv fi_getinfo failed");
+    ON_FI_ERROR(fi_getinfo(FI_VERSION(1, 5), fabname, port, FI_SOURCE, hints, &fi),
+		"srv fi_getinfo failed on %s for %s:%s in domain:%s",
+		pname, fabname, port, hints->domain_attr->name);
     fi_freeinfo(hints);
     if (fi->next) {
 	/* TODO: Add 'domain' option */
-	fprintf(stderr, "Ambiguous target provider:%s in domains %s and %s\n",
+	err("Ambiguous target provider:%s in domains %s and %s",
 		fi->fabric_attr->prov_name, fi->domain_attr->name, fi->next->domain_attr->name);
 	return 1;
     }
-    cl->fi = fi;
 
     /* Query provider capabilities */
     if (fi->domain_attr->mr_mode & FI_MR_LOCAL)
@@ -1308,33 +1343,32 @@ static int lf_srv_init(LF_SRV_t *priv)
     if (fi->domain_attr->mr_mode & FI_MR_ALLOCATED)
 	params->lf_mr_flags.allocated = 1;
 
-    // Create fabric object
-    ON_FI_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "srv fi_fabric failed");
+    if (cl->fabric == NULL) {
+	cl->free_domain_fl = 1;
+
+	// Create fabric object
+	ON_FI_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "srv fi_fabric failed");
+
+	// Create domain object
+	ON_FI_ERROR(fi_domain(fabric, fi, &domain, NULL), "srv fi_domain failed");
+
+	// Create address vector bind to endpoint and event queue
+	memset(&av_attr, 0, sizeof(av_attr));
+	av_attr.type = FI_AV_MAP;
+	av_attr.rx_ctx_bits = LFSRV_RCTX_BITS;
+	av_attr.ep_per_node = (unsigned int)rx_ctx_n;
+	ON_FI_ERROR(fi_av_open(domain, &av_attr, &av, NULL), "srv fi_av_open failed");
+    } else {
+	ASSERT(0);
+	//cl->free_domain_fl = 0;
+	//fabric = cl->fabric;
+	//domain = cl->domain;
+	//av = cl->av;
+    }
     cl->fabric = fabric;
-
-    // Create completion queue
-    /*
-    memset(&eq_attr, 0, sizeof(eq_attr));
-    eq_attr.size = 64;
-    eq_attr.wait_obj = FI_WAIT_UNSPEC;
-    ON_FI_ERROR(fi_eq_open(fabric, &eq_attr, &eq, NULL), "srv fi_eq_open failed");
-    cl->eq = eq;
-    */
-    cl->eq = NULL;
-
-    // Create domain object
-    ON_FI_ERROR(fi_domain(fabric, fi, &domain, NULL), "srv fi_domain failed");
     cl->domain = domain;
-
-    // Create address vector bind to endpoint and event queue
-    memset(&av_attr, 0, sizeof(av_attr));
-    av_attr.type = FI_AV_MAP;
-    av_attr.rx_ctx_bits = LFSRV_RCTX_BITS;
-    av_attr.ep_per_node = (unsigned int)rx_ctx_n;
-    ON_FI_ERROR(fi_av_open(domain, &av_attr, &av, NULL), "srv fi_av_open failed");
+    //cl->eq = NULL;
     cl->av = av;
-    // if FI_EVENT
-    // ON_FI_ERROR(fi_av_bind(av, (fid_t)eq, 0), "srv fi_av_bind failed");
 
     // Create endpoint
     if (rx_ctx_n) {
@@ -1439,15 +1473,12 @@ static int lf_srv_init(LF_SRV_t *priv)
 	    sleep(1);
 	}
 	if (mr_key == FI_KEY_NOTAVAIL) {
-	    fprintf(stderr, "%d/%d: Memory registration has not completed, partition:%d\n",
+	    err("%d/%d: Memory registration has not completed, partition:%d",
 		    my_node_id, priv->thread_id, cl->partition);
 	    ON_FI_ERROR(FI_KEY_NOTAVAIL, "srv fi_mr_key failed");
 	}
     }
     cl->mr_key = mr_key;
-    printf("%d/%d: Registered %zuMB of memory on %s:%s (p%d) if:%s\n",
-	my_node_id, priv->thread_id,
-	len/1024/1024, pname, port, cl->partition, fi->domain_attr->name);
 
     // Enable endpoint
     ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
@@ -1458,13 +1489,23 @@ static int lf_srv_init(LF_SRV_t *priv)
 	size_t sa_len;
 	void *fam_sa;
 	char url[16];
-	unsigned long long fam_id = part2fam_id(my_node_id, params->node_servers, cl->partition);
 
 	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
 		"srv open_ops failed");
-	sprintf(url, "zhpe:///fam%4Lu", fam_id);
-	ON_FI_ERROR( ext_ops->lookup(url, &fam_sa, &sa_len), "fam:%4Lu lookup failed", fam_id);
+	sprintf(url, "zhpe:///fam%4Lu", cl->fam_id);
+	ON_FI_ERROR( ext_ops->lookup(url, &fam_sa, &sa_len), "fam:%4Lu lookup failed", cl->fam_id);
+
+	printf("%d/%d: Attached to %zuMB of FAM memory on %s:fam%4Lu if:%s\n",
+	       my_node_id, priv->thread_id,
+	       len/1024/1024, pname,
+	       cl->fam_id, fi->domain_attr->name);
+    } else {
+	printf("%d/%d: Registered %zuMB of memory on %s:%s (p%d) if:%s\n",
+	       my_node_id, priv->thread_id,
+	       len/1024/1024, pname, port, cl->partition, fi->domain_attr->name);
     }
+    fi_freeinfo(fi);
+    fi = NULL;
 
     n = 128;
     ON_FI_ERROR(fi_getname((fid_t)ep, name, &n), "srv fi_getname failed");
@@ -1511,7 +1552,7 @@ static int lf_srv_trigger(LF_SRV_t *priv)
     if (err == -FI_ETIMEDOUT)
 	return 0; /* just fine */
     else if (err) {
-	err("srv fi_cntr_wait failed:%d", err);
+	ioerr("srv fi_cntr_wait failed:%d", err);
 	return err;
     }
 

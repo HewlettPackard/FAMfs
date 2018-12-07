@@ -19,7 +19,7 @@
 
 
 #define N_STRLIST_DELIM ","
-char** getstrlist(const char *buf, int *count)
+static char** _getstrlist(const char *buf, int *count, int allow_empty)
 {
 	char **nodelist;
 	const char *p;
@@ -30,7 +30,7 @@ char** getstrlist(const char *buf, int *count)
 	p = buf;
 	l = strcspn(p, N_STRLIST_DELIM);
 	i = 0;
-	while (l) {
+	while (l || allow_empty) {
 		i++;
 		p += l;
 		if (!*p)
@@ -46,9 +46,10 @@ char** getstrlist(const char *buf, int *count)
 	i = 0;
 	p = buf;
 	l = strcspn(p, N_STRLIST_DELIM);
-	while (l) {
+	while (l || allow_empty) {
 		node = (char *)malloc(l+1);
-		strncpy(node, p, l);
+		if (l)
+			strncpy(node, p, l);
 		node[l] = '\0';
 		nodelist[i++] = node;
 		p += l;
@@ -61,6 +62,10 @@ char** getstrlist(const char *buf, int *count)
 	return nodelist;
 }
 
+char** getstrlist(const char *buf, int *count) {
+    return _getstrlist(buf, count, 0);
+}
+
 void nodelist_free(char **nodelist, int size) {
 	if (nodelist) {
 		for (int i = 0; i < size; i++)
@@ -69,19 +74,122 @@ void nodelist_free(char **nodelist, int size) {
 	}
 }
 
+static  FAM_MAP_t* parse_famnode_list(char* const* famlist, int famnode_cnt, int *nchunks_p)
+{
+    FAM_MAP_t *m = NULL;
+    const char *range;
+    int *fams;
+    unsigned long long **fam_ids = NULL, *ids;
+    int i, n;
+    unsigned int b, e, id;
+    unsigned int total = 0;
+
+    if (!famlist)
+	return NULL;
+    fams = (int *) calloc(famnode_cnt, sizeof(int));
+    if (!fams)
+	return NULL;
+    fam_ids = (unsigned long long**) calloc(famnode_cnt, sizeof(*fam_ids));
+    if (!fam_ids)
+	goto _free;
+
+    for (i = 0; i < famnode_cnt; i++) {
+	range = famlist[i];
+	n = sscanf(range, "%u-%u", &b, &e);
+	if (n == 1)
+	    e = b;
+	else if (n != 2)
+	    continue;
+	fams[i] = e - b + 1;
+	total += fams[i];
+	ids = (unsigned long long*) calloc(fams[i], sizeof(unsigned long long));
+	for (id = b; id <= e; id++)
+	    ids[id-b] = id;
+	fam_ids[i] = ids;
+    }
+
+    if (*nchunks_p == 0) {
+	*nchunks_p = total;
+    } else if ((int)total % *nchunks_p) {
+	/* TODO: Fix allocation and don't require nchunks == number of FAMs */ 
+	err("Wrong number of chunks:%d (expect %u)", *nchunks_p, total);
+    }
+
+    m = (FAM_MAP_t *) malloc(sizeof(FAM_MAP_t));
+    if (!m)
+	goto _free;
+    m->ionode_cnt = famnode_cnt;
+    m->total_fam_cnt = total;
+    m->node_fams = fams;
+    m->fam_ids = fam_ids;
+    return m;
+
+_free:
+    free(fam_ids);
+    free(m);
+    return NULL;
+}
+
+static void free_fam_map(FAM_MAP_t **mp)
+{
+    FAM_MAP_t * m = *mp;
+
+    if (m) {
+	int *fams = m->node_fams;
+	unsigned long long **fam_ids = m->fam_ids;
+	int i;
+
+	for (i = 0; i < m->ionode_cnt; i++)
+	    if (fams[i])
+		free(fam_ids[i]);
+	free(fam_ids);
+	free(fams);
+	free(m);
+	*mp = NULL;
+    }
+}
+
+static void print_fam_map(FAM_MAP_t *m)
+{
+    int i, n, id;
+
+    if (!m)
+	return;
+
+    printf("FAM map: ");
+    for (i = 0; i < m->ionode_cnt; i++) {
+	unsigned long long *ids = m->fam_ids[i];
+	printf("%s%d:", i?" ":"", i);
+	n = m->node_fams[i];
+	for (id = 0; id < n; id++)
+	    printf("%s%u", id?",":"", (unsigned int) ids[id]);
+    }
+    printf(" total %d modules\n", m->total_fam_cnt);
+}
+
+static char *get_myhostname(void) {
+    char  *p, *hostname;
+
+    hostname =(char*) malloc(HOST_NAME_MAX);
+    if (hostname && !gethostname(hostname, HOST_NAME_MAX-1)) {
+	hostname[HOST_NAME_MAX-1] = '\0';
+
+	/* Strip domain */
+	p = strchr(hostname, '.');
+	if (p)
+	    *p = '\0';
+    }
+    return hostname;
+}
+
 int find_my_node(char* const* nodelist, int node_cnt, int silent) {
-	char *p, *hostname = NULL;
+	char *hostname;
 	size_t len;
 	int i, idx = -1;
 
-	hostname =(char*) malloc(HOST_NAME_MAX);
-	if (!hostname || !gethostname(hostname, HOST_NAME_MAX-1)) {
-		hostname[HOST_NAME_MAX-1] = '\0';
-
-		/* Strip domain */
-		p = strchr(hostname, '.');
-		len = p? (unsigned int)(p - hostname) : strlen(hostname);
-
+	hostname = get_myhostname();
+	if (hostname) {
+		len = strlen(hostname);
 		for (i = 0; i < node_cnt; i++) {
 			if (!strncmp(hostname, nodelist[i], len)) {
 				idx = i;
@@ -168,7 +276,8 @@ void alloc_affinity(int **affp, int size, int pos)
 
 void ion_usage(const char *name) {
     printf("\nUsage:\n%s <mandatory options> [<more options>] <command> [<command>...]\n"
-	   "\t-H |--hostlist <node name list>\n"
+	   "\t-H |--hostlist <IO node name list>\n"
+	   "\t-F |--fam_map <FAM id per-node list like 0-3,,4-7>\n"
 	   "\t-P |--parities <number of parity chunks in a stripe>\n"
 	   "\t-R |--recover <number of data chunks to recover>\n"
 	   "\t-M |--memory <virtual memory size>\n"
@@ -176,12 +285,14 @@ void ion_usage(const char *name) {
 	   "\t-C |--chunk <chunk size>\n"
 	   "\t-w |--workers <number of worker threads>\n"
 	   "  Optional:\n"
+	   "\t-n |--nchunks <number of chunks in a stripe>\n"
 	   "\t-p |--port <libfabric port>\n"
 	   "\t-i |--iters <iterations>\n"
 	   "\t-t |--transfer <transfer block size>\n"
 	   "\t-T |--timeout <I/O timeout>\n"
-	   "\t   --provider <libfabric provider name>\n"
+	   "\t   --fabric <libfabric fabric>\n"
 	   "\t   --domain <libfabric domain>\n"
+	   "\t   --provider <libfabric provider name>\n"
 	   "\t   --rxctx <number of rx contexts in lf server>\n"
 	   "\t   --srv_extents <partition size, in extents>\n"
 	   "\t   --cmd_trigger - trigger command execution by LF remote access\n"
@@ -203,7 +314,10 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 {
     int			opt, opt_idx = 0;
     char		port[6], **nodelist = NULL, **clientlist = NULL;
-    int			node_cnt = 0, recover = 0, verbose = 0;
+    char		**famlist = NULL;
+    FAM_MAP_t		*fam_map = NULL;
+    int			famnode_cnt = 0;
+    int			node_cnt = 0, nchunks = 0, recover = 0, verbose = 0;
     int			cmd_trigger = 0, client_cnt = 0, part_mreg = 1;
     int			iters = -1, parities = -1, workers = -1, lf_port = -1;
     size_t		vmem_sz = 0, chunk_sz = 0, extent_sz = 0;
@@ -213,9 +327,10 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     int			set_affinity = 0, lf_srv_rx_ctx = 0;
     int			lf_mr_scalable, lf_mr_local, lf_mr_basic, zhpe_support = 0;
     uint64_t		*mr_prov_keys = NULL, *mr_virt_addrs = NULL;
-    char		*lf_provider_name = NULL, *lf_domain = NULL, *memreg = NULL;
+    char		*lf_fabric = NULL, *lf_domain = NULL;
+    char		*lf_provider_name = NULL, *memreg = NULL;
     N_PARAMS_t		*params = NULL;
-    int			cmdc, i, data, node_id, srv_cnt, rc;
+    int			cmdc, i, data, fam_cnt, node_id, srv_cnt, rc;
     uint64_t		cmd_timeout, io_timeout = 0;
     uint64_t		stripes, extents;
 
@@ -223,6 +338,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 
     enum opt_long_ {
 	OPT_PROVIDER = 1000,
+	OPT_FABRIC,
 	OPT_DOMAIN,
 	OPT_RXCTX,
 	OPT_SRV_EXTENTS,
@@ -240,15 +356,18 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	{"transfer",	1, 0, 't'},
 	{"timeout",	1, 0, 'T'},
 	{"hostlist",	1, 0, 'H'},
+	{"fam_map",	1, 0, 'F'},
 	{"parities",	1, 0, 'P'},
 	{"recover",	1, 0, 'R'},
 	{"memory",	1, 0, 'M'},
 	{"chunk",	1, 0, 'C'},
+	{"nchunks",	1, 0, 'n'},
 	{"clients",	1, 0, 'c'},
 	{"extent",	1, 0, 'E'},
 	{"workers",	1, 0, 'w'},
 	/* no short option */
 	{"provider",	1, 0, OPT_PROVIDER},
+	{"fabric",	1, 0, OPT_FABRIC},
 	{"domain",	1, 0, OPT_DOMAIN},
 	{"rxctx",	1, 0, OPT_RXCTX},
 	{"srv_extents",	1, 0, OPT_SRV_EXTENTS},
@@ -259,7 +378,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     };
 
     optind = 0;
-    while ((opt = getopt_long(argc, argv, "avhp:i:t:T:H:P:R:M:C:c:E:w:",
+    while ((opt = getopt_long(argc, argv, "avhp:i:t:T:H:F:P:R:M:C:n:c:E:w:",
 	    long_opts, &opt_idx)) != -1)
     {
         switch (opt) {
@@ -290,6 +409,12 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 		    goto _free;
 		}
 		break;
+	    case 'F':
+		famlist = _getstrlist(optarg, &famnode_cnt, 1);
+		if (!famnode_cnt) {
+		    printf("FAM module list - bad delimiter!");
+		    goto _free;
+		}
 	    case 'P':
 		parities = getval(N_PARITY, optarg);
                 break;
@@ -301,6 +426,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 		break;
 	    case 'C':
 		chunk_sz = getval(N_CHUNK_SZ, optarg);
+		break;
+	    case 'n':
+		nchunks = atoi(optarg);
 		break;
 	    case 'E':
 		extent_sz = getval(N_EXTENT_SZ, optarg);
@@ -323,6 +451,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 		break;
 	    case OPT_PROVIDER:
 		lf_provider_name = strdup(optarg);
+		break;
+	    case OPT_FABRIC:
+		lf_fabric = strdup(optarg);
 		break;
 	    case OPT_DOMAIN:
 		lf_domain = strdup(optarg);
@@ -373,9 +504,6 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	goto _free;
     }
 
-    /* Sanity check */
-    ON_ERROR( (node_cnt == 0), "Bad node count, please check -H [--hostlist]");
-
     /* Defaults */
     if (iters < 0)
 	iters = getval(LFCLN_ITER, NULL);
@@ -400,7 +528,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	zhpe_support = is_module_loaded(ZHPE_MODULE_NAME);
 	if (zhpe_support && !lf_mr_local \
 	    && !is_module_loaded(UMMUNOTIFY_MODULE_NAME)) {
-	    fprintf(stderr, "zhpe privider requires %s module for local buffer registartion cache!",
+	    err("zhpe privider requires %s module for local buffer registartion cache!",
 		UMMUNOTIFY_MODULE_NAME);
 	    goto _free;
 	}
@@ -415,10 +543,39 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	chunk_sz = getval(N_CHUNK_SZ, NULL);
     if (!extent_sz)
 	extent_sz = getval(N_EXTENT_SZ, NULL);
-    data = node_cnt - parities;
-    extents = (vmem_sz * node_cnt) / extent_sz;
+
+    /* Parse FAM list */
+    fam_map = parse_famnode_list(famlist, famnode_cnt, &nchunks);
+    if (zhpe_support) {
+	if (!fam_map || !fam_map->total_fam_cnt) {
+	    err("Misformed FAM node list!\n");
+	    goto _free;
+	}
+	if (nchunks > fam_map->total_fam_cnt) {
+	    err("Not enough FAMs given:%d (expected at least %d)",
+			   fam_map->total_fam_cnt, nchunks);
+	    goto _free;
+	}
+    } else if (fam_map) {
+	err("Option is not supported yet and ignored: -F (--fam_map) - Need zhpe driver!");
+	free_fam_map(&fam_map);
+    }
+    nodelist_free(famlist, famnode_cnt);
+    if (fam_map)
+	fam_cnt = fam_map->total_fam_cnt;
+    else
+	fam_cnt = node_cnt; /* FAM emulation: one FAM per IO node */
+
+    /* Number of chunks */
+    if (nchunks == 0)
+	nchunks = node_cnt;
+    ON_ERROR( (nchunks == 0),
+	"Please specify the number of chunks -n [--nchunks]");
+
+    data = nchunks - parities;
+    extents = (vmem_sz * nchunks) / extent_sz;
     stripes = vmem_sz / chunk_sz;
-    cmd_timeout = io_timeout * get_batch_stripes(stripes, node_cnt*workers);
+    cmd_timeout = io_timeout * get_batch_stripes(stripes, nchunks*workers);
 
     /* Find my node */
     if (client_rank_size > 0) {
@@ -427,23 +584,32 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 		  "Bad node count %d > %d, please check -c [--clientlist]",
 		  client_cnt, client_rank_size);
     } else {
+	ON_ERROR( (node_cnt == 0),
+	    "Bad node count, please check -H [--hostlist]");
         node_id = find_my_node(nodelist, node_cnt, 0);
 	if (clientlist) {
 	    /* Ignore clientlist */
 	    nodelist_free(clientlist, client_cnt);
 	    client_cnt = 0;
 	    clientlist = NULL;
-	    fprintf(stderr, "Ignore clientlist (-c) option on IO node %d of %d", node_id, node_cnt);
+	    err("Ignore clientlist (-c) option");
 	}
     }
-    ON_ERROR (node_id < 0, "Cannot find my node in the list (-%c)!", client_cnt?'c':'H');
+    if (node_id < 0) {
+	err("Cannot find my node in the list (-%c)!", client_cnt?'c':'H');
+	goto _free;
+    }
 
-    /* Sanity check */
-
-    /* Default: srv_cnt=1 (single partition) */
+    /* Number of LF server partitions, default:1 */
     if (srv_extents == 0)
 	srv_extents = vmem_sz/extent_sz;
     srv_cnt = vmem_sz/extent_sz/srv_extents;
+    /* TODO: Allow arbitrary nchunks with stripe allocation */
+    if (fam_cnt % nchunks) {
+	err("FAM count:%d is not a multiple of nchunks:%d",
+	    fam_cnt, nchunks);
+	goto _free;
+    }
 
     if (verbose)
 	printf("Running on node:%d\n", node_id);
@@ -452,37 +618,40 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	unsigned int exts = vmem_sz/extent_sz;
 
 	if (lf_srv_rx_ctx > 0 && lf_mr_scalable == 0) {
-	    fprintf(stderr, "Scalable endpoinds not supported when FI_MR_BASIC is required\n");
+	    err("Scalable endpoinds not supported when FI_MR_BASIC is required");
 	    goto _free;
 	}
 	if ( extent_sz % chunk_sz != 0) {
-	    fprintf(stderr, "Extent must be multiple of chunks\n");
+	    err("Extent must be multiple of chunks");
 	    goto _free;
 	}
 	if ( chunk_sz % transfer_len != 0) {
-	    fprintf(stderr, "Chunk must be multiple of transfer blocks\n");
+	    err("Chunk must be multiple of transfer blocks");
 	    goto _free;
 	}
 	if ( (stripes*chunk_sz) != vmem_sz ) {
-	    fprintf(stderr, "vmem_sz is not divisible by chunk_sz!\n");
+	    err("vmem_sz is not divisible by chunk_sz!");
 	    goto _free;
 	}
-	if (data < parities) {
-	    printf("Wrong number of data chunks:%d for %d parity chunks on %d nodes\n",
-		data, parities, node_cnt);
+	if (data <= parities) {
+	    err("Wrong number of data chunks:%d for %d parity chunks",
+		data, parities);
 	    goto _free;
 	}
 	if (recover < 0 || recover > parities) {
-	    fprintf(stderr, "Wrong number of chunks to recover %d parities\n", parities);
+	    err("Wrong number of chunks to recover %d parities", parities);
 	    goto _free;
 	}
 	if (!lf_mr_scalable && !lf_mr_local && !lf_mr_basic) {
-	    fprintf(stderr, "Wrong LF memory registration type:%s (expect %s, %s or/and %s)\n",
+	    err("Wrong LF memory registration type:%s (expect %s, %s or/and %s)",
 		memreg, LF_MR_MODEL_SCALABLE, LF_MR_MODEL_BASIC, LF_MR_MODEL_LOCAL);
 	    goto _free;
 	}
 	if (cmd_trigger > cmdc) {
-	    fprintf(stderr, "Wrong command trigger:%d - there is no such command!", cmd_trigger);
+	    err("Wrong command trigger:%d - there is no such command!", cmd_trigger);
+	    goto _free;
+	} else if (cmd_trigger && zhpe_support) {
+	    err("Option not applicable: cmd_trigger - zhpe driver is loaded");
 	    goto _free;
 	}
 
@@ -495,18 +664,22 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 		cmd2str(cmdv[cmd_trigger-1]));
 	}
 
-	printf("Servers: ");
-	for (i = 0; i < node_cnt; i++)
-	    printf("%s%s", (i>0)?",":"", nodelist[i]);
-	printf("\n");
+	print_fam_map(fam_map);
+	if (node_cnt) {
+	    printf("Nodes: ");
+	    for (i = 0; i < node_cnt; i++)
+		printf("%s%s", (i>0)?",":"", nodelist[i]);
+	    printf(" total:%d\n", node_cnt);
+	}
 	if (clientlist) {
 	    printf("Clients: ");
 	    for (i = 0; i < client_cnt; i++)
 		printf("%s%s", (i>0)?",":"", clientlist[i]);
-	    printf("\n");
+	    printf(" total:%d\n", client_cnt);
 	}
 
-	printf("Chunk %dD+%dP=%d %zu bytes\n", data, parities, node_cnt, chunk_sz);
+	printf("Stripe %dD+%dP length: %d bytes (%d chunks %zu bytes each)\n",
+	       data, parities, (nchunks*(int)chunk_sz), nchunks, chunk_sz);
 	printf("Number data chunk(s) to recover:%d (starting with chunk 0)\n", recover);
 	if (recover || parities)
 	    printf("  ISA-L uses %s\n", ISAL_CMD==ISAL_USE_AVX2?"AVX2":"SSE2");
@@ -523,39 +696,41 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	printf("Command timeout %.1f s\n", cmd_timeout/1000.);
 	printf("Iterations: %d\n", iters);
 
-	if (extents*extent_sz != vmem_sz*node_cnt) {
-		fprintf(stderr, "Wrong VMEM:%lu, it must be a multiple of extent size (%lu)!\n",
+	if (extents*extent_sz != vmem_sz*nchunks) {
+		err("Wrong VMEM:%lu, it must be a multiple of extent size (%lu)!",
 			vmem_sz, extent_sz);
 		goto _free;
 	}
 	if (exts % srv_extents) {
-		fprintf(stderr, "Wrong srv_extents:%d, extents (%u) must be devisible by it.\n",
+		err("Wrong srv_extents:%d, extents (%u) must be devisible by it.",
 			srv_extents, exts);
 		goto _free;
 	}
 	printf("Calculated:\n\tPhy extents per node %u, total:%lu\n"
-		"\tStripes per extent:%lu, total:%ld\n",
+		"\tStripes per slab:%lu, total:%ld\n",
 		exts, extents, extent_sz/chunk_sz, stripes);
     }
     free(memreg);
 
     if (!lf_mr_scalable) {
-	mr_prov_keys = (uint64_t *)malloc(srv_cnt*node_cnt*sizeof(uint64_t));
-	mr_virt_addrs = (uint64_t *)malloc(srv_cnt*node_cnt*sizeof(uint64_t));
+	mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
+	mr_virt_addrs = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
     }
 
     params = (N_PARAMS_t*)malloc(sizeof(N_PARAMS_t));
     params->cmdc = cmdc;
     memcpy(params->cmdv, cmdv, cmdc*sizeof(W_TYPE_t));
     params->nodelist = nodelist;
+    params->fam_map = fam_map;
     params->vmem_sz = vmem_sz;
     params->chunk_sz = chunk_sz;
     params->extent_sz = extent_sz;
+    params->fam_cnt = fam_cnt;
     params->node_cnt = node_cnt;
     params->clientlist = clientlist;
-    params->client_cnt = clientlist? client_cnt : node_cnt;
-    /* TODO: Find my node in nodelist */
+    params->client_cnt = client_cnt;
     params->node_id = node_id;
+    params->nchunks = nchunks;
     params->parities = parities;
     params->recover = recover;
     params->w_thread_cnt = workers;
@@ -564,6 +739,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     params->cmd_timeout_ms = cmd_timeout;
     params->lf_port = lf_port;
     params->prov_name = lf_provider_name;
+    params->lf_fabric = lf_fabric;
     params->lf_domain = lf_domain;
 
     memset(&params->lf_mr_flags, 0, sizeof(LF_MR_MODE_t));
@@ -596,6 +772,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     params->mr_virt_addrs = mr_virt_addrs;
     params->cmd_trigger = cmd_trigger;
     params->part_mreg = part_mreg;
+    params->stripe_buf = NULL;
 
     params->lf_clients = NULL;
 
@@ -612,36 +789,37 @@ void free_lf_params(N_PARAMS_t **params_p)
 {
     N_PARAMS_t *params = *params_p;
     LF_CL_t **lf_all_clients;
-    int i, node_cnt;
 
     if (params == NULL)
 	return;
-    node_cnt = params->node_cnt;
 
     lf_all_clients = params->lf_clients;
     if (lf_all_clients) {
-	int count = node_cnt * params->node_servers;
+	int count = params->fam_cnt * params->node_servers;
 
 	lf_clients_free(lf_all_clients, count);
 	params->lf_clients = NULL;
     }
 
     if (params->stripe_buf) {
+	int i;
 	for (i = 0; i < params->w_thread_cnt; i++) {
 	    if (params->lf_mr_flags.allocated)
-		munlock(params->stripe_buf[i], params->chunk_sz * node_cnt);
+		munlock(params->stripe_buf[i], params->chunk_sz * params->nchunks);
 	    free(params->stripe_buf[i]);
 	}
 	free(params->stripe_buf);
 	params->stripe_buf = NULL;
     }
 
-    nodelist_free(params->nodelist, node_cnt);
+    nodelist_free(params->nodelist, params->node_cnt);
     nodelist_free(params->clientlist, params->client_cnt);
     free(params->prov_name);
+    free(params->lf_fabric);
     free(params->lf_domain);
     free(params->mr_prov_keys);
     free(params->mr_virt_addrs);
+    free_fam_map(&params->fam_map);
     free(params);
     *params_p = NULL;
 }

@@ -96,9 +96,14 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	hints->domain_attr->name = strdup(params->lf_domain);
     }
 
-    pname = params->nodelist[node];
+    if (params->lf_fabric)
+	pname = params->lf_fabric;
+    else if (params->lf_mr_flags.zhpe_support)
+	pname = params->nodelist[params->node_id];
+    else
+	pname = params->nodelist[node];
     rc = fi_getinfo(FI_VERSION(1, 5), pname, port, 0, hints, &fi);
-    ON_FI_ERROR(rc, "LF fi_getinfo failed, client cannot connect to node:%d (p%d) on %s:%s",
+    ON_FI_ERROR(rc, "LF client - fi_getinfo failed for FAM node %d (p%d) on %s:%s",
 		    node, partition_id, pname, port);
 
     fi_freeinfo(hints);
@@ -118,10 +123,6 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     if (fi->domain_attr->mr_mode & FI_MR_ALLOCATED)
 	params->lf_mr_flags.allocated = 1;
 
-    // Create fabric object
-    ON_FI_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "fi_fabric failed");
-    fi_dest_addr = fi->dest_addr;
-
     // Check support for scalable endpoint
     if (fi->domain_attr->max_ep_tx_ctx > 1) {
 	size_t min_ctx =
@@ -129,25 +130,35 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	ON_ERROR((unsigned int)thread_cnt > min_ctx,
 		"Maximum number of requested contexts exceeds provider limitation");
     } else {
-	fprintf(stderr, "Provider %s (in %s) doesn't support scalable endpoints\n",
+	err("Provider %s (in %s) doesn't support scalable endpoints",
 		fi->fabric_attr->prov_name, pname);
 	ON_ERROR(1, "lf_client_init failed");
     }
 
-    // Create domain object
-    ON_FI_ERROR(fi_domain(fabric, fi, &domain, NULL),
-		"LF client cannot connect to node %d (p%d) port %d - fi_domain failed",
-		node, partition_id, service);
-    if (params->verbose)
-	printf("CL attached to node/part %d/%d on %s:%s\n", node, partition_id, pname, port);
+    if (lf_node->fabric == NULL) {
+	// Create fabric object
+	ON_FI_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "fi_fabric failed");
 
-    // Create address vector bind to endpoint and event queue
-    memset(&av_attr, 0, sizeof(av_attr));
-    av_attr.type = FI_AV_MAP;
-    //av_attr.type = FI_AV_UNSPEC;
-    av_attr.rx_ctx_bits = LFSRV_RCTX_BITS;
-    av_attr.ep_per_node = (unsigned int)thread_cnt;
-    ON_FI_ERROR(fi_av_open(domain, &av_attr, &av, NULL), "fi_av_open failed");
+	// Create domain object
+	ON_FI_ERROR(fi_domain(fabric, fi, &domain, NULL),
+		    "LF client fi_domain failed for FAM node %d (p%d) port %d - fi_domain failed",
+		    node, partition_id, service);
+	lf_node->free_domain_fl = 1;
+
+	// Create address vector bind to endpoint and event queue
+	memset(&av_attr, 0, sizeof(av_attr));
+	av_attr.type = FI_AV_MAP;
+	//av_attr.type = FI_AV_UNSPEC;
+	av_attr.rx_ctx_bits = LFSRV_RCTX_BITS;
+	av_attr.ep_per_node = (unsigned int)thread_cnt;
+	ON_FI_ERROR(fi_av_open(domain, &av_attr, &av, NULL), "fi_av_open failed");
+    } else {
+	fabric = lf_node->fabric;
+	domain = lf_node->domain;
+	av = lf_node->av;
+	lf_node->free_domain_fl = 0;
+    }
+    fi_dest_addr = fi->dest_addr;
 
     // Create endpoint
     if (params->lf_srv_rx_ctx) {
@@ -185,7 +196,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	local_mr = (struct fid_mr **) malloc(thread_cnt * sizeof(void*));
 	ASSERT(local_mr);
 	for (i = 0; i < thread_cnt; i++) {
-	    ON_FI_ERROR( fi_mr_reg(domain, params->stripe_buf[i], params->chunk_sz * params->node_cnt,
+	    ON_FI_ERROR( fi_mr_reg(domain, params->stripe_buf[i], params->chunk_sz * params->nchunks,
 				   FI_READ|FI_WRITE, 0, i, 0, &mr, NULL),
 		    	"fi_mr_reg failed");
 	    local_mr[i] = mr;
@@ -201,7 +212,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 		sleep(1);
 	    }
 	    if (mr_key == FI_KEY_NOTAVAIL) {
-		ON_FI_ERROR(mr_key, "Memory registration has not completed, node:%d part:%d",
+		ON_FI_ERROR(mr_key, "Memory registration has not completed, FAM node %d part:%d",
 				    node, partition_id);
 	    }
 	}
@@ -220,7 +231,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	} else {
 	    /* non-scalable endpoint */
 	    ON_FI_ERROR(fi_endpoint(domain, fi, &tx_epp[i], NULL),
-			"Cannot create endpoint #%d for node %d (p%d) - fi_endpoint failed",
+			"Cannot create endpoint #%d for FAM node %d (p%d) - fi_endpoint failed",
 			i, node, partition_id);
 	    ON_FI_ERROR(fi_ep_bind(tx_epp[i], &av->fid, 0), "fi_ep_bind failed");
 	}
@@ -259,22 +270,31 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	char url[16];
-	unsigned long long fam_id = part2fam_id(node, params->node_servers, partition_id);
+	unsigned long long fam_id = lf_node->fam_id;
 
 	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
 		"srv open_ops failed");
 	// FAM lookup
 	sprintf(url, "zhpe:///fam%4Lu", fam_id);
 	ON_FI_ERROR( ext_ops->lookup(url, &fi_dest_addr, &sa_len), "fam:%4Lu lookup failed", fam_id);
+
+	if (params->verbose)
+	    printf("CL attached to FAM node %d(p%d) ID:fam%4Lu from %s\n",
+		   node, partition_id, fam_id, pname);
+    } else {
+	if (params->verbose)
+	    printf("CL attached to node %d(p%d) on %s:%s\n",
+		   node, partition_id, pname, port);
     }
 
     // Perform address translation
     srv_addr = (fi_addr_t *)malloc(sizeof(fi_addr_t));
     ASSERT(srv_addr);
     if (1 != (i = fi_av_insert(av, fi_dest_addr, 1, srv_addr, 0, NULL))) {
-        err("ft_av_insert failed, returned %d\n", i);
-        return 1;
+	ioerr("fi_av_insert failed, returned %d", i);
+	return 1;
     }
+    fi_freeinfo(fi);
 
     tgt_srv_addr = (fi_addr_t *)malloc(thread_cnt * sizeof(fi_addr_t));
     ASSERT(tgt_srv_addr);
@@ -287,7 +307,6 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	    tgt_srv_addr[i] = *srv_addr;
     }
 
-    lf_node->fi = fi;
     lf_node->fabric = fabric;
     lf_node->domain = domain;
     lf_node->ep = ep;
@@ -308,7 +327,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     lf_node->service = service;
 
     /* used on passive RMA side */
-    lf_node->eq = NULL;
+    //lf_node->eq = NULL;
     lf_node->rx_epp = NULL;
     lf_node->rx_cqq = NULL;
     lf_node->mr = NULL;
@@ -321,8 +340,8 @@ void lf_client_free(LF_CL_t *cl)
 {
 	int j;
 
-	if (cl->eq)
-	    ON_FI_ERROR(fi_close(&cl->eq->fid), "close eq");
+//	if (cl->eq)
+//	    ON_FI_ERROR(fi_close(&cl->eq->fid), "close eq");
 	if (cl->mr)
 	    ON_FI_ERROR(fi_close(&cl->mr->fid), "close srv mr");
 
@@ -364,11 +383,12 @@ void lf_client_free(LF_CL_t *cl)
 	free(cl->rx_cqq);
 	free(cl->tx_cqq);
 
-	ON_FI_ERROR(fi_close(&cl->av->fid), "close av");
-	ON_FI_ERROR(fi_close(&cl->domain->fid), "close domain");
-	ON_FI_ERROR(fi_close(&cl->fabric->fid), "close fabric");
-	fi_freeinfo(cl->fi);
-
+	if (cl->free_domain_fl) {
+	    /* close the domain */
+	    ON_FI_ERROR(fi_close(&cl->av->fid), "close av");
+	    ON_FI_ERROR(fi_close(&cl->domain->fid), "close domain");
+	    ON_FI_ERROR(fi_close(&cl->fabric->fid), "close fabric");
+	}
 	free(cl->srv_addr);
 	free(cl->tgt_srv_addr);
 	free(cl);
