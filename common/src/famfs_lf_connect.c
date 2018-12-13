@@ -193,33 +193,38 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 
     /* Register the local buffers */
     if (params->lf_mr_flags.local) {
-	local_mr = (struct fid_mr **) malloc(thread_cnt * sizeof(void*));
-	ASSERT(local_mr);
-	for (i = 0; i < thread_cnt; i++) {
-	    ON_FI_ERROR( fi_mr_reg(domain, params->stripe_buf[i], params->chunk_sz * params->nchunks,
-				   FI_READ|FI_WRITE, 0, i, 0, &mr, NULL),
-		    	"fi_mr_reg failed");
-	    local_mr[i] = mr;
-	}
+	if (lf_node->free_domain_fl) {
+	    local_mr = (struct fid_mr **) malloc(thread_cnt * sizeof(void*));
+	    ASSERT(local_mr);
+	    for (i = 0; i < thread_cnt; i++) {
+		ON_FI_ERROR( fi_mr_reg(domain, params->stripe_buf[i], params->chunk_sz * params->nchunks,
+				       FI_READ|FI_WRITE, 0, i, 0, &mr, NULL),
+			    "fi_mr_reg failed, key:%d", i);
+		local_mr[i] = mr;
+	    }
 #if 1
-	/* Wait until registration is completed */
-	int tmo = 3; /* 3 sec */
-	for (i = 0; i < thread_cnt; i++) {
-	    mr = local_mr[i];
-	    uint64_t mr_key = fi_mr_key(mr);
-	    while (tmo-- && mr_key == FI_KEY_NOTAVAIL) {
-		mr_key = fi_mr_key(mr);
-		sleep(1);
+	    /* Wait until registration is completed */
+	    int tmo = 3; /* 3 sec */
+	    for (i = 0; i < thread_cnt; i++) {
+		mr = local_mr[i];
+		uint64_t mr_key = fi_mr_key(mr);
+		while (tmo-- && mr_key == FI_KEY_NOTAVAIL) {
+		    mr_key = fi_mr_key(mr);
+		    sleep(1);
+		}
+		if (mr_key == FI_KEY_NOTAVAIL) {
+		    ON_FI_ERROR(mr_key, "Memory registration has not completed, FAM node %d part:%d",
+					node, partition_id);
+		}
 	    }
-	    if (mr_key == FI_KEY_NOTAVAIL) {
-		ON_FI_ERROR(mr_key, "Memory registration has not completed, FAM node %d part:%d",
-				    node, partition_id);
-	    }
-	}
 #endif
-	/* Get local descriptors */
-	for (i = 0; i < thread_cnt; i++)
-	    local_desc[i] = fi_mr_desc(local_mr[i]);
+	    /* Get local descriptors */
+	    for (i = 0; i < thread_cnt; i++)
+		local_desc[i] = fi_mr_desc(local_mr[i]);
+	} else {
+	    /* Copy local descriptors */
+	    memcpy(local_desc, lf_node->local_desc, thread_cnt * sizeof(void*));
+	}
     }
 
     for (i = 0; i < thread_cnt; i++) {

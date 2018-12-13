@@ -268,6 +268,7 @@ int main(int argc, char **argv) {
 		cl->fabric = fab->fabric;
 		cl->domain = fab->domain;
 		cl->av = fab->av;
+		cl->local_desc = fab->local_desc;
 	    }
 
 	    /* FI_MR_VIRT_ADDR? */

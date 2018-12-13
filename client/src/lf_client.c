@@ -89,6 +89,7 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 		cl->fabric = fab->fabric;
 		cl->domain = fab->domain;
 		cl->av = fab->av;
+		cl->local_desc = fab->local_desc;
 	    }
 
 	    /* Create tx contexts */
