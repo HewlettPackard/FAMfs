@@ -97,9 +97,11 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 		     "Error in libfabric client init");
 
 	    lf_all_clients[lf_client_idx] = cl;
-	    if (params->verbose)
-		printf("%d %s:%5d CL attached to FAM node %d(p%d) mr_key:%lu\n",
-			rank, params->nodelist[params->node_id], cl->service, i, part, cl->mr_key);
+	    if (params->verbose) {
+		char * const *nodelist = params->clientlist? params->clientlist : params->nodelist;
+		printf("%d %s:%5d CL attached to FAM module %d(p%d) mr_key:%lu\n",
+			rank, nodelist[params->node_id], cl->service, i, part, cl->mr_key);
+	    }
 	}
     }
     if (verbose) {

@@ -372,6 +372,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     struct timeval start = now(0);
     N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
+    char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
     N_CHUNK_t *chunk;
     LF_CL_t *node;
     struct fid_cntr *cntr;
@@ -405,7 +406,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     ASSERT(dst_node < lfs_params->fam_cnt);
     off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
     //for (i = 0; i < blocks; i++) {
-    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM node %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
+    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
 	  lfs_params->node_id, chunk_phy_id, chunk_offset,
 	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long) *tgt_srv_addr,
 	  dst_node, node->partition,
@@ -413,8 +414,8 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 
 	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,
 				node->mr_key, (void*)buf /* NULL */),
-			"%d (%s): fi_write failed on FAM node %d(p%d)",
-			lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id],
+			"%d (%s): fi_write failed on FAM module %d(p%d)",
+			lfs_params->node_id, nodelist[lfs_params->node_id],
 			dst_node, fam_stripe->partition);
 	//off += transfer_sz;
 	//buf += transfer_sz;
@@ -423,13 +424,13 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 
     rc = fi_cntr_wait(cntr, chunk->w_event, 10000);
     if (rc == -FI_ETIMEDOUT) {
-        err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on node %d(p%d) len:%zu off:%jd",
-	    lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id], chunk_phy_id,
+        err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
+	    lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
 	    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
 	    dst_node, node->partition, len, off);
     } else if (rc) {
-	err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on node %d(p%d) cnt:%lu/%lu",
-		lfs_params->node_id, lfs_params->nodelist[lfs_params->node_id], chunk_phy_id,
+	err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
+		lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
 		fi_cntr_readerr(cntr), rc,
 		fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
 		dst_node, node->partition,

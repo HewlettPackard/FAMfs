@@ -96,12 +96,16 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	hints->domain_attr->name = strdup(params->lf_domain);
     }
 
-    if (params->lf_fabric)
+    if (params->lf_fabric) {
 	pname = params->lf_fabric;
-    else if (params->lf_mr_flags.zhpe_support)
-	pname = params->nodelist[params->node_id];
-    else
-	pname = params->nodelist[node];
+    } else {
+	char* const* nodelist = params->clientlist? params->clientlist : params->nodelist;
+
+	if (params->lf_mr_flags.zhpe_support)
+	    pname = nodelist[params->node_id];
+	else
+	    pname = nodelist[node];
+    }
     rc = fi_getinfo(FI_VERSION(1, 5), pname, port, 0, hints, &fi);
     ON_FI_ERROR(rc, "LF client - fi_getinfo failed for FAM node %d (p%d) on %s:%s",
 		    node, partition_id, pname, port);
