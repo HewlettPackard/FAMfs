@@ -83,7 +83,7 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
 	lf_servers[i] = (LF_SRV_t *) malloc(sizeof(LF_SRV_t));
 	lf_servers[i]->params = params;
 	lf_servers[i]->length = part_length;
-	lf_servers[i]->virt_addr = NULL;
+	//lf_servers[i]->virt_addr = NULL;
 	cl = (LF_CL_t*) calloc(1, sizeof(LF_CL_t));
 	cl->partition = i;
 	//cl->fam_id = fam_id_by_index(params->fam_map, i);
@@ -272,12 +272,8 @@ int main(int argc, char **argv) {
 	    }
 
 	    /* FI_MR_VIRT_ADDR? */
-	    if (params->lf_mr_flags.virt_addr) {
-		if (params->part_mreg == 0)
-		    cl->dst_virt_addr = (uint64_t) fam_buf;
-		else
-		    cl->dst_virt_addr = (uint64_t) params->mr_virt_addrs[lf_client_idx];
-	    }
+	    if (params->lf_mr_flags.virt_addr)
+		cl->dst_virt_addr = (uint64_t) params->mr_virt_addrs[lf_client_idx];
 
 	    /* Create tx contexts per working thread (w_thread_cnt) */
 	    ON_ERROR( lf_client_init(cl, params), "Error in libfabric client init");
@@ -585,6 +581,7 @@ static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_
 
 		/* Setup fabric for extent on each node */
 		for (n = 0; n < nchunks; n++) {
+			int fam_extent = e;
 			/* TODO: Fix FAM allocation */
 			int lf_client_idx = to_lf_client_id(fam_idx++, srv_cnt, partition);
 			if (fam_idx == fam_cnt)
@@ -597,18 +594,17 @@ static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_
 			ON_ERROR( assign_map_chunk(&priv->chunks[n], params, e, n),
 				"Error allocating chunk");
 
-			int stripe_in_part = e - partition * params->srv_extents;
-			ASSERT(stripe_in_part >= 0);
+			/* Add dest partition offset? */
+			if (params->part_mreg != 0)
+			    fam_extent -= partition * params->srv_extents;
+			ASSERT(fam_extent >= 0);
+
 			priv->chunks[n]->lf_client_idx = lf_client_idx;
-			priv->chunks[n]->p_stripe0_off = stripe_in_part * params->extent_sz;
+			priv->chunks[n]->p_stripe0_off = fam_extent * params->extent_sz;
 
 			/* FI_MR_VIRT_ADDR? */
 			if (params->lf_mr_flags.virt_addr)
 				priv->chunks[n]->p_stripe0_off += (off_t) priv->lf_clients[n]->dst_virt_addr;
-
-			/* Add dest partition offset */
-			if (params->part_mreg == 0)
-				priv->chunks[n]->p_stripe0_off += (params->vmem_sz / srv_cnt) * partition;
 		}
 
 		/* Queue job */
@@ -1461,10 +1457,10 @@ static int lf_srv_init(LF_SRV_t *priv)
 	len = params->lf_mr_flags.zhpe_support? page_size : priv->length;
 	bufp = &buf;
 	ON_ERROR(posix_memalign((void **)bufp, page_size, len), "srv memory alloc failed");
-	priv->virt_addr = buf;
     }
     ON_FI_ERROR( fi_mr_reg(domain, *bufp, len, FI_REMOTE_READ|FI_REMOTE_WRITE, 0, mr_key, 0, &mr, NULL),
 		"srv fi_mr_reg failed");
+    priv->virt_addr = *bufp;
     cl->mr = mr;
     if (params->lf_mr_flags.prov_key) {
 	int tmo = 3; /* 3 sec */

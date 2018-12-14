@@ -83,10 +83,11 @@ N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int
     ASSERT(i < size);
 
     if (stripe->part_mreg == 0) {
-	/* Stripe # on the node */
+	/* Stripe # in the FAM module */
 	stripe->stripe_in_part = stripe_n;
     } else {
-	/* Offset in partition */
+	/* Each node emulates 'partition' number of FAM modules. */
+	/* Extent in partition */
 	unsigned int e = extent - stripe->partition * stripe->srv_extents;
 	ASSERT(e >= 0);
 	/* Stripe # in partition */

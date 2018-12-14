@@ -156,7 +156,7 @@ static void print_fam_map(FAM_MAP_t *m)
     if (!m)
 	return;
 
-    printf("FAM map: ");
+    printf("FAM modules map: ");
     for (i = 0; i < m->ionode_cnt; i++) {
 	unsigned long long *ids = m->fam_ids[i];
 	printf("%s%d:", i?" ":"", i);
@@ -164,7 +164,7 @@ static void print_fam_map(FAM_MAP_t *m)
 	for (id = 0; id < n; id++)
 	    printf("%s%u", id?",":"", (unsigned int) ids[id]);
     }
-    printf(" total %d modules\n", m->total_fam_cnt);
+    printf(" (total:%d)\n", m->total_fam_cnt);
 }
 
 static char *get_myhostname(void) {
@@ -296,7 +296,7 @@ void ion_usage(const char *name) {
 	   "\t   --rxctx <number of rx contexts in lf server>\n"
 	   "\t   --srv_extents <partition size, in extents>\n"
 	   "\t   --cmd_trigger - trigger command execution by LF remote access\n"
-	   "\t   --part_mreg <1|0> - 1(default): every partition registers own RMA buffer\n"
+	   "\t   --part_mreg <1|0> - 1(default): emulate multiple FAMs on each node as separate ""partitions""\n"
 	   "\t   --memreg <basic|local|basic,local|scalable> (default:scalable)\n"
 	   "\t-c --clients <node name list>\n"
 	   "\t-a |--affinity\n"
@@ -318,7 +318,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     FAM_MAP_t		*fam_map = NULL;
     int			famnode_cnt = 0;
     int			node_cnt = 0, nchunks = 0, recover = 0, verbose = 0;
-    int			cmd_trigger = 0, client_cnt = 0, part_mreg = 1;
+    int			cmd_trigger = 0, client_cnt = 0;
+    int			part_mreg = -1;
     int			iters = -1, parities = -1, workers = -1, lf_port = -1;
     size_t		vmem_sz = 0, chunk_sz = 0, extent_sz = 0;
     uint64_t            transfer_len = 0; /* transfer [block] size */
@@ -561,10 +562,16 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	free_fam_map(&fam_map);
     }
     nodelist_free(famlist, famnode_cnt);
-    if (fam_map)
+    if (fam_map) {
 	fam_cnt = fam_map->total_fam_cnt;
-    else
-	fam_cnt = node_cnt; /* FAM emulation: one FAM per IO node */
+	if (part_mreg > 0)
+	    err("Option is ignored: --part_mreg %d", part_mreg);
+	part_mreg = 0;
+    } else {
+	fam_cnt = node_cnt; /* FAM emulation: one module per IO node */
+	if (part_mreg < 0)
+	    part_mreg = 1; /* 'partition' modules per node */
+    }
 
     /* Number of chunks */
     if (nchunks == 0)
@@ -669,13 +676,13 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    printf("Nodes: ");
 	    for (i = 0; i < node_cnt; i++)
 		printf("%s%s", (i>0)?",":"", nodelist[i]);
-	    printf(" total:%d\n", node_cnt);
+	    printf(" (total:%d)\n", node_cnt);
 	}
 	if (clientlist) {
 	    printf("Clients: ");
 	    for (i = 0; i < client_cnt; i++)
 		printf("%s%s", (i>0)?",":"", clientlist[i]);
-	    printf(" total:%d\n", client_cnt);
+	    printf(" (total:%d)\n", client_cnt);
 	}
 
 	printf("Stripe %dD+%dP length: %d bytes (%d chunks %zu bytes each)\n",
