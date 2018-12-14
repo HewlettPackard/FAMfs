@@ -529,9 +529,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	zhpe_support = is_module_loaded(ZHPE_MODULE_NAME);
 	if (zhpe_support && !lf_mr_local \
 	    && !is_module_loaded(UMMUNOTIFY_MODULE_NAME)) {
-	    err("zhpe privider requires %s module for local buffer registartion cache!",
+	    err("Warning: zhpe privider requires %s module for local buffer registartion cache!",
 		UMMUNOTIFY_MODULE_NAME);
-	    goto _free;
+	    //goto _free;
 	}
     }
     if (!transfer_len)
