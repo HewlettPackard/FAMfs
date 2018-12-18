@@ -11,6 +11,7 @@
 #include <string.h>
 #include <malloc.h>
 #include <sys/types.h>
+#include <sys/mman.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
@@ -401,5 +402,493 @@ void lf_client_free(LF_CL_t *cl)
 	free(cl->srv_addr);
 	free(cl->tgt_srv_addr);
 	free(cl);
+}
+
+int lf_clients_init(N_PARAMS_t *params)
+{
+    LF_CL_t **lf_all_clients;
+    size_t chunk_sz;
+    char **stripe_buf;
+    int psize, workers, fam_cnt, srv_cnt, nchunks, lf_client_idx;
+    int verbose, my_node_id;
+    int i, part, rc;
+
+    /* Pre-allocate LF client worker's private data buffers */
+    workers = params->w_thread_cnt;
+    stripe_buf = (char **)malloc(workers * sizeof(void*));
+    ASSERT(stripe_buf);
+    psize = getpagesize();
+    nchunks = params->nchunks;
+    chunk_sz = params->chunk_sz;
+    for (i = 0; i < workers; i++) {
+	/* Stripe I/O buffer */
+	ON_ERROR(posix_memalign((void **)&stripe_buf[i], psize,
+				chunk_sz * nchunks),
+		 "stripe buffer memory alloc failed");
+	if (params->lf_mr_flags.allocated)
+	    mlock(stripe_buf[i], chunk_sz * nchunks);
+    }
+    params->stripe_buf = stripe_buf;
+
+    /* Allocate one LF_CL_t structure per FAM */
+    fam_cnt = params->fam_cnt;
+    srv_cnt = params->node_servers;
+    lf_all_clients = (LF_CL_t **)malloc(fam_cnt * srv_cnt * sizeof(void*));
+    ASSERT(lf_all_clients);
+    params->lf_clients = lf_all_clients;
+
+    /* Setup fabric for each node */
+    my_node_id = params->node_id;
+    for (i = 0; i < fam_cnt; i++) {
+	for (part = 0; part < srv_cnt; part++) {
+	    LF_CL_t *cl;
+	    lf_client_idx = to_lf_client_id(i, srv_cnt, part);
+
+	    cl = (LF_CL_t *) malloc(sizeof(LF_CL_t));
+	    ASSERT(cl);
+	    cl->node_id = i;
+	    cl->partition = (unsigned int)part;
+	    cl->fam_id = fam_id_by_index(params->fam_map, i);
+
+	    if (params->lf_mr_flags.prov_key)
+		cl->mr_key = params->mr_prov_keys[lf_client_idx];
+
+	    /* FI_MR_VIRT_ADDR? */
+	    if (params->lf_mr_flags.virt_addr) {
+		if (params->part_mreg == 0)
+		    cl->dst_virt_addr = (uint64_t) params->fam_buf;
+		else
+		    cl->dst_virt_addr = (uint64_t) params->mr_virt_addrs[lf_client_idx];
+	    }
+
+	    if (!params->fam_map || (i == 0 && part == 0)) {
+		/* Join the fabric and domain */
+		cl->fabric = NULL;
+	    } else {
+		LF_CL_t *fab = lf_all_clients[0];
+
+		cl->fabric = fab->fabric;
+		cl->domain = fab->domain;
+		cl->av = fab->av;
+		cl->local_desc = fab->local_desc;
+	    }
+
+	    /* Create tx contexts per working thread (w_thread_cnt) */
+	    if ((rc = lf_client_init(cl, params))) {
+		err("Error in libfabric client init for FAM module %d(p%d)",
+		    i, part);
+		free(cl);
+		return 1;
+	    }
+
+	    lf_all_clients[lf_client_idx] = cl;
+	    if (params->verbose) {
+		char * const *nodelist = params->clientlist? params->clientlist : params->nodelist;
+
+		if (params->fam_map)
+		    printf("%d CL attached to FAM module %d(p%d) mr_key:%lu\n",
+			   my_node_id, i, part, cl->mr_key);
+		else
+		    printf("%d CL attached to node %d(p%d) on %s:%5d mr_key:%lu\n",
+			   my_node_id, i, part, nodelist[i], cl->service, cl->mr_key);
+	    }
+	}
+    }
+
+    verbose = (my_node_id == 0);
+    if (verbose) {
+	printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
+		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
+    }
+
+    if (params->set_affinity && verbose) {
+	printf("Set CQ and worker affinity: ");
+	for (i = 0; i < params->w_thread_cnt; i++)
+		printf("%d ", lf_all_clients[0]->cq_affinity[i]);
+	printf("\n");
+    }
+
+    return 0;
+}
+
+/*
+ * Libfabric target
+**/
+int lf_srv_init(LF_SRV_t *priv)
+{
+    N_PARAMS_t		*params = priv->params;
+    LF_CL_t		*cl = priv->lf_client;
+
+    struct fi_info      *hints, *fi;
+    struct fid_fabric   *fabric;
+    struct fid_domain   *domain;
+    struct fid_ep       *ep;
+    struct fi_av_attr   av_attr;
+    struct fid_av       *av;
+    struct fi_cq_attr   cq_attr;
+    struct fid_mr       *mr;
+    struct fid_ep	**rx_epp = NULL;
+    struct fid_cq	**rx_cqq;
+    struct fi_rx_attr	rx_attr;
+    struct fid_cntr     *rcnt = NULL;
+    struct fi_cntr_attr cntr_attr;
+
+    char                port[6], name[128];
+    size_t              n, len;
+    uint64_t            mr_key = 0;
+
+    int			i, rx_ctx_n, my_node_id, *cq_affinity;
+    const char		*pname, *fabname;
+
+    rx_ctx_n = params->lf_srv_rx_ctx;
+    my_node_id = params->node_id;
+    pname = params->nodelist[my_node_id];
+    fabname = params->lf_fabric? params->lf_fabric : pname;
+    cq_affinity = cl->cq_affinity;
+    sprintf(port, "%5d", cl->service);
+
+    // Provider discovery
+    hints = fi_allocinfo();
+    hints->caps                 = FI_RMA;
+#ifdef LF_TARGET_RMA_EVENT
+    hints->caps                 |= FI_RMA_EVENT;
+#endif
+    if (rx_ctx_n)
+	hints->caps		|= FI_NAMED_RX_CTX;
+    hints->mode                 = FI_CONTEXT;
+
+    if (params->lf_mr_flags.scalable)
+	hints->domain_attr->mr_mode = FI_MR_SCALABLE;
+    else if (params->lf_mr_flags.basic)
+	hints->domain_attr->mr_mode = FI_MR_BASIC;
+    else {
+	if (params->lf_mr_flags.allocated)
+	    hints->domain_attr->mr_mode |= FI_MR_ALLOCATED;
+	if (params->lf_mr_flags.prov_key)
+	    hints->domain_attr->mr_mode |= FI_MR_PROV_KEY;
+	if (params->lf_mr_flags.virt_addr)
+	    hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR;
+    }
+    if (params->lf_mr_flags.local)
+	hints->domain_attr->mr_mode |= FI_MR_LOCAL;
+
+    // hints->domain_attr->threading = FI_THREAD_ENDPOINT;
+    if (!strcmp(params->prov_name, "zhpe"))
+	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
+    hints->ep_attr->type        = FI_EP_RDM;
+    free(hints->fabric_attr->prov_name);
+    hints->fabric_attr->prov_name = strdup(params->prov_name);
+    if (params->lf_domain) {
+	free(hints->domain_attr->name);
+	hints->domain_attr->name = strdup(params->lf_domain);
+    }
+
+    ON_FI_ERROR(fi_getinfo(FI_VERSION(1, 5), fabname, port, FI_SOURCE, hints, &fi),
+		"srv fi_getinfo failed on %s for %s:%s in domain:%s",
+		pname, fabname, port, hints->domain_attr->name);
+    fi_freeinfo(hints);
+    if (fi->next) {
+	/* TODO: Add 'domain' option */
+	err("Ambiguous target provider:%s in domains %s and %s",
+		fi->fabric_attr->prov_name, fi->domain_attr->name, fi->next->domain_attr->name);
+	return 1;
+    }
+
+    /* Query provider capabilities */
+    if (fi->domain_attr->mr_mode & FI_MR_LOCAL)
+	params->lf_mr_flags.local = 1;
+    if (fi->domain_attr->mr_mode & FI_MR_BASIC)
+	params->lf_mr_flags.basic = 1;
+    if (fi->domain_attr->mr_mode & FI_MR_PROV_KEY)
+	params->lf_mr_flags.prov_key = 1;
+    if (fi->domain_attr->mr_mode & FI_MR_VIRT_ADDR)
+	params->lf_mr_flags.virt_addr = 1;
+    if (fi->domain_attr->mr_mode & FI_MR_ALLOCATED)
+	params->lf_mr_flags.allocated = 1;
+
+    if (cl->fabric == NULL) {
+	cl->free_domain_fl = 1;
+
+	// Create fabric object
+	ON_FI_ERROR(fi_fabric(fi->fabric_attr, &fabric, NULL), "srv fi_fabric failed");
+
+	// Create domain object
+	ON_FI_ERROR(fi_domain(fabric, fi, &domain, NULL), "srv fi_domain failed");
+
+	// Create address vector bind to endpoint and event queue
+	memset(&av_attr, 0, sizeof(av_attr));
+	av_attr.type = FI_AV_MAP;
+	av_attr.rx_ctx_bits = LFSRV_RCTX_BITS;
+	av_attr.ep_per_node = (unsigned int)rx_ctx_n;
+	ON_FI_ERROR(fi_av_open(domain, &av_attr, &av, NULL), "srv fi_av_open failed");
+    } else {
+	cl->free_domain_fl = 0;
+	fabric = cl->fabric;
+	domain = cl->domain;
+	av = cl->av;
+    }
+
+    // Create endpoint
+    if (rx_ctx_n) {
+	//fi->caps = FI_RMA | FI_NAMED_RX_CTX;
+	ON_FI_ERROR(fi_scalable_ep(domain, fi, &ep, NULL), "srv fi_scalable_ep failed");
+	ON_FI_ERROR(fi_scalable_ep_bind(ep, &av->fid, 0), "srv fi_scalable_ep_bind failed");
+    } else {
+	//fi->caps = FI_RMA;
+	ON_FI_ERROR(fi_endpoint(domain, fi, &ep, NULL), "srv fi_endpoint failed");
+	ON_FI_ERROR(fi_ep_bind(ep, (fid_t)av, 0), "srv fi_ep_bind failed");
+    }
+
+    // Create completion queue and bind to endpoint
+    memset(&cq_attr, 0, sizeof(cq_attr));
+    cq_attr.format = FI_CQ_FORMAT_TAGGED;
+    cq_attr.size = 100;
+    if (params->set_affinity)
+	cq_attr.flags = FI_AFFINITY;
+
+    cl->size = rx_ctx_n;
+
+    /* Scalable endpoint: create 'rx_ctx_n' rx contexts on passive RMA side */
+    rx_attr = *fi->rx_attr;
+    rx_attr.caps = FI_RMA;
+    rx_attr.comp_order = FI_ORDER_NONE;
+    rx_attr.op_flags = 0;
+
+    if (rx_ctx_n > 0) {
+	rx_epp = (struct fid_ep **) malloc(rx_ctx_n * sizeof(void*));
+	ASSERT(rx_epp)
+    }
+    rx_cqq = (struct fid_cq **) malloc(((rx_ctx_n > 0)? rx_ctx_n:1)* sizeof(void*));
+    ASSERT(rx_cqq);
+    if (params->cmd_trigger > 0) {
+	memset(&cntr_attr, 0, sizeof(cntr_attr));
+	ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &rcnt, NULL), "srv fi_cntr_open failed");
+	cl->rcnt = rcnt;
+    }
+
+    for (i = 0; i < rx_ctx_n; i++) {
+	/* scalable endpoint */
+	ON_FI_ERROR(fi_rx_context(ep, i, &rx_attr, &rx_epp[i], NULL), "srv fi_rx_context failed");
+
+	if (params->set_affinity)
+	    cq_attr.signaling_vector = cq_affinity[(priv->thread_id + 1 + i) % params->node_servers];
+	ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &rx_cqq[i], NULL),
+		    "srv fi_cq_open failed");
+
+	ON_FI_ERROR(fi_ep_bind(rx_epp[i], &rx_cqq[i]->fid, FI_SEND | FI_RECV | FI_SELECTIVE_COMPLETION),
+		    "fi_ep_bind rx context failed");
+
+	if (params->cmd_trigger > 0) {
+	    // Bind counter to endpoint
+	    ON_FI_ERROR(fi_ep_bind(rx_epp[i], &rcnt->fid, FI_REMOTE_READ|FI_REMOTE_WRITE),
+			"srv cntr bind failed");
+	}
+
+	ON_FI_ERROR(fi_enable(rx_epp[i]),
+		    "srv fi_enable rx_ep failed");
+    }
+
+    if (rx_ctx_n == 0) {
+	/* non-scalable endpoint */
+	ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &rx_cqq[0], NULL),
+		    "srv fi_cq_open failed");
+	ON_FI_ERROR(fi_ep_bind(ep, &rx_cqq[0]->fid, FI_SEND | FI_RECV | FI_SELECTIVE_COMPLETION),
+		    "srv fi_ep_bind failed");
+
+	if (params->cmd_trigger > 0) {
+	    ON_FI_ERROR(fi_ep_bind(ep, &rcnt->fid, FI_REMOTE_READ|FI_REMOTE_WRITE),  "srv cntr bind failed");
+	}
+    }
+
+    // Create memory region
+    if (!params->lf_mr_flags.prov_key)
+	mr_key = params->lf_mr_flags.zhpe_support? FI_ZHPE_FAM_RKEY : \
+		 node2lf_mr_pkey(my_node_id, params->node_servers, cl->partition);
+
+    void **bufp, *buf;
+    if (params->part_mreg == 0) {
+	len = params->vmem_sz;
+	bufp = &params->fam_buf;
+    } else {
+	unsigned int page_size = getpagesize();
+	size_t part_length = params->vmem_sz / params->node_servers;
+
+	len = params->lf_mr_flags.zhpe_support? page_size : part_length;
+	bufp = &buf;
+	ON_ERROR(posix_memalign(bufp, page_size, len), "srv memory alloc failed");
+    }
+    ON_FI_ERROR( fi_mr_reg(domain, *bufp, len, FI_REMOTE_READ|FI_REMOTE_WRITE, 0, mr_key, 0, &mr, NULL),
+		"srv fi_mr_reg failed");
+    priv->virt_addr = *bufp;
+    if (params->lf_mr_flags.prov_key) {
+	int tmo = 3; /* 3 sec */
+	mr_key = fi_mr_key(mr);
+	while (tmo-- && mr_key == FI_KEY_NOTAVAIL) {
+	    mr_key = fi_mr_key(mr);
+	    sleep(1);
+	}
+	if (mr_key == FI_KEY_NOTAVAIL) {
+	    err("%d/%d: Memory registration has not completed, partition:%d",
+		    my_node_id, priv->thread_id, cl->partition);
+	    ON_FI_ERROR(FI_KEY_NOTAVAIL, "srv fi_mr_key failed");
+	}
+    }
+
+    // Enable endpoint
+    ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
+
+    // zhpe support
+    if (params->lf_mr_flags.zhpe_support) {
+	struct fi_zhpe_ext_ops_v1 *ext_ops;
+	size_t sa_len;
+	void *fam_sa;
+	char url[16];
+
+	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
+		"srv open_ops failed");
+	sprintf(url, "zhpe:///fam%4Lu", cl->fam_id);
+	ON_FI_ERROR( ext_ops->lookup(url, &fam_sa, &sa_len), "fam:%4Lu lookup failed", cl->fam_id);
+
+	printf("%d/%d: Attached to %zuMB of FAM memory on %s:fam%4Lu if:%s\n",
+	       my_node_id, priv->thread_id,
+	       len/1024/1024, pname,
+	       cl->fam_id, fi->domain_attr->name);
+    } else {
+	printf("%d/%d: Registered %zuMB of memory on %s:%s (p%d) if:%s\n",
+	       my_node_id, priv->thread_id,
+	       len/1024/1024, pname, port, cl->partition, fi->domain_attr->name);
+    }
+    fi_freeinfo(fi);
+    fi = NULL;
+
+    n = 128;
+    ON_FI_ERROR(fi_getname((fid_t)ep, name, &n), "srv fi_getname failed");
+    if (n >=128) {
+        printf("name > 128 chars!\n");
+        return 1;
+    }
+    name[n] = 0;
+    if (params->verbose) {
+        printf("%d/%d: server addr is %zu:\n", my_node_id, priv->thread_id, n);
+        for (i = 0; i < (int)n; i++)
+            printf("%02x ", (unsigned char)name[i]);
+	printf(" buf@%p basic:%d local:%d prov_key:%d virt_addr:%d allocated:%d mr_key:%lu\n",
+		*bufp, params->lf_mr_flags.basic, params->lf_mr_flags.local,
+		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated,
+		mr_key);
+    }
+
+#if 0
+    // Setup completion queues
+    memset(&cq_attr, 0, sizeof(cq_attr));
+    cq_attr.format = FI_CQ_FORMAT_DATA;
+    cq_attr.size = 64;
+    ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &rcq, NULL), "rcq open failed");
+    ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &wcq, NULL), "wcq open failed");
+    ON_FI_ERROR(fi_ep_bind(ep, (fid_t)rcq, FI_REMOTE_READ), "rcq bind failed");
+    ON_FI_ERROR(fi_ep_bind(ep, (fid_t)wcq, FI_REMOTE_WRITE), "wcq bind failed");
+#endif
+
+    cl->fabric = fabric;
+    cl->domain = domain;
+    cl->av = av;
+    cl->ep = ep;
+    cl->rx_epp = rx_epp;
+    cl->rx_cqq = rx_cqq;
+    cl->mr = mr;
+    cl->mr_key = mr_key;
+    return 0;
+}
+
+int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_Comm mpi_comm)
+{
+    LF_SRV_t **lf_servers;
+    int srv_cnt, node_id, lf_client_idx;
+    int i, part, rc;
+
+    node_id = params->node_id;
+    srv_cnt = params->node_servers;
+
+    if (params->part_mreg == 0)
+	ON_ERROR(posix_memalign(&params->fam_buf, getpagesize(), params->vmem_sz), "srv memory alloc failed");
+
+    lf_servers = (LF_SRV_t **) malloc(srv_cnt*sizeof(void*));
+    ASSERT(lf_servers);
+    for (i = 0; i < srv_cnt; i++) {
+	LF_SRV_t *srv;
+	LF_CL_t *cl;
+
+	srv = (LF_SRV_t *) malloc(sizeof(LF_SRV_t));
+	ASSERT(srv);
+	srv->params = params;
+	srv->thread_id = i;
+	//lf_servers[i]->length = part_length;
+	//lf_servers[i]->virt_addr = NULL;
+
+	cl = (LF_CL_t*) calloc(1, sizeof(LF_CL_t));
+	ASSERT(cl);
+	cl->partition = i;
+	if (params->fam_map)
+	    cl->fam_id = fam_id_by_index(params->fam_map, node_id);
+	cl->service = node2service(params->lf_port, node_id, i);
+	if ( params->set_affinity)
+	    alloc_affinity(&cl->cq_affinity, srv_cnt, i + 1);
+	srv->lf_client = cl;
+
+	rc = lf_srv_init(srv);
+	if (rc) {
+	    err("%d: Error starting FAM module %d(p%d) emulation!",
+		node_id, i, cl->partition);
+	    free(cl);
+	    free(srv);
+	    return rc;
+	}
+
+	lf_servers[i] = srv;
+    }
+
+#if 0
+	if (priv->params->cmd_trigger > 0)
+	    rc = lf_srv_trigger(priv);
+#endif
+
+    if (rank == 0) {
+	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
+		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
+    }
+
+    MPI_Barrier(mpi_comm);
+
+    /* Exchange keys */
+    if (params->lf_mr_flags.prov_key) {
+	size_t len = srv_cnt * sizeof(uint64_t);
+
+	/* For each partition */
+	for (part = 0; part < srv_cnt; part++) {
+	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
+	    params->mr_prov_keys[lf_client_idx] = lf_servers[part]->lf_client->mr_key;
+	}
+	ON_ERROR( MPI_Allgather(/* &mr_prov_keys[srv_cnt*node_id] */ MPI_IN_PLACE, len, MPI_BYTE,
+				params->mr_prov_keys, len, MPI_BYTE, mpi_comm),
+		 "MPI_Allgather");
+    }
+    /* Exchange virtual addresses */
+    if (params->lf_mr_flags.virt_addr) {
+	size_t len = srv_cnt * sizeof(uint64_t);
+
+	/* For each partition */
+	for (part = 0; part < srv_cnt; part++) {
+	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
+	    params->mr_virt_addrs[lf_client_idx] = (uint64_t) lf_servers[part]->virt_addr;
+	}
+	ON_ERROR( MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
+				params->mr_virt_addrs, len, MPI_BYTE, mpi_comm),
+		 "MPI_Allgather");
+    }
+
+    *lf_servers_p = lf_servers;
+    return 0;
 }
 

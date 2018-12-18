@@ -18,6 +18,8 @@
 #include <rdma/fi_rma.h>
 #include <rdma/fi_ext_zhpe.h>
 
+#include <mpi.h>
+
 #include "famfs_env.h"
 
 #define to_lf_client_id(node, part_count, part) (node*part_count + part)
@@ -121,6 +123,7 @@ typedef struct n_params_ {
 
 	FAM_MAP_t	*fam_map;	/* Node FAM IDs */
 	int		fam_cnt;	/* IO node count */
+	void		*fam_buf;	/* IO node: RAM buffer for FAM module emulation */
 
 	/* Per node partition array, look at to_lf_client_id() for the index */
 	LF_CL_t		**lf_clients;	/* LF client per node, partition */
@@ -132,10 +135,21 @@ typedef struct n_params_ {
 	char		**stripe_buf;	/* local buffers (if any) or NULLs */
 } N_PARAMS_t;
 
+typedef struct lf_srv_ {
+	struct n_params_	*params;	/* reference to struct n_params_ */
+	LF_CL_t			*lf_client;	/* open libfabric objects to be closed/freed */
+	void			*virt_addr;	/* mapped memory buffer */
+//	size_t			length;		/* FAM address range (length, bytes) */
+	int			thread_id;	/* worker's thread id */
+} LF_SRV_t;
+
 
 /* defined in famfs_lf_connect.c */
-int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params);
+int lf_clients_init(N_PARAMS_t *params);
+int lf_client_init(LF_CL_t *client, N_PARAMS_t *params);
 void lf_client_free(LF_CL_t *client);
+int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_Comm mpi_comm);
+int lf_srv_init(LF_SRV_t *priv);
 
 /* defined in util.c */
 int arg_parser(int argc, char **argv, int verbose, int client_rank_size, N_PARAMS_t **params_p);

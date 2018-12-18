@@ -20,14 +20,6 @@ typedef struct perf_stat_ {
 	struct ec_perf		lr_bw;		/* data transfer to local buffer from FAM */
 } PERF_STAT_t;
 
-typedef struct lf_srv_ {
-	struct n_params_	*params;	/* reference to struct n_params_ */
-	LF_CL_t			*lf_client;	/* open libfabric objects to be closed/freed */
-	void			*virt_addr;	/* mapped memory buffer */
-	size_t			length;		/* FAM address range (length, bytes) */
-	int			thread_id;	/* worker's thread id */
-} LF_SRV_t;
-
 typedef struct w_private_ {
 	struct n_params_	*params;	/* reference to struct n_params_ */
 	struct b_stripes_	bunch;		/* bunch of stripes belongs to the same extent */

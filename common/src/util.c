@@ -599,7 +599,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    nodelist_free(clientlist, client_cnt);
 	    client_cnt = 0;
 	    clientlist = NULL;
-	    err("Ignore clientlist (-c) option");
+	    if (be_verbose)
+		err("Ignore clientlist (-c) option");
 	}
     }
     if (node_id < 0) {
@@ -780,7 +781,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     params->cmd_trigger = cmd_trigger;
     params->part_mreg = part_mreg;
     params->stripe_buf = NULL;
-
+    params->fam_buf = NULL;
     params->lf_clients = NULL;
 
     *params_p = params;
@@ -827,6 +828,7 @@ void free_lf_params(N_PARAMS_t **params_p)
     free(params->mr_prov_keys);
     free(params->mr_virt_addrs);
     free_fam_map(&params->fam_map);
+    free(params->fam_buf);
     free(params);
     *params_p = NULL;
 }

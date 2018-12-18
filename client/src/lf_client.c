@@ -6,7 +6,6 @@
 #include <getopt.h>
 #include <malloc.h>
 #include <signal.h>
-#include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
 #include <limits.h>
@@ -34,90 +33,11 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
     params = *params_p;
     ASSERT(params);
     params->w_thread_cnt = 1;
-    nchunks = params->nchunks;
-    fam_cnt = params->fam_cnt;
-    srv_cnt = params->node_servers;
 
-    /* Pre-allocate LF client stripe buffer */
-    stripe_buf = (char **)malloc(params->w_thread_cnt * sizeof(void*));
-    ASSERT(stripe_buf);
-    psize = getpagesize();
-    for (i = 0; i < params->w_thread_cnt; i++) {
-	/* Stripe I/O buffer */
-	ON_ERROR(posix_memalign((void **)&stripe_buf[i], psize,
-				params->chunk_sz * nchunks),
-		"stripe buffer memory alloc failed");
-	if (params->lf_mr_flags.allocated)
-	    mlock(stripe_buf[i], params->chunk_sz * nchunks);
-    }
-    params->stripe_buf = stripe_buf;
-
-    /* Allocate one LF_CL_t structure per FAM partition */
-    lf_all_clients = (LF_CL_t **)malloc(fam_cnt * srv_cnt * sizeof(void*));
-    ASSERT(lf_all_clients);
-    params->lf_clients = lf_all_clients;
-    /* Setup fabric for each node */
-    for (i = 0; i < fam_cnt; i++) {
-	for (part = 0; part < srv_cnt; part++) {
-	    LF_CL_t *cl;
-	    int lf_client_idx = to_lf_client_id(i, srv_cnt, part);
-
-	    cl = (LF_CL_t *) malloc(sizeof(LF_CL_t));
-	    ASSERT(cl);
-	    cl->node_id = i;
-	    cl->fam_id = fam_id_by_index(params->fam_map, i);
-	    cl->partition = (unsigned int)part;
-#if 0 /* TODO: Exchange prov_keys & virt_addr */
-	    if (params->lf_mr_flags.prov_key)
-		cl->mr_key = params->mr_prov_keys[lf_client_idx];
-	    /* FI_MR_VIRT_ADDR? */
-	    if (params->lf_mr_flags.virt_addr) {
-		if (params->part_mreg == 0)
-		    cl->dst_virt_addr = (uint64_t) fam_buf;
-		else
-		    cl->dst_virt_addr = (uint64_t) params->mr_virt_addrs[lf_client_idx];
-	    }
-#else
-	    cl->mr_key = 0;
-	    cl->dst_virt_addr = 0;
-#endif
-	    if (!params->fam_map || (i == 0 && part == 0)) {
-		/* Join the fabric and domain */
-		cl->fabric = NULL;
-	    } else {
-		LF_CL_t *fab = lf_all_clients[0];
-		cl->fabric = fab->fabric;
-		cl->domain = fab->domain;
-		cl->av = fab->av;
-		cl->local_desc = fab->local_desc;
-	    }
-
-	    /* Create tx contexts */
-	    ON_ERROR( lf_client_init(cl, params),
-		     "Error in libfabric client init");
-
-	    lf_all_clients[lf_client_idx] = cl;
-	    if (params->verbose) {
-		char * const *nodelist = params->clientlist? params->clientlist : params->nodelist;
-		printf("%d %s:%5d CL attached to FAM module %d(p%d) mr_key:%lu\n",
-			rank, nodelist[params->node_id], cl->service, i, part, cl->mr_key);
-	    }
-	}
-    }
-    if (verbose) {
-	printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
-		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
-		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
-    }
-
-    if (params->set_affinity && verbose) {
-	printf("Set CQ and worker affinity: ");
-		printf("%d ", lf_all_clients[0]->cq_affinity[0]);
-	printf("\n");
-    }
-
-    *params_p = params;
-    return 0;
+    rc = lf_clients_init(params);
+    if (rc == 0)
+	*params_p = params;
+    return rc;
 }
 
 int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
