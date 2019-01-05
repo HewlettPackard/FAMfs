@@ -15,7 +15,6 @@ libunifycr_la_SOURCES = \
   unifycr-sysio.h \
   unifycr.c \
   unifycr.h \
-  unifycr-defs.h \
   unifycr-internal.h \
   unifycr-wrap.h \
   unifycr-path_utils.c \
@@ -47,7 +46,6 @@ libunifycr_gotcha_la_SOURCES = \
   unifycr.c \
   unifycr.h \
   gotcha_map_unifycr_list.h \
-  unifycr-defs.h \
   unifycr-internal.h \
   unifycr-wrap.h \
   unifycr-path_utils.c \

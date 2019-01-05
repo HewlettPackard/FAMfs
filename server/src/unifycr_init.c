@@ -52,6 +52,7 @@
 #include "famfs_env.h"
 #include "famfs_error.h"
 
+
 int *local_rank_lst;
 int local_rank_cnt;
 int local_rank_idx;
@@ -63,6 +64,8 @@ arraylist_t *thrd_list;
 
 int invert_sock_ids[MAX_NUM_CLIENTS]; /*records app_id for each sock_id*/
 int log_print_level = 5;
+
+unifycr_cfg_t server_cfg;
 
 char *mds_vec = NULL;
 int  num_mds = 0;
@@ -136,6 +139,17 @@ int main(int argc, char *argv[])
     int provided;
     char *env;
     int rc;
+    bool daemon;
+
+    rc = unifycr_config_init(&server_cfg, argc, argv);
+    if (rc != 0)
+	exit(1);
+
+    rc = configurator_bool_val(server_cfg.unifycr_daemonize, &daemon);
+    if (rc != 0)
+	exit(1);
+    if (daemon)
+	daemonize();
 
     rc = MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
 

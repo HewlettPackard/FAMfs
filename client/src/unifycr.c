@@ -110,6 +110,8 @@ static int unifycr_fpos_enabled   = 1;  /* whether we can use fgetpos/fsetpos */
  * unifycr variable:
  * */
 
+unifycr_cfg_t client_cfg;
+
 fs_type_t fs_type = UNIFYCRFS;
 unifycr_index_buf_t unifycr_indices;
 unifycr_fattr_buf_t unifycr_fattrs;
@@ -128,8 +130,8 @@ int local_rank_cnt = 0;
 int local_del_cnt = 0;
 int client_sockfd;
 struct pollfd cmd_fd;
-long shm_req_size = UNIFYCR_DEF_REQ_SIZE;
-long shm_recv_size = UNIFYCR_DEF_RECV_SIZE;
+long shm_req_size = UNIFYCR_SHMEM_REQ_SIZE;
+long shm_recv_size = UNIFYCR_SHMEM_RECV_SIZE;
 char *shm_recvbuf;
 char *shm_reqbuf;
 char cmd_buf[GEN_STR_LEN] = {0};
@@ -177,7 +179,7 @@ long    unifycr_spillover_max_chunks; /* maximum number of chunks that fit in sp
 
 
 #ifdef ENABLE_NUMA_POLICY
-static char unifycr_numa_policy[10];
+static char unifycr_numa_policy[12];
 static int unifycr_numa_bank = -1;
 #endif
 
@@ -228,35 +230,6 @@ LFS_CTX_t *lfs_ctx = NULL;
 
 //size_t              mem_per_srv;
 //size_t              mem_per_cln;
-
-static size_t get_evv(char *name, size_t df) {
-    size_t  val = 0;
-    char    *evv, *last;
-
-    evv = getenv(name);
-    if (evv) {
-        val = strtod(evv, &last);
-        if (*last) {
-            switch (*last) {
-            case 'k':
-            case 'K':
-                val *= 1024;
-                break;
-            case 'm':
-            case 'M':
-                val *= 1024*1024;
-                break;
-            case 'g':
-            case 'G':
-                val *= 1024*1024*1024L;
-                break;
-            }
-        }
-    }
-
-    return val ? val : df;
-
-}
 
 
 lfio_stats_t        lf_wr_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
@@ -1818,13 +1791,13 @@ static int unifycr_abtoull(char *str, unsigned long long *val)
 static int unifycr_init(int rank)
 {
     if (! unifycr_initialized) {
+        long l;
 
         /* unifycr debug level default is zero */
         unifycr_debug_level = 0;
-
         /* set debug level to UNIFYCR_DEBUG env variable if it is set */
-        if (getenv("UNIFYCR_DEBUG"))
-            unifycr_debug_level = atoi(getenv("UNIFYCR_DEBUG"));
+        if (!configurator_int_val(client_cfg.log_verbosity, &l))
+            unifycr_debug_level = (int)l;
 
 #ifdef UNIFYCR_GOTCHA
         enum gotcha_error_t result;
@@ -1866,42 +1839,31 @@ static int unifycr_init(int rank)
         unifycr_max_long = LONG_MAX;
         unifycr_min_long = LONG_MIN;
 
+        /* determine maximum number of bytes of spillover for chunk storage */
+        unifycr_spillover_size = UNIFYCR_SPILLOVER_SIZE;
+        if (!configurator_int_val(client_cfg.spillover_size, &l))
+            unifycr_spillover_size = (size_t)l;
+
         /* will we use spillover to store the files? */
-        unifycr_use_spillover = 1;
-
-        env = getenv("UNIFYCR_USE_SPILLOVER");
-        if (env) {
-            int val = atoi(env);
-            if (val != 1)
-                unifycr_use_spillover = 0;
-
-        }
-
+        unifycr_use_spillover = (unifycr_spillover_size > 0)? 1: 0;
         DEBUG("are we using spillover? %d\n", unifycr_use_spillover);
 
         /* determine max number of files to store in file system */
         unifycr_max_files = UNIFYCR_MAX_FILES;
-        env = getenv("UNIFYCR_MAX_FILES");
-        if (env) {
-            int val = atoi(env);
-            unifycr_max_files = val;
-        }
+        /* Note: UNIFYCR_MAX_FILEDESCS is hardcoded so far! */
+        if (!configurator_int_val(client_cfg.client_max_files, &l))
+            unifycr_max_files = (int)l;
+        ASSERT(UNIFYCR_MAX_FILEDESCS >= unifycr_max_files);
 
         /* determine number of bits for chunk size */
         unifycr_chunk_bits = UNIFYCR_CHUNK_BITS;
-        env = getenv("UNIFYCR_CHUNK_BITS");
-        if (env) {
-            int val = atoi(env);
-            unifycr_chunk_bits = val;
-        }
+        if (!configurator_int_val(client_cfg.unifycr_chunk_bits, &l))
+            unifycr_chunk_bits = (int)l;
 
         /* determine maximum number of bytes of memory for chunk storage */
         unifycr_chunk_mem = UNIFYCR_CHUNK_MEM;
-        env = getenv("UNIFYCR_CHUNK_MEM");
-        if (env) {
-            unifycr_abtoull(env, &bytes);
-            unifycr_chunk_mem = (size_t) bytes;
-        }
+        if (!configurator_int_val(client_cfg.unifycr_chunk_mem, &l))
+            unifycr_chunk_mem = (size_t)l;
 
         /* set chunk size, set chunk offset mask, and set total number
          * of chunks */
@@ -1909,61 +1871,48 @@ static int unifycr_init(int rank)
         unifycr_chunk_mask = unifycr_chunk_size - 1;
         unifycr_max_chunks = unifycr_chunk_mem >> unifycr_chunk_bits;
 
-        /* determine maximum number of bytes of spillover for chunk storage */
-        unifycr_spillover_size = UNIFYCR_SPILLOVER_SIZE;
-        env = getenv("UNIFYCR_SPILLOVER_SIZE");
-        if (env) {
-            unifycr_abtoull(env, &bytes);
-            unifycr_spillover_size = (size_t) bytes;
-        }
-
         /* set number of chunks in spillover device */
         unifycr_spillover_max_chunks = unifycr_spillover_size >> unifycr_chunk_bits;
 
         if (fs_type == UNIFYCR_LOG) {
             unifycr_index_buf_size = UNIFYCR_INDEX_BUF_SIZE;
-            env = getenv("UNIFYCR_INDEX_BUF_SIZE");
-            if (env) {
-                unifycr_abtoull(env, &bytes);
-                unifycr_index_buf_size = (size_t) bytes;
-            }
+            if (!configurator_int_val(client_cfg.unifycr_index_buf_size, &l))
+                    unifycr_index_buf_size = (size_t)l;
             unifycr_max_index_entries =
                 unifycr_index_buf_size / sizeof(unifycr_index_t);
 
             unifycr_fattr_buf_size = UNIFYCR_FATTR_BUF_SIZE;
-            env = getenv("UNIFYCR_ATTR_BUF_SIZE");
-            if (env) {
-                unifycr_abtoull(env, &bytes);
-                unifycr_fattr_buf_size = (size_t) bytes;
-            }
+            if (!configurator_int_val(client_cfg.unifycr_fattr_buf_size, &l))
+                    unifycr_fattr_buf_size = (size_t)l;
             unifycr_max_fattr_entries =
                 unifycr_fattr_buf_size / sizeof(unifycr_fattr_t);
 
         }
 
-
-
-
 #ifdef ENABLE_NUMA_POLICY
-        env = getenv("UNIFYCR_NUMA_POLICY");
-        if (env) {
-            sprintf(unifycr_numa_policy, env);
-            DEBUG("NUMA policy used: %s\n", unifycr_numa_policy);
-        } else {
+        /* UNIFYCR_NUMA_POLICY: 0 - default, 1 (interleaved) or 2 (local) */
+        l = 0;
+        (void)configurator_int_val(client_cfg.unifycr_numa_policy, &l);
+        switch ((int)l) {
+        case 0:
+        default:
             sprintf(unifycr_numa_policy, "default");
+            break;
+        case 1:
+            sprintf(unifycr_numa_policy, "interleaved");
+            break;
+        case 2:
+            sprintf(unifycr_numa_policy, "local");
+            break;
         }
+        DEBUG("NUMA policy used: %s\n", unifycr_numa_policy);
 
-        env = getenv("UNIFYCR_USE_NUMA_BANK");
-        if (env) {
-            int val = atoi(env);
-            if (val >= 0) {
-                unifycr_numa_bank = val;
-            } else {
-                fprintf(stderr, "Incorrect NUMA bank specified in UNIFYCR_USE_NUMA_BANK."
-                        "Proceeding with default allocation policy!\n");
-            }
+        if (!configurator_int_val(client_cfg.unifycr_numa_bank, &l))
+            unifycr_numa_bank = (int)l;
+        if (unifycr_numa_bank < 0) {
+            fprintf(stderr, "Incorrect NUMA bank specified in UNIFYCR_USE_NUMA_BANK."
+                    "Proceeding with default allocation policy!\n");
         }
-
 #endif
 
         /* record the max fd for the system */
@@ -2038,12 +1987,12 @@ static int unifycr_init(int rank)
         }
         char spillfile_prefix[128];
 
-        env = getenv("UNIFYCR_EXTERNAL_DATA_DIR");
-        if (env) {
-            strcpy(external_data_dir, env);
+        /* UNIFYCR_SPILLOVER_DATA_DIR */
+        if (client_cfg.spillover_data_dir) {
+            strncpy(external_data_dir, client_cfg.spillover_data_dir, sizeof(external_data_dir));
         } else {
-            DEBUG("UNIFYCR_EXTERNAL_DATA_DIR not set to an existing writable"
-                  " path (i.e UNIFYCR_EXTERNAL_DATA_DIR=/mnt/ssd):\n");
+            DEBUG("UNIFYCR_SPILLOVER_DATA_DIR not set to an existing writable"
+                  " path (i.e UNIFYCR_SPILLOVER_DATA_DIR=/mnt/ssd):\n");
             return UNIFYCR_FAILURE;
         }
 
@@ -2063,12 +2012,12 @@ static int unifycr_init(int rank)
             }
         }
 
-        env = getenv("UNIFYCR_EXTERNAL_META_DIR");
-        if (env) {
-            strcpy(external_meta_dir, env);
+        /* UNIFYCR_SPILLOVER_META_DIR */
+        if (client_cfg.spillover_meta_dir) {
+            strncpy(external_meta_dir, client_cfg.spillover_meta_dir, sizeof(external_meta_dir));
         } else {
-            DEBUG("UNIFYCR_EXTERNAL_META_DIR not set to an existing writable"
-                  " path (i.e UNIFYCR_EXTERNAL_META_DIR=/mnt/ssd):\n");
+            DEBUG("UNIFYCR_SPILLOVER_META_DIR not set to an existing writable"
+                  " path (i.e UNIFYCR_SPILLOVER_META_DIR=/mnt/ssd):\n");
             return UNIFYCR_FAILURE;
         }
 
@@ -2127,6 +2076,13 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     dbg_rank = rank;
     app_id = l_app_id;
     glb_size = size;
+
+    rc = unifycr_config_init(&client_cfg, 0, NULL);
+    if (rc) {
+        DEBUG("rank:%d, failed to initialize configuration:%d",
+              dbg_rank, rc);
+        return -1;
+    }
 
     if ((rc = unifycrfs_mount(prefix, size, rank)))
         return rc;
@@ -2285,10 +2241,6 @@ static int unifycr_sync_to_del()
 #if 0
                                 /*success*/
                                 my_srv_rank = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long)));
-                                my_srv_size = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long) + sizeof(int)));
-                                printf("*** connected to server: %d/%d\n", my_srv_rank, my_srv_size);
-                                //mem_per_cln = get_evv("CRUISE_SPILLOVER_SIZE", 256*1024*1024L);
-                                //mem_per_srv = get_evv("FAM_PART_SIZE", 1024*1024*1024L);
 #endif
                             }
                         }
@@ -2320,11 +2272,10 @@ static int unifycr_sync_to_del()
 static int unifycr_init_recv_shm(int local_rank_idx, int app_id)
 {
     int rc = -1;
+    long l;
 
-    char *env = getenv("SHM_RECV_SIZE");
-    if (env) {
-        shm_recv_size = atol(env);
-    }
+    /* UNIFYCR_SHMEM_RECV_SIZE */
+    (void)configurator_int_val(client_cfg.shmem_recv_size, &shm_recv_size);
 
     char shm_name[GEN_STR_LEN] = {0};
     sprintf(shm_name, "%d-recv-%d", app_id, local_rank_idx);
@@ -2363,11 +2314,8 @@ static int unifycr_init_req_shm(int local_rank_idx, int app_id)
 {
     int rc = -1;
 
-    /* initialize request buffer size*/
-    char *env = getenv("SHM_REQ_SIZE");
-    if (env) {
-        shm_req_size = atol(env);
-    }
+    /* initialize request buffer size: UNIFYCR_SHMEM_REQ_SIZE */
+    (void)configurator_int_val(client_cfg.shmem_recv_size, &shm_req_size);
 
     char shm_name[GEN_STR_LEN] = {0};
     sprintf(shm_name, "%d-req-%d", app_id, local_rank_idx);
@@ -2774,18 +2722,13 @@ static int CountTasksPerNode(int rank, int numTasks)
 /* mount memfs at some prefix location */
 int unifycrfs_mount(const char prefix[], size_t size, int rank)
 {
-    char *env = getenv("UNIFYCR_USE_SINGLE_SHM");
+    bool b;
 
     unifycr_mount_prefix = strdup(prefix);
     unifycr_mount_prefixlen = strlen(unifycr_mount_prefix);
 
-    if (env) {
-        int val = atoi(env);
-
-        if (val != 0)
-            unifycr_use_single_shm = 1;
-    }
-
+    if (!configurator_bool_val(client_cfg.shmem_single, &b))
+        unifycr_use_single_shm = (int)b;
     if (unifycr_use_single_shm)
         unifycr_mount_shmget_key = UNIFYCR_SUPERBLOCK_KEY + rank;
     else

@@ -6,7 +6,7 @@ dnl Process this file with autoconf to produce a configure script.
 AC_INIT([unifycr],
         m4_esyscmd([git describe --always |
                    awk '/.*/{sub(/^v/,""); printf "%s",$1; exit}']),
-        [unifycr@llnl.gov])
+        [d.ivanov@hpe.com])
 # AC_CONFIG_AUX_DIR([.])
 AC_CONFIG_SRCDIR([configure.ac])
 AC_CONFIG_HEADERS([config.h])

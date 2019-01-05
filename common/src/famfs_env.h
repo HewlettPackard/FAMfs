@@ -43,6 +43,7 @@ void nodelist_free(char **nodelist, int size);
 //int is_module_loaded(const char *name);
 void alloc_affinity(int **affp, int size, int pos);
 void ion_usage(const char *name);
+void daemonize(void);
 
 
 static inline size_t _getval(char *name, char *v, size_t df) {
@@ -121,6 +122,42 @@ static inline const char *cmd2str(W_TYPE_t type)
         default:        return "Unknown";
         }
 }
+
+/*
+ * Configurator: Default Values
+ */
+#define KIB 1024
+#define MIB 1048576
+#define GIB 1073741824
+
+/* Metadata/MDHIM */
+#define META_DEFAULT_DB_PATH /l/ssd/
+#define META_DEFAULT_DB_NAME unifycr_db
+#define META_DEFAULT_SERVER_RATIO 1
+#define META_DEFAULT_RANGE_SZ MIB
+
+/* Client */
+#define UNIFYCR_INDEX_BUF_SIZE (20 * MIB)
+#define UNIFYCR_FATTR_BUF_SIZE MIB
+
+#define UNIFYCR_CHUNK_BITS 24
+#define UNIFYCR_CHUNK_MEM 0
+#define UNIFYCR_SPILLOVER_SIZE (KIB * MIB)
+#define UNIFYCR_MOUNT_POINT /famfs
+
+#define UNIFYCR_MAX_FILES        ( 128 )
+
+#define UNIFYCR_SHMEM_REQ_SIZE 1024*1024*8*16 + 131072
+#define UNIFYCR_SHMEM_RECV_SIZE 1024*1024 + 131072
+
+/* Server */
+#define MAX_META_PER_SEND 524288
+#define ULFS_MAX_FILENAME 128
+#define MAX_PATH_LEN 100
+#define MAX_NUM_CLIENTS 64 /*number of application processes each server node takes charge of*/
+#define RECV_BUF_CNT 1
+#define RECV_BUF_LEN 1048576+131072
+#define REQ_BUF_LEN 8*16*1048576+4096+131072
 
 /*
  * Defaults and constants

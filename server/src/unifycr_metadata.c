@@ -100,7 +100,7 @@ int meta_init_store()
 
     int ser_ratio;
     if (mds_vec == NULL) {
-        env = getenv("UNIFYCR_META_SERVER_RATIO");
+        env = getenv("UNIFYCR_META_DEFAULT_SERVER_RATIO");
         if (!env) {
             ser_ratio = DEF_SERVER_RATIO;
         }

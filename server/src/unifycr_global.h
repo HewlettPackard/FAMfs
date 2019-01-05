@@ -31,7 +31,9 @@
 #define UNIFYCR_GLOBAL_H
 #include <pthread.h>
 #include <stdlib.h>
-#include "unifycr_const.h"
+#include <sys/stat.h>
+
+#include "famfs_configurator.h"
 #include "arraylist.h"
 
 typedef enum {

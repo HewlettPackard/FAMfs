@@ -66,12 +66,41 @@
 #include "utlist.h"
 #include "uthash.h"
 
+#include "famfs_configurator.h"
+
+/* TODO: Move common defs to another file ---> */
+#if 1
+/* holds debug level for unifycr, this defaults to zero
+ * in unifycr_init, but can be changed at runtime by setting
+ * the UNIFYCR_DEBUG env variable to a value greater than 1
+ */
+
+/* eventually could decouple these so there could be
+ * more or less file descriptors than files, but for
+ * now they're the same
+ */
+#define UNIFYCR_MAX_FILEDESCS    ( UNIFYCR_MAX_FILES )
+
+#define UNIFYCR_MAX_FILENAME     ( 128 )
+
+#define UNIFYCR_STREAM_BUFSIZE   ( 1 * 1024 * 1024 )
+
+#define UNIFYCR_SUPERBLOCK_KEY   ( 4321 )
+
+// const for unifycr
+#define GEN_STR_LEN 1024
+#define SOCKET_PATH "/tmp/unifycr_server_sock"
+#define UNIFYCR_MAX_SPLIT_CNT 1048576
+#define UNIFYCR_MAX_READ_CNT 1048576
+
+/* <--- */
+#endif
+
 /* -------------------------------
  * Defines and types
  * ------------------------------- */
+extern int unifycr_debug_level;
 
-/* TODO: move common includes to another file */
-#include "unifycr-defs.h"
 #define DEBUG(fmt, ...) \
 do { \
     if (unifycr_debug_level > 0) \

@@ -4,6 +4,9 @@ BASE_SRCS = famfs_env.h famfs_error.h famfs_stats.h \
 	famfs_stripe.h \
 	famfs_lf_connect.h \
 	famfs_lf_connect.c \
+	tinyexpr.h tinyexpr.c \
+	ini.h ini.c \
+	famfs_configurator.h famfs_configurator.c \
 	util.c
 
 libfamfs_common_la_SOURCES = $(BASE_SRCS)

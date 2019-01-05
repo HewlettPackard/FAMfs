@@ -144,18 +144,18 @@
 #define C_CLI_SEND_BUF_SIZE 1048576
 #define C_CLI_RECV_BUF_SIZE 1048576
 #define SH_BUF_SIZE 1048576
-#define MAX_NUM_CLIENTS 64 /*number of application processes each server node takes charge of*/
+//#define MAX_NUM_CLIENTS 64 /*number of application processes each server node takes charge of*/
 #define NUM_MSG 32768 /*number of messages one server sends to each of another server*/
 #define MAX_CQ_SIZE 2*NUM_CLI
-#define ULFS_MAX_FILENAME 128
+//#define ULFS_MAX_FILENAME 128
 
 #define GEN_STR_LEN 1024
-#define MAX_PATH_LEN 100
+//#define MAX_PATH_LEN 100
 #define ACK_MSG_SZ 8
 //#define DATA_BUF_LEN 1048576+4096+131072
 //#define REQ_BUF_LEN 10485760+4096+131072
-#define RECV_BUF_LEN 1048576+131072
-#define REQ_BUF_LEN 8*16*1048576+4096+131072
+//#define RECV_BUF_LEN 1048576+131072
+//#define REQ_BUF_LEN 8*16*1048576+4096+131072
 #define CLI_DATA_TAG 5001
 #define SER_DATA_TAG 6001
 #define MMAP_OPEN_FLAG O_RDWR|O_CREAT
@@ -170,9 +170,9 @@
 #define MIN_SLEEP_INTERVAL 10
 
 // need to set to a large number
-#define MAX_META_PER_SEND 524288
+//#define MAX_META_PER_SEND 524288
 #define MAX_FILE_CNT_PER_NODE 1024
-#define ULFS_MAX_FILENAME 128
+//#define ULFS_MAX_FILENAME 128
 
 #define NUM_OF_READ_TASKS 65536
 #define READ_BLOCK_SIZE 1048576
@@ -181,7 +181,7 @@
 
 #define READ_BUF_SZ 1048576*1024
 
-#define RECV_BUF_CNT 1
+//#define RECV_BUF_CNT 1
 
 // the buffer size on the service manager for read clustering and pipelining
 #define SERVICE_MEM_POOL_SIZE 2147483648

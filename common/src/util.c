@@ -10,6 +10,7 @@
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <limits.h>
 #include <ifaddrs.h>
 
@@ -831,5 +832,47 @@ void free_lf_params(N_PARAMS_t **params_p)
     free(params->fam_buf);
     free(params);
     *params_p = NULL;
+}
+
+void daemonize(void)
+{
+    pid_t pid;
+    pid_t sid;
+    int rc;
+
+    pid = fork();
+
+    if (pid < 0) {
+        fprintf(stderr, "fork failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    if (pid > 0)
+        exit(0);
+
+    umask(0);
+
+    sid = setsid();
+    if (sid < 0) {
+        fprintf(stderr, "setsid failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    rc = chdir("/");
+    if (rc < 0) {
+        fprintf(stderr, "chdir failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "fork failed: %s\n", strerror(errno));
+        exit(1);
+    } else if (pid > 0)
+        exit(0);
 }
 

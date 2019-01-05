@@ -41,8 +41,8 @@ Next, we can start run our application with UnifyCR in the following manner:
 
         #!/bin/bash
 
-        export UNIFYCR_EXTERNAL_META_DIR=/mnt/ssd
-        export UNIFYCR_EXTERNAL_DATA_DIR=/mnt/ssd
+        export UNIFYCR_SPILLOVER_META_DIR=/mnt/ssd
+        export UNIFYCR_SPILLOVER_DATA_DIR=/mnt/ssd
 
         NODES=1
         PROCS=1
