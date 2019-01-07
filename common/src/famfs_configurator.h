@@ -53,7 +53,7 @@
    one macro definition per setting */
 #define UNIFYCR_CONFIGS \
     UNIFYCR_CFG_CLI(unifycr, configfile, STRING, SYSCONFDIR/famfs/famfs.conf, "path to configuration file", configurator_file_check, 'f', "specify full path to config file") \
-    UNIFYCR_CFG_CLI(unifycr, daemonize, BOOL, on, "enable server daemonization", NULL, 'D', "on|off") \
+    UNIFYCR_CFG_CLI(unifycr, daemonize, BOOL, off, "enable server daemonization", NULL, 'D', "on|off") \
     UNIFYCR_CFG_CLI(unifycr, debug, BOOL, off, "enable debug output", NULL, 'd', "on|off") \
     UNIFYCR_CFG_CLI(unifycr, mount_point, STRING, UNIFYCR_MOUNT_POINT, "mountpoint directory", NULL, 'm', "specify full path to desired mountpoint") \
     UNIFYCR_CFG_CLI(log, verbosity, INT, 0, "log verbosity level", NULL, 'v', "specify logging verbosity level") \
