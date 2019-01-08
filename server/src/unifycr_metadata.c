@@ -66,50 +66,34 @@ extern int  num_mds;
 /**
 * initialize the key-value store
 */
-int meta_init_store()
+int meta_init_store(unifycr_cfg_t *cfg)
 {
+    long l;
+
     db_opts = malloc(sizeof(struct mdhim_options_t));
     if (!db_opts) {
         return -1;
     }
 
     /* UNIFYCR_META_DB_PATH: file that stores the key value pair*/
-    char *env = getenv("UNIFYCR_META_DB_PATH");
-    if (!env) {
-        db_opts->db_path = malloc(strlen(DEF_META_PATH) + 1);
-        if (!db_opts->db_path) {
-            return -1;
-        }
-
-        strcpy(db_opts->db_path, DEF_META_PATH);
-    } else {
-        db_opts->db_path = malloc(strlen(env) + 1);
-        if (!db_opts->db_path) {
-            return -1;
-        }
-
-        strcpy(db_opts->db_path, env);
-    }
+    if (cfg->meta_db_path)
+        db_opts->db_path = strdup(cfg->meta_db_path);
+    if (db_opts->db_path == NULL)
+        return -1;
 
     db_opts->manifest_path = NULL;
     db_opts->db_type = LEVELDB;
     db_opts->db_create_new = 1;
 
-    /* META_SERVER_RATIO: number of metadata servers =
+    /* UNIFYCR_META_SERVER_RATIO: number of metadata servers =
         number of processes/META_SERVER_RATIO */
 
-    int ser_ratio;
+    int ser_ratio = 1;
     if (mds_vec == NULL) {
-        env = getenv("UNIFYCR_META_DEFAULT_SERVER_RATIO");
-        if (!env) {
-            ser_ratio = DEF_SERVER_RATIO;
-        }
-
-        ser_ratio = atoi(env);
-    } else {
-        ser_ratio = 1;
+        if (configurator_int_val(cfg->meta_server_ratio, &l))
+            return -1;
+        ser_ratio = (int)l;
     }
-
 
     db_opts->rserver_factor = ser_ratio;
     db_opts->db_paths = NULL;
@@ -127,22 +111,11 @@ int meta_init_store()
     sprintf(manifest_path, "%s/%s", db_opts->db_path, MANIFEST_FILE_NAME);
     db_opts->manifest_path = manifest_path;
 
-    env = getenv("UNIFYCR_META_DB_NAME");
-    if (!env) {
-        db_opts->db_name = malloc(strlen(DEF_DB_NAME) + 1);
-        if (!db_opts->db_name) {
-            return -1;
-        }
-
-        strcpy(db_opts->db_name, DEF_DB_NAME);
-    } else {
-        db_opts->db_name = malloc(strlen(env) + 1);
-        if (!db_opts->db_name) {
-            return -1;
-        }
-
-        strcpy(db_opts->db_name, env);
-    }
+    /* UNIFYCR_META_DB_NAME */
+    if (cfg->meta_db_name)
+        db_opts->db_name = strdup(cfg->meta_db_name);
+    if (db_opts->db_name == NULL)
+        return -1;
 
     db_opts->db_key_type = MDHIM_UNIFYCR_KEY;
     db_opts->debug_level = MLOG_CRIT;
@@ -150,14 +123,10 @@ int meta_init_store()
     /* indices/attributes are striped to servers according
      * to UnifyCR_META_RANGE_SZ.
      * */
-    env = getenv("UNIFYCR_META_RANGE_SZ");
-    if (!env) {
-        db_opts->max_recs_per_slice = DEF_RANGE_SZ;
-    } else {
-        db_opts->max_recs_per_slice = atol(env);
-    }
-
-    max_recs_per_slice = db_opts->max_recs_per_slice;
+    if (configurator_int_val(cfg->meta_range_size, &l))
+        return -1;
+    max_recs_per_slice = (size_t)l;
+    db_opts->max_recs_per_slice = (uint64_t) max_recs_per_slice;
 
     MPI_Comm comm = MPI_COMM_WORLD;
     md = mdhimInit(&comm, db_opts);

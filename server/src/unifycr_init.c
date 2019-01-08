@@ -137,7 +137,6 @@ int main(int argc, char *argv[])
 
     char dbg_fname[GEN_STR_LEN] = {0};
     int provided;
-    char *env;
     int rc;
     bool daemon;
 
@@ -171,11 +170,10 @@ int main(int argc, char *argv[])
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst,
                                    local_rank_cnt);
 
-    env = getenv("UNIFYCR_SERVER_DEBUG_LOG");
-    if (env)
-        sprintf(dbg_fname, "%s-%d", env, glb_rank);
-    else
-        sprintf(dbg_fname, "%s-%d.log", DBG_FNAME, glb_rank);
+    /* UNIFYCR_DEFAULT_LOG_FILE */
+    if (server_cfg.log_file == NULL)
+        exit(1);
+    sprintf(dbg_fname, "%s-%d", server_cfg.log_file, glb_rank);
 
     rc = dbg_open(dbg_fname);
     if (rc != ULFS_SUCCESS)
@@ -233,7 +231,7 @@ int main(int argc, char *argv[])
         num_mds = 0;
     }
 
-    rc = meta_init_store();
+    rc = meta_init_store(&server_cfg);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
         exit(1);

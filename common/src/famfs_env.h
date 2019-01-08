@@ -151,6 +151,8 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define UNIFYCR_SHMEM_RECV_SIZE 1024*1024 + 131072
 
 /* Server */
+#define UNIFYCR_DEFAULT_LOG_FILE famfs.log
+
 #define MAX_META_PER_SEND 524288
 #define ULFS_MAX_FILENAME 128
 #define MAX_PATH_LEN 100

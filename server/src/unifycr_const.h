@@ -132,9 +132,6 @@
 #define ULFS_STR_ERROR_RECV "Receive error"
 #define ULFS_STR_ERROR_WRITE "Write error"
 /* ********************** ULFS STRING CONSTANT ************************ */
-#define DBG_FNAME "/l/ssd/serverdbg"
-//#define DBG_FNAME "/p/lscratchf/wang86/stand_unifycr_0217_dbg/UnifyCR_Server/logdir/serverdbg"
-//#define DBG_FNAME "/p/lscratchf/wang86/stand_unifycr/UnifyCR_Server/logdir/server"
 #define DEFAULT_INTERFACE "ib0"
 
 /* ********************** ULFS INT CONSTANT ************************ */

@@ -24,7 +24,7 @@ configuration.
         export UNIFYCR_META_DB_NAME=unifycr_db
         export UNIFYCR_CHUNK_MEM=0
         export UNIFYCR_META_DB_PATH=/mnt/ssd
-        export UNIFYCR_SERVER_DEBUG_LOG=/tmp/unifycrd_debug.$$
+        export UNIFYCR_LOG_FILE=/tmp/unifycrd_debug.$$
 
         NODES=1
         PROCS=1
