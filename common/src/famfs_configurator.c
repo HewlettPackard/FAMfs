@@ -761,28 +761,6 @@ int unifycr_config_validate(unifycr_cfg_t *cfg)
     return rc;
 }
 
-int contains_expression(const char *val)
-{
-    static char expr_chars[8] = {'(', ')', '+', '-', '*', '/', '%', '^'};
-    size_t s;
-    char c;
-    char *match;
-    for (s=0; s < sizeof(expr_chars); s++) {
-        c = expr_chars[s];
-        match = strchr(val, c);
-        if (match != NULL) {
-            if (((c == '+') || (c == '-')) && (match > val)) {
-                // check for exponent notation
-                c = *(--match);
-                if ((c == 'e') || (c == 'E'))
-                   return 0; // tinyexpr can't handle exponent notation
-            }
-            return 1;
-        }
-    }
-    return 0;
-}
-
 int configurator_bool_val(const char *val,
                           bool *b)
 {
@@ -841,37 +819,36 @@ int configurator_float_val(const char *val,
                            double *d)
 {
     int err;
-    double check, teval;
+    double check;
     char *end = NULL;
 
     if ((val == NULL) || (d == NULL))
         return EINVAL;
 
-    if (contains_expression(val)) {
-        err = 0;
-        teval = te_interp(val, &err);
-        if (err == 0)
-            check = teval;
-        else
-            return EINVAL;
+    te_expr *expr = te_compile(val, NULL, 0, &err);
+    if (expr) {
+        check = te_eval(expr);
+        te_free(expr);
     }
     else {
         errno = 0;
         check = strtod(val, &end);
-        err = errno;
-        if ((err == ERANGE) || (end == val))
-            return EINVAL;
-        else if (*end != 0) {
+        if ((errno != ERANGE) && (end != val)) {
             switch (*end) {
             case 'f':
             case 'l':
             case 'F':
             case 'L':
+                err = 0;
                 break;
             default:
-                return EINVAL;
+                err = end - val;
             }
         }
+    }
+    if (err) {
+        fprintf(stderr, "\t%s\n\t%*s^\n", val, err-1, "");
+        return EINVAL;
     }
 
     *d = check;
@@ -892,7 +869,7 @@ int configurator_float_check(const char *s __attribute__ ((unused)),
         return 0;
 
     rc = configurator_float_val(val, &d);
-    if ((o != NULL) && (rc == 0) && contains_expression(val)) {
+    if ((o != NULL) && (rc == 0)) {
         // update config setting to evaluated value
         len = strlen(val) + 1; // evaluated value should be shorter
         newval = (char*) calloc(len, sizeof(char));
@@ -962,7 +939,7 @@ int configurator_int_check(const char *s __attribute__ ((unused)),
         return 0;
 
     rc = configurator_int_val(val, &l);
-    if ((o != NULL) && (rc == 0) && contains_expression(val)) {
+    if ((o != NULL) && (rc == 0)) {
         // update config setting to evaluated value
         len = strlen(val) + 1; // evaluated value should be shorter
         newval = (char*) calloc(len, sizeof(char));
