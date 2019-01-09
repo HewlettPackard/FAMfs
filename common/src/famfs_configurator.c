@@ -861,9 +861,7 @@ int configurator_float_check(const char *s __attribute__ ((unused)),
                              char **o)
 {
     int rc;
-    size_t len;
     double d;
-    char *newval = NULL;
 
     if (val == NULL) // unset is OK
         return 0;
@@ -871,8 +869,8 @@ int configurator_float_check(const char *s __attribute__ ((unused)),
     rc = configurator_float_val(val, &d);
     if ((o != NULL) && (rc == 0)) {
         // update config setting to evaluated value
-        len = strlen(val) + 1; // evaluated value should be shorter
-        newval = (char*) calloc(len, sizeof(char));
+        size_t len = snprintf(NULL, 0, "%.6le", d) + 1;
+        char *newval = (char*) calloc(len, sizeof(char));
         if (newval != NULL) {
             snprintf(newval, len, "%.6le", d);
             *o = newval;
@@ -931,18 +929,16 @@ int configurator_int_check(const char *s __attribute__ ((unused)),
                            char **o)
 {
     int rc;
-    size_t len;
     long l;
-    char *newval = NULL;
 
     if (val == NULL) // unset is OK
         return 0;
 
     rc = configurator_int_val(val, &l);
     if ((o != NULL) && (rc == 0)) {
+        size_t len = snprintf(NULL, 0, "%ld", l) + 1;
         // update config setting to evaluated value
-        len = strlen(val) + 1; // evaluated value should be shorter
-        newval = (char*) calloc(len, sizeof(char));
+        char *newval = (char*) calloc(len, sizeof(char));
         if (newval != NULL) {
             snprintf(newval, len, "%ld", l);
             *o = newval;
