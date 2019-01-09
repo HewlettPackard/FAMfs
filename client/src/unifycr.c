@@ -1795,7 +1795,7 @@ static int unifycr_init(int rank)
 
         /* unifycr debug level default is zero */
         unifycr_debug_level = 0;
-        /* set debug level to UNIFYCR_DEBUG env variable if it is set */
+        /* set debug level to UNIFYCR_LOG_VERBOSITY env variable if it is set */
         if (!configurator_int_val(client_cfg.log_verbosity, &l))
             unifycr_debug_level = (int)l;
 
