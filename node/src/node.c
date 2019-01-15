@@ -332,14 +332,8 @@ int main(int argc, char **argv) {
 exit_srv_thr:
     if (!params->fam_map) {
 	pool_exit(w_srv_pool, 0); /* 0: don't cancel */
-	for (i = 0; i < srv_cnt; i++) {
-	    LF_CL_t *cl = lf_servers[i]->lf_client;
-
-	    lf_client_free(cl);
-	    if (params->part_mreg)
-		free(lf_servers[i]->virt_addr);
-    	    free(lf_servers[i]);
-	}
+	for (i = 0; i < srv_cnt; i++)
+	    lf_srv_free(lf_servers[i]);
 	free(lf_servers);
 
 	MPI_Barrier(MPI_COMM_WORLD);

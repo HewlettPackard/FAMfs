@@ -38,6 +38,8 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <ifaddrs.h>
+#include <signal.h>
+
 #include "unifycr_metadata.h"
 #include "log.h"
 #include "unifycr_debug.h"
@@ -51,6 +53,7 @@
 #include "unifycr_request_manager.h"
 #include "famfs_env.h"
 #include "famfs_error.h"
+#include "lf_client.h"
 
 
 int *local_rank_lst;
@@ -66,6 +69,7 @@ int invert_sock_ids[MAX_NUM_CLIENTS]; /*records app_id for each sock_id*/
 int log_print_level = 5;
 
 unifycr_cfg_t server_cfg;
+static LFS_CTX_t *lfs_ctx_p = NULL;
 
 char *mds_vec = NULL;
 int  num_mds = 0;
@@ -225,6 +229,18 @@ int main(int argc, char *argv[])
     if ((rc = make_mds_vec(glb_size, glb_rank)) > 0) {
         LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
         num_mds = rc;
+
+        /* FAM emulation */
+        char *lfs_cmd = getstr(LFS_COMMAND);
+        if (lfs_cmd) {
+            rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size,
+                   mds_vec, &lfs_ctx_p);
+            if (rc) {
+                LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
+                    glb_rank, glb_size, rc);
+                exit(1);
+            }
+        }
     } else if (rc < 0) {
         LOG(LOG_ERR, "Error obtaining MDS vector");
     } else {
@@ -575,6 +591,9 @@ static int unifycr_exit()
     /* destroy the sockets except for the ones
      * for acks*/
     sock_sanitize();
-    return rc;
 
+    /* Close FAM emulation fabric */
+    free_lfs_ctx(&lfs_ctx_p);
+
+    return rc;
 }

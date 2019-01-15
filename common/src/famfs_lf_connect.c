@@ -801,17 +801,31 @@ int lf_srv_init(LF_SRV_t *priv)
     return 0;
 }
 
-int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_Comm mpi_comm)
+int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_comm)
 {
-    LF_SRV_t **lf_servers;
+    LF_SRV_t **lf_servers = NULL;
     int srv_cnt, node_id, lf_client_idx;
+    int rank, size;
     int i, part, rc;
 
+    MPI_Comm_rank(mpi_comm, &rank);
+    MPI_Comm_size(mpi_comm, &size);
     node_id = params->node_id;
     srv_cnt = params->node_servers;
+    if (size != srv_cnt) {
+	err("%d: MPI error: communicator has %d nodes but the command has %d",
+	    node_id, size, srv_cnt);
+	rc = -1;
+        goto _err;
+    }
 
-    if (params->part_mreg == 0)
-	ON_ERROR(posix_memalign(&params->fam_buf, getpagesize(), params->vmem_sz), "srv memory alloc failed");
+    if (params->part_mreg == 0) {
+	if ((rc = posix_memalign(&params->fam_buf, getpagesize(),
+			params->vmem_sz))) {
+	    err("srv memory alloc failed");
+	    goto _err;
+	}
+    }
 
     lf_servers = (LF_SRV_t **) malloc(srv_cnt*sizeof(void*));
     ASSERT(lf_servers);
@@ -829,8 +843,8 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	cl = (LF_CL_t*) calloc(1, sizeof(LF_CL_t));
 	ASSERT(cl);
 	cl->partition = i;
-	if (params->fam_map)
-	    cl->fam_id = fam_id_by_index(params->fam_map, node_id);
+	/* if (params->fam_map)
+	    cl->fam_id = fam_id_by_index(params->fam_map, node_id); */
 	cl->service = node2service(params->lf_port, node_id, i);
 	if ( params->set_affinity)
 	    alloc_affinity(&cl->cq_affinity, srv_cnt, i + 1);
@@ -839,10 +853,10 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	rc = lf_srv_init(srv);
 	if (rc) {
 	    err("%d: Error starting FAM module %d(p%d) emulation!",
-		node_id, i, cl->partition);
+		rank, i, cl->partition);
 	    free(cl);
 	    free(srv);
-	    return rc;
+	    goto _err;
 	}
 
 	lf_servers[i] = srv;
@@ -853,13 +867,12 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	    rc = lf_srv_trigger(priv);
 #endif
 
+    MPI_Barrier(mpi_comm);
     if (rank == 0) {
 	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
 		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
 		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
     }
-
-    MPI_Barrier(mpi_comm);
 
     /* Exchange keys */
     if (params->lf_mr_flags.prov_key) {
@@ -870,9 +883,11 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
 	    params->mr_prov_keys[lf_client_idx] = lf_servers[part]->lf_client->mr_key;
 	}
-	ON_ERROR( MPI_Allgather(/* &mr_prov_keys[srv_cnt*node_id] */ MPI_IN_PLACE, len, MPI_BYTE,
-				params->mr_prov_keys, len, MPI_BYTE, mpi_comm),
-		 "MPI_Allgather");
+	if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
+				params->mr_prov_keys, len, MPI_BYTE, mpi_comm))) {
+	    err("MPI_Allgather failed");
+	    goto _err;
+	}
     }
     /* Exchange virtual addresses */
     if (params->lf_mr_flags.virt_addr) {
@@ -883,12 +898,32 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
 	    params->mr_virt_addrs[lf_client_idx] = (uint64_t) lf_servers[part]->virt_addr;
 	}
-	ON_ERROR( MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
-				params->mr_virt_addrs, len, MPI_BYTE, mpi_comm),
-		 "MPI_Allgather");
+	if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
+				params->mr_virt_addrs, len, MPI_BYTE, mpi_comm))) {
+	    err("MPI_Allgather failed");
+	    goto _err;
+	}
     }
 
     *lf_servers_p = lf_servers;
     return 0;
+
+_err:
+    MPI_Abort(mpi_comm, rc);
+    MPI_Finalize();
+    if (rank == 0)
+	exit(rc);
+    sleep(10);
+    /* Should not reach this */
+    return -1;
+}
+
+void lf_srv_free(LF_SRV_t *srv) {
+    LF_CL_t *cl = srv->lf_client;
+
+    lf_client_free(cl);
+    if (srv->params->part_mreg)
+	free(srv->virt_addr);
+    free(srv);
 }
 

@@ -20,6 +20,8 @@ unifycrd_SOURCES = arraylist.c \
                    unifycr_sock.h \
                    unifycr_global.h \
                    unifycr_setup.h \
+                   lf_client.c \
+                   lf_client.h \
                    log.h
 
 unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS)

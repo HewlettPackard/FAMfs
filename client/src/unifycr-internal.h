@@ -70,6 +70,10 @@
 
 /* TODO: Move common defs to another file ---> */
 #if 1
+/* holds debug level for unifycr, this defaults to zero
+ * in unifycr_init, but can be changed at runtime by setting
+ * the UNIFYCR_DEBUG env variable to a value greater than 1
+ */
 
 /* eventually could decouple these so there could be
  * more or less file descriptors than files, but for
@@ -95,10 +99,6 @@
 /* -------------------------------
  * Defines and types
  * ------------------------------- */
-/* holds debug level for unifycr, this defaults to zero
- * in unifycr_init, but can be changed at runtime by setting
- * the UNIFYCR_LOG_VERBOSITY env variable to a value greater than 1
- */
 extern int unifycr_debug_level;
 
 #define DEBUG(fmt, ...) \
