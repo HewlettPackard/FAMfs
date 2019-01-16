@@ -388,8 +388,8 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
     chunk = get_fam_chunk(chunk_phy_id, fam_stripe, &dst_node);
     if (chunk == NULL) {
 	DEBUG("%d chunk:%d - ENOSPC\n", lfs_params->node_id, chunk_phy_id);
-	/* TODO: Propagate the error to a client */
-	return -ENOSPC;
+	errno = ENOSPC;
+	return UNIFYCR_ERR_NOSPC;
     }
     ASSERT(chunk->lf_client_idx < lfs_params->fam_cnt * lfs_params->node_servers);
     node = lfs_params->lf_clients[chunk->lf_client_idx];
@@ -551,8 +551,14 @@ static int unifycr_logio_chunk_write(
 	int chunk_phy_id = physical_chunk_id(meta, chunk_id);
 	DEBUG("%d: write %zu bytes @%jd phy_chunk:%d @%jd\n",
 	      lfs_ctx->lfs_params->node_id, count, spill_offset, chunk_phy_id, chunk_offset);
-	if (lf_write((char *)buf, count, chunk_phy_id, chunk_offset)) {
-	    perror("lf-write failed");
+	int rc = lf_write((char *)buf, count, chunk_phy_id, chunk_offset);
+	if (rc) {
+	    /* Print the real error code */
+	    ioerr("lf-write failed ret:%d", rc);
+	    /* Report ENOSPC or EIO */
+	    if (rc != UNIFYCR_ERR_NOSPC)
+		rc = UNIFYCR_FAILURE;
+	    return rc;
 	}
 
 // *** <---
