@@ -417,6 +417,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 		    printf("FAM module list - bad delimiter!");
 		    goto _free;
 		}
+		break;
 	    case 'P':
 		parities = getval(N_PARITY, optarg);
                 break;
