@@ -3,7 +3,7 @@ dnl This file is a part of UnifyCR. Please see LICENSE for the license
 dnl information.
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT([unifycr],
+AC_INIT([famfs],
         m4_esyscmd([git describe --always |
                    awk '/.*/{sub(/^v/,""); printf "%s",$1; exit}']),
         [d.ivanov@hpe.com])
@@ -84,23 +84,23 @@ AC_ARG_WITH(pkgconfigdir,
             [pkgconfigdir='${libdir}/pkgconfig'])
 AC_SUBST(pkgconfigdir)
 
-## unifycr options
-AC_ARG_ENABLE(cuserid, 
-[  --disable-cuserid       Disables attempted use of cuserid() at run time], 
+## FAMfs options
+AC_ARG_ENABLE(cuserid,
+[  --disable-cuserid       Disables attempted use of cuserid() at run time],
 [if test "x$enableval" = "xno" ; then
     AC_DEFINE(CRUISE_DISABLE_CUSERID, 1, Define if cuserid() should be disabled),
 fi]
 ,)
 
-AC_ARG_ENABLE(ld-preload, 
-[  --disable-ld-preload    Disables support for LD_PRELOAD library], 
+AC_ARG_ENABLE(ld-preload,
+[  --disable-ld-preload    Disables support for LD_PRELOAD library],
 [if test "x$enableval" = "xno" ; then
     DISABLE_LDPRELOAD="1"
 fi]
 ,)
 
-AC_ARG_ENABLE(st-dev-workaround, 
-[  --enable-st-dev-workaround Gather device id from parent directory instead of file], 
+AC_ARG_ENABLE(st-dev-workaround,
+[  --enable-st-dev-workaround Gather device id from parent directory instead of file],
 [if test "x$enableval" = "xyes" ; then
     AC_DEFINE(__CP_ST_DEV_WORKAROUND, 1, Define if device id should be taken from parent directory rather than file)
     DISABLE_LDPRELOAD="1"
@@ -154,16 +154,18 @@ PKG_CHECK_MODULES([LEVELDB], [leveldb], ,
         [AC_SUBST([LEVELDB_LIBS], [-lleveldb])
          AC_SUBST([LEVELDB_CFLAGS], [-I/usr/include/leveldb])
         ],
-        AC_MSG_ERROR(['leveldb is required to build unifycr.'])))
+        AC_MSG_ERROR(['leveldb is required to build FAMfs.'])))
 
 # look for gotcha library, sets GOTCHA_INCLUDE, GOTCHA_LIB
 UNIFYCR_AC_GOTCHA
 
 # check libfabric
+AC_CHECK_HEADER(rdma/fabric.h, ,
+    AC_MSG_ERROR(['libfabric header not found.']))
+AC_CHECK_HEADER(rdma/fi_ext_zhpe.h, ,
+    AC_MSG_ERROR(['zhpe extension header (fi_ext_zhpe.h) not found.']))
 PKG_CHECK_MODULES([LIBFABRIC], [libfabric], ,
-    AC_MSG_ERROR(['pkg-config: libfabric not found.']))
-AC_CHECK_HEADER(rdma/fabric.h, , AC_MSG_ERROR(['libfabric header not found.']))
-AC_CHECK_LIB([fabric], fi_getinfo, , AC_MSG_ERROR(['libfabric not found.']))
+    AC_CHECK_LIB([fabric], fi_getinfo, , AC_MSG_ERROR(['libfabric not found.'])))
 
 # probe CPU feature
 CPU_HAS_AVX2=$(grep -q avx2 /proc/cpuinfo && echo 1 || echo 0)
@@ -174,7 +176,7 @@ fi
 # define CPP symbol
 AC_DEFINE_UNQUOTED(HAVE_CPU_FEATURE_AVX2, $CPU_HAS_AVX2, Define if CPU has AVX2 feature)
 
-# libc functions wrapped by unifycr
+# libc functions wrapped by FAMfs
 
 CP_WRAPPERS+="-Wl,-wrap,access"
 CP_WRAPPERS+=",-wrap,lio_listio"
@@ -272,11 +274,11 @@ CP_WRAPPERS+=",-wrap,close"
 
 # ,-u,__wrap___fxstat64,-u,pthread_mutex_lock,-u,pthread_mutex_unlock
 
-# We need to know the value of the $libdir and $bindir variables so that 
-# we can reference the correct path in the unifycr compiler wrappers.  
-# Unfortunately, those two variables are not normally evaluated by autoconf.  
-# They are evaluated at build time using Makefile variable substitutions.  
-# 
+# We need to know the value of the $libdir and $bindir variables so that
+# we can reference the correct path in the FAMfs compiler wrappers.
+# Unfortunately, those two variables are not normally evaluated by autoconf.
+# They are evaluated at build time using Makefile variable substitutions.
+#
 # The following logic was copied from mpich2 1.3.1 to resolve the $libdir
 # variable at configure time.
 #
@@ -286,16 +288,16 @@ savePrefix=$prefix
 saveExecprefix=$exec_prefix
 test "x$prefix" = xNONE && prefix=$ac_default_prefix
 test "x$exec_prefix" = xNONE && exec_prefix=$prefix
-eval unifycr_lib_path=$libdir
-eval unifycr_bin_path=$bindir
+eval famfs_lib_path=$libdir
+eval famfs_bin_path=$bindir
 prefix=$savePrefix
 exec_prefix=$saveExecprefix
 
 CFLAGS="$old_cflags"
 LIBS="$old_libs"
 
-AC_SUBST(unifycr_lib_path)
-AC_SUBST(unifycr_bin_path)
+AC_SUBST(famfs_lib_path)
+AC_SUBST(famfs_bin_path)
 AC_SUBST(LDFLAGS)
 AC_SUBST(__CP_LOG_PATH)
 AC_SUBST(CP_WRAPPERS)
@@ -317,7 +319,7 @@ AC_CONFIG_FILES([Makefile
                  common/src/Makefile
                  node/Makefile
                  node/src/Makefile
-                 client/unifycr.pc])
+                 client/famfs.pc])
 
 # Call node/isa-l configure script recursively
 AC_CONFIG_SUBDIRS([node/isa-l])

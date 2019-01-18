@@ -7,7 +7,7 @@ git submodule update --init
 ```
    cd node/isa-l
    ./autogen.sh
-   ./configure --prefix=/shared/ivanodmi/test4wp5 --enable-debug
+   ./configure --prefix=<install_path> --enable-debug
    make
    make install
    cd ..

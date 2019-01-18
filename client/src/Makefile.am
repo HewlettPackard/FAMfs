@@ -1,10 +1,10 @@
-lib_LTLIBRARIES = libunifycr.la libunifycr_gotcha.la
+lib_LTLIBRARIES = libfamfs.la libfamfs_gotcha.la
 
-libunifycrdir = $(includedir)
-libunifycr_gotchadir = $(includedir)
+libfamfsdir = $(includedir)
+libfamfs_gotchadir = $(includedir)
 
-libunifycr_HEADERS = unifycr.h
-libunifycr_la_SOURCES = \
+libfamfs_HEADERS = unifycr.h
+libfamfs_la_SOURCES = \
   unifycr-fixed.c \
   unifycr-fixed.h \
   unifycr-stack.c \
@@ -25,16 +25,16 @@ libunifycr_la_SOURCES = \
   fam_stripe.c \
   fam_stripe.h
 
-libunifycr_la_CPPFLAGS = \
+libfamfs_la_CPPFLAGS = \
   -I$(top_builddir)/common/src \
   -I$(top_builddir)/client \
   $(LIBFABRIC_CFLAGS)
-libunifycr_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(LIBFABRIC_LIBS) -lcrypto -lrt -lpthread
+libfamfs_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(LIBFABRIC_LIBS) -lcrypto -lrt -lpthread
 
-libunifycr_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
+libfamfs_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
 
-libunifycr_gotcha_HEADERS = unifycr.h
-libunifycr_gotcha_la_SOURCES = \
+libfamfs_gotcha_HEADERS = unifycr.h
+libfamfs_gotcha_la_SOURCES = \
   unifycr-fixed.c \
   unifycr-fixed.h \
   unifycr-stack.c \
@@ -56,10 +56,10 @@ libunifycr_gotcha_la_SOURCES = \
   fam_stripe.c \
   fam_stripe.h
 
-libunifycr_gotcha_la_CPPFLAGS = \
+libfamfs_gotcha_la_CPPFLAGS = \
   -DUNIFYCR_GOTCHA \
   -I$(top_builddir)/common/src \
   -I$(top_builddir)/client \
   $(GOTCHA_CFLAGS) $(LIBFABRIC_CFLAGS)
-libunifycr_gotcha_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(GOTCHA_LDFLAGS) $(LIBFABRIC_LIBS) -lgotcha -lcrypto -lrt -lpthread
-libunifycr_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
+libfamfs_gotcha_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(GOTCHA_LDFLAGS) $(LIBFABRIC_LIBS) -lgotcha -lcrypto -lrt -lpthread
+libfamfs_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la

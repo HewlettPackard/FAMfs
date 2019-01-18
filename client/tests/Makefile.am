@@ -3,8 +3,8 @@ libexec_PROGRAMS += test_prw_gotcha test_prw_static
 
 AM_CFLAGS = -Wall
 
-test_gotcha_ldadd = ../src/libunifycr_gotcha.la -lmpi
-test_static_ldadd = ../src/libunifycr.la -lmpi
+test_gotcha_ldadd = ../src/libfamfs_gotcha.la -lmpi
+test_static_ldadd = ../src/libfamfs.la -lmpi
 test_static_ldflags = -static $(CP_WRAPPERS) $(AM_LDFLAGS)
 test_cppflags = $(AM_CPPFLAGS) -I$(top_srcdir)/client/src
 
