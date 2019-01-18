@@ -157,8 +157,10 @@ int arg_parser(int argc, char **argv, int verbose, int client_rank_size, N_PARAM
 void free_lf_params(N_PARAMS_t **params_p);
 
 static inline void lf_clients_free(LF_CL_t **all_clients, int count) {
-    for (int i = count-1; i >= 0; i--)
-	lf_client_free(all_clients[i]);
+    for (int i = count-1; i >= 0; i--) {
+	if (all_clients[i])
+	    lf_client_free(all_clients[i]);
+    }
     free(all_clients);
 }
 

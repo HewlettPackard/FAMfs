@@ -433,7 +433,7 @@ int lf_clients_init(N_PARAMS_t *params)
     /* Allocate one LF_CL_t structure per FAM */
     fam_cnt = params->fam_cnt;
     srv_cnt = params->node_servers;
-    lf_all_clients = (LF_CL_t **)malloc(fam_cnt * srv_cnt * sizeof(void*));
+    lf_all_clients = (LF_CL_t **) calloc(fam_cnt * srv_cnt, sizeof(void*));
     ASSERT(lf_all_clients);
     params->lf_clients = lf_all_clients;
 
@@ -478,7 +478,7 @@ int lf_clients_init(N_PARAMS_t *params)
 		err("Error in libfabric client init for FAM module %d(p%d)",
 		    i, part);
 		free(cl);
-		return 1;
+		continue;
 	    }
 
 	    lf_all_clients[lf_client_idx] = cl;

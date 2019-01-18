@@ -169,7 +169,6 @@ static void usage(const char *name) {
 int main(int argc, char **argv) {
     PERF_STAT_t		stats_agg_bw;
     struct ec_perf	node_stat;
-    LF_CL_t		**lf_all_clients = NULL;
     LF_SRV_t		**lf_servers = NULL;
     W_POOL_t		*w_pool;
     N_PARAMS_t		*params = NULL;
@@ -224,7 +223,7 @@ int main(int argc, char **argv) {
     /* Standalone: FAM clients */
     lf_clients_init(params);
 
-    w_pool = pool_init(params->w_thread_cnt, &worker_func, lf_all_clients[0]->cq_affinity);
+    w_pool = pool_init(params->w_thread_cnt, &worker_func, params->lf_clients[0]->cq_affinity);
     if (w_pool == NULL) {
 	printf("Error initializing worker pool\n");
 	rc = 1;
