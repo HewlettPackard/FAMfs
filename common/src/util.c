@@ -589,13 +589,21 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     /* Find my node */
     if (client_rank_size > 0) {
 	node_id = find_my_node(clientlist, client_cnt, 0);
-	ON_ERROR ((node_id < 0) && (client_cnt > client_rank_size),
-		  "Bad node count %d > %d, please check -c [--clientlist]",
-		  client_cnt, client_rank_size);
+	if (client_cnt > client_rank_size) {
+	    err("Bad client node count, cmd:%d > MPI:%d, please check -c [--clientlist]",
+		client_cnt, client_rank_size);
+	    goto _free;
+	}
+	if (node_id < 0) {
+	    err("Cannot find my node in client list (-c)!");
+	    goto _free;
+	}
     } else {
-	ON_ERROR( (node_cnt == 0),
-	    "Bad node count, please check -H [--hostlist]");
-        node_id = find_my_node(nodelist, node_cnt, 0);
+	if (node_cnt == 0) {
+	    err("Bad node count, please check -H [--hostlist]");
+	    goto _free;
+	}
+        node_id = find_my_node(nodelist, node_cnt, (clientlist != NULL));
 	if (clientlist) {
 	    /* Ignore clientlist */
 	    nodelist_free(clientlist, client_cnt);
@@ -603,11 +611,10 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    clientlist = NULL;
 	    if (be_verbose)
 		err("Ignore clientlist (-c) option");
+	} else if (node_id < 0) {
+	    err("Cannot find my node in FAM emulation node list (-H)!");
+	    goto _free;
 	}
-    }
-    if (node_id < 0) {
-	err("Cannot find my node in the list (-%c)!", client_cnt?'c':'H');
-	goto _free;
     }
 
     /* Number of LF server partitions, default:1 */
