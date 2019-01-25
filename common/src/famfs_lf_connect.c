@@ -129,15 +129,17 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	params->lf_mr_flags.allocated = 1;
 
     // Check support for scalable endpoint
-    if (fi->domain_attr->max_ep_tx_ctx > 1) {
-	size_t min_ctx =
+    if (params->lf_srv_rx_ctx) {
+	if (fi->domain_attr->max_ep_tx_ctx > 1) {
+	    size_t min_ctx =
 		min(fi->domain_attr->tx_ctx_cnt, fi->domain_attr->rx_ctx_cnt);
-	ON_ERROR((unsigned int)thread_cnt > min_ctx,
-		"Maximum number of requested contexts exceeds provider limitation");
-    } else {
-	err("Provider %s (in %s) doesn't support scalable endpoints",
+	    ON_ERROR((unsigned int)thread_cnt > min_ctx,
+		     "Maximum number of requested contexts exceeds provider limitation");
+	} else {
+	    err("Provider %s (in %s) doesn't support scalable endpoints",
 		fi->fabric_attr->prov_name, pname);
-	ON_ERROR(1, "lf_client_init failed");
+	    ON_ERROR(1, "lf_client_init failed");
+	}
     }
 
     if (lf_node->fabric == NULL) {
