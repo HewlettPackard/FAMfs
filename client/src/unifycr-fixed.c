@@ -422,7 +422,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset)
 	chunk->w_event++;
     //}
 
-    rc = fi_cntr_wait(cntr, chunk->w_event, 10000);
+    rc = fi_cntr_wait(cntr, chunk->w_event, lfs_params->io_timeout_ms);
     if (rc == -FI_ETIMEDOUT) {
         err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
 	    lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
