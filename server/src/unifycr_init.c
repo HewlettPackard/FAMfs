@@ -201,6 +201,27 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    if ((rc = make_mds_vec(glb_size, glb_rank)) > 0) {
+        LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
+        num_mds = rc;
+
+        /* FAM emulation */
+        char *lfs_cmd = getstr(LFS_COMMAND);
+        if (lfs_cmd) {
+            rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size,
+                   mds_vec, &lfs_ctx_p);
+            if (rc) {
+                LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
+                    glb_rank, glb_size, rc);
+                exit(1);
+            }
+        }
+    } else if (rc < 0) {
+        LOG(LOG_ERR, "Error obtaining MDS vector");
+    } else {
+        num_mds = 0;
+    }
+
     /*launch the service manager*/
     rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
     if (rc != 0) {
@@ -224,27 +245,6 @@ int main(int argc, char *argv[])
         if (sock_id != 0) {
             exit(1);
         }
-    }
-
-    if ((rc = make_mds_vec(glb_size, glb_rank)) > 0) {
-        LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
-        num_mds = rc;
-
-        /* FAM emulation */
-        char *lfs_cmd = getstr(LFS_COMMAND);
-        if (lfs_cmd) {
-            rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size,
-                   mds_vec, &lfs_ctx_p);
-            if (rc) {
-                LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
-                    glb_rank, glb_size, rc);
-                exit(1);
-            }
-        }
-    } else if (rc < 0) {
-        LOG(LOG_ERR, "Error obtaining MDS vector");
-    } else {
-        num_mds = 0;
     }
 
     rc = meta_init_store(&server_cfg);
