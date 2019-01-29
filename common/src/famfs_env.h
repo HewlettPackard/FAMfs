@@ -179,7 +179,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define LFSRV_PORT	50666
 #define LF_PROV_NAME	"sockets"
 #define LFSRV_BUF_SZ	32*1024*1024*1024L
-#define	N_PARITY	1
+#define	N_PARITY	0
 #define N_CHUNK_SZ	1*1024*1024L
 #define N_WRK_COUNT	1
 #define N_EXTENT_SZ	1*1024*1024*1024L
@@ -192,7 +192,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define UMMUNOTIFY_MODULE_NAME "ummunotify"
 
 /* default configuration command line */
-#define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -P0 --memreg scalable --provider sockets ENCODE"
+#define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -M 16M -E 8M -P0 --memreg scalable --provider sockets ENCODE"
 #define LFS_MAXARGS     64
 #define LFS_MAXCLIENTS	64
 
