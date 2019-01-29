@@ -123,17 +123,15 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	params->lf_mr_flags.allocated = 1;
 
     // Check support for scalable endpoint
-    if (params->lf_srv_rx_ctx) {
-	if (fi->domain_attr->max_ep_tx_ctx > 1) {
-	    size_t min_ctx =
+    if (fi->domain_attr->max_ep_tx_ctx > 1) {
+	size_t min_ctx =
 		min(fi->domain_attr->tx_ctx_cnt, fi->domain_attr->rx_ctx_cnt);
-	    ON_ERROR((unsigned int)thread_cnt > min_ctx,
-		     "Maximum number of requested contexts exceeds provider limitation");
-	} else {
-	    err("Provider %s (in %s) doesn't support scalable endpoints",
+	ON_ERROR((unsigned int)thread_cnt > min_ctx,
+		"Maximum number of requested contexts exceeds provider limitation");
+    } else {
+	err("Provider %s (in %s) doesn't support scalable endpoints",
 		fi->fabric_attr->prov_name, pname);
-	    ON_ERROR(1, "lf_client_init failed");
-	}
+	ON_ERROR(1, "lf_client_init failed");
     }
 
     if (lf_node->fabric == NULL) {
@@ -800,16 +798,26 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
     LF_SRV_t **lf_servers = NULL;
     int srv_cnt, node_id, lf_client_idx;
     int rank, size;
-    int i, part, rc;
+    int i, part;
+    int rc = -1;
 
-    MPI_Comm_rank(mpi_comm, &rank);
-    MPI_Comm_size(mpi_comm, &size);
+    if (mpi_comm) {
+	MPI_Comm_rank(mpi_comm, &rank);
+	MPI_Comm_size(mpi_comm, &size);
+    } else {
+	if (params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr) {
+	    err("FAM emulator argument error - don't set prov_key:%d or virt_addr:%d !",
+		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr);
+            goto _err;
+	}
+	rank = -1;
+	size = params->fam_cnt;
+    }
     node_id = params->node_id;
     srv_cnt = params->node_servers;
     if (size != params->fam_cnt) {
 	err("%d: MPI communicator has %d nodes but FAM should be emulated on %d",
 	    node_id, size, params->fam_cnt);
-	rc = -1;
         goto _err;
     }
 
@@ -861,6 +869,11 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
 	    rc = lf_srv_trigger(priv);
 #endif
 
+    if (mpi_comm) {
+	*lf_servers_p = lf_servers;
+	return 0;
+    }
+
     MPI_Barrier(mpi_comm);
     if (rank == 0) {
 	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
@@ -903,12 +916,14 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
     return 0;
 
 _err:
-    MPI_Abort(mpi_comm, rc);
-    MPI_Finalize();
-    if (rank == 0)
-	exit(rc);
-    sleep(10);
-    /* Should not reach this */
+    if (mpi_comm) {
+	MPI_Abort(mpi_comm, rc);
+	MPI_Finalize();
+	if (rank == 0)
+	    exit(rc);
+	/* Should be killed in sleep */
+	sleep(10);
+    }
     return -1;
 }
 
