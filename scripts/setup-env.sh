@@ -1,7 +1,7 @@
 # source /admin/fssw/spack/share/spack/setup-env.sh
 WRK_DIR=/dev/shm
 # INSTALL_DIR=/ibnfs/${USER}/install/FAMfs
-INSTALL_DIR=$(pkg-config --variable=prefix unifycr)
+INSTALL_DIR=$(pkg-config --variable=prefix famfs)
 
 export PATH="${INSTALL_DIR}/bin:${PATH}"
 export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:$LD_LIBRARY_PATH"
