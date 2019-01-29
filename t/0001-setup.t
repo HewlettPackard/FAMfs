@@ -39,11 +39,19 @@ unifycrd_cleanup
 unifycrd_start_daemon
 
 #
+# Make sure unifycrd starts whithin 15 seconds
+#
+if ! process_is_running unifycrd 15; then
+   echo not ok 1 - daemon is not started
+   exit 1
+fi
+
+#
 # Make sure unifycrd stays running for 5 seconds to catch cases where
 # it dies during initialization.
 #
 if process_is_not_running unifycrd 5; then
-    echo not ok 1 - unifycrd running
+    echo not ok 1 - unifycrd is not running
     exit 1
 else
     echo ok 1 - unifycrd running
