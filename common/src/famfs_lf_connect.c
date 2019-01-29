@@ -869,7 +869,7 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
 	    rc = lf_srv_trigger(priv);
 #endif
 
-    if (mpi_comm) {
+    if (!mpi_comm) {
 	*lf_servers_p = lf_servers;
 	return 0;
     }

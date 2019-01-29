@@ -8,17 +8,24 @@
 #define LF_CLIENT_H
 
 #include <stddef.h>
+#include <pthread.h>
 
 #include "famfs_lf_connect.h"
 
-struct lfs_ctx_;
-typedef void (*quit_fn_t)(struct lfs_ctx_ *ctx);
+
+typedef struct lfs_shm_ {
+	int		lfs_ready;	/* 1: tell parent that server is ready */
+	int		quit_lfs;	/* 1: tell child to quit */
+	pthread_mutex_t	lock;		/* shared mutex */
+	pthread_cond_t	cond_ready;	/* parent waits for LF server */
+	pthread_cond_t	cond_quit;	/* child waits to quit */
+} LFS_SHM_t;
 
 typedef struct lfs_ctx_ {
 	N_PARAMS_t	*lf_params;	/* LF clients */
 	/* FAM emulation only */
 	pid_t		child_pid;	/* pid of child process or zero */
-	quit_fn_t	quit_fn;	/* function that signals the emulator to quit */
+        struct lfs_shm_	*lfs_shm;	/* shared data */
 } LFS_CTX_t;
 
 
