@@ -814,9 +814,9 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
     MPI_Comm_size(mpi_comm, &size);
     node_id = params->node_id;
     srv_cnt = params->node_servers;
-    if (size != srv_cnt) {
-	err("%d: MPI error: communicator has %d nodes but the command has %d",
-	    node_id, size, srv_cnt);
+    if (size != params->fam_cnt) {
+	err("%d: MPI communicator has %d nodes but FAM should be emulated on %d",
+	    node_id, size, params->fam_cnt);
 	rc = -1;
         goto _err;
     }
