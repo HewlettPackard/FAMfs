@@ -56,6 +56,10 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     int			i, rc;
 
     node = lf_node->node_id;
+    if (params->lf_fabric)
+	pname = params->lf_fabric;
+    else
+	pname = params->nodelist[node];
     partition_id = lf_node->partition;
     thread_cnt = params->w_thread_cnt;
     service = node2service(params->lf_port, node, partition_id);
@@ -97,16 +101,6 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	hints->domain_attr->name = strdup(params->lf_domain);
     }
 
-    if (params->lf_fabric) {
-	pname = params->lf_fabric;
-    } else {
-	char* const* nodelist = params->clientlist? params->clientlist : params->nodelist;
-
-	if (params->lf_mr_flags.zhpe_support)
-	    pname = nodelist[params->node_id];
-	else
-	    pname = nodelist[node];
-    }
     rc = fi_getinfo(FI_VERSION(1, 5), pname, port, 0, hints, &fi);
     ON_FI_ERROR(rc, "LF client - fi_getinfo failed for FAM node %d (p%d) on %s:%s",
 		    node, partition_id, pname, port);
@@ -485,14 +479,12 @@ int lf_clients_init(N_PARAMS_t *params)
 
 	    lf_all_clients[lf_client_idx] = cl;
 	    if (params->verbose) {
-		char * const *nodelist = params->clientlist? params->clientlist : params->nodelist;
-
 		if (params->fam_map)
 		    printf("%d CL attached to FAM module %d(p%d) mr_key:%lu\n",
 			   my_node_id, i, part, cl->mr_key);
 		else
 		    printf("%d CL attached to node %d(p%d) on %s:%5d mr_key:%lu\n",
-			   my_node_id, i, part, nodelist[i], cl->service, cl->mr_key);
+			   my_node_id, i, part, params->nodelist[i], cl->service, cl->mr_key);
 	    }
 	}
     }
