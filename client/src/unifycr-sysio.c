@@ -1441,9 +1441,10 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
         rc = poll(&cmd_fd, 1, -1);
         if (rc == 0) {
             /*time out event*/
-            printf("MD/read TMO: poll %d rq:\n", read_req_set.count);
+            DEBUG("MD/read TMO: poll %d rq:\n", read_req_set.count);
             for (i = 0; i < read_req_set.count; i++) {
-                printf("\tfid %d: %u(%u)\n", read_req_set.read_reqs[i].fid, read_req_set.read_reqs[i].offset, read_req_set.read_reqs[i].length);
+                DEBUG("fid %d: %ld(%ld)\n", read_req_set.read_reqs[i].fid,\
+                      read_req_set.read_reqs[i].offset, read_req_set.read_reqs[i].length);
             }
         } else if (rc > 0) {
             read_req_t tmp_read_req;
@@ -1556,9 +1557,9 @@ int famfs_read(read_req_t *read_req, int count)
     rc = poll(&cmd_fd, 1, -1);
     if (rc == 0) {
         /*time out event*/
-        printf("MD/read TMO: poll %d rq:\n", read_req_set.count);
+        DEBUG("MD/read TMO: poll %d rq:\n", read_req_set.count);
         for (i = 0; i < read_req_set.count; i++) {
-            printf("\tfid %d: %u(%u)\n", read_req_set.read_reqs[i].fid, read_req_set.read_reqs[i].offset, read_req_set.read_reqs[i].length);
+            DEBUG("fid %d: %ld(%ld)\n", read_req_set.read_reqs[i].fid, read_req_set.read_reqs[i].offset, read_req_set.read_reqs[i].length);
         }
         return -ETIME;
     } else if (rc > 0) {
