@@ -24,7 +24,7 @@ unifycrd_SOURCES = arraylist.c \
                    lf_client.h \
                    log.h
 
-unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS)
+unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 
 unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.a \
                  $(top_builddir)/common/src/.libs/libfamfs_common.a \
@@ -36,6 +36,6 @@ AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
               -I$(top_srcdir)/meta/src/Mlog2 \
               -I$(top_srcdir)/common/src
 
-AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS)
+AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
 
 CLEANFILES = $(bin_PROGRAMS)

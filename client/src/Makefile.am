@@ -28,8 +28,8 @@ libfamfs_la_SOURCES = \
 libfamfs_la_CPPFLAGS = \
   -I$(top_builddir)/common/src \
   -I$(top_builddir)/client \
-  $(LIBFABRIC_CFLAGS)
-libfamfs_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(LIBFABRIC_LIBS) -lcrypto -lrt -lpthread
+  $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+libfamfs_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) -lcrypto -lrt -lpthread
 
 libfamfs_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
 
@@ -60,6 +60,7 @@ libfamfs_gotcha_la_CPPFLAGS = \
   -DUNIFYCR_GOTCHA \
   -I$(top_builddir)/common/src \
   -I$(top_builddir)/client \
-  $(GOTCHA_CFLAGS) $(LIBFABRIC_CFLAGS)
-libfamfs_gotcha_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(GOTCHA_LDFLAGS) $(LIBFABRIC_LIBS) -lgotcha -lcrypto -lrt -lpthread
+  $(GOTCHA_CFLAGS) $(LIBFABRIC_CFLAGS) $(MPI_CLDFLAGS)
+libfamfs_gotcha_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(GOTCHA_LDFLAGS) \
+                             $(LIBFABRIC_LIBS) $(MPI_CFLAGS) -lgotcha -lcrypto -lrt -lpthread
 libfamfs_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la

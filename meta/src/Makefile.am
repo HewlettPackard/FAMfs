@@ -30,7 +30,7 @@ libmdhim_a_SOURCES = Mlog2/mlog2.c \
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src/Mlog2 \
               -I$(top_srcdir)/meta/src/uthash
 
-AM_CFLAGS = -DLEVELDB_SUPPORT $(LEVELDB_CFLAGS)
+AM_CFLAGS = -DLEVELDB_SUPPORT $(LEVELDB_CFLAGS) $(MPI_CFLAGS)
 AM_CFLAGS += -Wall
 
 CLEANFILES =
