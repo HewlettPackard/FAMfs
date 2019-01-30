@@ -60,6 +60,7 @@ int *local_rank_lst;
 int local_rank_cnt;
 int local_rank_idx;
 int glb_rank, glb_size;
+int fam_fs = -1;
 
 arraylist_t *app_config_list;
 pthread_t data_thrd;
@@ -144,6 +145,7 @@ int main(int argc, char *argv[])
     int rc;
     bool daemon;
 
+printf("unifycrd starting\n");
     rc = unifycr_config_init(&server_cfg, argc, argv);
     if (rc != 0)
 	exit(1);
@@ -254,6 +256,7 @@ int main(int argc, char *argv[])
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
+printf("unifycrd running\n");
     while (1) {
         rc = sock_wait_cli_cmd();
         if (rc != ULFS_SUCCESS) {

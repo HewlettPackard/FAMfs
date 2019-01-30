@@ -16,10 +16,18 @@
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
+
+#ifdef ZHPE_SUPPORT
+
 #include <rdma/fi_ext_zhpe.h>
 
-#include <mpi.h>
+#else
 
+#define FI_ZHPE_FAM_RKEY 0
+
+#endif
+
+#include <mpi.h>
 #include "famfs_env.h"
 
 #define to_lf_client_id(node, part_count, part) (node*part_count + part)

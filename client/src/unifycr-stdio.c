@@ -61,6 +61,7 @@
 #include <limits.h>
 #define __USE_GNU
 #include <pthread.h>
+#include "famfs_global.h"
 #include "unifycr-stdio.h"
 #include "unifycr-internal.h"
 

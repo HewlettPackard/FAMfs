@@ -103,6 +103,7 @@ typedef int64_t off64_t;
 #include "famfs_env.h"
 #include "famfs_stats.h"
 #include "lf_client.h"
+#include "famfs_global.h"
 
 
 static int unifycr_fpos_enabled   = 1;  /* whether we can use fgetpos/fsetpos */
@@ -554,7 +555,7 @@ static int unifycr_fid_store_alloc(int fid)
     /* get meta data for this file */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
 
-    if (fs_type == UNIFYCR_LOG) {
+    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         meta->storage = FILE_STORAGE_LOGIO;
     } else if (unifycr_use_memfs || unifycr_use_spillover) {
         /* we used fixed-size chunk storage for memfs and spillover */
@@ -1210,7 +1211,7 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
     DEBUG("unifycr_get_fid_from_path() gave %d\n", fid);
 
     int gfid = -1, rc = 0;
-    if (fs_type == UNIFYCR_LOG) {
+    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         if (fid < 0) {
             rc = unifycr_get_global_fid(norm_path, &gfid);
             if (rc != UNIFYCR_SUCCESS) {
@@ -1285,7 +1286,7 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                 return -1;
             }
 
-            if (fs_type == UNIFYCR_LOG) {
+            if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
                 /*create a file and send its attribute to key-value store*/
                 unifycr_fattr_t *new_fmeta =
                     (unifycr_fattr_t *)malloc(sizeof(unifycr_fattr_t));
@@ -1431,15 +1432,15 @@ static void *unifycr_init_pointers(void *superblock)
     }
 
     /* pointer to the log-structured metadata structures*/
-    if (fs_type == UNIFYCR_LOG) {
+    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         unifycr_indices.ptr_num_entries = (unsigned long *)ptr;
 
         ptr += unifycr_page_size;
-        unifycr_indices.index_entry = (unifycr_index_t *)ptr;
+        unifycr_indices.index_entry = (md_index_t *)ptr;
 
 
         /*data structures  to record the global metadata*/
-        ptr += unifycr_max_index_entries * sizeof(unifycr_index_t);
+        ptr += unifycr_max_index_entries * sizeof(md_index_t);
         unifycr_fattrs.ptr_num_entries = (unsigned long *)ptr;
         ptr += unifycr_page_size;
         unifycr_fattrs.meta_entry = (unifycr_fattr_t *)ptr;
@@ -1475,7 +1476,7 @@ static int unifycr_init_structures()
         unifycr_stack_init(free_spillchunk_stack, unifycr_spillover_max_chunks);
     }
 
-    if (fs_type == UNIFYCR_LOG) {
+    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         *(unifycr_indices.ptr_num_entries) = 0;
         *(unifycr_fattrs.ptr_num_entries) = 0;
     }
@@ -1524,7 +1525,7 @@ static void *unifycr_superblock_shmget(size_t size, key_t key)
     int scr_shmblock_shmid;
 
     DEBUG("Key for superblock = %x\n", key);
-    if (fs_type != UNIFYCR_LOG) {
+    if (fs_type != UNIFYCR_LOG && fs_type != FAMFS) {
 #ifdef ENABLE_NUMA_POLICY
         /* if user requested to use 1 shm/process along with NUMA optimizations */
         if (key != IPC_PRIVATE) {
@@ -1798,6 +1799,7 @@ static int unifycr_init(int rank)
         /* set debug level to UNIFYCR_DEBUG env variable if it is set */
         if (!configurator_int_val(client_cfg.log_verbosity, &l))
             unifycr_debug_level = (int)l;
+printf("unifycr_debug_level=%d\n", unifycr_debug_level);
 
 #ifdef UNIFYCR_GOTCHA
         enum gotcha_error_t result;
@@ -1874,12 +1876,12 @@ static int unifycr_init(int rank)
         /* set number of chunks in spillover device */
         unifycr_spillover_max_chunks = unifycr_spillover_size >> unifycr_chunk_bits;
 
-        if (fs_type == UNIFYCR_LOG) {
+        if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
             unifycr_index_buf_size = UNIFYCR_INDEX_BUF_SIZE;
             if (!configurator_int_val(client_cfg.unifycr_index_buf_size, &l))
                     unifycr_index_buf_size = (size_t)l;
             unifycr_max_index_entries =
-                unifycr_index_buf_size / sizeof(unifycr_index_t);
+                unifycr_index_buf_size / sizeof(md_index_t);
 
             unifycr_fattr_buf_size = UNIFYCR_FATTR_BUF_SIZE;
             if (!configurator_int_val(client_cfg.unifycr_fattr_buf_size, &l))
@@ -1963,9 +1965,9 @@ static int unifycr_init(int rank)
         }
 
         /*unifycr: add the index and attribute region size of unifycr*/
-        if (fs_type == UNIFYCR_LOG) {
+        if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
             superblock_size += unifycr_max_index_entries
-                               * sizeof(unifycr_index_t) + unifycr_page_size;
+                               * sizeof(md_index_t) + unifycr_page_size;
             superblock_size += unifycr_max_fattr_entries
                                * sizeof(unifycr_fattr_t) + unifycr_page_size;
             glb_superblock_size = superblock_size;
@@ -2024,7 +2026,7 @@ static int unifycr_init(int rank)
         /*ToDo: add the spillover feature for the index metadata*/
         sprintf(spillfile_prefix, "%.87s/spill_index_%d_%d.log",
                 external_meta_dir, app_id, local_rank_idx);
-        if (fs_type == UNIFYCR_LOG) {
+        if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
             unifycr_spillmetablock =
                 unifycr_get_spillblock(unifycr_index_buf_size, spillfile_prefix);
             if (unifycr_spillmetablock < 0) {
@@ -2068,6 +2070,9 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     case UNIFYCR_STRIPE:
         fs_type = UNIFYCR_STRIPE;
         break;
+    case FAMFS:
+        fs_type = FAMFS;
+        break;
     default:
         fs_type = UNIFYCR_LOG;
         break;
@@ -2084,13 +2089,17 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
         return -1;
     }
 
-    if ((rc = unifycrfs_mount(prefix, size, rank)))
+    if ((rc = unifycrfs_mount(prefix, size, rank))) {
+        printf("unifycrfs_mount failed %d\n", rc);
         return rc;
+    }
 
-    char *cmdline = getstr(LFS_COMMAND);
-    if ((rc = lfs_connect(cmdline, rank, size, &lfs_ctx))) {
-        printf("lf-connect failed on mount\n");
-        return rc;
+    if (subtype == FAMFS) {
+        char *cmdline = getstr(LFS_COMMAND);
+        if ((rc = lfs_connect(cmdline, rank, size, &lfs_ctx))) {
+            printf("lf-connect failed on mount\n");
+            return rc;
+        }
     }
     return 0;
 }
@@ -2110,31 +2119,40 @@ int unifycr_unmount()
     int bytes_read = 0;
     int rc;
 
-    if (fs_type != UNIFYCR_LOG)
+    if (fs_type != UNIFYCR_LOG && fs_type != FAMFS) {
+        DEBUG("wrong FS type %d\n", fs_type);
         return UNIFYCR_FAILURE;
+    }
 
     memcpy(cmd_buf, &cmd, sizeof(int));
 
     rc = __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
-    if (rc <= 0)
+    if (rc <= 0) {
+        DEBUG("write to pipe failed %m\n");
         return UNIFYCR_FAILURE;
+    }
 
     cmd_fd.events = POLLIN | POLLPRI;
     cmd_fd.revents = 0;
 
     rc = poll(&cmd_fd, 1, -1);
-    if (rc < 0)
+    if (rc < 0) {
+        DEBUG("poll failed %m\n");
         return UNIFYCR_FAILURE;
+    }
 
     if (cmd_fd.revents != 0 && cmd_fd.revents == POLLIN) {
         bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
         if (bytes_read <= 0 ||
             *((int *)cmd_buf) != COMM_UNMOUNT ||
-            *((int *)cmd_buf + 1) != ACK_SUCCESS)
+            *((int *)cmd_buf + 1) != ACK_SUCCESS) {
+            DEBUG("pipe read error %m\n");
             return UNIFYCR_FAILURE;
+        }
     }
 
-    free_lfs_ctx(&lfs_ctx);
+    if (fs_type == FAMFS)
+        free_lfs_ctx(&lfs_ctx);
 
     return UNIFYCR_SUCCESS;
 }
@@ -2150,6 +2168,9 @@ static int unifycr_sync_to_del()
 
     int cmd = COMM_MOUNT;
 
+    if (fs_type == FAMFS)
+        cmd |= COMM_OPT_FAMFS;
+
     int superblock_start = UNIFYCR_SUPERBLOCK_KEY;
     int num_procs_per_node = local_rank_cnt;
     int req_buf_sz = shm_req_size;
@@ -2160,7 +2181,7 @@ static int unifycr_sync_to_del()
         (void *)unifycr_indices.ptr_num_entries
         - unifycr_superblock;
     long meta_size = unifycr_max_index_entries
-                     * sizeof(unifycr_index_t);
+                     * sizeof(md_index_t);
 
     long fmeta_offset =
         (void *)unifycr_fattrs.ptr_num_entries
@@ -2360,6 +2381,7 @@ static int get_del_cnt()
         rc = poll(&cmd_fd, 1, -1);
         if (rc == 0) {
             /* encounter timeout*/
+            printf("poll timeout\n");
             return -1;
         } else {
             if (rc > 0) {
@@ -2369,11 +2391,13 @@ static int get_del_cnt()
                                                  sizeof(cmd_buf));
                         if (bytes_read == 0) {
                             /*remote connection is closed*/
+                            printf("read() failed %m\n");
                             return -1;
                         } else {
                             if (*((int *)cmd_buf) != COMM_SYNC_DEL || *((int *)cmd_buf + 1)
                                 != ACK_SUCCESS) {
                                 /*encounter delegator-side error*/
+                                printf("delegator return %d\n", rc);
                                 return rc;
                             } else {
                                 /*success*/
@@ -2381,19 +2405,23 @@ static int get_del_cnt()
                         }
                     } else {
                         /*encounter connection error*/
+                        printf("connection error, ev=%d %m\n", cmd_fd.revents);
                         return -1;
                     }
                 } else {
                     /*file descriptor is negative*/
+                    printf("FD < 0\n");
                     return -1;
                 }
             } else {
                 /* encounter error*/
+                printf("poll() failed %m\n");
                 return -1;
             }
         }
     } else {
         /*write error*/
+        printf("write errror %m\n");
         return -1;
     }
 
@@ -2734,7 +2762,7 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
     else
         unifycr_mount_shmget_key = IPC_PRIVATE;
 
-    if (fs_type == UNIFYCR_LOG || fs_type == UNIFYCR_STRIPE) {
+    if (fs_type == UNIFYCR_LOG || fs_type == UNIFYCR_STRIPE || fs_type == FAMFS) {
         int rc = CountTasksPerNode(rank, size);
 
         if (rc < 0) {
@@ -2764,7 +2792,7 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
     if (ret != UNIFYCR_SUCCESS)
         return ret;
 
-    if (fs_type == UNIFYCR_LOG || fs_type == UNIFYCR_STRIPE) {
+    if (fs_type == UNIFYCR_LOG || fs_type == UNIFYCR_STRIPE || fs_type == FAMFS) {
         char host_name[UNIFYCR_MAX_FILENAME] = {0};
         int rc = gethostname(host_name, UNIFYCR_MAX_FILENAME);
 

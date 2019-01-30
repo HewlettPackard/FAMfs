@@ -41,6 +41,7 @@ typedef struct {
 
 void *rm_delegate_request_thread(void *arg);
 int rm_read_remote_data(int sock_id, int num);
+int rm_fetch_md(int sock_id, int num);
 int rm_send_remote_requests(thrd_ctrl_t *thrd_ctrl,
                             int thrd_tag, long *tot_sz);
 int rm_pack_send_requests(char *req_msg_buf,

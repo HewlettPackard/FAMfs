@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
     /*
      * Verify unifycr_mount succeeds.
      */
-    rc = unifycr_mount(unifycr_root, rank, rank_num, 0, 1);
+    rc = unifycr_mount(unifycr_root, rank, rank_num, 0, /* 1 */ 3);
     ok(rc == 0, "unifycr_mount at %s (rc=%d)", unifycr_root, rc);
 
     testutil_rand_path(path, sizeof(path), unifycr_root);
@@ -54,9 +54,15 @@ int main(int argc, char *argv[])
      * Verify we can create a new file.
      */
     errno = 0;
-    fd = open(path, O_CREAT|O_EXCL, mode);
+    fd = open(path, O_CREAT|O_EXCL|O_RDWR, mode);
     ok(fd >= 0, "open non-existing file %s flags O_CREAT|O_EXCL (fd=%d): %s",
        path, fd, strerror(errno));
+
+    /*
+    char buf[4096];
+    ssize_t w = write(fd, buf, sizeof(buf));
+    ok(w == sizeof(buf), "write at %s:%d %m\n", path, w);
+    */
 
     /*
      * Verify close succeeds.

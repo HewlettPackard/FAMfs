@@ -38,7 +38,7 @@
 #include "unifycr_metadata.h"
 #include "unifycr_sock.h"
 
-//extern struct pollfd poll_set[MAX_NUM_CLIENTS];
+#include "famfs_global.h"
 
 struct timespec shm_wait_tm;
 
@@ -122,6 +122,40 @@ int rm_read_remote_data(int sock_id, int req_num)
     pthread_mutex_unlock(&thrd_ctrl->thrd_lock);
     return rc;
 
+}
+
+int rm_fetch_md(int sock_id, int req_num) {
+
+    int rc;
+
+    int app_id = invert_sock_ids[sock_id];
+    app_config_t *app_config =
+        (app_config_t *)arraylist_get(app_config_list, app_id);
+
+    int client_id = app_config->client_ranks[sock_id];
+    int dbg_rank = app_config->dbg_ranks[sock_id];
+
+    int thrd_id = app_config->thrd_idxs[sock_id];
+    thrd_ctrl_t *thrd_ctrl = (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
+
+    pthread_mutex_lock(&thrd_ctrl->thrd_lock);
+
+    /* get the locations of all the read requests from the key-value store*/
+    rc = meta_batch_get(app_id, client_id, thrd_id, dbg_rank,
+                        app_config->shm_req_bufs[client_id], req_num,
+                        thrd_ctrl->del_req_set);
+
+    /*
+     * group together the read requests
+     * to be sent to the same delegators.
+     * */
+    qsort(thrd_ctrl->del_req_set->msg_meta,
+          thrd_ctrl->del_req_set->num,
+          sizeof(send_msg_t), compare_delegators);
+//  print_send_msgs(thrd_ctrl->del_req_set->msg_meta,
+//  thrd_ctrl->del_req_set->num, dbg_rank);
+
+    return rc;
 }
 
 /**

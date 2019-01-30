@@ -271,12 +271,15 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     if (params->lf_srv_rx_ctx)
 	ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
 
+
     // zhpe support
     if (params->lf_mr_flags.zhpe_support) {
+#ifdef ZHPE_SUPPORT
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	char url[16];
 	unsigned long long fam_id = lf_node->fam_id;
+
 
 	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
 		"srv open_ops failed");
@@ -284,9 +287,11 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	sprintf(url, "zhpe:///fam%4Lu", fam_id);
 	ON_FI_ERROR( ext_ops->lookup(url, &fi_dest_addr, &sa_len), "fam:%4Lu lookup failed", fam_id);
 
+
 	if (params->verbose)
 	    printf("CL attached to FAM node %d(p%d) ID:fam%4Lu from %s\n",
 		   node, partition_id, fam_id, pname);
+#endif
     } else {
 	if (params->verbose)
 	    printf("CL attached to node %d(p%d) on %s:%s\n",
@@ -734,10 +739,12 @@ int lf_srv_init(LF_SRV_t *priv)
 
     // zhpe support
     if (params->lf_mr_flags.zhpe_support) {
+#ifdef ZHPE_SUPPORT
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	void *fam_sa;
 	char url[16];
+
 
 	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
 		"srv open_ops failed");
@@ -748,6 +755,8 @@ int lf_srv_init(LF_SRV_t *priv)
 	       my_node_id, priv->thread_id,
 	       len/1024/1024, pname,
 	       cl->fam_id, fi->domain_attr->name);
+#endif
+
     } else {
 	printf("%d/%d: Registered %zuMB of memory on %s:%s (p%d) if:%s\n",
 	       my_node_id, priv->thread_id,

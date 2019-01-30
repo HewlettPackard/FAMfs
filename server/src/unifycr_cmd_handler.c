@@ -41,6 +41,7 @@
 #include "unifycr_const.h"
 #include "unifycr_sock.h"
 #include "unifycr_metadata.h"
+#include "famfs_global.h"
 
 /**
 * handle client-side requests, including init, open, fsync,
@@ -57,9 +58,11 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
 
     int rc = 0, ret_sz = 0;
     int cmd = *((int *)ptr_cmd);
+    int num;
     char *ptr_ack;
 
-    switch (cmd) {
+    LOG(LOG_DBG, "DLG command %x, masked %x\n", cmd, cmd & ~COMM_OPT_MASK);
+    switch (cmd & ~COMM_OPT_MASK) {
     case COMM_SYNC_DEL:
         (void)0;
         ptr_ack = sock_get_ack_buf(sock_id);
@@ -69,10 +72,21 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
         return rc;
 
     case COMM_MOUNT:
+        if (fam_fs == -1) {
+            fam_fs = cmd & COMM_OPT_FAMFS ? 1 : 0;
+        } else {
+            if (fam_fs && !(cmd & COMM_OPT_FAMFS)) {
+                LOG(LOG_ERR, "Attempt to mount FAMFS on non-FAMFS DB\n");
+                rc = -1;
+            } else if (!fam_fs && (cmd & COMM_OPT_FAMFS)) {
+                LOG(LOG_ERR, "Attempt to mount not-FAM FS on FAMFS DB\n");
+                rc = -1;
+            }
+        }
         rc = sync_with_client(ptr_cmd, sock_id);
 
         ptr_ack = sock_get_ack_buf(sock_id);
-        ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
+        ret_sz = pack_ack_msg(ptr_ack, COMM_MOUNT, rc,
                               &max_recs_per_slice, sizeof(long));
 #if 0
         *((int *)&ptr_ack[ret_sz]) = glb_rank;
@@ -81,6 +95,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
         ret_sz += sizeof(int);
 #endif
         rc = sock_ack_cli(sock_id, ret_sz);
+        fam_fs = cmd & COMM_OPT_FAMFS;
         return rc;
 
     case COMM_META:
@@ -123,11 +138,15 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
         break;
 
     case COMM_READ:
-        (void)0;
-        int num = *(((int *)ptr_cmd) + 1);
+        num = *(((int *)ptr_cmd) + 1);
         /* result is handled by the individual thread in
          * the request manager*/
         rc = rm_read_remote_data(sock_id, num);
+        break;
+
+    case COMM_MDGET:
+        num = *(((int *)ptr_cmd) + 1);
+        rc = rm_fetch_md(sock_id, num);
         break;
 
     case COMM_UNMOUNT:
@@ -139,7 +158,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
         break;
 
     default:
-        LOG(LOG_DBG, "rank:%d,Unsupported command type %d\n",
+        LOG(LOG_DBG, "rank:%d,Unsupported command %x\n",
             glb_rank, cmd);
         rc = -1;
         break;

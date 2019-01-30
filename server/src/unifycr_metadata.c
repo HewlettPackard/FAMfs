@@ -34,6 +34,7 @@
 #include "arraylist.h"
 #include "unifycr_const.h"
 #include "unifycr_global.h"
+#include "famfs_global.h"
 
 unifycr_key_t **unifycr_keys;
 unifycr_val_t **unifycr_vals;
@@ -292,7 +293,7 @@ int meta_process_attr_get(char *buf, int sock_id,
 
 int meta_process_fsync(int sock_id)
 {
-    int ret = 0;
+    int i, ret = 0;
 
     int app_id = invert_sock_ids[sock_id];
     app_config_t *app_config = (app_config_t *)arraylist_get(app_config_list,
@@ -308,22 +309,26 @@ int meta_process_fsync(int sock_id)
 
     /* indices are stored in the superblock shared memory
      *  created by the client*/
-    unifycr_index_t *meta_payload =
-        (unifycr_index_t *)(app_config->shm_superblocks[client_side_id]
+    md_index_t *meta_payload =
+        (md_index_t *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset + page_sz);
 
     md->primary_index = unifycr_indexes[0];
 
-    long i;
     for (i = 0; i < num_entries; i++) {
         unifycr_keys[i]->fid = meta_payload[i].fid;
         unifycr_keys[i]->offset = meta_payload[i].file_pos;
         unifycr_vals[i]->addr = meta_payload[i].mem_pos;
         unifycr_vals[i]->len = meta_payload[i].length;
-        unifycr_vals[i]->delegator_id = glb_rank;
-        memcpy((char *) & (unifycr_vals[i]->app_rank_id), &app_id, sizeof(int));
-        memcpy((char *) & (unifycr_vals[i]->app_rank_id) + sizeof(int),
-               &client_side_id, sizeof(int));
+        if (fam_fs) {
+            unifycr_vals[i]->node = meta_payload[i].nid;
+            unifycr_vals[i]->node = meta_payload[i].cid;
+        } else {
+            unifycr_vals[i]->delegator_id = glb_rank;
+            memcpy((char *) & (unifycr_vals[i]->app_rank_id), &app_id, sizeof(int));
+            memcpy((char *) & (unifycr_vals[i]->app_rank_id) + sizeof(int),
+                   &client_side_id, sizeof(int));
+        }
 
         unifycr_key_lens[i] = sizeof(unifycr_key_t);
         unifycr_val_lens[i] = sizeof(unifycr_val_t);
@@ -489,14 +494,19 @@ int meta_batch_get(int app_id, int client_id,
             tmp_key = (unifycr_key_t *)bgrm->keys[i];
             tmp_val = (unifycr_val_t *)bgrm->values[i];
 
-            memcpy(&dest_app, (char *) & (tmp_val->app_rank_id), sizeof(int));
-            memcpy(&dest_client, (char *) & (tmp_val->app_rank_id)
-                   + sizeof(int), sizeof(int));
+            if (fam_fs) {
+                del_req_set->msg_meta[tot_num].fam_cid = tmp_val->chunk;
+                del_req_set->msg_meta[tot_num].fam_nid = tmp_val->node;
+            } else {
+                memcpy(&dest_app, (char *) & (tmp_val->app_rank_id), sizeof(int));
+                memcpy(&dest_client, (char *) & (tmp_val->app_rank_id)
+                       + sizeof(int), sizeof(int));
+                /* rank of the remote delegator*/
+                del_req_set->msg_meta[tot_num].dest_delegator_rank = tmp_val->delegator_id;
+            }
+
             /* physical offset of the requested file segment on the log file*/
             del_req_set->msg_meta[tot_num].dest_offset = tmp_val->addr;
-
-            /* rank of the remote delegator*/
-            del_req_set->msg_meta[tot_num].dest_delegator_rank = tmp_val->delegator_id;
 
             /* dest_client_id and dest_app_id uniquely identifies the remote physical
              * log file that contains the requested segments*/

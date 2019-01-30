@@ -270,6 +270,8 @@ enum flock_enum {
 #define CHUNK_LOCATION_MEMFS     1
 #define CHUNK_LOCATION_SPILLOVER 2
 
+#include "famfs_global.h"
+
 typedef struct {
     int location; /* CHUNK_LOCATION specifies how chunk is stored */
     off_t id;     /* physical id of chunk in its respective storage */
@@ -312,15 +314,8 @@ typedef struct {
 } shm_meta_t; /*metadata format in the shared memory*/
 
 typedef struct {
-    off_t file_pos;
-    off_t mem_pos;
-    size_t length;
-    int fid;
-} unifycr_index_t;
-
-typedef struct {
     off_t *ptr_num_entries;
-    unifycr_index_t *index_entry;
+    md_index_t *index_entry;
 } unifycr_index_buf_t;
 
 typedef struct {
@@ -336,7 +331,7 @@ typedef struct {
 } unifycr_fattr_buf_t;
 
 typedef struct {
-    unifycr_index_t idxes[UNIFYCR_MAX_SPLIT_CNT];
+    md_index_t idxes[UNIFYCR_MAX_SPLIT_CNT];
     int count;
 } index_set_t;
 
@@ -344,6 +339,7 @@ typedef enum {
     UNIFYCRFS,
     UNIFYCR_LOG,
     UNIFYCR_STRIPE,
+    FAMFS
 } fs_type_t;
 
 typedef struct {
@@ -397,6 +393,7 @@ extern long unifycr_key_slice_range;
 /*definition for unifycr*/
 #define UNIFYCR_CLI_TIME_OUT 5000
 
+#if 0
 typedef enum {
     COMM_MOUNT,
     COMM_META,
@@ -404,7 +401,9 @@ typedef enum {
     COMM_UNMOUNT,
     COMM_DIGEST,
     COMM_SYNC_DEL,
+    COMM_MDGET,
 } cmd_lst_t;
+#endif
 
 typedef enum {
     ACK_SUCCESS,
@@ -575,7 +574,7 @@ int unifycr_fid_unlink(int fid);
 
 
 /*functions used in UnifyCR*/
-int unifycr_split_index(unifycr_index_t *cur_idx, index_set_t *index_set,
+int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
                         long slice_range);
 int unifycr_split_read_requests(read_req_t *cur_read_req,
                                 read_req_set_t *read_req_set,

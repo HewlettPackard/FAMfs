@@ -48,18 +48,19 @@ typedef struct {
 } unifycr_key_t;
 
 typedef struct {
-    unsigned long delegator_id;
     unsigned long len;
     unsigned long addr;
-    unsigned long app_rank_id; /*include both app and rank id*/
+    union {
+        struct {
+            unsigned long delegator_id;
+            unsigned long app_rank_id; /*include both app and rank id*/
+        };
+        struct {
+            unsigned long node;
+            unsigned long chunk;
+        };
+    };
 } unifycr_val_t;
-
-typedef struct {
-    off_t file_pos;
-    off_t mem_pos;
-    size_t length;
-    int fid;
-} unifycr_index_t;
 
 typedef struct {
     int fid;
