@@ -34,6 +34,7 @@
 #include <sys/mman.h>
 #include <string.h>
 #include "log.h"
+#include "famfs_global.h"
 #include "unifycr_global.h"
 #include "unifycr_cmd_handler.h"
 #include "unifycr_request_manager.h"
@@ -41,7 +42,6 @@
 #include "unifycr_const.h"
 #include "unifycr_sock.h"
 #include "unifycr_metadata.h"
-#include "famfs_global.h"
 
 /**
 * handle client-side requests, including init, open, fsync,
@@ -147,6 +147,14 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
     case COMM_MDGET:
         num = *(((int *)ptr_cmd) + 1);
         rc = rm_fetch_md(sock_id, num);
+        if (rc) {
+            LOG(LOG_ERR, "md_get err %d\n", rc);
+        }
+        rc = sock_notify_cli(sock_id, COMM_READ);
+        if (rc != 0) {
+            LOG(LOG_ERR, "sock notify failed\n");
+            return rc;
+        }
         break;
 
     case COMM_UNMOUNT:

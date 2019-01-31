@@ -27,6 +27,7 @@
  * Please read https://github.com/llnl/burstfs/LICNSE for full license text.
  */
 
+#include "famfs_global.h"
 #include "mdhim.h"
 #include "indexes.h"
 #include "log.h"
@@ -34,10 +35,9 @@
 #include "arraylist.h"
 #include "unifycr_const.h"
 #include "unifycr_global.h"
-#include "famfs_global.h"
 
-unifycr_key_t **unifycr_keys;
-unifycr_val_t **unifycr_vals;
+fsmd_key_t **fsmd_keys;
+fsmd_val_t **fsmd_vals;
 
 fattr_key_t **fattr_keys;
 fattr_val_t **fattr_vals;
@@ -51,7 +51,7 @@ mdhim_options_t *db_opts;
 struct mdhim_t *md;
 
 int md_size;
-int unifycr_key_lens[MAX_META_PER_SEND] = {0};
+int fsmd_ley_lens[MAX_META_PER_SEND] = {0};
 int unifycr_val_lens[MAX_META_PER_SEND] = {0};
 
 int fattr_key_lens[MAX_FILE_CNT_PER_NODE] = {0};
@@ -162,27 +162,27 @@ int meta_init_indices()
     int i;
 
     /*init index metadata*/
-    unifycr_keys = (unifycr_key_t **)malloc(MAX_META_PER_SEND
-                                            * sizeof(unifycr_key_t *));
+    fsmd_keys = (fsmd_key_t **)malloc(MAX_META_PER_SEND
+                                            * sizeof(fsmd_key_t *));
 
-    unifycr_vals = (unifycr_val_t **)malloc(MAX_META_PER_SEND
-                                            * sizeof(unifycr_val_t *));
+    fsmd_vals = (fsmd_val_t **)malloc(MAX_META_PER_SEND
+                                            * sizeof(fsmd_val_t *));
 
     for (i = 0; i < MAX_META_PER_SEND; i++) {
-        unifycr_keys[i] = (unifycr_key_t *)malloc(sizeof(unifycr_key_t));
+        fsmd_keys[i] = (fsmd_key_t *)malloc(sizeof(fsmd_key_t));
 
-        if (!unifycr_keys[i]) {
+        if (!fsmd_keys[i]) {
             return ULFS_ERROR_NOMEM;
         }
-        memset(unifycr_keys[i], 0, sizeof(unifycr_key_t));
+        memset(fsmd_keys[i], 0, sizeof(fsmd_key_t));
     }
 
     for (i = 0; i < MAX_META_PER_SEND; i++) {
-        unifycr_vals[i] = (unifycr_val_t *)malloc(sizeof(unifycr_val_t));
-        if (!unifycr_vals[i]) {
+        fsmd_vals[i] = (fsmd_val_t *)malloc(sizeof(fsmd_val_t));
+        if (!fsmd_vals[i]) {
             return ULFS_ERROR_NOMEM;
         };
-        memset(unifycr_vals[i], 0, sizeof(unifycr_val_t));
+        memset(fsmd_vals[i], 0, sizeof(fsmd_val_t));
     }
 
     /*init attribute metadata*/
@@ -316,29 +316,29 @@ int meta_process_fsync(int sock_id)
     md->primary_index = unifycr_indexes[0];
 
     for (i = 0; i < num_entries; i++) {
-        unifycr_keys[i]->fid = meta_payload[i].fid;
-        unifycr_keys[i]->offset = meta_payload[i].file_pos;
-        unifycr_vals[i]->addr = meta_payload[i].mem_pos;
-        unifycr_vals[i]->len = meta_payload[i].length;
+        fsmd_keys[i]->fid = meta_payload[i].fid;
+        fsmd_keys[i]->offset = meta_payload[i].file_pos;
+        fsmd_vals[i]->addr = meta_payload[i].mem_pos;
+        fsmd_vals[i]->len = meta_payload[i].length;
         if (fam_fs) {
-            unifycr_vals[i]->node = meta_payload[i].nid;
-            unifycr_vals[i]->node = meta_payload[i].cid;
+            fsmd_vals[i]->node = meta_payload[i].nid;
+            fsmd_vals[i]->node = meta_payload[i].cid;
         } else {
-            unifycr_vals[i]->delegator_id = glb_rank;
-            memcpy((char *) & (unifycr_vals[i]->app_rank_id), &app_id, sizeof(int));
-            memcpy((char *) & (unifycr_vals[i]->app_rank_id) + sizeof(int),
+            fsmd_vals[i]->delegator_id = glb_rank;
+            memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
+            memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
                    &client_side_id, sizeof(int));
         }
 
-        unifycr_key_lens[i] = sizeof(unifycr_key_t);
-        unifycr_val_lens[i] = sizeof(unifycr_val_t);
+        fsmd_ley_lens[i] = sizeof(fsmd_key_t);
+        unifycr_val_lens[i] = sizeof(fsmd_val_t);
     }
 
-    // print_fsync_indices(unifycr_keys, unifycr_vals, num_entries);
+    // print_fsync_indices(fsmd_keys, fsmd_vals, num_entries);
 
     if (num_entries == 1) {
-        brm = mdhimPut(md, unifycr_keys[0], sizeof(unifycr_key_t),
-                       unifycr_vals[0], sizeof(unifycr_val_t),
+        brm = mdhimPut(md, fsmd_keys[0], sizeof(fsmd_key_t),
+                       fsmd_vals[0], sizeof(fsmd_val_t),
                        NULL, NULL);
         if (!brm || brm->error) {
             ret = ULFS_ERROR_MDHIM;
@@ -350,8 +350,8 @@ int meta_process_fsync(int sock_id)
         mdhim_full_release_msg(brm);
     } else {
 
-    brm = mdhimBPut(md, (void **)(&unifycr_keys[0]), unifycr_key_lens,
-                    (void **)(&unifycr_vals[0]), unifycr_val_lens, num_entries,
+    brm = mdhimBPut(md, (void **)(&fsmd_keys[0]), fsmd_ley_lens,
+                    (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries,
                     NULL, NULL);
     brmp = brm;
     if (!brmp || brmp->error) {
@@ -465,24 +465,24 @@ int meta_batch_get(int app_id, int client_id,
 
     int i, rc = 0;
     for (i = 0; i < num; i++) {
-        unifycr_keys[2 * i]->fid = tmp_cli_req[i].fid;
-        unifycr_keys[2 * i]->offset = tmp_cli_req[i].offset;
-        unifycr_key_lens[2 * i] = sizeof(unifycr_key_t);
-        unifycr_keys[2 * i + 1]->fid = tmp_cli_req[i].fid;
-        unifycr_keys[2 * i + 1]->offset =
+        fsmd_keys[2 * i]->fid = tmp_cli_req[i].fid;
+        fsmd_keys[2 * i]->offset = tmp_cli_req[i].offset;
+        fsmd_ley_lens[2 * i] = sizeof(fsmd_key_t);
+        fsmd_keys[2 * i + 1]->fid = tmp_cli_req[i].fid;
+        fsmd_keys[2 * i + 1]->offset =
             tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
-        unifycr_key_lens[2 * i + 1] = sizeof(unifycr_key_t);
+        fsmd_ley_lens[2 * i + 1] = sizeof(fsmd_key_t);
 
     }
 
     md->primary_index = unifycr_indexes[0];
-    bgrm = mdhimBGet(md, md->primary_index, (void **)unifycr_keys,
-                     unifycr_key_lens, 2 * num, MDHIM_RANGE_BGET);
+    bgrm = mdhimBGet(md, md->primary_index, (void **)fsmd_keys,
+                     fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
 
     int tot_num = 0;
     int dest_client, dest_app;
-    unifycr_key_t *tmp_key;
-    unifycr_val_t *tmp_val;
+    fsmd_key_t *tmp_key;
+    fsmd_val_t *tmp_val;
 
     bgrmp = bgrm;
     while (bgrmp) {
@@ -491,8 +491,8 @@ int meta_batch_get(int app_id, int client_id,
         }
 
         for (i = 0; i < bgrmp->num_keys; i++) {
-            tmp_key = (unifycr_key_t *)bgrm->keys[i];
-            tmp_val = (unifycr_val_t *)bgrm->values[i];
+            tmp_key = (fsmd_key_t *)bgrm->keys[i];
+            tmp_val = (fsmd_val_t *)bgrm->values[i];
 
             if (fam_fs) {
                 del_req_set->msg_meta[tot_num].fam_cid = tmp_val->chunk;
@@ -536,6 +536,49 @@ int meta_batch_get(int app_id, int client_id,
 
     return rc;
 }
+
+int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
+
+    int tot_num = 0;
+    cli_req_t *tmp_cli_req = (cli_req_t *)shm_reqbuf;
+
+    int i, rc = 0;
+    for (i = 0; i < num; i++) {
+        fsmd_keys[2*i]->fid        = tmp_cli_req[i].fid;
+        fsmd_keys[2*i + 1]->fid    = tmp_cli_req[i].fid;
+        fsmd_keys[2*i]->offset     = tmp_cli_req[i].offset;
+        fsmd_keys[2*i + 1]->offset = tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
+        fsmd_ley_lens[2*i]         = sizeof(fsmd_key_t);
+        fsmd_ley_lens[2*i + 1]     = sizeof(fsmd_key_t);
+
+    }
+
+    md->primary_index = unifycr_indexes[0];
+    bgrm = mdhimBGet(md, md->primary_index, (void **)fsmd_keys,
+                     fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
+
+    bgrmp = bgrm;
+    while (bgrmp) {
+        if (bgrmp->error < 0) {
+            rc = ULFS_ERROR_MDHIM;
+        }
+
+        for (i = 0; i < bgrmp->num_keys; i++) {
+            res_kv[i].k = *(fsmd_key_t *)bgrm->keys[i];
+            res_kv[i].v = *(fsmd_val_t *)bgrm->values[i];
+            tot_num++;
+        }
+        bgrmp = bgrmp->next;
+        mdhim_full_release_msg(bgrm);
+        bgrm = bgrmp;
+    }
+
+    if (total_kv)
+        *total_kv = tot_num;
+
+    return rc;
+}
+
 
 void print_bget_indices(int app_id, int cli_id,
                         send_msg_t *index_set, int tot_num)
@@ -583,15 +626,15 @@ void print_bget_indices(int app_id, int cli_id,
 
 }
 
-void print_fsync_indices(unifycr_key_t **unifycr_keys,
-                         unifycr_val_t **unifycr_vals, long num_entries)
+void print_fsync_indices(fsmd_key_t **fsmd_keys,
+                         fsmd_val_t **fsmd_vals, long num_entries)
 {
     long i;
     for (i = 0; i < num_entries; i++) {
         LOG(LOG_DBG, "fid:%ld, offset:%ld, addr:%ld, len:%ld, del_id:%ld\n",
-            unifycr_keys[i]->fid, unifycr_keys[i]->offset,
-            unifycr_vals[i]->addr, unifycr_vals[i]->len,
-            unifycr_vals[i]->delegator_id);
+            fsmd_keys[i]->fid, fsmd_keys[i]->offset,
+            fsmd_vals[i]->addr, fsmd_vals[i]->len,
+            fsmd_vals[i]->delegator_id);
 
     }
 }
@@ -600,14 +643,14 @@ int meta_free_indices()
 {
     int i;
     for (i = 0; i < MAX_META_PER_SEND; i++) {
-        free(unifycr_keys[i]);
+        free(fsmd_keys[i]);
     }
-    free(unifycr_keys);
+    free(fsmd_keys);
 
     for (i = 0; i < MAX_META_PER_SEND; i++) {
-        free(unifycr_vals[i]);
+        free(fsmd_vals[i]);
     }
-    free(unifycr_vals);
+    free(fsmd_vals);
 
     for (i = 0; i < MAX_FILE_CNT_PER_NODE; i++) {
         free(fattr_keys[i]);

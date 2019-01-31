@@ -40,6 +40,7 @@
 #include <ifaddrs.h>
 #include <signal.h>
 
+#include "famfs_global.h"
 #include "unifycr_metadata.h"
 #include "log.h"
 #include "unifycr_debug.h"

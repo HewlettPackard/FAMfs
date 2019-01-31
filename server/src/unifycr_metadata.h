@@ -43,26 +43,6 @@
 
 
 typedef struct {
-    unsigned long fid;
-    unsigned long offset;
-} unifycr_key_t;
-
-typedef struct {
-    unsigned long len;
-    unsigned long addr;
-    union {
-        struct {
-            unsigned long delegator_id;
-            unsigned long app_rank_id; /*include both app and rank id*/
-        };
-        struct {
-            unsigned long node;
-            unsigned long chunk;
-        };
-    };
-} unifycr_val_t;
-
-typedef struct {
     int fid;
     long offset;
     long length;
@@ -82,10 +62,9 @@ int meta_batch_get(int app_id, int client_id,
                    msg_meta_t *del_req_set);
 int meta_init_indices();
 int meta_free_indices();
-void print_fsync_indices(unifycr_key_t **unifycr_keys,
-                         unifycr_val_t **unifycr_vals, long num_entries);
+void print_fsync_indices(fsmd_key_t **keys, fsmd_val_t **vals, long num_entries);
 int meta_process_attr_set(char *ptr_cmd, int sock_id);
 int meta_process_attr_get(char *buf, int sock_id,
                           unifycr_file_attr_t *ptr_attr_val);
-
+int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv);
 #endif

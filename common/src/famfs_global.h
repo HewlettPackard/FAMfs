@@ -1,5 +1,8 @@
 #ifndef FAMFS_GLOBAL_H_
 #define FAMFS_GLOBAL_H_ 
+
+#include <sys/types.h>
+
 typedef enum {
     COMM_MOUNT     = 0x1, /*the list of addrs: appid, size of buffer, offset of data section, metadata section*/
     COMM_META      = 0x2,
@@ -21,5 +24,31 @@ typedef struct {
     int     nid;
     int     cid;
 } md_index_t;
+
+typedef struct {
+    unsigned long fid;
+    unsigned long offset;
+} fsmd_key_t;
+
+typedef struct {
+    unsigned long len;
+    unsigned long addr;
+    union {
+        struct {
+            unsigned long delegator_id;
+            unsigned long app_rank_id; /*include both app and rank id*/
+        };
+        struct {
+            unsigned long node;
+            unsigned long chunk;
+        };
+    };
+} fsmd_val_t;
+
+
+typedef struct {
+    fsmd_key_t   k;
+    fsmd_val_t   v;
+} fsmd_kv_t;
 #endif
 

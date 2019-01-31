@@ -31,6 +31,7 @@
 #include <poll.h>
 #include <time.h>
 #include <string.h>
+#include "famfs_global.h"
 #include "log.h"
 #include "unifycr_request_manager.h"
 #include "unifycr_const.h"
@@ -38,7 +39,6 @@
 #include "unifycr_metadata.h"
 #include "unifycr_sock.h"
 
-#include "famfs_global.h"
 
 struct timespec shm_wait_tm;
 
@@ -133,27 +133,17 @@ int rm_fetch_md(int sock_id, int req_num) {
         (app_config_t *)arraylist_get(app_config_list, app_id);
 
     int client_id = app_config->client_ranks[sock_id];
-    int dbg_rank = app_config->dbg_ranks[sock_id];
+    //int dbg_rank = app_config->dbg_ranks[sock_id];
 
     int thrd_id = app_config->thrd_idxs[sock_id];
     thrd_ctrl_t *thrd_ctrl = (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
 
     pthread_mutex_lock(&thrd_ctrl->thrd_lock);
-
+                            
     /* get the locations of all the read requests from the key-value store*/
-    rc = meta_batch_get(app_id, client_id, thrd_id, dbg_rank,
-                        app_config->shm_req_bufs[client_id], req_num,
-                        thrd_ctrl->del_req_set);
-
-    /*
-     * group together the read requests
-     * to be sent to the same delegators.
-     * */
-    qsort(thrd_ctrl->del_req_set->msg_meta,
-          thrd_ctrl->del_req_set->num,
-          sizeof(send_msg_t), compare_delegators);
-//  print_send_msgs(thrd_ctrl->del_req_set->msg_meta,
-//  thrd_ctrl->del_req_set->num, dbg_rank);
+    int *pcnt = (int*)app_config->shm_recv_bufs[client_id];
+    fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1); 
+    rc = famfs_md_get(app_config->shm_req_bufs[client_id], req_num, pmd, pcnt);
 
     return rc;
 }

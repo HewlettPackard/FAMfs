@@ -1500,12 +1500,15 @@ int famfs_read(read_req_t *read_req, int count)
 {
     int i, j, tot_sz = 0, rc = UNIFYCR_SUCCESS,
               bytes_read = 0, num = 0, bytes_write = 0;
-    int *ptr_size = NULL, *ptr_num = NULL;
     int tmp_counter = 0;
     int delegator;
     read_req_t tmp_read_req;
     shm_meta_t *tmp_req;
     int sh_cursor = 0;
+    shm_meta_t *tmp_sh_meta;
+    int *ptr_num = (int *)shm_recvbuf;
+    fsmd_kv_t  *ptr_md = (fsmd_kv_t *)(ptr_num + 1);;
+
 
     unifycr_fattr_t tmp_meta_entry;
     unifycr_fattr_t *ptr_meta_entry;
@@ -1529,8 +1532,6 @@ int famfs_read(read_req_t *read_req, int count)
                                &read_req_set);
 
 
-    shm_meta_t *tmp_sh_meta;
-
     int cmd = COMM_MDGET;
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &(read_req_set.count), sizeof(int));
@@ -1546,8 +1547,7 @@ int famfs_read(read_req_t *read_req, int count)
         tmp_sh_meta->offset = read_req_set.read_reqs[i].offset;
         tmp_sh_meta->length = read_req_set.read_reqs[i].length;
 
-        memcpy(shm_reqbuf + i * sizeof(shm_meta_t),
-               tmp_sh_meta, sizeof(shm_meta_t));
+        memcpy(shm_reqbuf + i*sizeof(shm_meta_t), tmp_sh_meta, sizeof(shm_meta_t));
     }
     __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
 
@@ -1567,43 +1567,52 @@ int famfs_read(read_req_t *read_req, int count)
         if (cmd_fd.revents != 0) {
             if (cmd_fd.revents == POLLIN) {
                 bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
-                ptr_size = (int *)shm_recvbuf;
-                num = *((int *)shm_recvbuf + 1); /*The first int spared out for size*/
-                ptr_num = (int *)((char *)shm_recvbuf + sizeof(int));
+                if (*ptr_num < 0) {
+                    DEBUG("error reading MD: %d\n", *ptr_num);
+                    return -EIO;
+                } else if (!ptr_num) {
+                    DEBUG("no MD found\n");
+                    return -EIO;
+                }
             } else {
-                printf("unexpected event %d\n", cmd_fd.revents);
+                DEBUG("unexpected event %d\n", cmd_fd.revents);
                 return -EIO;
             }
         } else {
-            printf("revents == 0\n");
+            DEBUG("revents == 0\n");
             return -EAGAIN;
         }
     }
 
-    for (j = 0; j < num; j++) {
-        tmp_req = (shm_meta_t *)(shm_recvbuf
-                                 + 2 * sizeof(int) + sh_cursor);
+    for (i = 0; i < num; i++) {
+        off_t fam_off;
+        size_t fam_len;
+        off_t rq_b = read_req_set.read_reqs[i].offset;
+        off_t rq_e = rq_b + read_req_set.read_reqs[i].length;
 
-        sh_cursor += sizeof(shm_meta_t);
-        *ptr_size -= sizeof(shm_meta_t);
+        for (j = 0; j < *ptr_num; j++) {
+            off_t md_b = ptr_md[j].k.offset;
+            off_t md_e = ptr_md[j].k.offset + ptr_md[j].v.len;
 
-        tmp_read_req.fid = tmp_req->src_fid;
-        tmp_read_req.offset = tmp_req->offset;
-        tmp_read_req.length = tmp_req->length;
-        tmp_read_req.buf = shm_recvbuf + 2 * sizeof(int) + sh_cursor;
-
-        rc = unifycr_match_received_ack(read_req,
-                                        count, &tmp_read_req);
-        if (rc == 0) {
-            sh_cursor += tmp_req->length;
-            tot_sz -= tmp_req->length;
-            *ptr_size -= tmp_req->length;
-            (*ptr_num)--;
-        } else {
-            rc = -1;
-            return rc;
+            if (ptr_md[j].k.fid != read_req_set.read_reqs[i].fid) 
+                continue;
+            if (rq_b >= md_b && rq_b < md_e) {
+                // [MD_beg ... (rq_b ... MD_end] ... rq_e)
+                fam_off = ptr_md[j].v.addr + (rq_b - md_b);
+                fam_len = md_e - rq_b;
+            } else if (rq_e > md_b && rq_e <= md_e) {
+                // (rq_b ... [MD_beg ... rq_end)... MD_end]
+                fam_off = ptr_md[j].v.addr;
+                fam_len = rq_e - md_b;
+            } else {
+                continue;
+            }
+            if (fam_len) {
+                //fi_read()
+            }
         }
     }
+
     if (tot_sz) {
         printf("residual length not 0: %d\n", tot_sz);
         rc = -ENODATA;
