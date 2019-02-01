@@ -692,7 +692,7 @@ static int unifycr_stream_write(
         current = unifycr_fid_size(fid);
 
         /* like a seek, we discard push back bytes */
-        s->ubuflen;
+        //s->ubuflen;
     } else {
         /* otherwise, write at current file pointer */
         current = filedesc->pos;
@@ -1680,7 +1680,7 @@ int UNIFYCR_WRAP(fflush)(FILE *stream)
     /* otherwise, check whether we should intercept this stream */
     if (unifycr_intercept_stream(stream)) {
         /* lookup stream */
-        unifycr_stream_t *s = (unifycr_stream_t *) stream;
+        //unifycr_stream_t *s = (unifycr_stream_t *) stream;
 
         /* TODO: check that stream is active */
 
@@ -2929,7 +2929,7 @@ __sccl(tab, fmt)
 char *tab;
 const u_char *fmt;
 {
-    int c, n, v, i;
+    int c, n, v;
 
     /* first `clear' the whole table */
     c = *fmt++;     /* first char hat => negated scanset */

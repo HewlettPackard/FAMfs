@@ -1616,7 +1616,7 @@ int famfs_read(read_req_t *read_req, int count)
                 continue;
             }
             if (fam_len) {
-                DEBUG("rq read %lu[%u]@%lu, nid=%d, cid=%d \n", fam_len, bufp - read_req_set.read_reqs[i].buf, fam_off, 
+                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - read_req_set.read_reqs[i].buf, fam_off, 
                     ptr_md[j].v.node, ptr_md[j].v.chunk);
                 if ((rc = lf_fam_read(bufp, fam_len, fam_off, ptr_md[j].v.node, ptr_md[j].v.chunk))) {
                     ioerr("lf_fam_read failed ret:%d", rc);

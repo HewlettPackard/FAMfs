@@ -915,8 +915,8 @@ int unifycr_fid_extend(int fid, off_t length)
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
 
     /* determine file storage type */
-    if (meta->storage == FILE_STORAGE_FIXED_CHUNK |
-        meta->storage == FILE_STORAGE_LOGIO) {
+    if ((meta->storage == FILE_STORAGE_FIXED_CHUNK) |
+        (meta->storage == FILE_STORAGE_LOGIO)) {
         /* file stored in fixed-size chunks */
         rc = unifycr_fid_store_fixed_extend(fid, meta, length);
     } else {
@@ -1432,8 +1432,8 @@ static void *unifycr_init_pointers(void *superblock)
     }
 
     /* pointer to the log-structured metadata structures*/
-    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
-        unifycr_indices.ptr_num_entries = (unsigned long *)ptr;
+    if ((fs_type == UNIFYCR_LOG) || (fs_type == FAMFS)) {
+        unifycr_indices.ptr_num_entries = (long *)ptr;
 
         ptr += unifycr_page_size;
         unifycr_indices.index_entry = (md_index_t *)ptr;
@@ -1441,7 +1441,7 @@ static void *unifycr_init_pointers(void *superblock)
 
         /*data structures  to record the global metadata*/
         ptr += unifycr_max_index_entries * sizeof(md_index_t);
-        unifycr_fattrs.ptr_num_entries = (unsigned long *)ptr;
+        unifycr_fattrs.ptr_num_entries = (long *)ptr;
         ptr += unifycr_page_size;
         unifycr_fattrs.meta_entry = (unifycr_fattr_t *)ptr;
     }

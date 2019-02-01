@@ -64,3 +64,5 @@ libfamfs_gotcha_la_CPPFLAGS = \
 libfamfs_gotcha_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(GOTCHA_LDFLAGS) \
                              $(LIBFABRIC_LIBS) $(MPI_CFLAGS) -lgotcha -lcrypto -lrt -lpthread
 libfamfs_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
+AM_CFLAGS = -Wall -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+
