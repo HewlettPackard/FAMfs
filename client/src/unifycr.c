@@ -1799,7 +1799,6 @@ static int unifycr_init(int rank)
         /* set debug level to UNIFYCR_DEBUG env variable if it is set */
         if (!configurator_int_val(client_cfg.log_verbosity, &l))
             unifycr_debug_level = (int)l;
-printf("unifycr_debug_level=%d\n", unifycr_debug_level);
 
 #ifdef UNIFYCR_GOTCHA
         enum gotcha_error_t result;
