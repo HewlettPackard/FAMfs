@@ -250,9 +250,15 @@ int main(int argc, char *argv[]) {
 	min_write_bw=(double)blk_sz\
 			* seg_num * rank_num / 1048576 / max_write_time;
 
+	double agg_meta_time;
+	MPI_Reduce(&meta_time, &agg_meta_time,  1, MPI_DOUBLE,\
+			MPI_SUM, 0, MPI_COMM_WORLD);
+
 	if (rank == 0) {
 			printf("Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",\
 					agg_write_bw, min_write_bw);
+			printf("Per-process sync time %lf sec\n",
+				agg_meta_time / rank_num);
 			fflush(stdout);
 	}
 	free(buf);
