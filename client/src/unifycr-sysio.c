@@ -64,6 +64,7 @@
 
 #include "unifycr-sysio.h"
 #include "unifycr-internal.h"
+#include "unifycr-fixed.h"
 #include "famfs_stats.h"
 #include "famfs_env.h"
 #include "famfs_global.h"
@@ -1589,36 +1590,49 @@ int famfs_read(read_req_t *read_req, int count)
         size_t fam_len;
         off_t rq_b = read_req_set.read_reqs[i].offset;
         off_t rq_e = rq_b + read_req_set.read_reqs[i].length;
+        char *bufp;
 
         for (j = 0; j < *ptr_num; j++) {
             off_t md_b = ptr_md[j].k.offset;
             off_t md_e = ptr_md[j].k.offset + ptr_md[j].v.len;
 
+            fam_off = fam_len = 0;
             if (ptr_md[j].k.fid != read_req_set.read_reqs[i].fid) 
                 continue;
             if (rq_b >= md_b && rq_b < md_e) {
-                // [MD_beg ... (rq_b ... MD_end] ... rq_e)
+                // [MD_b ... (rq_b ... MD_e] ... rq_e)
+                // [MD_b ... (rq_b ... rq_e) ... MD_e]  
                 fam_off = ptr_md[j].v.addr + (rq_b - md_b);
-                fam_len = md_e - rq_b;
-            } else if (rq_e > md_b && rq_e <= md_e) {
-                // (rq_b ... [MD_beg ... rq_end)... MD_end]
+                fam_len = min(md_e, rq_e) - rq_b;
+                bufp = read_req_set.read_reqs[i].buf;
+            } else if (rq_e > md_b && rq_b <= md_b) {
+                // (rq_b ... [MD_b ... rq_e) ... MD_e]
+                // (rq_b ... [MD_b ... MD_e] ... rq_e)
                 fam_off = ptr_md[j].v.addr;
-                fam_len = rq_e - md_b;
+                fam_len = min(rq_e, md_e) - md_b;
+                bufp = read_req_set.read_reqs[i].buf + (md_b - rq_b);
             } else {
+                // not our chunk
                 continue;
             }
             if (fam_len) {
-                //fi_read()
+                DEBUG("rq read %lu[%u]@%lu, nid=%d, cid=%d \n", fam_len, bufp - read_req_set.read_reqs[i].buf, fam_off, 
+                    ptr_md[j].v.node, ptr_md[j].v.chunk);
+                if ((rc = lf_fam_read(bufp, fam_len, fam_off, ptr_md[j].v.node, ptr_md[j].v.chunk))) {
+                    ioerr("lf_fam_read failed ret:%d", rc);
+                    return rc;
+                }
+                tot_sz -= fam_len;
             }
         }
     }
 
     if (tot_sz) {
         printf("residual length not 0: %d\n", tot_sz);
-        rc = -ENODATA;
+        return -ENODATA;
     }
 
-    return rc;
+    return 0;
 }
 
 

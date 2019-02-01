@@ -448,6 +448,79 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     return rc;
 }
 
+int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid)
+{
+    struct timeval start = now(0);
+    N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
+    N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
+    char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
+    N_CHUNK_t *chunk;
+    LF_CL_t *node;
+    struct fid_cntr *cntr;
+    fi_addr_t *src_srv_addr;
+    struct fid_ep *tx_ep;
+    unsigned long r_event;
+    //size_t transfer_sz;
+    //int i, blocks;
+    int src_node, rc;
+    ALLOCA_CHUNK_PR_BUF(pr_buf);
+
+    /* to FAM chunk */
+    
+    chunk = get_fam_chunk(cid, fam_stripe, &src_node);
+    if (chunk == NULL) {
+	DEBUG("%d chunk:%d - ENOSPC\n", lfs_params->node_id, cid);
+	errno = ENOSPC;
+	return UNIFYCR_ERR_NOSPC;
+    }
+   
+    ASSERT(src_node == node->node_id);
+    ASSERT(src_node == nid);
+    node = lfs_params->lf_clients[nid];
+
+    /* Do RMA synchronous read */
+    cntr = node->rcnts[0];
+    src_srv_addr = &node->tgt_srv_addr[0];
+    tx_ep =  node->tx_epp[0];
+    chunk->r_event = fi_cntr_read(cntr);
+    //transfer_sz = params->transfer_sz;
+    //int blocks = len / transfer_sz;
+    /*
+    ASSERT(chunk_offset + len <= unifycr_chunk_size);
+    ASSERT(dst_node < lfs_params->fam_cnt);
+    */
+    off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*lfs_params->chunk_sz; 
+    DEBUG("%d: read chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
+	  lfs_params->node_id, cid, coff,
+	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*src_srv_addr,
+	  src_node, node->partition,
+	  len, node->local_desc[0], fam_off, node->mr_key);
+
+    ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *src_srv_addr, fam_off, node->mr_key, (void*)buf),
+            "%d: fi_read failed on FAM module %d(p%d)", lfs_params->node_id, src_node, fam_stripe->partition);
+
+    rc = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
+    if (rc == -FI_ETIMEDOUT) {
+        err("%d: lf_read timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
+	    lfs_params->node_id, cid,
+	    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+	    src_node, node->partition, len, fam_off);
+    } else if (rc) {
+	err("%d: lf_read chunk:%d has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
+		lfs_params->node_id, cid,
+		fi_cntr_readerr(cntr), rc,
+		fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+		src_node, node->partition,
+		fi_cntr_read(cntr), chunk->r_event);
+	ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
+    }
+
+    UPDATE_STATS(lf_rd_stat, 1, len, start);
+
+    return rc;
+}
+
+
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,
  * count should fit within chunk starting from specified offset */
