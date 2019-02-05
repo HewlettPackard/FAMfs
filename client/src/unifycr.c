@@ -2111,7 +2111,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 * data flush for persistence.
 * @return success/error code
 */
-int unifycr_unmount()
+int unifycr_shutdown()
 {
     int cmd = COMM_UNMOUNT;
     char cmd_buf[GEN_STR_LEN] = {0};
@@ -2151,7 +2151,18 @@ int unifycr_unmount()
     }
 
     if (fs_type == FAMFS)
-        free_lfs_ctx(&lfs_ctx);
+        free_lfc_ctx(&lfs_ctx);
+
+    return UNIFYCR_SUCCESS;
+}
+
+int unifycr_unmount() {
+    if (fs_type != UNIFYCR_LOG && fs_type != FAMFS) {
+        DEBUG("wrong FS type %d\n", fs_type);
+        return UNIFYCR_FAILURE;
+    }
+    if (fs_type == FAMFS)
+        free_lfc_ctx(&lfs_ctx);
 
     return UNIFYCR_SUCCESS;
 }

@@ -90,6 +90,7 @@ static int unifycr_init_req_shm(int local_rank_idx, int app_id);
 int unifycr_mount(const char prefix[], int rank, size_t size,
                   int l_app_id, int subtype);
 int unifycr_unmount(void);
+int unifycr_shutdown(void);
 int compare_fattr(const void *a, const void *b);
 
 

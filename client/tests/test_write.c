@@ -161,7 +161,7 @@ int main(int argc, char *argv[]) {
 
 	if (to_unmount) {
 		if (rank == 0) {
-			unifycr_unmount();
+			unifycr_shutdown();
 		}
 	}
 

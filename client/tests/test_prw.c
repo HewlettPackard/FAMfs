@@ -243,11 +243,6 @@ int main(int argc, char *argv[]) {
 	}
 	MPI_Barrier(MPI_COMM_WORLD);
 
-	if (to_unmount) {
-		if (rank == 0) {
-			unifycr_unmount();
-		}
-	}
 
 	double write_bw = (double)blk_sz\
 			* seg_num / 1048576 /write_time;
@@ -381,12 +376,6 @@ int main(int argc, char *argv[]) {
 	close(fd);
 	MPI_Barrier(MPI_COMM_WORLD);
 
-
-	if (to_unmount) {
-		if (rank == 0)
-			unifycr_unmount();
-	}
-
 	free(read_buf);
 
 	double read_bw = (double)blk_sz\
@@ -405,6 +394,9 @@ int main(int argc, char *argv[]) {
 					agg_read_bw,  min_read_bw);
 			fflush(stdout);
 	}
+
+        // *** this will only free libfabric context and WILL NOT shut down servers
+        unifycr_unmount(); 
 
 	MPI_Finalize();
 	exit(rc);

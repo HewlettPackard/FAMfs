@@ -20,7 +20,7 @@ typedef struct lfs_ctx_ {
 
 
 int lfs_connect(char *cmd, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_p);
-void free_lfs_ctx(LFS_CTX_t **lfs_ctx_p);
+void free_lfc_ctx(LFS_CTX_t **lfs_ctx_p);
 
 #endif /* LF_CLIENT_H */
 

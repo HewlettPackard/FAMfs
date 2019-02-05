@@ -110,7 +110,7 @@ _free:
     return rc;
 }
 
-void free_lfs_ctx(LFS_CTX_t **lfs_ctx_pp) {
+void free_lfc_ctx(LFS_CTX_t **lfs_ctx_pp) {
     LFS_CTX_t *lfs_ctx_p = *lfs_ctx_pp;
 
     free_fam_stripe(lfs_ctx_p->fam_stripe);

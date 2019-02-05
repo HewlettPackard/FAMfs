@@ -192,9 +192,9 @@ int main(int argc, char *argv[]) {
 				+ writeend.tv_usec - writestart.tv_usec;
 		writetime = writetime / 1000000;
 		if (direction == 1) {
-			if (rank == 0)
-				unifycr_unmount();
 			close(fd);
+			if (rank == 0)
+				unifycr_shutdown();
 		}
 		MPI_Barrier(MPI_COMM_WORLD);
 		double wr_bw = (double)tot_sz/ranknum/1048576/writetime;
@@ -252,7 +252,7 @@ int main(int argc, char *argv[]) {
 			MPI_Barrier(MPI_COMM_WORLD);
 			close(fd);
 			if (rank == 0)
-				unifycr_unmount();
+				unifycr_shutdwon();
 
 			double rd_bw = (double)tot_sz/ranknum/1048576/readtime;
 			double max_rd_time;
