@@ -141,9 +141,12 @@ int rm_fetch_md(int sock_id, int req_num) {
     pthread_mutex_lock(&thrd_ctrl->thrd_lock);
                             
     /* get the locations of all the read requests from the key-value store*/
-    int *pcnt = (int*)app_config->shm_recv_bufs[client_id];
+    int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
     fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1); 
+    //printf("srv: md fetch for client %d %p %p %p\n", client_id, app_config->shm_recv_bufs[client_id], pcnt, pmd);
     rc = famfs_md_get(app_config->shm_req_bufs[client_id], req_num, pmd, pcnt);
+
+    pthread_mutex_unlock(&thrd_ctrl->thrd_lock);
 
     return rc;
 }

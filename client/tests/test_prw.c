@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
 	if (mount_burstfs) {
 		printf("mount unifycr\n");
 
-		unifycr_mount("/tmp/mnt", rank, rank_num, 0, 1);
+		unifycr_mount("/tmp/mnt", rank, rank_num, 0, 3);
 	} else
 		to_unmount = 0;
 
@@ -195,7 +195,7 @@ int main(int argc, char *argv[]) {
 			int k;
 			for (k = 0; k < tran_sz/sizeof(unsigned long); k++) {
 				unsigned long *p = &(((unsigned long*)buf)[k]);
-				*p = offset;
+				*p = offset + k;
 			}
 
 			rc = pwrite(fd, buf, tran_sz, offset);
@@ -329,7 +329,7 @@ int main(int argc, char *argv[]) {
 			int k;
 			for (k = 0; k < tran_sz/sizeof(unsigned long); k++) {
 				unsigned long *p = &(((unsigned long*)(read_buf + cursor))[k]);
-				if (*p != offset) {
+				if (*p != offset + k) {
 					e++;
 #if 0
 					printf("DATA MISMATCH, expected %u, got %u @%u\n", offset, *p, k*8);

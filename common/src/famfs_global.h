@@ -31,8 +31,8 @@ typedef struct {
 } fsmd_key_t;
 
 typedef struct {
-    unsigned long len;
     unsigned long addr;
+    unsigned long len;
     union {
         struct {
             unsigned long delegator_id;

@@ -352,6 +352,10 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
             index_set->idxes[index_set->count].file_pos = cur_slice_start;
             index_set->idxes[index_set->count].length = slice_range;
             index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
+            if (fs_type == FAMFS) {
+                index_set->idxes[index_set->count].nid = cur_idx->nid;
+                index_set->idxes[index_set->count].cid = cur_idx->cid;
+            }
             cur_mem_pos += index_set->idxes[index_set->count].length;
 
             cur_slice_start = cur_slice_end + 1;
@@ -364,11 +368,20 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
         index_set->idxes[index_set->count].file_pos = cur_slice_start;
         index_set->idxes[index_set->count].length = cur_idx_end - cur_slice_start + 1;
         index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
+        if (fs_type == FAMFS) {
+            index_set->idxes[index_set->count].nid = cur_idx->nid;
+            index_set->idxes[index_set->count].cid = cur_idx->cid;
+        }
+
         index_set->count++;
     }
 
     return 0;
 }
+
+struct fid_ep   *saved_ep;
+fi_addr_t       *saved_adr;
+off_t           saved_off;
 
 int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off)
 {
@@ -415,9 +428,10 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     //for (i = 0; i < blocks; i++) {
     DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
 	  lfs_params->node_id, chunk_phy_id, chunk_offset,
-	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long) *tgt_srv_addr,
+	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
 	  dst_node, node->partition,
 	  len, node->local_desc[0], off, node->mr_key);
+
 
 	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,
 				node->mr_key, (void*)buf /* NULL */),
@@ -445,6 +459,36 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 	ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
     }
 
+#if 0
+    {
+        char *vfy = malloc(len);
+        cntr = node->rcnts[0];
+        chunk->r_event = fi_cntr_read(cntr);
+        printf("rcnt=%d\n", chunk->r_event);
+    
+        int s = fi_read(tx_ep, vfy, len, node->local_desc[0], *tgt_srv_addr, off, node->mr_key, (void*)vfy /* NULL */);
+        if (s) {
+            printf("vfy failed: %d\n", s);
+            free(vfy);
+            return s;
+        }
+        chunk->r_event++;
+        printf("wait for rcnt=%d\n", chunk->r_event);
+        s = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
+        if (s) {
+            printf("vfy ctr failed: %d\n", s);
+            free(vfy);
+            return s;
+        }
+        printf("=== read *vfy[0]=%lx\n", *(unsigned long *)vfy);
+        printf("=== read *vfy[1]=%lx\n", *((unsigned long *)vfy + 1));
+        free(vfy);
+        saved_ep = tx_ep;
+        saved_adr = tgt_srv_addr;
+        saved_off = off;
+    }
+#endif
+
     UPDATE_STATS(lf_wr_stat, 1, len, start);
 
     return rc;
@@ -459,7 +503,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     N_CHUNK_t *chunk;
     LF_CL_t *node;
     struct fid_cntr *cntr;
-    fi_addr_t *src_srv_addr;
+    fi_addr_t *tgt_srv_addr;
     struct fid_ep *tx_ep;
     //size_t transfer_sz;
     //int i, blocks;
@@ -481,7 +525,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
 
     /* Do RMA synchronous read */
     cntr = node->rcnts[0];
-    src_srv_addr = &node->tgt_srv_addr[0];
+    tgt_srv_addr = &node->tgt_srv_addr[0];
     tx_ep =  node->tx_epp[0];
     chunk->r_event = fi_cntr_read(cntr);
     //transfer_sz = params->transfer_sz;
@@ -490,16 +534,18 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     ASSERT(chunk_offset + len <= unifycr_chunk_size);
     ASSERT(dst_node < lfs_params->fam_cnt);
     */
+
     off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*lfs_params->chunk_sz; 
-    DEBUG("%d: read chunk:%jd @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
+    DEBUG("%d: read chunk:%jd @%lu to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
 	  lfs_params->node_id, cid, coff,
-	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*src_srv_addr,
+	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
 	  src_node, node->partition,
 	  len, node->local_desc[0], fam_off, node->mr_key);
 
-    ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *src_srv_addr, fam_off, node->mr_key, (void*)buf),
+    ON_FI_ERROR(fi_read(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, fam_off, node->mr_key, (void*)buf /* NULL */),
             "%d: fi_read failed on FAM module %d(p%d)", lfs_params->node_id, src_node, fam_stripe->partition);
 
+    chunk->r_event++;
     rc = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
     if (rc == -FI_ETIMEDOUT) {
         err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
@@ -630,6 +676,7 @@ static int unifycr_logio_chunk_write(
             chunk_phy_id = physical_chunk_id(meta, chunk_id);
             DEBUG("%d: write %zu bytes @%jd phy_chunk:%d @%jd\n",
                   lfs_ctx->lfs_params->node_id, count, spill_offset, chunk_phy_id, chunk_offset);
+
             int rc = lf_write((char *)buf, count, chunk_phy_id, chunk_offset, &my_node, &my_off);
             if (rc) {
                 /* Print the real error code */
@@ -721,8 +768,7 @@ static int unifycr_logio_chunk_write(
                 /*coalesce contiguous indices*/
 
                 if (*unifycr_indices.ptr_num_entries >= 1) {
-                    md_index_t *ptr_last_idx =
-                        &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
+                    md_index_t *ptr_last_idx = &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
                     if (ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
                         ptr_last_idx->file_pos + ptr_last_idx->length
                         == tmp_index_set.idxes[0].file_pos) {
@@ -733,7 +779,6 @@ static int unifycr_logio_chunk_write(
                         }
                     }
                 }
-
                 for (; i < tmp_index_set.count; i++) {
                     unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].file_pos =
                         tmp_index_set.idxes[i].file_pos;
@@ -744,6 +789,12 @@ static int unifycr_logio_chunk_write(
 
                     unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
                         = tmp_index_set.idxes[i].fid;
+                    if (fs_type == FAMFS) {
+                        unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].cid = 
+                            tmp_index_set.idxes[i].cid;
+                        unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].nid = 
+                            tmp_index_set.idxes[i].nid;
+                    }
                     (*unifycr_indices.ptr_num_entries)++;
                 }
 

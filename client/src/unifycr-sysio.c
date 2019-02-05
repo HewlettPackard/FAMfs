@@ -1508,7 +1508,7 @@ int famfs_read(read_req_t *read_req, int count)
     int sh_cursor = 0;
     shm_meta_t *tmp_sh_meta;
     int *ptr_num = (int *)shm_recvbuf;
-    fsmd_kv_t  *ptr_md = (fsmd_kv_t *)(ptr_num + 1);;
+    fsmd_kv_t  *ptr_md = (fsmd_kv_t *)(ptr_num + 1);
 
 
     unifycr_fattr_t tmp_meta_entry;
@@ -1547,6 +1547,7 @@ int famfs_read(read_req_t *read_req, int count)
         tmp_sh_meta->src_fid = read_req_set.read_reqs[i].fid;
         tmp_sh_meta->offset = read_req_set.read_reqs[i].offset;
         tmp_sh_meta->length = read_req_set.read_reqs[i].length;
+        //printf("cln: rd rq fid=%d off=%jd lrn=%jd\n", tmp_sh_meta->src_fid, tmp_sh_meta->offset,  tmp_sh_meta->length);
 
         memcpy(shm_reqbuf + i*sizeof(shm_meta_t), tmp_sh_meta, sizeof(shm_meta_t));
     }
@@ -1571,7 +1572,7 @@ int famfs_read(read_req_t *read_req, int count)
                 if (*ptr_num < 0) {
                     DEBUG("error reading MD: %d\n", *ptr_num);
                     return -EIO;
-                } else if (!ptr_num) {
+                } else if (!*ptr_num) {
                     DEBUG("no MD found\n");
                     return -EIO;
                 }
@@ -1585,7 +1586,7 @@ int famfs_read(read_req_t *read_req, int count)
         }
     }
 
-    for (i = 0; i < num; i++) {
+    for (i = 0; i < *ptr_num; i++) {
         off_t fam_off;
         size_t fam_len;
         off_t rq_b = read_req_set.read_reqs[i].offset;
