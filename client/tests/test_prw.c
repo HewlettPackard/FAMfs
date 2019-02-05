@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
 			case 'S':
 			   sequential_io = atoi(optarg); break; /* 1: Write/read blocks sequentially */
 			case 'w':
-			   write_only = 1; break;
+			   write_only = atoi(optarg); break;
 		  }
 	}
 	if (rank == 0)
