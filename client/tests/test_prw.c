@@ -76,7 +76,7 @@ typedef struct {
 int main(int argc, char *argv[]) {
 
 	printf("start test_pwr\n");
-	static const char * opts = "b:s:t:f:p:u:M:D:S:w";
+	static const char * opts = "b:s:t:f:p:u:M:D:S:w:";
 	char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
 	long blk_sz, seg_num, tran_sz;
 	//long num_reqs;
@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
 			case 'S':
 			   sequential_io = atoi(optarg); break; /* 1: Write/read blocks sequentially */
 			case 'w':
-			   write_only = 1; break;
+			   write_only = atoi(optarg); break;
 		  }
 	}
 	if (rank == 0)
