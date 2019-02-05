@@ -75,14 +75,14 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 
-	printf("start test_pwrite\n");
-	static const char * opts = "b:s:t:f:p:u:M:D:w";
+	printf("start test_pwr\n");
+	static const char * opts = "b:s:t:f:p:u:M:D:S:w";
 	char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
 	long blk_sz, seg_num, tran_sz;
 	//long num_reqs;
 	int pat, c, rank_num, rank, fd, \
 		to_unmount = 0;
-	int mount_burstfs = 1, direct_io = 0, write_only = 0;
+	int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
         int initialized, provided, rrc = MPI_SUCCESS;
 
         //MPI_Init(&argc, &argv);
@@ -132,10 +132,19 @@ int main(int argc, char *argv[]) {
 			   mount_burstfs = atoi(optarg); break; /* 0: Don't mount burstfs */
 			case 'D':
 			   direct_io = atoi(optarg); break; /* 1: Open with O_DIRECT */
+			case 'S':
+			   sequential_io = atoi(optarg); break; /* 1: Write/read blocks sequentially */
 			case 'w':
 			   write_only = 1; break;
 		  }
-		}
+	}
+	if (rank == 0)
+		printf(" %s, %s, %s I/O, %s block size:%ld segment:%ld\n",
+			(pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
+			(direct_io)? "direct":"buffered",
+			(sequential_io)? "sequential":"randomized",
+			(write_only)? "W":"W/R",
+			tran_sz, blk_sz);
 
 	if (mount_burstfs) {
 		printf("mount unifycr\n");
@@ -183,9 +192,13 @@ int main(int argc, char *argv[]) {
 	for (i = 0; i < seg_num; i++) {
 		long jj;
 		for (jj = 0; jj < blk_sz/tran_sz; jj++) {
-			j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
-			if (j < 0)
-				j += (blk_sz/tran_sz - 1);
+			if (sequential_io) {
+				j = jj;
+			} else {
+				j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
+				if (j < 0)
+					j += (blk_sz/tran_sz - 1);
+			}
 			if (pat == 0)
 				offset = i * rank_num * blk_sz +
 					rank * blk_sz + j * tran_sz;
@@ -254,11 +267,15 @@ int main(int argc, char *argv[]) {
 	MPI_Reduce(&meta_time, &agg_meta_time,  1, MPI_DOUBLE,\
 			MPI_SUM, 0, MPI_COMM_WORLD);
 
+	double max_meta_time;
+	MPI_Reduce(&meta_time, &max_meta_time, 1, MPI_DOUBLE,\
+			MPI_MAX, 0, MPI_COMM_WORLD);
+
 	if (rank == 0) {
 			printf("Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",\
 					agg_write_bw, min_write_bw);
-			printf("Per-process sync time %lf sec\n",
-				agg_meta_time / rank_num);
+			printf("Per-process sync time %lf sec, Max %lf sec\n",
+				agg_meta_time / rank_num, max_meta_time);
 			fflush(stdout);
 	}
 	free(buf);
@@ -280,7 +297,7 @@ int main(int argc, char *argv[]) {
 
 	if (to_unmount) {
 		unifycr_mount("/tmp/mnt", rank, rank_num,\
-			0, 1);
+			0, 3);
 	}
 
 	if (pat == 1) {
@@ -310,9 +327,13 @@ int main(int argc, char *argv[]) {
 		cursor = 0;
 		long jj;
 		for (jj = 0; jj < blk_sz/tran_sz; jj++) {
-			j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
-			if (j < 0)
-				j += (blk_sz/tran_sz - 1);
+			if (sequential_io) {
+				j = jj;
+			} else {
+				j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
+				if (j < 0)
+					j += (blk_sz/tran_sz - 1);
+			}
 			if (pat == 0)
 				offset = i * rank_num * blk_sz +\
 					rank * blk_sz + j * tran_sz;
