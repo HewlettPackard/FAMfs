@@ -73,17 +73,22 @@ typedef struct {
 
 }read_req_t;
 
+#ifndef max
+#define max(a,b) (((a) > (b)) ? (a) : (b))
+#endif
+
 int main(int argc, char *argv[]) {
 
 	printf("start test_pwr\n");
-	static const char * opts = "b:s:t:f:p:u:M:D:S:w:";
+	static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:v";
 	char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
-	long blk_sz, seg_num, tran_sz;
+	long blk_sz, seg_num, tran_sz = 1024*1024, read_sz = tran_sz;
 	//long num_reqs;
 	int pat, c, rank_num, rank, fd, \
 		to_unmount = 0;
 	int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
         int initialized, provided, rrc = MPI_SUCCESS;
+        int verify = 0;
 
         //MPI_Init(&argc, &argv);
         MPI_Initialized(&initialized);
@@ -122,6 +127,8 @@ int main(int argc, char *argv[]) {
 			   seg_num = atol(optarg); break;
 			case 't': /*size of each write*/
 			   tran_sz = atol(optarg); break;
+			case 'r': /*size of each read*/
+			   read_sz= atol(optarg); break;
 			case 'f':
 			   strcpy(fname, optarg); break;
 			case 'p':
@@ -136,15 +143,17 @@ int main(int argc, char *argv[]) {
 			   sequential_io = atoi(optarg); break; /* 1: Write/read blocks sequentially */
 			case 'w':
 			   write_only = atoi(optarg); break;
+                        case 'v':
+                           verify++;
 		  }
 	}
 	if (rank == 0)
-		printf(" %s, %s, %s I/O, %s block size:%ld segment:%ld\n",
+		printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld\n",
 			(pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
 			(direct_io)? "direct":"buffered",
 			(sequential_io)? "sequential":"randomized",
 			(write_only)? "W":"W/R",
-			tran_sz, blk_sz);
+			tran_sz, read_sz, blk_sz);
 
 	if (mount_burstfs) {
 		printf("mount unifycr\n");
@@ -155,12 +164,12 @@ int main(int argc, char *argv[]) {
 
 	char *buf;
 	if (direct_io)
-		posix_memalign((void**)&buf, getpagesize(), tran_sz);
+		posix_memalign((void**)&buf, getpagesize(), max(tran_sz, read_sz));
 	else
-		buf = malloc (tran_sz);
+		buf = malloc (max(tran_sz, read_sz));
 	if (buf == NULL)
 		return -1;
-	memset(buf, 0, tran_sz);
+	memset(buf, 0, max(tran_sz, read_sz));
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
@@ -187,7 +196,7 @@ int main(int argc, char *argv[]) {
 	printf("write to file\n");
 
 	gettimeofday(&write_start, NULL);
-	long i, j, offset, rc;
+	long i, j, offset, rc, lw_off = 0;
 	offset = 0;
 	for (i = 0; i < seg_num; i++) {
 		long jj;
@@ -206,9 +215,12 @@ int main(int argc, char *argv[]) {
 				offset = i * blk_sz + j * tran_sz;
 
 			int k;
+                        lw_off = 0;
 			for (k = 0; k < tran_sz/sizeof(unsigned long); k++) {
 				unsigned long *p = &(((unsigned long*)buf)[k]);
-				*p = offset + k;
+				//*p = offset + k;
+                                *p = offset + lw_off*sizeof(long);
+                                lw_off++;
 			}
 
 			rc = pwrite(fd, buf, tran_sz, offset);
@@ -273,7 +285,7 @@ int main(int argc, char *argv[]) {
 				agg_meta_time / rank_num, max_meta_time);
 			fflush(stdout);
 	}
-	free(buf);
+	//free(buf);
 
 	//MPI_Finalize();
 	MPI_Barrier(MPI_COMM_WORLD);
@@ -284,7 +296,8 @@ int main(int argc, char *argv[]) {
 
 	//num_reqs = blk_sz*seg_num/tran_sz;
 	//char *read_buf = malloc(blk_sz * seg_num); /*read buffer*/
-	char *read_buf; /*read buffer*/
+	//char *read_buf; /*read buffer*/
+        /*
 	if (direct_io)
 		posix_memalign((void**)&read_buf, getpagesize(), blk_sz);
 	else
@@ -294,6 +307,7 @@ int main(int argc, char *argv[]) {
 		unifycr_mount("/tmp/mnt", rank, rank_num,\
 			0, 3);
 	}
+        */
 
 	if (pat == 1) {
 		sprintf(tmpfname, "%s%d", fname, rank);
@@ -317,25 +331,28 @@ int main(int argc, char *argv[]) {
 
 	gettimeofday(&read_start, NULL);
 
-	long cursor, e = 0;
+	long e = 0;
+        //long cursor;
+        offset = 0;
 	for (i = 0; i < seg_num; i++) {
-		cursor = 0;
+		//cursor = 0;
 		long jj;
-		for (jj = 0; jj < blk_sz/tran_sz; jj++) {
+		for (jj = 0; jj < blk_sz/read_sz; jj++) {
 			if (sequential_io) {
 				j = jj;
 			} else {
-				j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
+				j = (blk_sz/read_sz - 1) - 2*jj; /* reverse */
 				if (j < 0)
-					j += (blk_sz/tran_sz - 1);
+					j += (blk_sz/read_sz - 1);
 			}
 			if (pat == 0)
 				offset = i * rank_num * blk_sz +\
-					rank * blk_sz + j * tran_sz;
+					rank * blk_sz + j * read_sz;
 			else if (pat == 1)
-				offset = i * blk_sz + j * tran_sz;
-			cursor = j * tran_sz;
-			rc = pread(fd, read_buf + cursor, tran_sz, offset);
+				offset = i * blk_sz + j * read_sz;
+			//cursor = j * read_sz;
+			//rc = pread(fd, read_buf + cursor, read_sz, offset);
+                        rc = pread(fd, buf, read_sz, offset);
 			if (rc < 0) {
 				printf("read failure\n");
 				fflush(stdout);
@@ -343,23 +360,28 @@ int main(int argc, char *argv[]) {
 			}
 
 			int k;
-			for (k = 0; k < tran_sz/sizeof(unsigned long); k++) {
-				unsigned long *p = &(((unsigned long*)(read_buf + cursor))[k]);
-				if (*p != offset + k) {
+                        lw_off = 0;
+			for (k = 0; k < read_sz/sizeof(unsigned long); k++) {
+				//unsigned long *p = &(((unsigned long*)(read_buf + cursor))[k]);
+				unsigned long *p = &(((unsigned long*)(buf))[k]);
+				if (*p != offset + (lw_off*sizeof(long))) {
 					e++;
+                                        if (verify)
+                                            printf("DATA MISMATCH @%lu, expected %lu, got %lu [%u]\n", offset, offset + (lw_off*sizeof(long)), *p, k*8);
 #if 0
-					printf("DATA MISMATCH, expected %u, got %u @%u\n", offset, *p, k*8);
 					int ii, jj;
 					for (ii = 0; ii < 16; ii++) {
 						printf("### %02d: ", ii);
 						for (jj = 0; jj < 8; jj++) {
-							printf("[%02x] ", (unsigned char)*(read_buf + cursor + ii*8 + jj));
+							//printf("[%02x] ", (unsigned char)*(read_buf + cursor + ii*8 + jj));
+							printf("[%02x] ", (unsigned char)*(buf + ii*8 + jj));
 						}
 						printf("\n");
 					}
 					break;
 #endif
 				}
+                                lw_off++;
 			}
 		}
 	}
@@ -376,7 +398,8 @@ int main(int argc, char *argv[]) {
 	close(fd);
 	MPI_Barrier(MPI_COMM_WORLD);
 
-	free(read_buf);
+	//free(read_buf);
+        free(buf);
 
 	double read_bw = (double)blk_sz\
 			* seg_num / 1048576 / read_time;
@@ -396,6 +419,8 @@ int main(int argc, char *argv[]) {
 	}
 
         // *** this will only free libfabric context and WILL NOT shut down servers
+        if (to_unmount)
+            ;
         unifycr_unmount(); 
 
 	MPI_Finalize();

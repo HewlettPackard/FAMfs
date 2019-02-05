@@ -1586,6 +1586,7 @@ int famfs_read(read_req_t *read_req, int count)
         }
     }
 
+    //printf("got %d md entries\n", *ptr_num);
     for (i = 0; i < *ptr_num; i++) {
         off_t fam_off;
         size_t fam_len;
@@ -1616,8 +1617,9 @@ int famfs_read(read_req_t *read_req, int count)
                 // not our chunk
                 continue;
             }
+            //printf("rq(b,e)=%lu:%lu MD(b,e)=%lu:%lu fam(addr,off,len)=%lu:%lu:%lu\n", rq_b, rq_e, md_b, md_e, ptr_md[j].v.addr, fam_off, fam_len);
             if (fam_len) {
-                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - read_req_set.read_reqs[i].buf, fam_off, 
+               DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - read_req_set.read_reqs[i].buf, fam_off, 
                     ptr_md[j].v.node, ptr_md[j].v.chunk);
                 if ((rc = lf_fam_read(bufp, fam_len, fam_off, ptr_md[j].v.node, ptr_md[j].v.chunk))) {
                     ioerr("lf_fam_read failed ret:%d", rc);
@@ -1836,7 +1838,8 @@ static int unifycr_fsync(void)
                 return -1;
             }
         }
-
+        *unifycr_indices.ptr_num_entries = 0;
+        //*unifycr_fattrs.ptr_num_entries = 0;
         DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
 
         /* TODO: if using spill over we may have some fsyncing to do */

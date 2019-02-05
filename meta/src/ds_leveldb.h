@@ -46,11 +46,12 @@
 #include "mdhim.h"
 #include "partitioner.h"
 #include "data_store.h"
+#include "famfs_global.h"
 
-#define UNIFYCR_FID(key) *(long *)key
-#define UNIFYCR_OFFSET(key) *((long *)key + 1)
-#define UNIFYCR_ADDR(val) *((long *)val + 2)
-#define UNIFYCR_LEN(val) *((long *)val + 1)
+#define UNIFYCR_FID(key)    *(long *)(&(((fsmd_key_t*)key)->fid))
+#define UNIFYCR_OFFSET(key) *(long *)(&(((fsmd_key_t*)key)->offset))
+#define UNIFYCR_ADDR(val)   *(long *)(&(((fsmd_val_t*)val)->addr)) 
+#define UNIFYCR_LEN(val)    *(long *)(&(((fsmd_val_t*)val)->len))
 
 /* Function pointer for comparator in C */
 typedef int (*mdhim_store_cmp_fn_t)(void* arg, const char* a, size_t alen,

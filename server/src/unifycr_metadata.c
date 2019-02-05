@@ -304,6 +304,7 @@ int meta_process_fsync(int sock_id)
     unsigned long num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset));
+    //printf("sync to process %d indecies\n", num_entries);
     if (num_entries == 0)
         goto _process_fattr;
 
@@ -386,6 +387,7 @@ _process_fattr:
     num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->fmeta_offset));
+    //printf("sync to process %d attrs\n", num_entries);
     if (num_entries == 0)
         return ret;
 

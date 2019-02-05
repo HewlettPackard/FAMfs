@@ -28,7 +28,8 @@ libmdhim_a_SOURCES = Mlog2/mlog2.c \
                      uthash/uthash.h
 
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src/Mlog2 \
-              -I$(top_srcdir)/meta/src/uthash
+              -I$(top_srcdir)/meta/src/uthash \
+              -I$(top_srcdir)/common/src
 
 AM_CFLAGS = -DLEVELDB_SUPPORT $(LEVELDB_CFLAGS) $(MPI_CFLAGS)
 AM_CFLAGS += -Wall

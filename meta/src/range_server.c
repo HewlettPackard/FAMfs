@@ -51,10 +51,10 @@
 #include "ds_leveldb.h"
 #include "uthash.h"
 
-#define UNIFYCR_FID(key) *(long *)key
-#define UNIFYCR_OFFSET(key) *((long *)key + 1)
-#define UNIFYCR_ADDR(val) *((long *)val + 2)
-#define UNIFYCR_LEN(val) *((long *)val + 1)
+//#define UNIFYCR_FID(key) *(long *)key
+//#define UNIFYCR_OFFSET(key) *((long *)key + 1)
+//#define UNIFYCR_ADDR(val) *((long *)val + 2)
+//#define UNIFYCR_LEN(val) *((long *)val + 1)
 
 int recv_counter = 0;
 

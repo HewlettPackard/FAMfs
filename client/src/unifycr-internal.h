@@ -365,6 +365,7 @@ extern fs_type_t fs_type;
 extern char cmd_buf[GEN_STR_LEN];
 extern char ack_msg[3];
 extern unifycr_fattr_buf_t unifycr_fattrs;
+extern unifycr_index_buf_t unifycr_indices;
 extern int my_srv_rank;
 
 extern int glb_superblock_size;

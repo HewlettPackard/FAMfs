@@ -40,6 +40,7 @@
 #include <linux/limits.h>
 #include <sys/time.h>
 #include "ds_leveldb.h"
+#include "famfs_global.h"
 
 struct timeval dbputstart, dbputend;
 struct timeval dbgetstart, dbgetend;
