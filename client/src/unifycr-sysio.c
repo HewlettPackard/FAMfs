@@ -1150,8 +1150,7 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
                          cur_read_start     cur_read_end
 
         */
-        read_req_set->read_reqs[read_req_set->count]
-            = *cur_read_req;
+        read_req_set->read_reqs[read_req_set->count]= *cur_read_req;
         read_req_set->count++;
     } else {
         /*
@@ -1168,9 +1167,8 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
         cur_slice_end = cur_slice_start + slice_range - 1;
 
         while (1) {
-            if (cur_read_end <= cur_slice_end) {
+            if (cur_read_end <= cur_slice_end) 
                 break;
-            }
 
             read_req_set->read_reqs[read_req_set->count].fid = cur_read_req->fid;
             read_req_set->read_reqs[read_req_set->count].offset = cur_slice_start;
@@ -1184,8 +1182,7 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
 
         read_req_set->read_reqs[read_req_set->count].fid = cur_read_req->fid;
         read_req_set->read_reqs[read_req_set->count].offset = cur_slice_start;
-        read_req_set->read_reqs[read_req_set->count].length =
-            cur_read_end - cur_slice_start + 1;
+        read_req_set->read_reqs[read_req_set->count].length = cur_read_end - cur_slice_start + 1;
         read_req_set->count++;
     }
 
@@ -1221,19 +1218,19 @@ int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
         unifycr_split_read_requests(&read_req[i], tmp_read_req_set,
                                     unifycr_key_slice_range);
         if (cursor != 0) {
-            if (read_req_set->read_reqs[cursor - 1].fid
-                == tmp_read_req_set->read_reqs[0].fid) {
-                if (read_req_set->read_reqs[cursor - 1].offset
-                    + read_req_set->read_reqs[cursor - 1].length ==
-                    tmp_read_req_set->read_reqs[0].offset) {
+            if (read_req_set->read_reqs[cursor - 1].fid == tmp_read_req_set->read_reqs[0].fid) {
+                if (read_req_set->read_reqs[cursor - 1].offset + 
+                    read_req_set->read_reqs[cursor - 1].length 
+                    == tmp_read_req_set->read_reqs[0].offset) {
                     /*
                      * if not within the same slice, then don't coalesce
                      *
                      * */
-                    if (read_req_set->read_reqs[cursor - 1].offset / unifycr_key_slice_range ==
-                        tmp_read_req_set->read_reqs[0].offset / unifycr_key_slice_range) {
-                        read_req_set->read_reqs[cursor - 1].length
-                        += tmp_read_req_set->read_reqs[0].length;
+                    if (read_req_set->read_reqs[cursor - 1].offset/unifycr_key_slice_range 
+                        == tmp_read_req_set->read_reqs[0].offset/unifycr_key_slice_range) {
+                        
+                        read_req_set->read_reqs[cursor - 1].length += 
+                            tmp_read_req_set->read_reqs[0].length;
                         j++;
                     }
 
@@ -1497,22 +1494,41 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
     return rc;
 }
 
+void static split_reads_by_slice(read_req_t *rq, int n, read_req_set_t *rset) {
+    printf("SPLIT!!!\n");
+    memcpy(rset->read_reqs, rq, sizeof(read_req_t)*n);
+    rset->count = n;
+    return;
+}
+
+static inline off_t chunk_num(off_t off) {
+    return off >> unifycr_chunk_bits;
+}
+
+static inline off_t choff_cur(off_t off) {
+    return chunk_num(off) << unifycr_chunk_bits;
+}
+
+static inline off_t choff_nxt(off_t off) {
+    return (chunk_num(off) + 1) << unifycr_chunk_bits;
+}
+
 int famfs_read(read_req_t *read_req, int count)
 {
     int i, j, tot_sz = 0, rc = UNIFYCR_SUCCESS,
               bytes_read = 0, num = 0, bytes_write = 0;
-    int tmp_counter = 0;
     int delegator;
-    read_req_t tmp_read_req;
-    shm_meta_t *tmp_req;
     int sh_cursor = 0;
-    shm_meta_t *tmp_sh_meta;
-    int *ptr_num = (int *)shm_recvbuf;
-    fsmd_kv_t  *ptr_md = (fsmd_kv_t *)(ptr_num + 1);
+    shm_meta_t *md_rq;
+    int rq_cnt;
+    read_req_t *rq_ptr;
+    int *rc_ptr = (int *)shm_recvbuf;
+    fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
 
 
     unifycr_fattr_t tmp_meta_entry;
     unifycr_fattr_t *ptr_meta_entry;
+
     for (i = 0; i < count; i++) {
         read_req[i].fid -= unifycr_fd_limit;
         tmp_meta_entry.fid = read_req[i].fid;
@@ -1522,35 +1538,49 @@ int famfs_read(read_req_t *read_req, int count)
                          sizeof(unifycr_fattr_t), compare_fattr);
         if (ptr_meta_entry != NULL) {
             read_req[i].fid = ptr_meta_entry->gfid;
+        } else {
+            DEBUG("file %d has no gfid %d record in DB\n", read_req[i].fid, ptr_meta_entry->gfid);
+            return -EBADF;
         }
     }
 
     qsort(read_req, count, sizeof(read_req_t), compare_read_req);
-
-    /*coalesce the contiguous read requests*/
-    unifycr_coalesce_read_reqs(read_req, count,
-                               &tmp_read_req_set, unifycr_key_slice_range,
-                               &read_req_set);
-
-
-    int cmd = COMM_MDGET;
-    memcpy(cmd_buf, &cmd, sizeof(int));
-    memcpy(cmd_buf + sizeof(int), &(read_req_set.count), sizeof(int));
-
-    *((int *)shm_recvbuf) = 0;
-    *((int *)shm_recvbuf + 1) = 0;
-
-    for (i = 0; i < read_req_set.count; i++) {
-        tot_sz += read_req_set.read_reqs[i].length;
-
-        tmp_sh_meta = (shm_meta_t *)(shm_reqbuf + i * sizeof(shm_meta_t));
-        tmp_sh_meta->src_fid = read_req_set.read_reqs[i].fid;
-        tmp_sh_meta->offset = read_req_set.read_reqs[i].offset;
-        tmp_sh_meta->length = read_req_set.read_reqs[i].length;
-        //printf("cln: rd rq fid=%d off=%jd lrn=%jd\n", tmp_sh_meta->src_fid, tmp_sh_meta->offset,  tmp_sh_meta->length);
-
-        memcpy(shm_reqbuf + i*sizeof(shm_meta_t), tmp_sh_meta, sizeof(shm_meta_t));
+    if (unifycr_key_slice_range % unifycr_chunk_size) {
+        // If some brain-dead individual created a FS with key range slice not multiples of
+        // chunk size, split reads that cross slice boundary
+        // *** NOTE: this is REALLY stupid and should be discouraged in SOP
+        split_reads_by_slice(read_req, count, &read_req_set);
+        rq_cnt = read_req_set.count;
+        rq_ptr = read_req_set.read_reqs;
+    } else {
+        rq_cnt = count;
+        rq_ptr = read_req_set.read_reqs;
+        memcpy(rq_ptr, read_req, sizeof(read_req_t)*count);
     }
+
+    md_rq = (shm_meta_t *)(shm_reqbuf);
+    for (i = 0, j = 0; i < rq_cnt; i++) {
+        tot_sz += rq_ptr[i].length;
+
+        while ((rq_ptr[i].offset + rq_ptr[i].length) > choff_nxt(rq_ptr[i].offset)) {
+            md_rq[j].length = choff_nxt(rq_ptr[i].offset) - rq_ptr[i].offset;
+            md_rq[j].src_fid = rq_ptr[i].fid;
+            md_rq[j].offset  = rq_ptr[i].offset;
+            rq_ptr[i].length -= md_rq[j].length;
+            rq_ptr[i].offset += md_rq[j].length;
+            j++;
+        }
+        md_rq[j].length  = rq_ptr[i].length;
+        md_rq[j].src_fid = rq_ptr[i].fid;
+        md_rq[j].offset  = rq_ptr[i].offset;
+        j++;
+    }
+    rq_cnt += j - i;
+
+    *(int *)cmd_buf = COMM_MDGET;
+    *((int *)cmd_buf + 1) = rq_cnt;
+    *rc_ptr = 0;
+
     __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
 
     cmd_fd.events = POLLIN | POLLPRI;
@@ -1559,9 +1589,9 @@ int famfs_read(read_req_t *read_req, int count)
     rc = poll(&cmd_fd, 1, -1);
     if (rc == 0) {
         /*time out event*/
-        DEBUG("MD/read TMO: poll %d rq:\n", read_req_set.count);
-        for (i = 0; i < read_req_set.count; i++) {
-            DEBUG("fid %d: %ld(%ld)\n", read_req_set.read_reqs[i].fid, read_req_set.read_reqs[i].offset, read_req_set.read_reqs[i].length);
+        DEBUG("MD/read TMO: poll %d rq:\n", rq_cnt);
+        for (i = 0; i < rq_cnt; i++) {
+            DEBUG("fid %d: %ld(%ld)\n", rq_ptr[i].fid, rq_ptr[i].offset, rq_ptr[i].length);
         }
         return -ETIME;
     } else if (rc > 0) {
@@ -1569,10 +1599,10 @@ int famfs_read(read_req_t *read_req, int count)
         if (cmd_fd.revents != 0) {
             if (cmd_fd.revents == POLLIN) {
                 bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
-                if (*ptr_num < 0) {
-                    DEBUG("error reading MD: %d\n", *ptr_num);
+                if (*rc_ptr < 0) {
+                    DEBUG("error reading MD: %d\n", *rc_ptr);
                     return -EIO;
-                } else if (!*ptr_num) {
+                } else if (!*rc_ptr) {
                     DEBUG("no MD found\n");
                     return -EIO;
                 }
@@ -1586,42 +1616,46 @@ int famfs_read(read_req_t *read_req, int count)
         }
     }
 
-    //printf("got %d md entries\n", *ptr_num);
-    for (i = 0; i < *ptr_num; i++) {
+    /*    
+    for (i = 0; i < *rc_ptr; i++) printf("md k/v[%d]: fid=%lu off=%lu/len=%lu addr=%lu node=%lu chunk=%lu\n", i, 
+    md_ptr[i].k.fid, md_ptr[i].k.offset, md_ptr[i].v.len, md_ptr[i].v.addr, md_ptr[i].v.node, md_ptr[i].v.chunk);
+    */
+
+    for (i = 0; i < count; i++) {
         off_t fam_off;
         size_t fam_len;
-        off_t rq_b = read_req_set.read_reqs[i].offset;
-        off_t rq_e = rq_b + read_req_set.read_reqs[i].length;
+        off_t rq_b = read_req[i].offset;
+        off_t rq_e = rq_b + read_req[i].length;
         char *bufp;
 
-        for (j = 0; j < *ptr_num; j++) {
-            off_t md_b = ptr_md[j].k.offset;
-            off_t md_e = ptr_md[j].k.offset + ptr_md[j].v.len;
+        for (j = 0; j < *rc_ptr; j++) {
+            off_t md_b = md_ptr[j].k.offset;
+            off_t md_e = md_ptr[j].k.offset + md_ptr[j].v.len;
 
             fam_off = fam_len = 0;
-            if (ptr_md[j].k.fid != read_req_set.read_reqs[i].fid) 
+            if (md_ptr[j].k.fid != read_req[i].fid) 
                 continue;
             if (rq_b >= md_b && rq_b < md_e) {
                 // [MD_b ... (rq_b ... MD_e] ... rq_e)
                 // [MD_b ... (rq_b ... rq_e) ... MD_e]  
-                fam_off = ptr_md[j].v.addr + (rq_b - md_b);
+                fam_off = md_ptr[j].v.addr + (rq_b - md_b);
                 fam_len = min(md_e, rq_e) - rq_b;
-                bufp = read_req_set.read_reqs[i].buf;
+                bufp = read_req[i].buf;
             } else if (rq_e > md_b && rq_b <= md_b) {
                 // (rq_b ... [MD_b ... rq_e) ... MD_e]
                 // (rq_b ... [MD_b ... MD_e] ... rq_e)
-                fam_off = ptr_md[j].v.addr;
+                fam_off = md_ptr[j].v.addr;
                 fam_len = min(rq_e, md_e) - md_b;
-                bufp = read_req_set.read_reqs[i].buf + (md_b - rq_b);
+                bufp = read_req[i].buf + (md_b - rq_b);
             } else {
                 // not our chunk
                 continue;
             }
-            //printf("rq(b,e)=%lu:%lu MD(b,e)=%lu:%lu fam(addr,off,len)=%lu:%lu:%lu\n", rq_b, rq_e, md_b, md_e, ptr_md[j].v.addr, fam_off, fam_len);
+
             if (fam_len) {
-               DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - read_req_set.read_reqs[i].buf, fam_off, 
-                    ptr_md[j].v.node, ptr_md[j].v.chunk);
-                if ((rc = lf_fam_read(bufp, fam_len, fam_off, ptr_md[j].v.node, ptr_md[j].v.chunk))) {
+                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - read_req[i].buf, fam_off, 
+                    md_ptr[j].v.node, md_ptr[j].v.chunk);
+                if ((rc = lf_fam_read(bufp, fam_len, fam_off, md_ptr[j].v.node, md_ptr[j].v.chunk))) {
                     ioerr("lf_fam_read failed ret:%d", rc);
                     return rc;
                 }

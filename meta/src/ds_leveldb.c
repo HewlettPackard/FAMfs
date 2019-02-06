@@ -42,6 +42,8 @@
 #include "ds_leveldb.h"
 #include "famfs_global.h"
 
+int famfs = 1;
+
 struct timeval dbputstart, dbputend;
 struct timeval dbgetstart, dbgetend;
 double dbputtime=0, dbgettime=0;
@@ -955,23 +957,27 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 	/*ToDo: return different error types if leveldb_process_range fails*/
 
 	for (i = 0; i < tot_records/2; i++) {
-/*		printf("%dth offset is %ld, fid is %d, %d offset is %ld, len:%ld\n", 2 * i, \
-				UNIFYCR_OFFSET(key[2 * i]), UNIFYCR_FID(key[2 * i]), 2 * i + 1, \
-					UNIFYCR_OFFSET(key[ 2 * i + 1]), key_len[2 * i]); */
-		leveldb_process_range(iter, key[2 * i], key[2 * i + 1], \
-				key_len[2 * i], out_key, out_key_len, \
-					out_val, out_val_len, &tmp_records_cnt, \
-						&tmp_out_cap);
+/*
+        printf("%dth offset is %ld, fid is %d, %d offset is %ld, len:%ld\n", 2 * i, 
+        UNIFYCR_OFFSET(key[2 * i]), UNIFYCR_FID(key[2 * i]), 2 * i + 1, 
+        UNIFYCR_OFFSET(key[ 2 * i + 1]), key_len[2 * i]); 
+*/
+
+		leveldb_process_range(iter, 
+            key[2 * i], key[2 * i + 1], key_len[2 * i], 
+            out_key, out_key_len, out_val, out_val_len, 
+            &tmp_records_cnt, &tmp_out_cap);
 
 	}
 
 	*out_records_cnt = tmp_records_cnt;
 
-/*	printf("out_records_cnt is %d\n", *out_records_cnt);
+/*
+    printf("out_records_cnt is %d\n", *out_records_cnt);
 	for (i = 0; i < *out_records_cnt; i++) {
-		printf("%dth out offset is %ld, fid is %ld, addr is %ld\n", \
-				i, UNIFYCR_OFFSET((*out_key)[i]), UNIFYCR_FID((*out_key)[i]), \
-					UNIFYCR_ADDR((*out_val)[i]));
+		printf("%dth out offset is %ld, fid is %ld, addr is %ld\n", 
+            i, UNIFYCR_OFFSET((*out_key)[i]), UNIFYCR_FID((*out_key)[i]), 
+            UNIFYCR_ADDR((*out_val)[i]));
 		fflush(stdout);
 	}
 */
@@ -991,11 +997,10 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
  * start_e: the end of the key-value pair right after start_key
  * start_e = start_f + range of the key-value pair (length) - 1
  * */
-int leveldb_process_range(leveldb_iterator_t *iter,\
-		char *start_key, char *end_key, \
-			int key_len, char ***out_key, int **out_key_len, \
-				char ***out_val, int **out_val_len, int *tmp_records_cnt, \
-					int *tmp_out_cap) {
+int leveldb_process_range(leveldb_iterator_t *iter, 
+        char *start_key, char *end_key, int key_len, 
+        char ***out_key, int **out_key_len, char ***out_val, int **out_val_len, 
+        int *tmp_records_cnt, int *tmp_out_cap) {
 
 	const char *ret_key, *ret_val;
 	long tmp_key_len, tmp_val_len;
@@ -1053,27 +1058,22 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 	}
 
 	if (data_end_flag || diff_fid_flag) {
-		if (UNIFYCR_OFFSET(start_key) > UNIFYCR_OFFSET(ret_key)\
-				+ UNIFYCR_LEN(ret_val) - 1) {
+		if (UNIFYCR_OFFSET(start_key) > UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 			/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-			 		 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 start  end 	 */
+			 		 	 	 	 	 	 	 	 	 	 	 	 	  	 	 	 start  end 	 */
 			return 0;
 		} else {
 
 			long tmp_end;
-			if (UNIFYCR_OFFSET(end_key) >\
-					UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+			if (UNIFYCR_OFFSET(end_key) > UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-
-
 				 	 	 	 	 	 	 	 	 	 	 	 	start 	 	 	 	 	end 	 */
-				tmp_end = UNIFYCR_OFFSET(ret_key)\
-						+ UNIFYCR_LEN(ret_val) - 1;
+
+				tmp_end = UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1;
 			} else {
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-
-
 				 	 	 	 	 	 	 	 	 	 	 	 	start end 	 */
+
 				tmp_end = UNIFYCR_OFFSET(end_key);
 			}
 
@@ -1082,25 +1082,23 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 			memcpy(ret_out_key, ret_key, tmp_key_len);
 			memcpy(ret_out_val, ret_val, tmp_val_len);
 
-			UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val)\
-					+ UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
-			UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
-			UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
+            if (!famfs) {
+                UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
+                UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
+                UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
+            }
 
-			add_kv(out_key, out_key_len, out_val,\
-				out_val_len, tmp_records_cnt, tmp_out_cap, \
-					ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
+			add_kv(out_key, out_key_len, out_val, out_val_len, 
+                tmp_records_cnt, tmp_out_cap, ret_out_key, ret_out_val, 
+                tmp_key_len, tmp_val_len);
 
 			return 0;
 		}
 
 	} else {
 		if (UNIFYCR_OFFSET(ret_key) == UNIFYCR_OFFSET(start_key)) {
-			return	handle_next_half(iter,\
-					start_key, end_key, \
-						 out_key, out_key_len, \
-							out_val, out_val_len, tmp_records_cnt, \
-								tmp_out_cap);
+			return	handle_next_half(iter, start_key, end_key, out_key, out_key_len, out_val, out_val_len, 
+                tmp_records_cnt, tmp_out_cap);
 		}
 
 		leveldb_iter_prev(iter);
@@ -1108,11 +1106,8 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 			/*already the first, handle the next*/
 			//start_next_half
 			leveldb_iter_seek_to_first(iter);
-			return handle_next_half(iter,\
-					start_key, end_key, \
-						out_key, out_key_len, \
-							out_val, out_val_len, tmp_records_cnt, \
-								tmp_out_cap);
+			return handle_next_half(iter, start_key, end_key, out_key, out_key_len, out_val, out_val_len, 
+                tmp_records_cnt, tmp_out_cap);
 		} else {
 			save_next_ret_key = ret_key;
 			ret_key = leveldb_iter_key(iter, (size_t *)&tmp_key_len);
@@ -1125,16 +1120,12 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 
 			if (UNIFYCR_FID(ret_key) != UNIFYCR_FID(start_key)) {
 				leveldb_iter_next(iter);
-				return handle_next_half(iter,\
-						start_key, end_key, \
-							out_key, out_key_len, \
-								out_val, out_val_len, tmp_records_cnt, \
-									tmp_out_cap);
+				return handle_next_half(iter, start_key, end_key, out_key, out_key_len, out_val, out_val_len, 
+                    tmp_records_cnt, tmp_out_cap);
 
 			}
 
-			if (UNIFYCR_OFFSET(start_key) <=\
-					UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+			if (UNIFYCR_OFFSET(start_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
 				 	 	 	 	 start 		 end
@@ -1149,13 +1140,11 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 				 	  	 	 	 	 	 	 	 	 	 		 */
 				int to_ret = 0;
 				long tmp_end;
-				if (UNIFYCR_OFFSET(end_key) <=\
-						UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+				if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 					to_ret = 1;
 					tmp_end = UNIFYCR_OFFSET(end_key);
 				} else {
-					tmp_end = UNIFYCR_OFFSET(ret_key)\
-							+ UNIFYCR_LEN(ret_val) - 1;
+					tmp_end = UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1;
 				}
 
 				char *ret_out_key = malloc(tmp_key_len);
@@ -1163,14 +1152,16 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 				memcpy(ret_out_key, ret_key, tmp_key_len);
 				memcpy(ret_out_val, ret_val, tmp_val_len);
 
-				UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
-				UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + \
-						UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
-				UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
+			    if (!famfs) {
+                    UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
+                    UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
+                    UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
+                }
 
-				add_kv(out_key, out_key_len, out_val,\
-					out_val_len, tmp_records_cnt, tmp_out_cap, \
-						ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
+				add_kv(out_key, out_key_len, out_val, out_val_len, 
+                    tmp_records_cnt, tmp_out_cap, 
+                    ret_out_key, ret_out_val, 
+                    tmp_key_len, tmp_val_len);
 
 				if (to_ret == 1) {
 					return 0;
@@ -1179,11 +1170,8 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 				/*start next half*/
 				UNIFYCR_OFFSET(start_key) = UNIFYCR_OFFSET(save_next_ret_key);
 				leveldb_iter_next(iter);
-				return handle_next_half(iter,\
-						start_key, end_key, \
-							 out_key, out_key_len, \
-								out_val, out_val_len, tmp_records_cnt, \
-									tmp_out_cap);
+				return handle_next_half(iter, start_key, end_key,  out_key, out_key_len, out_val, out_val_len, 
+                    tmp_records_cnt, tmp_out_cap);
 
 
 			} else {
@@ -1196,11 +1184,8 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 				 	 	 	 	  	 	 	 	 	 	 	 	 	 		 */
 				// directly handle the next
 				leveldb_iter_next(iter);
-				return handle_next_half(iter,\
-						start_key, end_key, \
-							out_key, out_key_len, \
-								out_val, out_val_len, tmp_records_cnt, \
-									tmp_out_cap);
+				return handle_next_half(iter, start_key, end_key, out_key, out_key_len, out_val, out_val_len, 
+                    tmp_records_cnt, tmp_out_cap);
 			}
 		}
 
@@ -1209,25 +1194,23 @@ int leveldb_process_range(leveldb_iterator_t *iter,\
 	return 0;
 }
 
-int handle_next_half(leveldb_iterator_t *iter,\
-		char *start_key, char *end_key, \
-			char ***out_key, int **out_key_len, \
-				char ***out_val, int **out_val_len, int *tmp_records_cnt, \
-					int *tmp_out_cap) {
+int handle_next_half(
+    leveldb_iterator_t *iter, 
+    char *start_key, char *end_key, char ***out_key, int **out_key_len, char ***out_val, int **out_val_len, 
+    int *tmp_records_cnt, int *tmp_out_cap) {
+
 	const char *ret_key, *ret_val;
 
 	long tmp_key_len, tmp_val_len;
 	ret_key = leveldb_iter_key(iter, (size_t *)&tmp_key_len);
 	ret_val = leveldb_iter_value(iter, (size_t *)&tmp_val_len);
 
-	if (UNIFYCR_OFFSET(ret_key)\
-			> UNIFYCR_OFFSET(end_key)) {
+	if (UNIFYCR_OFFSET(ret_key)	> UNIFYCR_OFFSET(end_key)) {
 		/*	(start)........end....(start_f)...(end_f),........
-					 			 */
+					 		                               	 */
 		return 0;
 	} else {
-		if (UNIFYCR_OFFSET(end_key) <=\
-				UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+		if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 			/* search between start and end*/
 			/*	(start).........end............
 						start_f  		(end_f)	 */
@@ -1237,14 +1220,13 @@ int handle_next_half(leveldb_iterator_t *iter,\
 			memcpy(ret_out_key, ret_key, tmp_key_len);
 			memcpy(ret_out_val, ret_val, tmp_val_len);
 
-			UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key)\
-				- UNIFYCR_OFFSET(ret_key) +1;
-			UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val)\
-					+ UNIFYCR_OFFSET(ret_key) - UNIFYCR_OFFSET(start_key);
+            if (!famfs) {
+                UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) +1;
+                UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(ret_key) - UNIFYCR_OFFSET(start_key);
+            }
 
-			add_kv(out_key, out_key_len, out_val,\
-				out_val_len, tmp_records_cnt, tmp_out_cap, \
-					ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
+			add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+                ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
 
 			return 0;
 
@@ -1256,15 +1238,17 @@ int handle_next_half(leveldb_iterator_t *iter,\
 
 			char *ret_out_key = malloc(tmp_key_len);
 			char *ret_out_val = malloc(tmp_val_len);
-		/*	printf("here, ret_key offset is %ld, addr is %ld, len is %ld\n",\
-					UNIFYCR_OFFSET(ret_key), UNIFYCR_ADDR(ret_val),\
-						UNIFYCR_LEN(ret_val));
-			fflush(stdout); */
+
+/*		    printf("here, ret_key offset is %ld, addr is %ld, len is %ld\n", 
+            UNIFYCR_OFFSET(ret_key), UNIFYCR_ADDR(ret_val),	UNIFYCR_LEN(ret_val));
+			fflush(stdout); 
+*/
 			memcpy(ret_out_key, ret_key, tmp_key_len);
 			memcpy(ret_out_val, ret_val, tmp_val_len);
-			add_kv(out_key, out_key_len, out_val,\
-				out_val_len, tmp_records_cnt, tmp_out_cap, \
-					ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
+
+			add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+                ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
+
 			while (1) {
 
 				leveldb_iter_next(iter);
@@ -1293,8 +1277,7 @@ int handle_next_half(leveldb_iterator_t *iter,\
 					break;
 				}
 
-				if (UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1 >=\
-						UNIFYCR_OFFSET(end_key)) {
+				if (UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1 >= UNIFYCR_OFFSET(end_key)) {
 					/*	(start)............................end_f),........
 								start_f 			end*/
 					flag = 1;
@@ -1304,15 +1287,16 @@ int handle_next_half(leveldb_iterator_t *iter,\
 							start_f 			end*/
 				char *ret_out_key = malloc(tmp_key_len);
 				char *ret_out_val = malloc(tmp_val_len);
-			/*	printf("here, ret_key offset is %ld, addr is %ld, len is %ld\n",\
-						UNIFYCR_OFFSET(ret_key), UNIFYCR_ADDR(ret_val), \
-							UNIFYCR_LEN(ret_val));
-				fflush(stdout); */
+			/*	
+                printf("here, ret_key offset is %ld, addr is %ld, len is %ld\n",
+                UNIFYCR_OFFSET(ret_key), UNIFYCR_ADDR(ret_val), UNIFYCR_LEN(ret_val));
+				fflush(stdout); 
+             */
 				memcpy(ret_out_key, ret_key, tmp_key_len);
 				memcpy(ret_out_val, ret_val, tmp_val_len);
-				add_kv(out_key, out_key_len, out_val,\
-					out_val_len, tmp_records_cnt, tmp_out_cap, \
-						ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
+
+				add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+                    ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
 			}
 
 			if (flag == 1) {
@@ -1322,18 +1306,20 @@ int handle_next_half(leveldb_iterator_t *iter,\
 				char *ret_out_key = malloc(tmp_key_len);
 				char *ret_out_val = malloc(tmp_val_len);
 
-			/*	printf("finally, ret_key offset is %ld, addr is %ld, len is %ld\n",\
-						UNIFYCR_OFFSET(ret_key), UNIFYCR_ADDR(ret_val), \
-						UNIFYCR_LEN(ret_val)); */
+			/*	
+                printf("finally, ret_key offset is %ld, addr is %ld, len is %ld\n",
+                UNIFYCR_OFFSET(ret_key), UNIFYCR_ADDR(ret_val), UNIFYCR_LEN(ret_val)); 
+             */
 				memcpy(ret_out_key, ret_key, tmp_key_len);
 				memcpy(ret_out_val, ret_val, tmp_val_len);
 
-				UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key)\
-						- UNIFYCR_OFFSET(ret_key) + 1;
-				UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val);
-				add_kv(out_key, out_key_len, out_val,\
-					out_val_len, tmp_records_cnt, tmp_out_cap, \
-						ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
+                if (!famfs) {
+                    UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) + 1;
+                    UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val);
+                }
+
+				add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+                    ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
 
 			}
 			return 0;
@@ -1343,9 +1329,10 @@ int handle_next_half(leveldb_iterator_t *iter,\
 
 }
 
-int add_kv(char ***out_key, int **out_key_len, char ***out_val,\
-		int **out_val_len, int *tmp_records_cnt, int *tmp_out_cap, \
-			char *ret_key, char *ret_val, int key_len, int val_len) {
+int add_kv(
+    char ***out_key, int **out_key_len, char ***out_val,
+    int **out_val_len, int *tmp_records_cnt, int *tmp_out_cap, 
+    char *ret_key, char *ret_val, int key_len, int val_len) {
 
 	if (*tmp_records_cnt == *tmp_out_cap) {
 		*out_key = (char **)realloc(*out_key, 2 * (*tmp_out_cap) * sizeof(char *));

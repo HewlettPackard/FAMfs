@@ -325,9 +325,9 @@ int meta_process_fsync(int sock_id)
             fsmd_vals[i]->node  = meta_payload[i].nid;
             fsmd_vals[i]->chunk = meta_payload[i].cid;
 /*
-printf("srv: process fsync set[%d] k.fid=%d, k.off=%lu, v.addr=%jd, v.len=%jd, v.nid=%d, v.cid=%d\n", i,
-fsmd_keys[i]->fid, fsmd_keys[i]->offset, 
-fsmd_vals[i]->addr, fsmd_vals[i]->len, fsmd_vals[i]->node, fsmd_vals[i]->chunk);
+        printf("srv: fsync k/v[%d] fid=%ld off=%ld/len=%ld addr=%lu node=%ld chunk=%ld\n", i,
+        fsmd_keys[i]->fid, fsmd_keys[i]->offset, 
+        fsmd_vals[i]->len, fsmd_vals[i]->addr, fsmd_vals[i]->node, fsmd_vals[i]->chunk);
 */
 
         } else {
@@ -571,14 +571,9 @@ int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
         }
 
         for (i = 0; i < bgrmp->num_keys; i++) {
-            res_kv[i].k = *(fsmd_key_t *)bgrm->keys[i];
-            res_kv[i].v = *(fsmd_val_t *)bgrm->values[i];
+            res_kv[tot_num].k = *(fsmd_key_t *)bgrm->keys[i];
+            res_kv[tot_num].v = *(fsmd_val_t *)bgrm->values[i];
             tot_num++;
-/*
-printf("srv: got md k/v[%d] fid=%ld off=%jd/len=%jd addr=%jd node=%jd chunk=%jd\n", i, 
-res_kv[i].k.fid, res_kv[i].k.offset, 
-res_kv[i].v.len, res_kv[i].v.addr, res_kv[i].v.node, res_kv[i].v.chunk);
-*/
         }
         bgrmp = bgrmp->next;
         mdhim_full_release_msg(bgrm);
@@ -587,7 +582,12 @@ res_kv[i].v.len, res_kv[i].v.addr, res_kv[i].v.node, res_kv[i].v.chunk);
 
     if (total_kv)
         *total_kv = tot_num;
-    //printf("srv: total kv's %d\n", *total_kv);
+    /*
+    for (i = 0; i < *total_kv; i++)
+        printf("srv: got md k/v[%d] fid=%ld off=%jd/len=%jd addr=%jd node=%jd chunk=%jd\n", i, 
+        res_kv[i].k.fid, res_kv[i].k.offset, 
+        res_kv[i].v.len, res_kv[i].v.addr, res_kv[i].v.node, res_kv[i].v.chunk);
+    */
 
     return rc;
 }

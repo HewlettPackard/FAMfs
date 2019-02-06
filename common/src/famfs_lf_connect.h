@@ -17,7 +17,6 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
 #include <rdma/fi_ext_zhpe.h>
-//#define FI_ZHPE_FAM_RKEY 0
 #include <mpi.h>
 
 #include "famfs_env.h"
