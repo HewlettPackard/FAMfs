@@ -1513,10 +1513,57 @@ static inline off_t choff_nxt(off_t off) {
     return (chunk_num(off) + 1) << unifycr_chunk_bits;
 }
 
+static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt, fsmd_kv_t  *md, int md_cnt, size_t ttl ) {
+    int rc;
+    for (int i = 0; i < rq_cnt; i++) {
+        off_t fam_off;
+        size_t fam_len;
+        off_t rq_b = rq[i].offset;
+        off_t rq_e = rq_b + rq[i].length;
+        char *bufp;
+
+        for (int j = 0; j < md_cnt; j++) {
+            off_t md_b = md[j].k.offset;
+            off_t md_e = md[j].k.offset + md[j].v.len;
+
+            fam_off = fam_len = 0;
+            if (md[j].k.fid != rq[i].fid) 
+                continue;
+            if (rq_b >= md_b && rq_b < md_e) {
+                // [MD_b ... (rq_b ... MD_e] ... rq_e)
+                // [MD_b ... (rq_b ... rq_e) ... MD_e]  
+                fam_off = md[j].v.addr + (rq_b - md_b);
+                fam_len = min(md_e, rq_e) - rq_b;
+                bufp = rq[i].buf;
+            } else if (rq_e > md_b && rq_b <= md_b) {
+                // (rq_b ... [MD_b ... rq_e) ... MD_e]
+                // (rq_b ... [MD_b ... MD_e] ... rq_e)
+                fam_off = md[j].v.addr;
+                fam_len = min(rq_e, md_e) - md_b;
+                bufp = rq[i].buf + (md_b - rq_b);
+            } else {
+                // not our chunk
+                continue;
+            }
+
+            if (fam_len) {
+                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - rq[i].buf, fam_off, 
+                    md[j].v.node, md[j].v.chunk);
+                if ((rc = lf_fam_read(bufp, fam_len, fam_off, md[j].v.node, md[j].v.chunk))) {
+                    ioerr("lf_fam_read failed ret:%d", rc);
+                    return (ssize_t)rc;
+                }
+                ttl -= fam_len;
+            }
+        }
+    }
+    return ttl;
+}
+
 int famfs_read(read_req_t *read_req, int count)
 {
-    int i, j, tot_sz = 0, rc = UNIFYCR_SUCCESS,
-              bytes_read = 0, num = 0, bytes_write = 0;
+    int i, j, rc = UNIFYCR_SUCCESS, bytes_read = 0, num = 0, bytes_write = 0;
+    long tot_sz = 0;
     int delegator;
     int sh_cursor = 0;
     shm_meta_t *md_rq;
@@ -1577,6 +1624,17 @@ int famfs_read(read_req_t *read_req, int count)
     }
     rq_cnt += j - i;
 
+    if (*rc_ptr) {
+        // Have prev MD in cache, see if anything matches
+        tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
+        if (tot_sz < 0) {
+            printf("lf_read error\n");
+            return (int)tot_sz;
+        }
+        if (!tot_sz)
+            return 0;
+    }
+
     *(int *)cmd_buf = COMM_MDGET;
     *((int *)cmd_buf + 1) = rq_cnt;
     *rc_ptr = 0;
@@ -1616,56 +1674,14 @@ int famfs_read(read_req_t *read_req, int count)
         }
     }
 
-    /*    
-    for (i = 0; i < *rc_ptr; i++) printf("md k/v[%d]: fid=%lu off=%lu/len=%lu addr=%lu node=%lu chunk=%lu\n", i, 
-    md_ptr[i].k.fid, md_ptr[i].k.offset, md_ptr[i].v.len, md_ptr[i].v.addr, md_ptr[i].v.node, md_ptr[i].v.chunk);
-    */
-
-    for (i = 0; i < count; i++) {
-        off_t fam_off;
-        size_t fam_len;
-        off_t rq_b = read_req[i].offset;
-        off_t rq_e = rq_b + read_req[i].length;
-        char *bufp;
-
-        for (j = 0; j < *rc_ptr; j++) {
-            off_t md_b = md_ptr[j].k.offset;
-            off_t md_e = md_ptr[j].k.offset + md_ptr[j].v.len;
-
-            fam_off = fam_len = 0;
-            if (md_ptr[j].k.fid != read_req[i].fid) 
-                continue;
-            if (rq_b >= md_b && rq_b < md_e) {
-                // [MD_b ... (rq_b ... MD_e] ... rq_e)
-                // [MD_b ... (rq_b ... rq_e) ... MD_e]  
-                fam_off = md_ptr[j].v.addr + (rq_b - md_b);
-                fam_len = min(md_e, rq_e) - rq_b;
-                bufp = read_req[i].buf;
-            } else if (rq_e > md_b && rq_b <= md_b) {
-                // (rq_b ... [MD_b ... rq_e) ... MD_e]
-                // (rq_b ... [MD_b ... MD_e] ... rq_e)
-                fam_off = md_ptr[j].v.addr;
-                fam_len = min(rq_e, md_e) - md_b;
-                bufp = read_req[i].buf + (md_b - rq_b);
-            } else {
-                // not our chunk
-                continue;
-            }
-
-            if (fam_len) {
-                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - read_req[i].buf, fam_off, 
-                    md_ptr[j].v.node, md_ptr[j].v.chunk);
-                if ((rc = lf_fam_read(bufp, fam_len, fam_off, md_ptr[j].v.node, md_ptr[j].v.chunk))) {
-                    ioerr("lf_fam_read failed ret:%d", rc);
-                    return rc;
-                }
-                tot_sz -= fam_len;
-            }
-        }
+    tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
+    if (tot_sz < 0) {
+        printf("lf_read error\n");
+        return (int)tot_sz;
     }
 
     if (tot_sz) {
-        printf("residual length not 0: %d\n", tot_sz);
+        printf("residual length not 0: %ld\n", tot_sz);
         return -ENODATA;
     }
 
