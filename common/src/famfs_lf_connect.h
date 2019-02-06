@@ -181,4 +181,18 @@ static inline unsigned long long fam_id_by_index(FAM_MAP_t *m, int index)
     return 0ULL;
 }
 
+static inline int fam_node_by_index(FAM_MAP_t *m, int index)
+{
+    if (m) {
+	int ionode, idx;
+
+	for (ionode = idx = 0; ionode < m->ionode_cnt; ionode++) {
+	    idx += m->node_fams[ionode];
+	    if (index < idx)
+		return ionode;
+	}
+    }
+    return -1;
+}
+
 #endif /* FAMFS_LF_CONNECT_H */

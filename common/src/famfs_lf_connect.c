@@ -56,12 +56,15 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     int			i, rc;
 
     node = lf_node->node_id;
-    if (params->lf_fabric)
+    if (params->lf_fabric) {
 	pname = params->lf_fabric;
-    else if (params->lf_mr_flags.zhpe_support)
-	pname = params->nodelist[0]; /* Need just a valid AF */
-    else
+    } else if (params->lf_mr_flags.zhpe_support) {
+	/* Need just a valid AF. Point to the node nearest to the FAM. */
+	i = fam_node_by_index(params->fam_map, node);
+	pname = params->nodelist[i];
+    } else {
 	pname = params->nodelist[node];
+    }
     partition_id = lf_node->partition;
     thread_cnt = params->w_thread_cnt;
     service = node2service(params->lf_port, node, partition_id);
@@ -832,8 +835,6 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
 	cl = (LF_CL_t*) calloc(1, sizeof(LF_CL_t));
 	ASSERT(cl);
 	cl->partition = i;
-	/* if (params->fam_map)
-	    cl->fam_id = fam_id_by_index(params->fam_map, node_id); */
 	cl->service = node2service(params->lf_port, node_id, i);
 	if ( params->set_affinity)
 	    alloc_affinity(&cl->cq_affinity, srv_cnt, i + 1);
