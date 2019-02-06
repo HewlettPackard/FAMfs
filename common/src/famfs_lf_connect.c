@@ -58,6 +58,8 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     node = lf_node->node_id;
     if (params->lf_fabric)
 	pname = params->lf_fabric;
+    else if (params->lf_mr_flags.zhpe_support)
+	pname = params->nodelist[0]; /* Need just a valid AF */
     else
 	pname = params->nodelist[node];
     partition_id = lf_node->partition;
@@ -271,10 +273,8 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     if (params->lf_srv_rx_ctx)
 	ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
 
-
     // zhpe support
     if (params->lf_mr_flags.zhpe_support) {
-#ifdef ZHPE_SUPPORT
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	char url[16];
@@ -291,7 +291,6 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	if (params->verbose)
 	    printf("CL attached to FAM node %d(p%d) ID:fam%4Lu from %s\n",
 		   node, partition_id, fam_id, pname);
-#endif
     } else {
 	if (params->verbose)
 	    printf("CL attached to node %d(p%d) on %s:%s\n",
@@ -736,32 +735,9 @@ int lf_srv_init(LF_SRV_t *priv)
 
     // Enable endpoint
     ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
-
-    // zhpe support
-    if (params->lf_mr_flags.zhpe_support) {
-#ifdef ZHPE_SUPPORT
-	struct fi_zhpe_ext_ops_v1 *ext_ops;
-	size_t sa_len;
-	void *fam_sa;
-	char url[16];
-
-
-	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
-		"srv open_ops failed");
-	sprintf(url, "zhpe:///fam%4Lu", cl->fam_id);
-	ON_FI_ERROR( ext_ops->lookup(url, &fam_sa, &sa_len), "fam:%4Lu lookup failed", cl->fam_id);
-
-	printf("%d/%d: Attached to %zuMB of FAM memory on %s:fam%4Lu if:%s\n",
-	       my_node_id, priv->thread_id,
-	       len/1024/1024, pname,
-	       cl->fam_id, fi->domain_attr->name);
-#endif
-
-    } else {
-	printf("%d/%d: Registered %zuMB of memory on %s:%s (p%d) if:%s\n",
-	       my_node_id, priv->thread_id,
-	       len/1024/1024, pname, port, cl->partition, fi->domain_attr->name);
-    }
+    printf("%d/%d: Registered %zuMB of memory on %s:%s (p%d) if:%s\n",
+	   my_node_id, priv->thread_id,
+	   len/1024/1024, pname, port, cl->partition, fi->domain_attr->name);
     fi_freeinfo(fi);
     fi = NULL;
 

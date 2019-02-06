@@ -16,28 +16,17 @@
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
-
-#ifdef ZHPE_SUPPORT
-
 #include <rdma/fi_ext_zhpe.h>
-
-#else
-
-#define FI_ZHPE_FAM_RKEY 0
-
-#endif
-
+//#define FI_ZHPE_FAM_RKEY 0
 #include <mpi.h>
+
 #include "famfs_env.h"
 
 #define to_lf_client_id(node, part_count, part) (node*part_count + part)
-#if 1 /* TODO: Remove me */
+/* TODO: Remove me */
 #define node2lf_mr_pkey(node_id, node_servers, partition) (node_id*node_servers + partition + 1)
-#else
-/* 0: Workaround for old zhpe code that does not accept PROV_KEY from user properly (Sep 29 2018) */
-#define node2lf_mr_pkey(node_id, node_servers, partition) (0)
-#endif
 #define node2service(base, node_id, part_id) (base + part_id + node_id*100)
+
 
 typedef struct fam_map_ {
 	int	ionode_cnt;		/* IO node count */
