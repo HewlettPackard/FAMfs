@@ -19,10 +19,7 @@
 static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params_p)
 {
     N_PARAMS_t *params;
-    LF_CL_t **lf_all_clients;
-    char **stripe_buf = NULL;
-    int i, part, verbose;
-    int nchunks, fam_cnt, srv_cnt, psize, rc;
+    int nchunks, verbose, rc;
 
     verbose = (rank == 0);
     if ((rc = arg_parser(argc, argv, verbose, LFS_MAXCLIENTS, params_p))) {

@@ -58,7 +58,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     node = lf_node->node_id;
     if (params->lf_fabric) {
 	pname = params->lf_fabric;
-    } else if (params->lf_mr_flags.zhpe_support) {
+    } else if (params->fam_map) {
 	/* Need just a valid AF. Point to the node nearest to the FAM. */
 	i = fam_node_by_index(params->fam_map, node);
 	pname = params->nodelist[i];
@@ -277,7 +277,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
 
     // zhpe support
-    if (params->lf_mr_flags.zhpe_support) {
+    if (params->fam_map) {
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	char url[16];
@@ -715,22 +715,29 @@ int lf_srv_init(LF_SRV_t *priv)
 	unsigned int page_size = getpagesize();
 	size_t part_length = params->vmem_sz / params->node_servers;
 
-	len = params->lf_mr_flags.zhpe_support? page_size : part_length;
+	len = params->fam_map? page_size : part_length;
 	bufp = &buf;
-	//ON_ERROR(posix_memalign(bufp, page_size, len), "srv memory alloc failed");
-        buf = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
-        if (buf == MAP_FAILED) {
-            err("%d/%d: Memory allocation/map failed, partition:%d - %m", my_node_id, priv->thread_id, cl->partition);
-            exit(1);
-        }
+#if 0
+	ON_ERROR(posix_memalign(bufp, page_size, len), "srv memory alloc failed");
+	if (buf == NULL) {
+	    err("%d/%d: Memory allocation failed, partition:%d - %m", my_node_id, priv->thread_id, cl->partition);
+	    exit(1);
+	}
+#else
+	buf = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+	if (buf == MAP_FAILED) {
+	    err("%d/%d: Memory allocation/map failed, partition:%d - %m", my_node_id, priv->thread_id, cl->partition);
+	    exit(1);
+	}
+#endif
     }
     /*
-    for (size_t i = 0; i < len/getpagesize(); i++) 
-        *(long *)&((char *)buf)[getpagesize()*i] = i;
+    for (size_t i = 0; i < len/page_size; i++)
+        *(unsigned long *)&((char *)buf)[page_size*i] = i;
     */
     
     ON_FI_ERROR( fi_mr_reg(domain, *bufp, len, FI_REMOTE_READ|FI_REMOTE_WRITE, 0, mr_key, 0, &mr, NULL),
-		"srv fi_mr_reg failed");
+		"srv fi_mr_reg (len=%zu, key=%lu) failed", len, mr_key);
     priv->virt_addr = *bufp;
     if (params->lf_mr_flags.prov_key) {
 	int tmo = 3; /* 3 sec */
@@ -827,8 +834,6 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
 	    err("srv memory alloc failed");
 	    goto _err;
 	}
-        for (i = 0; i < (int)params->vmem_sz/getpagesize(); i++) 
-            *(long *)&((char *)params->fam_buf)[getpagesize()*i] = i;
     }
 
     lf_servers = (LF_SRV_t **) malloc(srv_cnt*sizeof(void*));

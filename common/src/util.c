@@ -550,14 +550,21 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     /* Parse FAM list */
     fam_map = parse_famnode_list(famlist, famnode_cnt, &nchunks);
     if (zhpe_support) {
-	if (!fam_map || !fam_map->total_fam_cnt) {
-	    err("Misformed FAM node list!\n");
-	    goto _free;
-	}
-	if (nchunks > fam_map->total_fam_cnt) {
-	    err("Not enough FAMs given:%d (expected at least %d)",
-			   fam_map->total_fam_cnt, nchunks);
-	    goto _free;
+	if (fam_map) {
+	    if (fam_map->total_fam_cnt == 0) {
+		err("Misformed FAM node list!\n");
+		goto _free;
+	    }
+	    if (nchunks > fam_map->total_fam_cnt) {
+		err("Not enough FAMs given:%d (expected at least %d)",
+		    fam_map->total_fam_cnt, nchunks);
+		goto _free;
+	    }
+	} else {
+	    if (nchunks == 0) {
+		err("Need the number of chunks (option '-n') for FAM emulation!");
+		goto _free;
+	    }
 	}
     } else if (fam_map) {
 	err("Option is not supported yet and ignored: -F (--fam_map) - Need zhpe driver!");
@@ -570,6 +577,11 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    err("Option is ignored: --part_mreg %d", part_mreg);
 	part_mreg = 0;
     } else {
+	if (nchunks > node_cnt) {
+	    err("Need more nodes (%d) for FAM emulation; given:%d",
+		nchunks, node_cnt);
+	    goto _free;
+	}
 	fam_cnt = node_cnt; /* FAM emulation: one module per IO node */
 	if (part_mreg < 0)
 	    part_mreg = 1; /* 'partition' modules per node */
