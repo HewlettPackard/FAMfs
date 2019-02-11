@@ -379,13 +379,78 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
     return 0;
 }
 
+famfs_mr_list_t known_mrs = {0, NULL};
+
+#define FAMFS_MR_AU 8
+
+int famfs_buf_reg(char *buf, size_t len, void **rid) {
+    int i;
+
+    if (fs_type != FAMFS)
+        return -EINVAL;
+
+    struct fid_mr *mr;
+    N_PARAMS_t *pr = lfs_ctx->lfs_params;
+    LF_CL_t    *me = pr->lf_clients[pr->node_id];
+
+    if (!known_mrs.cnt) {
+        known_mrs.regs = (lf_mreg_t *)calloc(FAMFS_MR_AU, sizeof(lf_mreg_t));
+        if (!known_mrs.regs) {
+            err("memory alloc failure");
+            return -ENOMEM;
+        }
+        known_mrs.cnt = FAMFS_MR_AU;
+        i = 0;
+    } else {
+        for (i = 0; i < known_mrs.cnt; i++) 
+            if (!known_mrs.regs[i].buf) 
+                break;
+        if (i == known_mrs.cnt) {
+            known_mrs.regs = (lf_mreg_t *)realloc(known_mrs.regs, known_mrs.cnt*sizeof(lf_mreg_t));
+            if (!known_mrs.regs) {
+                err("memory realloc failure");
+                return -ENOMEM;
+            }
+            bzero(&known_mrs.regs[i], sizeof(lf_mreg_t)*FAMFS_MR_AU);
+            known_mrs.cnt += FAMFS_MR_AU;
+        }
+    }
+    ON_FI_ERR_RET(fi_mr_reg(me->domain, buf, len, FI_REMOTE_READ | FI_REMOTE_WRITE, 0, me->mr_key, 0, &known_mrs.regs[i].mreg, NULL), "cln fi_mr_reg failed");
+
+    known_mrs.regs[i].buf = buf;
+    known_mrs.regs[i].len = len;
+    known_mrs.regs[i].desc = fi_mr_desc(known_mrs.regs[i].mreg);
+    *rid = (void *)&known_mrs.regs[i];
+
+    return 0;
+}
+
+int famfs_buf_unreg(void *rid) {
+    lf_mreg_t *mr = (lf_mreg_t *)rid;
+    ON_FI_ERR_RET(fi_close(&mr->mreg->fid), "cln fi_close failed");
+    mr->buf = 0;
+    mr->len = 0;
+
+    return 0;
+}
+
+static int lookup_mreg(char *buf, size_t len) {
+    int i; 
+
+    for (i = 0; i < known_mrs.cnt; i++) 
+        if (buf >= known_mrs.regs[i].buf && buf + len <= known_mrs.regs[i].buf + known_mrs.regs[i].len) 
+            break;
+
+    return i == known_mrs.cnt ? -1 : i;
+}
+
 struct fid_ep   *saved_ep;
 fi_addr_t       *saved_adr;
 off_t           saved_off;
 
 int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off)
 {
-//  struct timeval start = now(0);
+    struct timeval start = now(0);
     N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
     char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
@@ -397,7 +462,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     //size_t transfer_sz;
     off_t off;
     //int i, blocks;
-    int dst_node, rc;
+    int dst_node, rc, ix;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     /* to FAM chunk */
@@ -427,17 +492,20 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
         *trg_off = off;
     //for (i = 0; i < blocks; i++) {
     DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
-	  lfs_params->node_id, chunk_phy_id, chunk_offset,
-	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
-	  dst_node, node->partition,
-	  len, node->local_desc[0], off, node->mr_key);
+        lfs_params->node_id, chunk_phy_id, chunk_offset,
+        fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
+        dst_node, node->partition,
+        len, node->local_desc[0], off, node->mr_key);
 
 
-	ON_FI_ERROR(fi_write(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, off,
-				node->mr_key, (void*)buf /* NULL */),
-			"%d (%s): fi_write failed on FAM module %d(p%d)",
-			lfs_params->node_id, nodelist[lfs_params->node_id],
-			dst_node, fam_stripe->partition);
+    ix = lookup_mreg(buf, len);
+    ON_FI_ERROR(
+        fi_write(tx_ep, buf, len, ix < 0 ? node->local_desc[0] :  known_mrs.regs[ix].desc, 
+            *tgt_srv_addr, off, node->mr_key, (void*)buf),
+        "%d (%s): fi_write failed on FAM module %d(p%d)", 
+        lfs_params->node_id, nodelist[lfs_params->node_id],
+        dst_node, fam_stripe->partition);
+
 	//off += transfer_sz;
 	//buf += transfer_sz;
 	chunk->w_event++;
@@ -507,7 +575,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     struct fid_ep *tx_ep;
     //size_t transfer_sz;
     //int i, blocks;
-    int src_node, rc;
+    int src_node, rc, ix;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     /* to FAM chunk */
@@ -542,8 +610,11 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
 	  src_node, node->partition,
 	  len, node->local_desc[0], fam_off, node->mr_key);
 
-    ON_FI_ERROR(fi_read(tx_ep, buf, len, node->local_desc[0], *tgt_srv_addr, fam_off, node->mr_key, (void*)buf /* NULL */),
-            "%d: fi_read failed on FAM module %d(p%d)", lfs_params->node_id, src_node, fam_stripe->partition);
+    ix = lookup_mreg(buf, len);
+    ON_FI_ERROR(
+        fi_read(tx_ep, buf, len, ix < 0 ? node->local_desc[0] :  known_mrs.regs[ix].desc, 
+            *tgt_srv_addr, fam_off, node->mr_key, (void*)buf),
+        "%d: fi_read failed on FAM module %d(p%d)", lfs_params->node_id, src_node, fam_stripe->partition);
 
     chunk->r_event++;
     rc = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);

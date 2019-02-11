@@ -50,5 +50,20 @@ typedef struct {
     fsmd_key_t   k;
     fsmd_val_t   v;
 } fsmd_kv_t;
+
+typedef struct {
+    char            *buf;
+    size_t          len;
+    struct fid_mr   *mreg;
+    void            *desc;
+} lf_mreg_t;
+
+typedef struct {
+    size_t          cnt;
+    lf_mreg_t       *regs;
+} famfs_mr_list_t;
+
+extern famfs_mr_list_t known_mrs;
+
 #endif
 

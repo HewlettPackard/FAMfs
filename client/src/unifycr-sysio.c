@@ -2040,6 +2040,8 @@ void *UNIFYCR_WRAP(mmap)(void *addr, size_t length, int prot, int flags,
 
 int UNIFYCR_WRAP(munmap)(void *addr, size_t length)
 {
+    MAP_OR_FAIL(munmap)
+    return UNIFYCR_REAL(munmap)(addr, length);
     fprintf(stderr, "Function not yet supported @ %s:%d\n", __FILE__, __LINE__);
     errno = ENOSYS;
     return ENODEV;

@@ -32,6 +32,7 @@ UNIFYCR_DEF(fsync, int, (int fd));
 UNIFYCR_DEF(fdatasync, int, (int fd));
 UNIFYCR_DEF(flock, int, (int fd, int operation));
 UNIFYCR_DEF(mmap, void*, (void *addr, size_t length, int prot, int flags, int fd, off_t offset));
+UNIFYCR_DEF(munmap, int, (void *addr, size_t length));
 UNIFYCR_DEF(msync, int, (void *addr, size_t length, int flags));
 UNIFYCR_DEF(mmap64, void*, (void *addr, size_t length, int prot, int flags, int fd, off_t offset));
 UNIFYCR_DEF(__fxstat, int, (int vers, int fd, struct stat *buf));

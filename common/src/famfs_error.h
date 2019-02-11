@@ -39,6 +39,16 @@
         }                               \
     } while (0);
 
+#define ON_FI_ERR_RET(action, msg, ...)       \
+    do {                                    \
+        int64_t __err;                      \
+        if ((__err = (action))) {           \
+            fprintf(stderr, #msg ": %ld - %s\n", ## __VA_ARGS__, \
+                    __err, fi_strerror(-__err)); \
+            return -EINVAL;                 \
+        }                                   \
+    } while (0);
+
 #define err(str, ...) fprintf(stderr, #str "\n", ## __VA_ARGS__)
 #define ioerr(str, ...) fprintf(stderr, "%s: " #str " - %m\n", __FUNCTION__, ## __VA_ARGS__)
 
