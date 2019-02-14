@@ -73,9 +73,6 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
     if (params->part_mreg == 0)
 	ON_ERROR(posix_memalign(&params->fam_buf, getpagesize(), params->vmem_sz), "srv memory alloc failed");
 
-    for (i = 0; i < (int)params->vmem_sz/getpagesize(); i++) 
-        *(long *)&((char *)params->fam_buf)[getpagesize()*i] = i;
-
     lf_servers = (LF_SRV_t **) malloc(srv_cnt*sizeof(void*));
     ASSERT(lf_servers);
     for (i = 0; i < srv_cnt; i++) {
