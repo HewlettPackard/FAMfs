@@ -17,6 +17,8 @@
 #define mSec (1000L)
 #define uSec (mSec*1000L)
 
+#define CKPFS_STATS 1
+extern int do_lf_stats;
 
 #if CKPFS_STATS
 
@@ -24,7 +26,7 @@
     char *__ev = getenv("##name");\
     if (!__ev)\
         __ev = name;\
-    printf("dumping %s\n", __ev);\
+    /*printf("dumping %s\n", __ev);*/\
     pthread_mutex_lock(&sb.lck);\
     FILE *__fp = fopen(__ev, "a+");\
     if (__fp) {\
@@ -35,6 +37,13 @@
         fclose(__fp);\
     }\
     pthread_mutex_unlock(&sb.lck);\
+}
+
+#define INIT_STATS(name, sb) if (do_lf_stats) {\
+    char *__ev = getenv("##name");\
+    if (!__ev)\
+        __ev = name;\
+    bzero(&sb.all, sizeof(sb.all));\
 }
 
 #define UPDATE_STATS(sb, n, s, ts) if (do_lf_stats) {\
@@ -67,6 +76,7 @@
 #else
 
 #define DUMP_STATS(name, sb) do {;} while (0);
+#define INIT_STATS(name, sb) do {;} while (0);
 #define UPDATE_STATS(sb, n, s, ts) do {;} while(0);
 
 #endif
@@ -103,16 +113,21 @@ static inline uint64_t elapsed(struct timeval *ts) {
 
 typedef struct {
     pthread_mutex_t lck;
-    uint64_t        cnt;
-    uint64_t        ttl;
-    uint64_t        min;
-    uint64_t        max;
-    uint64_t        bcnt;
-    uint64_t        bmin;
-    uint64_t        bmax;
-    uint64_t        ett;
-    uint64_t        emin;
-    uint64_t        emax;
+    union {
+        struct {
+            uint64_t        cnt;
+            uint64_t        ttl;
+            uint64_t        min;
+            uint64_t        max;
+            uint64_t        bcnt;
+            uint64_t        bmin;
+            uint64_t        bmax;
+            uint64_t        ett;
+            uint64_t        emin;
+            uint64_t        emax;
+        };
+        uint64_t            all[10];
+    };
 } lfio_stats_t;
 
 extern lfio_stats_t        lf_wr_stat;  // libfaric write

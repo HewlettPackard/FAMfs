@@ -83,5 +83,6 @@ int unifycr_fid_store_fixed_write(
 
 int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off);
 int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid);
+void famfs_merge_md();
 
 #endif /* UNIFYCR_FIXED_H */

@@ -234,6 +234,11 @@ LFS_CTX_t *lfs_ctx = NULL;
 
 
 lfio_stats_t        lf_wr_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        lf_rd_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        md_fp_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        md_fg_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        md_ap_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        md_ag_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 
 int do_lf_stats = 0;
 
@@ -2033,6 +2038,9 @@ static int unifycr_init(int rank)
                 return UNIFYCR_FAILURE;
             }
         }
+
+        if (getenv("FAMFS_DO_STATS")) 
+            do_lf_stats = 1;
 
         /* remember that we've now initialized the library */
         unifycr_initialized = 1;

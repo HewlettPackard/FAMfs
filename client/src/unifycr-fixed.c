@@ -382,16 +382,20 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
 famfs_mr_list_t known_mrs = {0, NULL};
 
 #define FAMFS_MR_AU 8
+#define LMR_BASE_KEY 1000000
 
 int famfs_buf_reg(char *buf, size_t len, void **rid) {
+    struct fid_mr *mr;
+    N_PARAMS_t *pr = lfs_ctx->lfs_params;
+    LF_CL_t    *me = pr->lf_clients[pr->node_id];
     int i;
 
     if (fs_type != FAMFS)
         return -EINVAL;
 
-    struct fid_mr *mr;
-    N_PARAMS_t *pr = lfs_ctx->lfs_params;
-    LF_CL_t    *me = pr->lf_clients[pr->node_id];
+    // if local registration is not enabled, do nothing
+    if (!pr->lf_mr_flags.local) 
+        return 0;
 
     if (!known_mrs.cnt) {
         known_mrs.regs = (lf_mreg_t *)calloc(FAMFS_MR_AU, sizeof(lf_mreg_t));
@@ -415,7 +419,8 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
             known_mrs.cnt += FAMFS_MR_AU;
         }
     }
-    ON_FI_ERR_RET(fi_mr_reg(me->domain, buf, len, FI_REMOTE_READ | FI_REMOTE_WRITE, 0, me->mr_key, 0, &known_mrs.regs[i].mreg, NULL), "cln fi_mr_reg failed");
+    unsigned long my_key = LMR_BASE_KEY + me->node_id*10000 + local_rank_idx*100 + i;
+    ON_FI_ERR_RET(fi_mr_reg(me->domain, buf, len, FI_REMOTE_READ | FI_REMOTE_WRITE, 0, my_key, 0, &known_mrs.regs[i].mreg, NULL), "cln fi_mr_reg failed");
 
     known_mrs.regs[i].buf = buf;
     known_mrs.regs[i].len = len;
@@ -426,6 +431,11 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
 }
 
 int famfs_buf_unreg(void *rid) {
+    N_PARAMS_t *pr = lfs_ctx->lfs_params;
+
+    if (!pr->lf_mr_flags.local)
+        return 0;
+
     lf_mreg_t *mr = (lf_mreg_t *)rid;
     ON_FI_ERR_RET(fi_close(&mr->mreg->fid), "cln fi_close failed");
     mr->buf = 0;
@@ -435,7 +445,11 @@ int famfs_buf_unreg(void *rid) {
 }
 
 static int lookup_mreg(char *buf, size_t len) {
+    N_PARAMS_t *pr = lfs_ctx->lfs_params;
     int i; 
+
+    if (!pr->lf_mr_flags.local)
+        return -1;
 
     for (i = 0; i < known_mrs.cnt; i++) 
         if (buf >= known_mrs.regs[i].buf && buf + len <= known_mrs.regs[i].buf + known_mrs.regs[i].len) 
@@ -496,7 +510,6 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
         fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
         dst_node, node->partition,
         len, node->local_desc[0], off, node->mr_key);
-
 
     ix = lookup_mreg(buf, len);
     ON_FI_ERROR(
@@ -638,6 +651,13 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     return rc;
 }
 
+static inline long off_in_chunk(long foff) {
+    return foff - ((foff >> unifycr_chunk_bits) << unifycr_chunk_bits);
+}
+
+static inline long chunk_num(long foff) {
+    return foff >> unifycr_chunk_bits;
+}
 
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,
@@ -729,14 +749,15 @@ static int unifycr_logio_chunk_write(
     } else if (chunk_meta->location == CHUNK_LOCATION_SPILLOVER) {
 	int i;
         int chunk_phy_id;
+        off_t spill_offset;
 
         /* spill over to a file, so write to file descriptor */
         MAP_OR_FAIL(pwrite);
-        off_t spill_offset = unifycr_compute_spill_offset(meta, chunk_id, chunk_offset);
-        /*  printf("spill_offset is %ld, count:%ld, chunk_offset is %ld\n",
-                  spill_offset, count, chunk_offset);
-          fflush(stdout); */
         if (fs_type != FAMFS) {
+            spill_offset = unifycr_compute_spill_offset(meta, chunk_id, chunk_offset);
+            /*  printf("spill_offset is %ld, count:%ld, chunk_offset is %ld\n",
+                      spill_offset, count, chunk_offset);
+              fflush(stdout); */
             ssize_t rc = __real_pwrite(unifycr_spilloverblock, buf, count, spill_offset);
             if (rc < 0)  {
                 perror("pwrite failed");
@@ -744,10 +765,13 @@ static int unifycr_logio_chunk_write(
         } else {
 
             /*  FAMFS: FAM chunk id */
-            chunk_phy_id = physical_chunk_id(meta, chunk_id);
-            DEBUG("%d: write %zu bytes @%jd phy_chunk:%d @%jd\n",
-                  lfs_ctx->lfs_params->node_id, count, spill_offset, chunk_phy_id, chunk_offset);
+            /* *FIXME* we need linearisation algo for this to work: fam_pos != file_pos :( */
+            //chunk_id = chunk_num(pos);
+            //chunk_offset = off_in_chunk(pos);
 
+            chunk_phy_id = physical_chunk_id(meta, chunk_id);
+            DEBUG("%d: write %zu bytes @%d phy_chunk:%d @%lu\n",
+                  lfs_ctx->lfs_params->node_id, count, chunk_id, chunk_phy_id, chunk_offset);
             int rc = lf_write((char *)buf, count, chunk_phy_id, chunk_offset, &my_node, &my_off);
             if (rc) {
                 /* Print the real error code */
@@ -883,6 +907,69 @@ static int unifycr_logio_chunk_write(
 
     /* assume read was successful if we get to here */
     return UNIFYCR_SUCCESS;
+}
+
+static int cmp_md(const void *ap, const void *bp) {
+    md_index_t *mda = (md_index_t *)ap, *mdb = (md_index_t *)bp;
+
+    if (mda->fid > mdb->fid)
+        return 1;
+    else if (mda->fid < mdb->fid)
+        return -1;
+    if (mda->nid > mdb->nid)
+        return 1;
+    else if (mda->nid < mdb->nid)
+        return -1;
+    if (mda->cid > mdb->cid)
+        return 1;
+    else if (mda->cid < mdb->cid)
+        return -1;
+    if (mda->file_pos > mdb->file_pos)
+        return 1;
+    else if (mda->file_pos < mdb->file_pos)
+        return -1;
+    return 0;
+}
+
+static inline int same_chunk(md_index_t *a,  md_index_t *b) {
+    return (a->fid == b->fid  && a->cid == b->cid && a->nid == b->nid);
+}
+
+void famfs_merge_md() {
+    md_index_t *mdp = unifycr_indices.index_entry;
+    off_t     *nrp = unifycr_indices.ptr_num_entries;
+
+    if (*nrp <= 1)
+        return;
+
+    // first, or MD by file id and offset in it
+    off_t i, j = 0, n = *nrp;
+    qsort(mdp, n, sizeof(md_index_t), cmp_md);
+
+    // merge sequential requests within same chunk
+    for (i = 1; i < n; i++) {
+        md_index_t *a = &mdp[j], *b =  &mdp[i];
+        if (same_chunk(a, b) && b->file_pos == a->file_pos + a->length) {
+            a->length += b->length;
+            b->length = 0;
+            if (a->mem_pos > b->mem_pos)
+                a->mem_pos = b->mem_pos;
+        } else {
+            j++;
+        }
+    }
+
+    // now compress MD to get rid of 0 length records
+    for (i = 0, j = 0; i < n; i++) {
+        if (mdp[j].length == 0) {
+            if (mdp[i].length == 0)
+                continue;
+            mdp[j] = mdp[i];
+        }
+        j++;
+    }
+    if (j < i)
+        *nrp = j;
 }
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,

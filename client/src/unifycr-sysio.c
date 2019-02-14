@@ -706,6 +706,10 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
 
         /* don't conflict with active system fds that range from 0 - (fd_limit) */
         ret = fid + unifycr_fd_limit;
+        INIT_STATS(LF_RD_STATS_FN, lf_rd_stat);
+        INIT_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        INIT_STATS(MD_FP_STATS_FN, md_fp_stat);
+        INIT_STATS(MD_FG_STATS_FN, md_fg_stat);
         return ret;
     } else {
         MAP_OR_FAIL(open);
@@ -1571,6 +1575,7 @@ int famfs_read(read_req_t *read_req, int count)
     read_req_t *rq_ptr;
     int *rc_ptr = (int *)shm_recvbuf;
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
+    struct timeval start = now(0);
 
 
     unifycr_fattr_t tmp_meta_entry;
@@ -1639,6 +1644,8 @@ int famfs_read(read_req_t *read_req, int count)
     *((int *)cmd_buf + 1) = rq_cnt;
     *rc_ptr = 0;
 
+    start = now(0); // <- start MD get timer
+
     __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
 
     cmd_fd.events = POLLIN | POLLPRI;
@@ -1673,6 +1680,7 @@ int famfs_read(read_req_t *read_req, int count)
             return -EAGAIN;
         }
     }
+    UPDATE_STATS(md_fg_stat, *rc_ptr, *rc_ptr*sizeof(fsmd_kv_t), start);
 
     tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
     if (tot_sz < 0) {
@@ -1841,11 +1849,21 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
     }
 }
 
+static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
+
 static int unifycr_fsync(void)
 {
+    if (!*unifycr_indices.ptr_num_entries)
+        return 0;
+
+    struct timeval start = now(0);
+
     if (unifycr_use_spillover)
         if (__real_fsync(unifycr_spilloverblock))
             return -1; /* EIO */
+
+    if (fs_type == FAMFS && allow_merge)
+        famfs_merge_md();
 
     if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         /*put indices to key-value store*/
@@ -1888,9 +1906,9 @@ static int unifycr_fsync(void)
                 return -1;
             }
         }
+        UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
         *unifycr_indices.ptr_num_entries = 0;
         //*unifycr_fattrs.ptr_num_entries = 0;
-        DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
 
         /* TODO: if using spill over we may have some fsyncing to do */
     }
@@ -2112,6 +2130,10 @@ int UNIFYCR_WRAP(close)(int fd)
             errno = EIO;
             return -1;
         }
+        DUMP_STATS(LF_RD_STATS_FN, lf_rd_stat);
+        DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        DUMP_STATS(MD_FP_STATS_FN, md_fp_stat);
+        DUMP_STATS(MD_FG_STATS_FN, md_fg_stat);
 
         /* TODO: free file descriptor */
 

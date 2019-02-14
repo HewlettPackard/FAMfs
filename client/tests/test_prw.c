@@ -81,7 +81,7 @@ typedef struct {
 int main(int argc, char *argv[]) {
 
     printf("start test_pwr\n");
-    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:vGR";
+    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:GR";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     long blk_sz, seg_num, tran_sz = 1024*1024, read_sz = tran_sz;
     //long num_reqs;
@@ -89,9 +89,10 @@ int main(int argc, char *argv[]) {
             to_unmount = 0;
     int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
     int initialized, provided, rrc = MPI_SUCCESS;
-    int verify = 0, gbuf = 0, mreg = 0;
+    int gbuf = 0, mreg = 0;
     off_t ini_off;
     void *rid;
+    int vmax = 0;
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -147,7 +148,7 @@ int main(int argc, char *argv[]) {
             case 'w':
                write_only = atoi(optarg); break;
             case 'v':
-               verify++; break;
+               vmax = atoi(optarg); break;
             case 'G':
                gbuf++; break;
             case 'R':
@@ -359,7 +360,7 @@ int main(int argc, char *argv[]) {
 
     gettimeofday(&read_start, NULL);
 
-    long e = 0;
+    long vcnt, e = 0;
     //long cursor;
     offset = 0;
     for (i = 0; i < seg_num; i++) {
@@ -394,6 +395,7 @@ int main(int argc, char *argv[]) {
                 return -1;
             }
 
+            vcnt = 0;
             for (k = 0; k < read_sz/sizeof(unsigned long); k++) {
                 //unsigned long *p = &(((unsigned long*)(read_buf + cursor))[k]);
                
@@ -404,8 +406,10 @@ int main(int argc, char *argv[]) {
 
                 if (*p != offset + (lw_off*sizeof(long))) {
                     e++;
-                    if (verify)
+                    if (vcnt < vmax) {
                         printf("DATA MISMATCH @%lu, expected %lu, got %lu [%u]\n", offset, offset + (lw_off*sizeof(long)), *p, k*8);
+                        vcnt++;
+                    }
 #if 0
                     int ii, jj;
                     for (ii = 0; ii < 16; ii++) {
