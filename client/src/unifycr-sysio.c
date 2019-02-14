@@ -1575,8 +1575,6 @@ int famfs_read(read_req_t *read_req, int count)
     read_req_t *rq_ptr;
     int *rc_ptr = (int *)shm_recvbuf;
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
-    struct timeval start = now(0);
-
 
     unifycr_fattr_t tmp_meta_entry;
     unifycr_fattr_t *ptr_meta_entry;
@@ -1644,8 +1642,8 @@ int famfs_read(read_req_t *read_req, int count)
     *((int *)cmd_buf + 1) = rq_cnt;
     *rc_ptr = 0;
 
-    start = now(0); // <- start MD get timer
-
+    STATS_START(start);
+    
     __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
 
     cmd_fd.events = POLLIN | POLLPRI;
@@ -1856,7 +1854,7 @@ static int unifycr_fsync(void)
     if (!*unifycr_indices.ptr_num_entries)
         return 0;
 
-    struct timeval start = now(0);
+    STATS_START(start);
 
     if (unifycr_use_spillover)
         if (__real_fsync(unifycr_spilloverblock))

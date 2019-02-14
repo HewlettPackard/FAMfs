@@ -464,7 +464,6 @@ off_t           saved_off;
 
 int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off)
 {
-    struct timeval start = now(0);
     N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
     char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
@@ -504,6 +503,9 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
     if (trg_off)
         *trg_off = off;
+
+    STATS_START(start);
+
     //for (i = 0; i < blocks; i++) {
     DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
         lfs_params->node_id, chunk_phy_id, chunk_offset,
@@ -577,7 +579,6 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 
 int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid)
 {
-    struct timeval start = now(0);
     N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
     //char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
@@ -615,6 +616,8 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     ASSERT(chunk_offset + len <= unifycr_chunk_size);
     ASSERT(dst_node < lfs_params->fam_cnt);
     */
+
+    STATS_START(start);
 
     off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*lfs_params->chunk_sz; 
     DEBUG("%d: read chunk:%jd @%lu to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",

@@ -17,7 +17,7 @@
 #define mSec (1000L)
 #define uSec (mSec*1000L)
 
-#define CKPFS_STATS 1
+//#define CKPFS_STATS 1
 extern int do_lf_stats;
 
 #if CKPFS_STATS
@@ -73,11 +73,17 @@ extern int do_lf_stats;
     }\
 }
 
+#define STATS_START(start) \
+    struct timeval start;  \
+    if (do_lf_stats)       \
+        start = now(0);
+
 #else
 
 #define DUMP_STATS(name, sb) do {;} while (0);
 #define INIT_STATS(name, sb) do {;} while (0);
 #define UPDATE_STATS(sb, n, s, ts) do {;} while(0);
+#define STATS_START(start) do {;} while(0);
 
 #endif
 

@@ -237,6 +237,8 @@ int main(int argc, char *argv[])
     if (log_print_level > 0) {
         printf("unifycrd is running\n");
     }
+
+
     rc = sock_wait_cli_cmd();
     if (rc != ULFS_SUCCESS) {
         int ret = sock_handle_error(rc);
@@ -259,6 +261,12 @@ int main(int argc, char *argv[])
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
+    {
+        char fname[256];
+        sprintf(fname, "/tmp/uifycrd.running.%d", getpid());
+        int flag = open(fname, O_RDWR | O_CREAT);
+        close(flag);
+    }
 
     while (1) {
         rc = sock_wait_cli_cmd();
