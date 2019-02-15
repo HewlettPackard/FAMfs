@@ -57,6 +57,9 @@
 
 #define GEN_STR_LEN 1024
 
+#define print0(...) if (rank == 0 && vmax == 0) {printf(__VA_ARGS__);}
+#define printv(...) if (vmax > 0) {printf(__VA_ARGS__);}
+
 struct timeval read_start, read_end;
 double read_time = 0;
 
@@ -78,10 +81,31 @@ typedef struct {
 #define max(a,b) (((a) > (b)) ? (a) : (b))
 #endif
 
+long getval(char *str) {
+    char *sfx;
+    size_t rv = strtoul(str, &sfx, 10);
+
+    switch (*sfx) {
+    case 'G':
+    case 'g':
+        rv *= 1024*1024*1024L;
+        break;
+    case 'M':
+    case 'm':
+        rv *= 1024*1024L;
+        break;
+    case 'K':
+    case 'k':
+        rv *= 1024L;
+        break;
+    }
+
+    return rv;
+}
+
 int main(int argc, char *argv[]) {
 
-    printf("start test_pwr\n");
-    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:GR";
+    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GR";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     long blk_sz, seg_num, tran_sz = 1024*1024, read_sz = tran_sz;
     //long num_reqs;
@@ -93,6 +117,7 @@ int main(int argc, char *argv[]) {
     off_t ini_off;
     void *rid;
     int vmax = 0;
+    size_t warmup = 0;
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -116,23 +141,23 @@ int main(int argc, char *argv[]) {
         printf("MPI_Comm_rank failed\n");
         exit(1);
     }
+    print0("startng test_pwr\n");
 
 #define ULFS_MAX_FILENAME 128
     char hostname[ULFS_MAX_FILENAME] = {0};
     gethostname(hostname, ULFS_MAX_FILENAME);
-    printf("%s: Rank=%u, Rank num=%u\n", hostname, rank, rank_num);
+    printv("%s: Rank=%u, Rank num=%u\n", hostname, rank, rank_num);
 
     while((c = getopt(argc, argv, opts)) != -1) {
-
         switch (c)  {
             case 'b': /*size of block*/
-               blk_sz = atol(optarg); break;
+               blk_sz = getval(optarg); break;
             case 's': /*number of blocks each process writes*/
-               seg_num = atol(optarg); break;
+               seg_num = getval(optarg); break;
             case 't': /*size of each write*/
-               tran_sz = atol(optarg); break;
+               tran_sz = getval(optarg); break;
             case 'r': /*size of each read*/
-               read_sz= atol(optarg); break;
+               read_sz= getval(optarg); break;
             case 'f':
                strcpy(fname, optarg); break;
             case 'p':
@@ -153,20 +178,22 @@ int main(int argc, char *argv[]) {
                gbuf++; break;
             case 'R':
                mreg++; break;
-            case'i':
-               ini_off = atoi(optarg); break;   /* 1st write initial offset: simulate unaligned writes */
+            case 'i':
+               ini_off = getval(optarg); break;   /* 1st write initial offset: simulate unaligned writes */
+            case 'W':
+               warmup = getval(optarg); break;
         }
     }
-    if (rank == 0)
-        printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
-                (pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
-                (direct_io)? "direct":"buffered",
-                (sequential_io)? "sequential":"randomized",
-                (write_only)? "W":"W/R",
-                tran_sz, read_sz, blk_sz, ini_off);
+
+    if (rank == 0) printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
+        (pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
+        (direct_io)? "direct":"buffered",
+        (sequential_io)? "sequential":"randomized",
+        (write_only)? "W":"W/R",
+        tran_sz, read_sz, blk_sz, ini_off);
 
     if (mount_burstfs) {
-        printf("mount unifycr\n");
+        print0("mount unifycr\n");
         unifycr_mount("/tmp/mnt", rank, rank_num, 0, 3);
     } else
         to_unmount = 0;
@@ -181,16 +208,38 @@ int main(int argc, char *argv[]) {
         posix_memalign((void**)&buf, getpagesize(), len);
     }
 
+
     if (buf == NULL || buf == MAP_FAILED) {
-        printf("[%d] can't allocate %luMiB of  memory\n", rank, len/1024/1024);
+        printf("[%02d] can't allocate %luMiB of  memory\n", rank, len/1024/1024);
         return -1;
     }
     memset(buf, 0, max(tran_sz, read_sz));
 
+    if (warmup) {
+        print0("warming up...\n");
+        printv("%02d warming up\n", rank);
+        sprintf(tmpfname, "%s-%d.warmup", fname, rank);
+        fd = open(tmpfname, O_RDWR | O_CREAT);
+        if (fd < 0) {
+            printf("%02d warm-up file %s open failure\n", rank, fname);
+            exit(1);
+        }
+        while (warmup) {
+            ssize_t l = write(fd, buf, tran_sz);
+
+            if (l < 0) {
+                printf("%02d warm-up file %s write error\n", rank, fname);
+                exit(1);
+            }
+            warmup -= l;
+        }
+        close(fd);
+    }
+
     if (mreg) {
        int rc = famfs_buf_reg(buf, len, &rid);
        if (rc) {
-           printf("buf register error %d\n", rc);
+           printf("%02d buf register error %d\n", rank, rc);
            return -1;
        }
     }
@@ -203,14 +252,14 @@ int main(int argc, char *argv[]) {
         sprintf(tmpfname, "%s", fname);
     }
 
-    printf("open file: %s\n", tmpfname);
+    print0("opening files\n");
 
     int flags = O_RDWR | O_CREAT | O_TRUNC;
     if (direct_io)
         flags |= O_DIRECT;
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        printf("open file failure\n");
+        printf("%02d open file %s failure\n", rank, tmpfname);
         fflush(stdout);
         return -1;
     }
@@ -222,7 +271,8 @@ int main(int argc, char *argv[]) {
     char *bufp = buf;
     offset = 0;
 
-    printf("write to file\n");
+    print0("writing...\n");
+    printv("%02d writing\n", rank);
     gettimeofday(&write_start, NULL);
 
     for (i = 0; i < seg_num; i++) {
@@ -259,14 +309,14 @@ int main(int argc, char *argv[]) {
 
             rc = pwrite(fd, bufp, tran_sz, offset);
             if (rc < 0) {
-                printf("write failure\n");
+                printf("%02d write failure\n", rank);
                 fflush(stdout);
                 return -1;
             }
         }
     }
 
-    printf("sync file\n");
+    printv("%02d syncing\n", rank);
 
     gettimeofday(&meta_start, NULL);
     fsync(fd);
@@ -279,7 +329,6 @@ int main(int argc, char *argv[]) {
         write_end.tv_usec - write_start.tv_usec;
     write_time = write_time/1000000;
 
-    printf("close file\n");
 
     close(fd);
     if (direct_io) {
@@ -288,6 +337,7 @@ int main(int argc, char *argv[]) {
         system("echo 1 > /proc/sys/vm/drop_caches");
     }
     MPI_Barrier(MPI_COMM_WORLD);
+    print0("closed files\n");
 
 
     double write_bw = (double)blk_sz*seg_num/1048576/write_time;
@@ -349,9 +399,11 @@ int main(int argc, char *argv[]) {
     else
         flags = O_RDONLY;
 
+    print0("open for read\n");
+
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        printf("open file failure\n");
+        printf("%02d open file failure\n", rank);
         fflush(stdout);
         return -1;
     }
@@ -359,6 +411,9 @@ int main(int argc, char *argv[]) {
         fsync(fd);
 
     gettimeofday(&read_start, NULL);
+
+    print0("reading...\n");
+    printv("%02d reading\n", rank);
 
     long vcnt, e = 0;
     //long cursor;
@@ -390,7 +445,7 @@ int main(int argc, char *argv[]) {
 
             rc = pread(fd, bufp, read_sz, offset);
             if (rc < 0) {
-                printf("read failure\n");
+                printf("%02d read failure\n", rank);
                 fflush(stdout);
                 return -1;
             }
@@ -429,9 +484,9 @@ int main(int argc, char *argv[]) {
     }
 
     if (e)
-        printf("%ld data verification errors\n", e);
+        printf("%02d: %ld data verification errors\n", rank, e);
     else 
-        printf("Success!!!\n");
+        printv("%02d success\n", rank);
 
     gettimeofday(&read_end, NULL);
     read_time = (read_end.tv_sec - read_start.tv_sec)*1000000 + read_end.tv_usec - read_start.tv_usec;
