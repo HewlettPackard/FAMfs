@@ -83,7 +83,7 @@ typedef struct {
 
 long getval(char *str) {
     char *sfx;
-    size_t rv = strtoul(str, &sfx, 10);
+    ssize_t rv = strtol(str, &sfx, 10);
 
     switch (*sfx) {
     case 'G':
@@ -117,7 +117,7 @@ int main(int argc, char *argv[]) {
     off_t ini_off;
     void *rid;
     int vmax = 0;
-    size_t warmup = 0;
+    ssize_t warmup = 0;
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -205,7 +205,7 @@ int main(int argc, char *argv[]) {
         buf = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     } else {
         len = max(tran_sz, read_sz);
-        posix_memalign((void**)&buf, getpagesize(), len);
+        posix_memalign((void**)&buf, getpagesize(), max(len,1024*1024));
     }
 
 
@@ -224,8 +224,8 @@ int main(int argc, char *argv[]) {
             printf("%02d warm-up file %s open failure\n", rank, fname);
             exit(1);
         }
-        while (warmup) {
-            ssize_t l = write(fd, buf, tran_sz);
+        while (warmup > 0) {
+            ssize_t l = write(fd, buf, 1024*1024);
 
             if (l < 0) {
                 printf("%02d warm-up file %s write error\n", rank, fname);
@@ -357,7 +357,7 @@ int main(int argc, char *argv[]) {
     MPI_Reduce(&meta_time, &max_meta_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     if (rank == 0) {
-        printf("Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",
+        printf("### Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",
                 agg_write_bw, min_write_bw);
         printf("Per-process sync time %lf sec, Max %lf sec\n",
                 agg_meta_time / rank_num, max_meta_time);
@@ -514,7 +514,7 @@ int main(int argc, char *argv[]) {
 
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
-        printf("Aggregate Read BW is %lfMB/s, Min Read BW is %lf\n", agg_read_bw,  min_read_bw);
+        printf("### Aggregate Read BW is %lfMB/s, Min Read BW is %lf\n", agg_read_bw,  min_read_bw);
         fflush(stdout);
     }
 
