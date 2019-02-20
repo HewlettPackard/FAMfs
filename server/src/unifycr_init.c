@@ -104,26 +104,25 @@ int mds_by_name() {
     return find_my_node(nlist, ncnt, 1) >= 0;
 }
 
-int make_mds_vec(int wsize, int rank) {
+int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
     int n = 0;
-    char is_mds = (char)mds_by_name();
+    char *vec;
 
-    if (!(mds_vec = malloc(wsize))) {
+    if (!(vec = malloc(wsize))) {
         LOG(LOG_ERR, "memory error");
         return -1;
     }
-    memset(mds_vec, 0, wsize);
+    memset(vec, 0, wsize);
     MPI_Barrier(MPI_COMM_WORLD);
-    mds_vec[rank] = is_mds;
+    vec[rank] = (char) is_member();
     ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
-             mds_vec, 1, MPI_BYTE, MPI_COMM_WORLD),
+             vec, 1, MPI_BYTE, MPI_COMM_WORLD),
             "MPI_Allgather");
     for (int i = 0; i < wsize; i++) {
-        if (mds_vec[i] < 0) {
-            free(mds_vec);
-            mds_vec = NULL;
+        if (vec[i] < 0) {
+            free(vec);
             return 0;
-        } else if (mds_vec[i]) {
+        } else if (vec[i]) {
             n++;
         }
     }
@@ -131,10 +130,11 @@ int make_mds_vec(int wsize, int rank) {
         char buf[1024];
         int l = snprintf(buf, sizeof(buf), "MDS rank(s): ");
         for (int i = 0; i < wsize; i++)
-            if (mds_vec[i])
+            if (vec[i])
                 l += snprintf(&buf[l], sizeof(buf), "%d ", i);
         LOG(LOG_INFO, "%s\n", buf);
     }
+    *vec_p = vec;
     return n;
 }
 
@@ -203,25 +203,24 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    if ((rc = make_mds_vec(glb_size, glb_rank)) > 0) {
+    if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank, mds_by_name)) > 0) {
         LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
         num_mds = rc;
-
-        /* FAM emulation */
-        char *lfs_cmd = getstr(LFS_COMMAND);
-        if (lfs_cmd) {
-            rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size,
-                   mds_vec, &lfs_ctx_p);
-            if (rc) {
-                LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
-                    glb_rank, glb_size, rc);
-                exit(1);
-            }
-        }
     } else if (rc < 0) {
         LOG(LOG_ERR, "Error obtaining MDS vector");
     } else {
         num_mds = 0;
+    }
+
+   /* Fork LF server process if FAM emulation is required */
+   char *lfs_cmd = getstr(LFS_COMMAND);
+   if (lfs_cmd) {
+	rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size, &lfs_ctx_p);
+	if (rc) {
+	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
+		glb_rank, glb_size, rc);
+		exit(1);
+	}
     }
 
     /*launch the service manager*/

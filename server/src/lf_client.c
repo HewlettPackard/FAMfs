@@ -18,8 +18,8 @@
 #include "lf_client.h"
 
 
-/* Parse LFS_COMMAND and start FAM emulation servers on nodes marked in map */
-int lfs_emulate_fams(char * const cmdline, int rank, int size, char *map,
+/* Parse LFS_COMMAND and start FAM emulation servers on nodes in hostlist */
+int lfs_emulate_fams(char * const cmdline, int rank, int size,
     LFS_CTX_t **lfs_ctx_pp)
 {
     LFS_CTX_t *lfs_ctx_p = NULL;
@@ -80,23 +80,10 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size, char *map,
         goto _exit;
     } else if (cpid == 0) {
         LF_SRV_t   **lf_servers;
-        int lfs_size, *lfs_ranks;
         int i, srv_cnt;
 
-        lfs_ranks = (int *) calloc(size, sizeof(int));
-        if (lfs_ranks == NULL)
-            goto _child_exit;
-        lfs_size = 0;
-        bool start_lfs = false;
-        for (i = 0; i < size; i++) {
-            if (!map[i])
-                continue;
-            lfs_ranks[lfs_size++] = i;
-            if (i == rank)
-                start_lfs = true;
-        }
-        /* On each node in map[] */
-        if (start_lfs) {
+        /* On each node in nodelist */
+        if (find_my_node(params->nodelist, params->node_cnt, 1) >= 0) {
 
             /* Initialize libfabric target */
             rc = lf_servers_init(&lf_servers, params, 0);
@@ -105,7 +92,6 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size, char *map,
                     params->nodelist[params->node_id], rc);
         }
 
-_child_exit:
         /* It's Ok for parent process to proceed with MPI communication */
         pthread_mutex_lock(&lfs_shm->lock);
         lfs_shm->lfs_ready = rc? -1 : 1;
