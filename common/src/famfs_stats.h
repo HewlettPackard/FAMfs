@@ -17,10 +17,10 @@
 #define mSec (1000L)
 #define uSec (mSec*1000L)
 
-//#define CKPFS_STATS 1
+//#define FAMFS_STATS 1
 extern int do_lf_stats;
 
-#if CKPFS_STATS
+#if FAMFS_STATS
 
 #define DUMP_STATS(name, sb) if (do_lf_stats) {\
     char *__ev = getenv("##name");\
