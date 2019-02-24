@@ -55,10 +55,14 @@
 
 #include <unifycr.h>
 
+#include "famfs_stats.h"
+
+
 #define GEN_STR_LEN 1024
 
 #define print0(...) if (rank == 0 && vmax == 0) {printf(__VA_ARGS__);}
 #define printv(...) if (vmax > 0) {printf(__VA_ARGS__);}
+#define getv(s) _getval(NULL, (s), 0)
 
 struct timeval read_start, read_end;
 double read_time = 0;
@@ -77,35 +81,9 @@ typedef struct {
 
 }read_req_t;
 
-#ifndef max
-#define max(a,b) (((a) > (b)) ? (a) : (b))
-#endif
-
-long getval(char *str) {
-    char *sfx;
-    ssize_t rv = strtol(str, &sfx, 10);
-
-    switch (*sfx) {
-    case 'G':
-    case 'g':
-        rv *= 1024*1024*1024L;
-        break;
-    case 'M':
-    case 'm':
-        rv *= 1024*1024L;
-        break;
-    case 'K':
-    case 'k':
-        rv *= 1024L;
-        break;
-    }
-
-    return rv;
-}
-
 int main(int argc, char *argv[]) {
 
-    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GR";
+    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     long blk_sz, seg_num, tran_sz = 1024*1024, read_sz = tran_sz;
     //long num_reqs;
@@ -114,10 +92,12 @@ int main(int argc, char *argv[]) {
     int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
     int initialized, provided, rrc = MPI_SUCCESS;
     int gbuf = 0, mreg = 0;
-    off_t ini_off;
+    off_t ini_off = 0;
     void *rid;
     int vmax = 0;
     ssize_t warmup = 0;
+    struct famsim_stat_ctx *famsim_ctx = NULL;
+    int carbon_stats = 0; /* Only on Carbon: CPU instruction stats */
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -151,13 +131,13 @@ int main(int argc, char *argv[]) {
     while((c = getopt(argc, argv, opts)) != -1) {
         switch (c)  {
             case 'b': /*size of block*/
-               blk_sz = getval(optarg); break;
+               blk_sz = getv(optarg); break;
             case 's': /*number of blocks each process writes*/
-               seg_num = getval(optarg); break;
+               seg_num = getv(optarg); break;
             case 't': /*size of each write*/
-               tran_sz = getval(optarg); break;
+               tran_sz = getv(optarg); break;
             case 'r': /*size of each read*/
-               read_sz= getval(optarg); break;
+               read_sz= getv(optarg); break;
             case 'f':
                strcpy(fname, optarg); break;
             case 'p':
@@ -179,9 +159,11 @@ int main(int argc, char *argv[]) {
             case 'R':
                mreg++; break;
             case 'i':
-               ini_off = getval(optarg); break;   /* 1st write initial offset: simulate unaligned writes */
+               ini_off = getv(optarg); break;   /* 1st write initial offset: simulate unaligned writes */
             case 'W':
-               warmup = getval(optarg); break;
+               warmup = getv(optarg); break;
+            case 'C':
+               carbon_stats = atoi(optarg); break; /* 1: Enable stats */
         }
     }
 
@@ -191,6 +173,16 @@ int main(int argc, char *argv[]) {
         (sequential_io)? "sequential":"randomized",
         (write_only)? "W":"W/R",
         tran_sz, read_sz, blk_sz, ini_off);
+
+    famsim_stats_init(&famsim_ctx, carbon_stats?"/tmp":NULL, "famsim", rank);
+    if (carbon_stats != 0) {
+        if (rank == 0 ) {
+            printf("   Carbon stats %sabled\n", famsim_ctx?"en":"dis");
+#if (HAVE_FAM_SIM == 0)
+            printf("   FAMfs was configured without --with-fam-sim option!\n");
+#endif
+        }
+    }
 
     if (mount_burstfs) {
         print0("mount unifycr\n");
@@ -307,7 +299,9 @@ int main(int argc, char *argv[]) {
                 lw_off++;
             }
 
+            famsim_stats_start(famsim_ctx, &famsim_stats_send);
             rc = pwrite(fd, bufp, tran_sz, offset);
+            famsim_stats_pause(&famsim_stats_send);
             if (rc < 0) {
                 printf("%02d write failure\n", rank);
                 fflush(stdout);
@@ -355,6 +349,9 @@ int main(int argc, char *argv[]) {
 
     double max_meta_time;
     MPI_Reduce(&meta_time, &max_meta_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    /* write out FAM simulator stats */
+    famsim_stats_stop(&famsim_stats_send, 1);
 
     if (rank == 0) {
         printf("### Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",

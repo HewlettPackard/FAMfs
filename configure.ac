@@ -85,6 +85,18 @@ AC_ARG_WITH(pkgconfigdir,
 AC_SUBST(pkgconfigdir)
 
 ## FAMfs options
+AC_ARG_WITH([fam-sim],
+            [AS_HELP_STRING(
+               [--with-fam-sim=@<:@Path to simulator headers@:>@],
+               [Provide path to option simulator headers])],
+            [AC_CHECK_HEADER(
+               ["${with_fam_sim}/hpe_sim_api_linux64.h"], [],
+               [AC_MSG_FAILURE(
+                 [*** Carbon simulator API requested but hpe_sim_api_linux64.h missing])
+               ])
+             AC_DEFINE(HAVE_FAM_SIM, 1, Define if Carbon simulator API should be used)
+             AC_SUBST(COMMON_CPPFLAGS, "-I$with_fam_sim")])
+
 AC_ARG_ENABLE(cuserid,
 [  --disable-cuserid       Disables attempted use of cuserid() at run time],
 [if test "x$enableval" = "xno" ; then

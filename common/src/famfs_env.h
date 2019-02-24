@@ -12,6 +12,9 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include "config.h"
+
+
 #ifndef min
 #define min(a,b)			\
     ({	__typeof__ (a) _a = (a);	\

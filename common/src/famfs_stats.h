@@ -7,7 +7,12 @@
 #ifndef FAMFS_STATS_H
 #define FAMFS_STATS_H
 
+#include <pthread.h>
+#include <stdint.h>
 #include <sys/time.h>
+
+#include "famfs_env.h"
+
 
 #define KiB (1024L)
 #define MiB (KiB*1024L)
@@ -142,5 +147,60 @@ extern lfio_stats_t        md_fg_stat;  // MDHIM file position get
 extern lfio_stats_t        md_fp_stat;  // MDHIM file position put
 extern lfio_stats_t        md_ag_stat;  // MDHIM file attr get
 extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
+
+
+/* Carbon simulator instruction stats */
+enum {
+        FAMSIM_STATS_STOPPED,
+        FAMSIM_STATS_RUNNING,
+        FAMSIM_STATS_PAUSED,
+};
+
+struct famsim_stat_ctx {
+        int  stats_id;
+        char *stats_dir;
+        char *stats_unique;
+};
+
+struct famsim_stats {
+        struct famsim_stat_ctx  *stat_ctx;
+        void                    *buf;
+        uint64_t                buf_len;
+        int                     fd;
+        uint16_t                uid;
+        uint8_t                 state;
+};
+
+
+#define DEFINE_FAMSIM_STATS(_name, _uid)                          \
+        struct famsim_stats _name = { .uid = _uid, .fd = -1,      \
+				      .state = FAMSIM_STATS_STOPPED, }
+
+extern struct famsim_stats      famsim_stats_test;
+extern struct famsim_stats      famsim_stats_send;
+extern struct famsim_stats      famsim_stats_recv;
+
+#if (HAVE_FAM_SIM == 1)
+
+#include <hpe_sim_api_linux64.h>
+
+void famsim_stats_init(struct famsim_stat_ctx **ctx_p, const char *dir, const char *fn, int id);
+void famsim_stats_start(struct famsim_stat_ctx *ctx, struct famsim_stats *stats);
+void famsim_stats_stop(struct famsim_stats *stats, int do_write);
+void famsim_stats_pause(struct famsim_stats *stats);
+void famsim_stats_close(struct famsim_stats *stats);
+
+#else
+
+static inline void famsim_stats_init(struct famsim_stat_ctx **ctx_p, const char *dir, const char *fn, int id) \
+    { (void)ctx_p; (void)dir; (void)fn; (void)id; }
+static inline void famsim_stats_start(struct famsim_stat_ctx *ctx, struct famsim_stats *stats) \
+    { (void)ctx; (void)stats; }
+static inline void famsim_stats_stop(struct famsim_stats *stats, int do_write) \
+    { (void)stats; (void)do_write; }
+static inline void famsim_stats_pause(struct famsim_stats *stats) { (void)stats; }
+static inline void famsim_stats_close(struct famsim_stats *stats) { (void)stats; }
+
+#endif /* HAVE_FAM_SIM == 1 */
 
 #endif  /* FAMFS_STATS_H */

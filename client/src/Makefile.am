@@ -26,6 +26,7 @@ libfamfs_la_SOURCES = \
   fam_stripe.h
 
 libfamfs_la_CPPFLAGS = \
+  -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE \
   -I$(top_builddir)/common/src \
   -I$(top_builddir)/client \
   $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
@@ -58,6 +59,7 @@ libfamfs_gotcha_la_SOURCES = \
 
 libfamfs_gotcha_la_CPPFLAGS = \
   -DUNIFYCR_GOTCHA \
+  -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE \
   -I$(top_builddir)/common/src \
   -I$(top_builddir)/client \
   $(GOTCHA_CFLAGS) $(LIBFABRIC_CFLAGS) $(MPI_CLDFLAGS)
