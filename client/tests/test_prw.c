@@ -300,8 +300,15 @@ int main(int argc, char *argv[]) {
             }
 
             famsim_stats_start(famsim_ctx, &famsim_stats_send);
+
             rc = pwrite(fd, bufp, tran_sz, offset);
-            famsim_stats_pause(&famsim_stats_send);
+
+            /* TODO: The number of FAMs is hardcoded to four! */
+            if (i==0 && jj<(4/rank_num))
+                famsim_stats_stop(&famsim_stats_send, 1);
+            else
+                famsim_stats_pause(&famsim_stats_send);
+
             if (rc < 0) {
                 printf("%02d write failure\n", rank);
                 fflush(stdout);
@@ -440,7 +447,9 @@ int main(int argc, char *argv[]) {
             if (gbuf) 
                 bufp = buf + i*blk_sz + j*read_sz;
 
+            famsim_stats_start(famsim_ctx, &famsim_stats_recv);
             rc = pread(fd, bufp, read_sz, offset);
+            famsim_stats_pause(&famsim_stats_recv);
             if (rc < 0) {
                 printf("%02d read failure\n", rank);
                 fflush(stdout);
@@ -492,6 +501,9 @@ int main(int argc, char *argv[]) {
     close(fd);
     MPI_Barrier(MPI_COMM_WORLD);
 
+    /* write out FAM simulator stats */
+    famsim_stats_stop(&famsim_stats_recv, 1);
+
     if (mreg)
         famfs_buf_unreg(rid);
 
@@ -508,7 +520,6 @@ int main(int argc, char *argv[]) {
     MPI_Reduce(&read_bw, &agg_read_bw, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&read_time, &max_read_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
-
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
         printf("### Aggregate Read BW is %lfMB/s, Min Read BW is %lf\n", agg_read_bw,  min_read_bw);
@@ -517,8 +528,8 @@ int main(int argc, char *argv[]) {
 
     // *** this will only free libfabric context and WILL NOT shut down servers
     if (to_unmount)
-        ;
-    unifycr_unmount(); 
+ unifycr_shutdown();
+    //unifycr_unmount();
 
     MPI_Finalize();
     exit(rc);
