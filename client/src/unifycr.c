@@ -2674,7 +2674,7 @@ static int CountTasksPerNode(int rank, int numTasks)
 
             /*broadcast the rank_cnt and rank_set information to each
              * rank*/
-            int root_set_no;
+            int root_set_no = 0;
             for (i = 0; i < set_counter; i++) {
                 for (j = 0; j < rank_cnt[i]; j++) {
                     if (rank_set[i][j] != 0) {

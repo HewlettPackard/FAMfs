@@ -749,8 +749,8 @@ static int unifycr_logio_chunk_write(
 
     } else if (chunk_meta->location == CHUNK_LOCATION_SPILLOVER) {
 	int i;
-        int chunk_phy_id;
-        off_t spill_offset;
+        int chunk_phy_id = 0;
+        off_t spill_offset = 0;
 
         /* spill over to a file, so write to file descriptor */
         MAP_OR_FAIL(pwrite);

@@ -51,11 +51,11 @@ void daemonize(void);
 
 static inline size_t _getval(char *name, char *v, size_t df) {
     size_t  val = 0;
-    char    *evv, *last;
+    char    *evv = NULL, *last;
 
     if (v)
         evv = v;
-    else
+    else if(name)
         evv = getenv(name);
     if (evv) {
         val = strtod(evv, &last);
