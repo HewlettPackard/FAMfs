@@ -386,9 +386,9 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 		key_num = floorl(map_num * total_keys);
 
 		break;
+	case MDHIM_UNIFYCR_KEY: break;
 	default:
-		//return 0;
-		break;
+		return MDHIM_ERROR;
 	}
 
 	if (key_type == MDHIM_UNIFYCR_KEY) {
