@@ -211,7 +211,7 @@ int main(int argc, char *argv[]) {
         print0("warming up...\n");
         printv("%02d warming up\n", rank);
         sprintf(tmpfname, "%s-%d.warmup", fname, rank);
-        fd = open(tmpfname, O_RDWR | O_CREAT);
+        fd = open(tmpfname, O_RDWR | O_CREAT | O_TRUNC, 0644);
         if (fd < 0) {
             printf("%02d warm-up file %s open failure\n", rank, fname);
             exit(1);
@@ -249,7 +249,7 @@ int main(int argc, char *argv[]) {
     int flags = O_RDWR | O_CREAT | O_TRUNC;
     if (direct_io)
         flags |= O_DIRECT;
-    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
+    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR, 0644);
     if (fd < 0) {
         printf("%02d open file %s failure\n", rank, tmpfname);
         fflush(stdout);
@@ -405,7 +405,7 @@ int main(int argc, char *argv[]) {
 
     print0("open for read\n");
 
-    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
+    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR, 0644);
     if (fd < 0) {
         printf("%02d open file failure\n", rank);
         fflush(stdout);
