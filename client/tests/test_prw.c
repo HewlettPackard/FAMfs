@@ -85,9 +85,9 @@ int main(int argc, char *argv[]) {
 
     static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
-    long blk_sz, seg_num, tran_sz = 1024*1024, read_sz = tran_sz;
+    long blk_sz, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
     //long num_reqs;
-    int pat, c, rank_num, rank, fd, \
+    int pat = 0, c, rank_num, rank, fd, \
             to_unmount = 0;
     int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
     int initialized, provided, rrc = MPI_SUCCESS;
@@ -166,6 +166,8 @@ int main(int argc, char *argv[]) {
                carbon_stats = atoi(optarg); break; /* 1: Enable stats */
         }
     }
+    if (read_sz == 0)
+        read_sz = tran_sz;
 
     if (rank == 0) printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
         (pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
@@ -190,6 +192,7 @@ int main(int argc, char *argv[]) {
     } else
         to_unmount = 0;
 
+    int rc = 0;
     char *buf;
     size_t len;
     if (gbuf) {
@@ -197,13 +200,16 @@ int main(int argc, char *argv[]) {
         buf = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     } else {
         len = max(tran_sz, read_sz);
-        posix_memalign((void**)&buf, getpagesize(), max(len,1024*1024));
+        rc = posix_memalign((void**)&buf, getpagesize(), max(len,1024*1024));
+        if (rc) {
+            printf("posix_memalign error:%d - %m\n", rc);
+            exit(1);
+        }
     }
-
 
     if (buf == NULL || buf == MAP_FAILED) {
         printf("[%02d] can't allocate %luMiB of  memory\n", rank, len/1024/1024);
-        return -1;
+        exit(1);
     }
     memset(buf, 0, max(tran_sz, read_sz));
 
@@ -211,7 +217,7 @@ int main(int argc, char *argv[]) {
         print0("warming up...\n");
         printv("%02d warming up\n", rank);
         sprintf(tmpfname, "%s-%d.warmup", fname, rank);
-        fd = open(tmpfname, O_RDWR | O_CREAT | O_TRUNC, 0644);
+        fd = open(tmpfname, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             printf("%02d warm-up file %s open failure\n", rank, fname);
             exit(1);
@@ -229,10 +235,10 @@ int main(int argc, char *argv[]) {
     }
 
     if (mreg) {
-       int rc = famfs_buf_reg(buf, len, &rid);
+       rc = famfs_buf_reg(buf, len, &rid);
        if (rc) {
            printf("%02d buf register error %d\n", rank, rc);
-           return -1;
+           exit(1);
        }
     }
 
@@ -249,7 +255,7 @@ int main(int argc, char *argv[]) {
     int flags = O_RDWR | O_CREAT | O_TRUNC;
     if (direct_io)
         flags |= O_DIRECT;
-    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR, 0644);
+    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
         printf("%02d open file %s failure\n", rank, tmpfname);
         fflush(stdout);
@@ -259,7 +265,7 @@ int main(int argc, char *argv[]) {
         fsync(fd);
    
     long i, j; 
-    unsigned long offset, rc, lw_off = 0, *p;
+    unsigned long offset, lw_off = 0, *p;
     char *bufp = buf;
     offset = 0;
 
@@ -301,7 +307,7 @@ int main(int argc, char *argv[]) {
 
             famsim_stats_start(famsim_ctx, &famsim_stats_send);
 
-            rc = pwrite(fd, bufp, tran_sz, offset);
+            ssize_t bcount = pwrite(fd, bufp, tran_sz, offset);
 
             /* TODO: The number of FAMs is hardcoded to four! */
             if (i==0 && jj<(4/rank_num))
@@ -309,10 +315,14 @@ int main(int argc, char *argv[]) {
             else
                 famsim_stats_pause(&famsim_stats_send);
 
-            if (rc < 0) {
-                printf("%02d write failure\n", rank);
+            if (bcount < 0) {
+                printf("%02d write failure - %m\n", rank);
                 fflush(stdout);
-                return -1;
+                exit(1);
+            } else if (bcount != tran_sz) {
+                printf("%02d write failure - %zd bytes written\n", rank, bcount);
+                fflush(stdout);
+                exit(1);
             }
         }
     }
@@ -335,7 +345,11 @@ int main(int argc, char *argv[]) {
     if (direct_io) {
         MPI_Barrier(MPI_COMM_WORLD);
         printf("%s: drop_caches\n", hostname);
-        system("echo 1 > /proc/sys/vm/drop_caches");
+        rc = system("echo 1 > /proc/sys/vm/drop_caches");
+        if (rc) {
+            printf("Faied to drop caches:%d - %m\n", rc);
+            exit(1);
+        }
     }
     MPI_Barrier(MPI_COMM_WORLD);
     print0("closed files\n");
@@ -373,7 +387,7 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
     if (write_only) {
         MPI_Finalize();
-        exit(rc);
+        exit(0);
     }
 
     //num_reqs = blk_sz*seg_num/tran_sz;
@@ -405,7 +419,7 @@ int main(int argc, char *argv[]) {
 
     print0("open for read\n");
 
-    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR, 0644);
+    fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
         printf("%02d open file failure\n", rank);
         fflush(stdout);
