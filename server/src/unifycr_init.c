@@ -263,7 +263,7 @@ int main(int argc, char *argv[])
     {
         char fname[256];
         sprintf(fname, "/tmp/uifycrd.running.%d", getpid());
-        int flag = open(fname, O_RDWR | O_CREAT);
+        int flag = open(fname, O_RDWR | O_CREAT, 0644);
         close(flag);
     }
 
