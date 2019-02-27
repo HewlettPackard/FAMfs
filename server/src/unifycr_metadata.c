@@ -502,6 +502,9 @@ int meta_batch_get(int app_id, int client_id,
             tmp_val = (fsmd_val_t *)bgrm->values[i];
 
             if (fam_fs) {
+                /* TODO: Add support for app, client ids in FAMfs */
+                dest_app = 0;
+                dest_client = 0;
                 del_req_set->msg_meta[tot_num].fam_cid = tmp_val->chunk;
                 del_req_set->msg_meta[tot_num].fam_nid = tmp_val->node;
             } else {
