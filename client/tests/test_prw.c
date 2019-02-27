@@ -85,7 +85,7 @@ int main(int argc, char *argv[]) {
 
     static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
-    long blk_sz, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
+    long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
     //long num_reqs;
     int pat = 0, c, rank_num, rank, fd, \
             to_unmount = 0;
@@ -168,6 +168,8 @@ int main(int argc, char *argv[]) {
     }
     if (read_sz == 0)
         read_sz = tran_sz;
+    if (blk_sz == 0)
+        blk_sz = tran_sz;
 
     if (rank == 0) printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
         (pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),

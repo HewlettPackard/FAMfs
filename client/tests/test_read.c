@@ -44,8 +44,8 @@ int main(int argc, char *argv[]) {
 	static const char * opts = "b:s:t:f:p:u:";
 
 	char tmpfname[GEN_STR_LEN+12], fname[GEN_STR_LEN];
-	long blk_sz, seg_num, tran_sz;
-	int pat, c, rank_num, rank, fd, to_unmount = 0;
+	long blk_sz = 0, seg_num, tran_sz = 1024*1024;
+	int pat = 0, c, rank_num, rank, fd, to_unmount = 0;
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &rank_num);
@@ -66,6 +66,12 @@ int main(int argc, char *argv[]) {
 			case 'u':
 				to_unmount = atoi(optarg); break;
 		  }
+	}
+	if (blk_sz == 0)
+		blk_sz = tran_sz;
+	if (pat != 0 || pat != 1) {
+		printf("Option 'p' must be one of 0: N-1 segment/strided, 1: N-N\n");
+		exit(1);
 	}
 
 	char *read_buf = malloc(blk_sz * seg_num); /*read buffer*/
@@ -100,7 +106,7 @@ int main(int argc, char *argv[]) {
 			if (pat == 0)
 				offset = i * rank_num * blk_sz +\
 					rank * blk_sz + j * tran_sz;
-			else if (pat == 1)
+			else
 				offset = i * blk_sz + j * tran_sz;
 			cursor += tran_sz;
 			lseek(fd, offset, SEEK_SET);
