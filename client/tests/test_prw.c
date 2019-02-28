@@ -83,7 +83,7 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 
-    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:";
+    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:V";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
     //long num_reqs;
@@ -95,6 +95,7 @@ int main(int argc, char *argv[]) {
     off_t ini_off = 0;
     void *rid;
     int vmax = 0;
+    int vfy = 0;
     ssize_t warmup = 0;
     struct famsim_stat_ctx *famsim_ctx = NULL;
     int carbon_stats = 0; /* Only on Carbon: CPU instruction stats */
@@ -164,6 +165,8 @@ int main(int argc, char *argv[]) {
                warmup = getv(optarg); break;
             case 'C':
                carbon_stats = atoi(optarg); break; /* 1: Enable stats */
+            case 'V':
+               vfy++; break;
         }
     }
     if (read_sz == 0)
@@ -296,7 +299,7 @@ int main(int argc, char *argv[]) {
             if (gbuf) 
                 bufp = buf + i*blk_sz + j*tran_sz;
 
-            for (k = 0; k < tran_sz/sizeof(unsigned long); k++) {
+            for (k = 0; vfy && k < tran_sz/sizeof(unsigned long); k++) {
                 if (gbuf) 
                     p = &(((unsigned long *)bufp)[k]);
                 else
@@ -473,7 +476,7 @@ int main(int argc, char *argv[]) {
             }
 
             vcnt = 0;
-            for (k = 0; k < read_sz/sizeof(unsigned long); k++) {
+            for (k = 0; vfy && k < read_sz/sizeof(unsigned long); k++) {
                 //unsigned long *p = &(((unsigned long*)(read_buf + cursor))[k]);
                
                 if (gbuf) 
