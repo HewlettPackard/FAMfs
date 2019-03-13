@@ -524,7 +524,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
         lfs_params->node_id, nodelist[lfs_params->node_id],
         dst_node, fam_stripe->partition);
 
-    if (chunk_phy_id==0)
+    if (fam_stripe->extent == 0 && fam_stripe->stripe_in_part == 0)
         famsim_stats_stop(stats_fi_wr, 1);
     else
         famsim_stats_pause(stats_fi_wr);

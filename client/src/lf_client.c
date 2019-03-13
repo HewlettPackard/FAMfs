@@ -63,6 +63,8 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
     nchunks = lfs_params->nchunks;
 
     stats_fi_wr = famsim_stats_create(famsim_ctx, FAMSIM_STATS_FI_WR);
+    if (stats_fi_wr)
+	famsim_ctx->fam_cnt = lfs_params->fam_cnt;
 
 #if 0
     /* stripe buffer for libfabric I/O */

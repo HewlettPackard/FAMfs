@@ -316,8 +316,8 @@ int main(int argc, char *argv[]) {
 
             ssize_t bcount = pwrite(fd, bufp, tran_sz, offset);
 
-            /* TODO: The number of FAMs is hardcoded to four! */
-            if (i==0 && jj<(4/rank_num))
+            /* TODO: Ensure tran_sz equals to the chunk size */
+            if (i==0 && jj<(famsim_ctx->fam_cnt/rank_num))
                 famsim_stats_stop(famsim_stats_send, 1);
             else
                 famsim_stats_pause(famsim_stats_send);

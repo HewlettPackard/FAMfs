@@ -183,6 +183,7 @@ struct famsim_stat_ctx {
         char                    *stats_dir;
         char                    *stats_unique;
         struct list_head        stats_list;
+        int                     fam_cnt; /* Pass FAM count to a client */
 };
 
 struct famsim_stats {
