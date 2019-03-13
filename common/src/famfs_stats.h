@@ -150,6 +150,28 @@ extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
 
 
 /* Carbon simulator instruction stats */
+
+#if (HAVE_FAM_SIM == 1)
+
+#include <stddef.h>		/* offsetof(type,member) */
+#include <rdma/fabric.h>	/* container_of(ptr, type, member) */
+#include <btrfs/list.h>	/* Simple doubly linked list implementation. */
+
+enum {
+        FAMSIM_STATS_TEST,
+        FAMSIM_STATS_SEND,
+        FAMSIM_STATS_RECV,
+        FAMSIM_STATS_FI_WR,
+};
+
+#else
+
+struct list_head {
+        struct list_head *next, *prev;
+};
+
+#endif /* HAVE_FAM_SIM == 1 */
+
 enum {
         FAMSIM_STATS_STOPPED,
         FAMSIM_STATS_RUNNING,
@@ -157,12 +179,14 @@ enum {
 };
 
 struct famsim_stat_ctx {
-        int  stats_id;
-        char *stats_dir;
-        char *stats_unique;
+        int                     stats_id;
+        char                    *stats_dir;
+        char                    *stats_unique;
+        struct list_head        stats_list;
 };
 
 struct famsim_stats {
+        struct list_head        item;
         struct famsim_stat_ctx  *stat_ctx;
         void                    *buf;
         uint64_t                buf_len;
@@ -171,35 +195,36 @@ struct famsim_stats {
         uint8_t                 state;
 };
 
-
-#define DEFINE_FAMSIM_STATS(_name, _uid)                          \
-        struct famsim_stats _name = { .uid = _uid, .fd = -1,      \
-				      .state = FAMSIM_STATS_STOPPED, }
-
-extern struct famsim_stats      famsim_stats_test;
-extern struct famsim_stats      famsim_stats_send;
-extern struct famsim_stats      famsim_stats_recv;
+extern struct famsim_stat_ctx *famsim_ctx;
 
 #if (HAVE_FAM_SIM == 1)
 
 #include <hpe_sim_api_linux64.h>
 
 void famsim_stats_init(struct famsim_stat_ctx **ctx_p, const char *dir, const char *fn, int id);
+struct famsim_stats * famsim_stats_create(struct famsim_stat_ctx *ctx, int uid);
+struct famsim_stats * famsim_stats_find(struct famsim_stat_ctx *ctx, int uid);
 void famsim_stats_start(struct famsim_stat_ctx *ctx, struct famsim_stats *stats);
 void famsim_stats_stop(struct famsim_stats *stats, int do_write);
 void famsim_stats_pause(struct famsim_stats *stats);
 void famsim_stats_close(struct famsim_stats *stats);
+void famsim_stats_free(struct famsim_stat_ctx *ctx);
 
 #else
 
 static inline void famsim_stats_init(struct famsim_stat_ctx **ctx_p, const char *dir, const char *fn, int id) \
     { (void)ctx_p; (void)dir; (void)fn; (void)id; }
+static inline struct famsim_stats * famsim_stats_create(struct famsim_stat_ctx *ctx, int id)
+    { (void)ctx; (void)id; return NULL; }
+static inline struct famsim_stats * famsim_stats_find(struct famsim_stat_ctx *ctx, int id)
+    { (void)ctx; (void)id; return NULL; }
 static inline void famsim_stats_start(struct famsim_stat_ctx *ctx, struct famsim_stats *stats) \
     { (void)ctx; (void)stats; }
 static inline void famsim_stats_stop(struct famsim_stats *stats, int do_write) \
     { (void)stats; (void)do_write; }
 static inline void famsim_stats_pause(struct famsim_stats *stats) { (void)stats; }
 static inline void famsim_stats_close(struct famsim_stats *stats) { (void)stats; }
+static inline void famsim_stats_free(struct famsim_stat_ctx *ctx) { (void)ctx; }
 
 #endif /* HAVE_FAM_SIM == 1 */
 

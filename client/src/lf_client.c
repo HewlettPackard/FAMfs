@@ -43,6 +43,7 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
     N_STRIPE_t *stripe = NULL;
     LFS_CTX_t *lfs_ctx_p;
     N_CHUNK_t *chunk, *chunks = NULL;
+    struct famsim_stats *stats_fi_wr;
     char *argv[LFS_MAXARGS];
     int i, nchunks, argc;
     int rc = 1; /* OOM error */
@@ -60,6 +61,9 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
 	goto _free;
 
     nchunks = lfs_params->nchunks;
+
+    stats_fi_wr = famsim_stats_create(famsim_ctx, FAMSIM_STATS_FI_WR);
+
 #if 0
     /* stripe buffer for libfabric I/O */
     posix_memalign((void **)&stripe->lf_buffer, getpagesize(),
@@ -95,6 +99,7 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
 
     lfs_ctx_p->lfs_params = lfs_params;
     lfs_ctx_p->fam_stripe = stripe;
+    lfs_ctx_p->famsim_stats_fi_wr = stats_fi_wr;
     *lfs_ctx_pp = lfs_ctx_p;
     return 0;
 
@@ -109,6 +114,8 @@ _free:
 
 void free_lfc_ctx(LFS_CTX_t **lfs_ctx_pp) {
     LFS_CTX_t *lfs_ctx_p = *lfs_ctx_pp;
+
+    famsim_stats_stop(lfs_ctx_p->famsim_stats_fi_wr, 1);
 
     free_fam_stripe(lfs_ctx_p->fam_stripe);
     free_lf_params(&lfs_ctx_p->lfs_params);

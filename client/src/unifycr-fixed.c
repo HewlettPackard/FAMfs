@@ -469,6 +469,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
     N_CHUNK_t *chunk;
     LF_CL_t *node;
+    struct famsim_stats *stats_fi_wr;
     struct fid_cntr *cntr;
     fi_addr_t *tgt_srv_addr;
     struct fid_ep *tx_ep;
@@ -504,6 +505,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     if (trg_off)
         *trg_off = off;
 
+    stats_fi_wr = lfs_ctx->famsim_stats_fi_wr;
     STATS_START(start);
 
     //for (i = 0; i < blocks; i++) {
@@ -513,12 +515,19 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
         dst_node, node->partition,
         len, node->local_desc[0], off, node->mr_key);
 
+    famsim_stats_start(famsim_ctx, stats_fi_wr);
+
     ON_FI_ERROR(
         fi_write(tx_ep, buf, len, lookup_mreg(buf, len), 
             *tgt_srv_addr, off, node->mr_key, (void*)buf),
         "%d (%s): fi_write failed on FAM module %d(p%d)", 
         lfs_params->node_id, nodelist[lfs_params->node_id],
         dst_node, fam_stripe->partition);
+
+    if (chunk_phy_id==0)
+        famsim_stats_stop(stats_fi_wr, 1);
+    else
+        famsim_stats_pause(stats_fi_wr);
 
 	//off += transfer_sz;
 	//buf += transfer_sz;
