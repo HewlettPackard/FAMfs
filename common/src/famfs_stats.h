@@ -215,10 +215,8 @@ void famsim_stats_free(struct famsim_stat_ctx *ctx);
 
 static inline void famsim_stats_init(struct famsim_stat_ctx **ctx_p, const char *dir, const char *fn, int id) \
     { (void)ctx_p; (void)dir; (void)fn; (void)id; }
-static inline struct famsim_stats * famsim_stats_create(struct famsim_stat_ctx *ctx, int id)
-    { (void)ctx; (void)id; return NULL; }
-static inline struct famsim_stats * famsim_stats_find(struct famsim_stat_ctx *ctx, int id)
-    { (void)ctx; (void)id; return NULL; }
+#define famsim_stats_create(ctx, id) (NULL)
+#define famsim_stats_find(ctx, id) (NULL)
 static inline void famsim_stats_start(struct famsim_stat_ctx *ctx, struct famsim_stats *stats) \
     { (void)ctx; (void)stats; }
 static inline void famsim_stats_stop(struct famsim_stats *stats, int do_write) \
