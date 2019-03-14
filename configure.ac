@@ -71,7 +71,7 @@ AC_ARG_ENABLE([debug],
 BUILD_DEBUG=no
 if test "x$enable_debug" = "xyes"; then
         BUILD_DEBUG=yes
-        CFLAGS=`echo $CFLAGS | sed -e s/O2/O0/`
+        CFLAGS=`echo $CFLAGS | sed -e s/O2/Og/`
 else
         BUILD_DEBUG=no
 fi
