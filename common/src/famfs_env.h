@@ -199,8 +199,9 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define LFS_MAXARGS     64
 #define LFS_MAXCLIENTS	64
 
+#define FAMFS_PROGRESS_AUTO	"default" /* "default", "manual" or "auto" */
 #define LF_MR_MODEL_SCALABLE	"scalable"
-#define LF_MR_MODEL_LOCAL	"local"	/* FI_Mr_LOCAL */
+#define LF_MR_MODEL_LOCAL	"local"	/* FI_MR_LOCAL */
 #define LF_MR_MODEL_BASIC	"basic"
 /* Default: scalable memory registration */
 //#define LF_MR_MODEL	LF_MR_MODEL_BASIC

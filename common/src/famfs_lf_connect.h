@@ -45,6 +45,12 @@ typedef struct lf_mr_mode_ {
 	unsigned int _f:25;
 } __attribute__((packed)) LF_MR_MODE_t;
 
+typedef struct lf_prg_mode_ {
+	unsigned int progress_manual:1;
+	unsigned int progress_auto:1;
+	unsigned int _f:30;
+} __attribute__((packed)) LF_PRG_MODE_t;
+
 /* libfabric client data */
 typedef struct lf_cl_ {
 	/* Index for including this in a top structure */
@@ -101,7 +107,8 @@ typedef struct n_params_ {
 	int	    w_thread_cnt;	/* Size of working thread pool */
 	int	    lf_port;		/* libfabric port number (on node 0) */
 	int	    lf_srv_rx_ctx;	/* libfabric: number of SEPs rx contexts on a server */
-	LF_MR_MODE_t lf_mr_flags;	/* libfabric: 1 - use scalable memory registration model */
+	LF_MR_MODE_t  lf_mr_flags;	/* libfabric: 1 - use scalable memory registration model */
+	LF_PRG_MODE_t lf_progress_flags;/* libfabric: force FI_PROGRESS_AUTO or _MANUAL */
 	int	    verbose;		/* debug flag */
 	int	    set_affinity;	/* set CPU affinity to workers and CQ */
 	char	    *lf_fabric;		/* libfabric fabric */

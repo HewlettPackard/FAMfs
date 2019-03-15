@@ -299,6 +299,7 @@ void ion_usage(const char *name) {
 	   "\t   --cmd_trigger - trigger command execution by LF remote access\n"
 	   "\t   --part_mreg <1|0> - 1(default): emulate multiple FAMs on each node as separate ""partitions""\n"
 	   "\t   --memreg <basic|local|basic,local|scalable> (default:scalable)\n"
+	   "\t   --lf_progress <auto|manual|default>\n"
 	   "\t-c --clients <node name list>\n"
 	   "\t-a |--affinity\n"
 	   "\t-v |--verbose\n"
@@ -328,9 +329,11 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     unsigned int	srv_extents = 0;
     int			set_affinity = 0, lf_srv_rx_ctx = 0;
     int			lf_mr_scalable, lf_mr_local, lf_mr_basic, zhpe_support = 0;
+    int			lf_progress_auto = 0, lf_progress_manual = 0;
     uint64_t		*mr_prov_keys = NULL, *mr_virt_addrs = NULL;
     char		*lf_fabric = NULL, *lf_domain = NULL;
     char		*lf_provider_name = NULL, *memreg = NULL;
+    char		*lf_progress = NULL;
     N_PARAMS_t		*params = NULL;
     int			cmdc, i, data, fam_cnt, node_id, srv_cnt, rc;
     uint64_t		cmd_timeout, io_timeout = 0;
@@ -345,6 +348,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	OPT_RXCTX,
 	OPT_SRV_EXTENTS,
 	OPT_MEMREG,
+	OPT_LF_PROGRESS,
 	OPT_CMD_TRIGGER,
 	OPT_PART_MREG,
     };
@@ -374,6 +378,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	{"rxctx",	1, 0, OPT_RXCTX},
 	{"srv_extents",	1, 0, OPT_SRV_EXTENTS},
 	{"memreg",	1, 0, OPT_MEMREG},
+	{"lf_progress",	1, 0, OPT_LF_PROGRESS},
 	{"cmd_trigger",	0, 0, OPT_CMD_TRIGGER},
 	{"part_mreg",	0, 0, OPT_PART_MREG},
 	{0, 0, 0, 0}
@@ -470,6 +475,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    case OPT_MEMREG:
 		memreg = strdup(optarg);
 		break;
+	    case OPT_LF_PROGRESS:
+		lf_progress = strdup(optarg);
+		break;
 	    case OPT_CMD_TRIGGER:
 		cmd_trigger++;
 		break;
@@ -524,6 +532,15 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	if ((memreg = getstr(LF_MR_MODEL)))
 		memreg = strdup(memreg);
     lf_mr_scalable = strcasecmp(memreg, LF_MR_MODEL_SCALABLE)? 0:1;
+    if (lf_progress == NULL)
+	if ((lf_progress = getstr(FAMFS_PROGRESS_AUTO)))
+		lf_progress = strdup(lf_progress);
+    lf_progress_manual = strncasecmp(lf_progress, "manual", 3)? 0:1;
+    if (!lf_progress_manual) {
+	lf_progress_auto = strcasecmp(lf_progress, "auto")? 0:1;
+	if (!lf_progress_auto && strcasecmp(lf_progress, "default"))
+	    err("Warning: wrong lf_progress option:%s", lf_progress);
+    }
     lf_mr_basic = strncasecmp(memreg, LF_MR_MODEL_BASIC, strlen(LF_MR_MODEL_BASIC))? 0:1;
     lf_mr_local = strcasecmp(memreg + lf_mr_basic*(strlen(LF_MR_MODEL_BASIC)+1),
 	LF_MR_MODEL_LOCAL)? 0:1;
@@ -715,11 +732,12 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	printf("Extent %zu bytes\n", extent_sz);
 	printf("VMEM %zu bytes in %d partition(s) per node\n", vmem_sz, srv_cnt);
 	printf("Transfer block size %zu bytes\n", transfer_len);
-	printf("libfabric provider:%s/%s mr_mode:%s%s%s",
+	printf("libfabric provider:%s/%s mr_mode:%s%s%s progress:%s",
 	       lf_provider_name, zhpe_support? "zhpe" : "sockets",
 	       lf_mr_scalable?LF_MR_MODEL_SCALABLE:(lf_mr_basic?LF_MR_MODEL_BASIC:""),
 	       (lf_mr_basic&&lf_mr_local)?",":"",
-	       lf_mr_local?LF_MR_MODEL_LOCAL:"");
+	       lf_mr_local?LF_MR_MODEL_LOCAL:"",
+	       lf_progress);
 	printf(" base port:%s\n  number of workers:%d, srv rx ctx:%d, I/O timeout %lu ms\n",
 	       port, workers, lf_srv_rx_ctx, io_timeout);
 	printf("Command timeout %.1f s\n", cmd_timeout/1000.);
@@ -740,6 +758,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 		exts, extents, extent_sz/chunk_sz, stripes);
     }
     free(memreg);
+    free(lf_progress);
 
     if (!lf_mr_scalable) {
 	mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
@@ -790,6 +809,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 
     params->lf_mr_flags.local = lf_mr_local;
     params->lf_mr_flags.zhpe_support = zhpe_support;
+    params->lf_progress_flags.progress_manual = lf_progress_manual;
+    params->lf_progress_flags.progress_auto = lf_progress_auto;
 
     params->verbose = verbose;
     params->set_affinity = set_affinity;
