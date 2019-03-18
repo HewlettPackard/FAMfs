@@ -99,6 +99,7 @@ int main(int argc, char *argv[]) {
     ssize_t warmup = 0;
     struct famsim_stats *famsim_stats_send, *famsim_stats_recv;
     int carbon_stats = 0; /* Only on Carbon: CPU instruction stats */
+    int fam_cnt = 0; /* Number of FAMs */
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -196,6 +197,8 @@ int main(int argc, char *argv[]) {
     if (mount_burstfs) {
         print0("mount unifycr\n");
         unifycr_mount("/tmp/mnt", rank, rank_num, 0, 3);
+        if (famsim_ctx)
+            fam_cnt = famsim_ctx->fam_cnt;
     } else
         to_unmount = 0;
 
@@ -317,7 +320,7 @@ int main(int argc, char *argv[]) {
             ssize_t bcount = pwrite(fd, bufp, tran_sz, offset);
 
             /* TODO: Ensure tran_sz equals to the chunk size */
-            if (i==0 && jj<(famsim_ctx->fam_cnt/rank_num))
+            if (i==0 && jj<(fam_cnt/rank_num))
                 famsim_stats_stop(famsim_stats_send, 1);
             else
                 famsim_stats_pause(famsim_stats_send);
