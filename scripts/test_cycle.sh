@@ -21,7 +21,7 @@ while
     then
         sleep 10
     fi
-    mpirun --hosts $AllNodes -ppn 1 /bin/bash -c 'ls /tmp/uifycrd.running.* && exit 0 || exit 1' 2>/dev/null 1>/dev/null
+    mpirun --hosts $AllNodes -ppn 1 /bin/bash -c 'ls /tmp/unifycrd.running.* && exit 0 || exit 1' 2>/dev/null 1>/dev/null
     sts=$?
     ((waiting += 10))
     ((sts != 0))

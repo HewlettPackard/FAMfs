@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
     MPI_Barrier(MPI_COMM_WORLD);
     {
         char fname[256];
-        sprintf(fname, "/tmp/uifycrd.running.%d", getpid());
+        sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
         int flag = open(fname, O_RDWR | O_CREAT, 0644);
         close(flag);
     }
