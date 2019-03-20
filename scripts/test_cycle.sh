@@ -33,7 +33,7 @@ echo "### $DSC" >>$MPI_LOG
 echo "### $DSC" >>$SRV_LOG
 echo "Starting test..."
 #echo "/${TEST_BIN}/test_prw_static -f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 0"
-mpirun --hosts $Clients -ppn $Ranks /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; ${TEST_BIN}/test_prw_static -f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 0' 2>>$MPI_LOG 1>>$TEST_LOG
+mpirun --hosts $Clients -ppn $Ranks /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; ${TEST_BIN}/test_prw_static -f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 0 $OPT' 2>>$MPI_LOG 1>>$TEST_LOG
 
 if (($? == 0))
 then

@@ -43,7 +43,7 @@ function make_list() {
     echo $list
 }
 
-OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vq -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential -n 'parse-options' -- "$@"`
+OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vqV -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -110,6 +110,7 @@ oWARMUP="0"
 oVERBOSE=0
 oN2N=0
 oSEQ=0
+oVFY=0
 
 cycles=1
 
@@ -132,6 +133,7 @@ while true; do
   -c | --cycles)     cycles="$2"; shift; shift ;;
   -i | --iter-cln)   ClnIter=(`echo "$2" | tr ',' ' '`); shift; shift ;;
   -I | --iter-srv)   SrvIter=(`echo "$2" | tr ',' ' '`); shift; shift ;;
+  -V | --verify)     oVFY=1; shift ;;
   -- ) shift; break ;;
   * ) break ;;
   esac
@@ -139,6 +141,8 @@ done
 
 if [ -z "$oREADS" ]; then oREADS=$oWRITES; fi
 
+if [[ "$oSERVERS" != "$all_h" ]]; then export all_h="$oSERVERS"; fi
+if [[ "$oCLIENTS" != "$all_c" ]]; then export all_c="$oCLIENTS"; fi
 export hh="${oSERVERS}"
 export cc="${oCLIENTS}"
 ns=$(count $hh)
@@ -164,6 +168,7 @@ if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 
 unset IFS
+opt=""
 
 if ((oSEQ)); then seq="-S 1"; else seq=""; fi
 ((err=0))
@@ -211,6 +216,13 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     wu="-W $wup"
                     dsc="$dsc WARMUP=$wup"
                 fi
+                if ((oVFY)); then
+                    dsc="$dsc with VFY"
+                    opt="$opt -V"
+                fi
+                if ((oVERBOSE)); then
+                    opt="$opt -v1"
+                fi
                 for ((k = 0; k < cycles; k++)); do
                     ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
                     ((mem = (mem/1024/1024/1024 + 1)*1024*1024*1024))
@@ -221,6 +233,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export WUP="$wu"
                     export PTR="$ptrn"
                     export SEQ="$seq"
+                    export OPT="$opt"
                     export DSC="$dsc"
                     export Ranks="${RANK[$i]}"
                     export AllNodes="$Servers,$Clients"
