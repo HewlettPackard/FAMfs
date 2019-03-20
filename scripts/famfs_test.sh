@@ -178,6 +178,8 @@ wup=$(getval $oWARMUP)
 seg=$(getval $oSEGMENT)
 extsz=$(getval $ExtSize)
 
+[[ -z "$fams" ]] || oFAMs="-F $fams"
+
 if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 
@@ -255,7 +257,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export DSC="$dsc"
                     export extsz
                     export lfProgress
-                    export fams
+                    export oFAMs
                     source ${SCRIPT_DIR}/test-env
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
