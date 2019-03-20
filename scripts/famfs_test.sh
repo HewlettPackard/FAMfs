@@ -178,7 +178,7 @@ wup=$(getval $oWARMUP)
 seg=$(getval $oSEGMENT)
 extsz=$(getval $ExtSize)
 
-[[ -z "$fams" ]] || oFAMs="-F $fams"
+[[ -z "$fams" ]] && oFAMs=" " || oFAMs=" -F $fams"
 
 if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
