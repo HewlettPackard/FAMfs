@@ -9,22 +9,21 @@ pid=$!
 #echo FAMFS_MDS_LIST=$FAMFS_MDS_LIST
 
 ((waiting=0))
-echo -n "Waiting for the servers to come up."
+((_dt=2)) # Check every 2 sec
+echo -n "Waiting for the servers to come up"
 while
     if ((waiting > 600))
     then
         echo "***ERROR: Server start timeout" >> $SRV_LOG
         exit 1
     fi
-    echo -n "."
+    ((waiting % 30 == 0)) && echo -n "."
     if ((waiting > 0))
     then
-        sleep 10
+        sleep $_dt
     fi
-    mpirun --hosts $AllNodes -ppn 1 /bin/bash -c 'ls /tmp/unifycrd.running.* && exit 0 || exit 1' 2>/dev/null 1>/dev/null
-    sts=$?
-    ((waiting += 10))
-    ((sts != 0))
+    ((waiting += _dt))
+    [ ! -f /tmp/unifycrd.running.* ]
 do
     :
 done
