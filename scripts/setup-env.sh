@@ -3,7 +3,7 @@ WRK_DIR=/dev/shm
 # INSTALL_DIR=/ibnfs/${USER}/install/FAMfs
 INSTALL_DIR=$(pkg-config --variable=prefix famfs)
 
-export PATH="${INSTALL_DIR}/bin:${PATH}"
+export PATH="${INSTALL_DIR}/bin:${INSTALL_DIR}/libexec:${PATH}"
 export LD_LIBRARY_PATH="${INSTALL_DIR}/lib:$LD_LIBRARY_PATH"
 export PKG_CONFIG_PATH="${INSTALL_DIR}/lib/pkgconfig:${PKG_CONFIG_PATH}"
 

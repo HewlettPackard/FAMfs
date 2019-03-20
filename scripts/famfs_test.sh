@@ -1,5 +1,6 @@
 #!/bin/bash
-. ./setup-env.sh
+SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
+. ${SCRIPT_DIR}/setup-env.sh
 
 function run-all() { mpirun --hosts ${all_h},${all_c} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }
 function run-cln() { mpirun --hosts ${all_c} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }
@@ -43,16 +44,18 @@ function make_list() {
     echo $list
 }
 
-OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vqV -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify -n 'parse-options' -- "$@"`
+OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vqVE:p:F: -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,lf_progress:,fams: -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
 
-nodes=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 2))
-parts=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 1))
 all_h=""
 all_c=""
-for ((i = 0; i < ${#parts[*]}; i++)) do
+if command -v squeue; then
+  MPIchEnv="-genv MPICH_NEMESIS_NETMOD mxm"
+  nodes=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 2))
+  parts=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 1))
+  for ((i = 0; i < ${#parts[*]}; i++)) do
     nlist=${nodes[$i]}
     if [[ "$nlist" =~ "[" ]]; then
         #some sort of range, list or combination of the two
@@ -87,17 +90,22 @@ for ((i = 0; i < ${#parts[*]}; i++)) do
     else
         all_c="$all_c$nodes,"
     fi
-done
-all_h=${all_h:0:((${#all_h}-1))}
-all_c=${all_c:0:((${#all_c}-1))}
-export all_h
-export all_c
-echo "Allocated Servers: $all_h"
-echo "Allocated Clients: $all_c"
+  done
+  all_h=${all_h:0:((${#all_h}-1))}
+  all_c=${all_c:0:((${#all_c}-1))}
+  echo "Allocated Servers: $all_h"
+  echo "Allocated Clients: $all_c"
+else
+  MPIchEnv=""
+fi
 export MPI_LOG=${PWD}/mpi.log
 export TEST_LOG=${PWD}/test.log
 export SRV_LOG=${PWD}/server.log
 
+### DEFAULTS ###
+ExtSize="1G"
+lfProgress="manual"
+fams=""
 oSERVERS="$all_h"
 oCLIENTS="$all_c"
 oRANKS="1,2,4,8,16"
@@ -134,6 +142,9 @@ while true; do
   -i | --iter-cln)   ClnIter=(`echo "$2" | tr ',' ' '`); shift; shift ;;
   -I | --iter-srv)   SrvIter=(`echo "$2" | tr ',' ' '`); shift; shift ;;
   -V | --verify)     oVFY=1; shift ;;
+  -E | --extent)     ExtSize="$2"; shift; shift ;;
+  -p | --lf_progress) lfProgress="$2"; shift; shift ;;
+  -F | --fams)       fams="$2"; shift; shift ;;
   -- ) shift; break ;;
   * ) break ;;
   esac
@@ -141,8 +152,10 @@ done
 
 if [ -z "$oREADS" ]; then oREADS=$oWRITES; fi
 
-if [[ "$oSERVERS" != "$all_h" ]]; then export all_h="$oSERVERS"; fi
-if [[ "$oCLIENTS" != "$all_c" ]]; then export all_c="$oCLIENTS"; fi
+if [[ -z "$oSERVERS" ]]; then all_h="$oSERVERS"; fi
+if [[ -z "$oCLIENTS" ]]; then all_c="$oCLIENTS"; fi
+export all_h
+export all_c
 export hh="${oSERVERS}"
 export cc="${oCLIENTS}"
 ns=$(count $hh)
@@ -163,6 +176,7 @@ for r in $oREADS; do RDSZ[$i]=$(getval $r); ((i++)); done
 blksz=$(getval $oBLOCK)
 wup=$(getval $oWARMUP)
 seg=$(getval $oSEGMENT)
+extsz=$(getval $ExtSize)
 
 if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
@@ -239,10 +253,13 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export AllNodes="$Servers,$Clients"
                     export MEM=$mem
                     export DSC="$dsc"
-                    source ./test-env
+                    export extsz
+                    export lfProgress
+                    export fams
+                    source ${SCRIPT_DIR}/test-env
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
-                    if ./test_cycle.sh; then
+                    if ${SCRIPT_DIR}/test_cycle.sh; then
                         echo "Finished OK"
                     else
                         ((err++))
