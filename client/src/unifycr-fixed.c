@@ -531,7 +531,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 
 	//off += transfer_sz;
 	//buf += transfer_sz;
-	chunk->w_event++;
+    chunk->w_event++;
     //}
 
     rc = fi_cntr_wait(cntr, chunk->w_event, lfs_params->io_timeout_ms);
