@@ -505,7 +505,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    }
 	}
 	if (cmd == W_T_EXIT) {
-	    printf("Unrecognized command:%s\n", argv[optind]);
+	    printf("Unrecognized command:'%s'\n", argv[optind]);
 	    goto _free;
 	}
 	cmdv[cmdc++] = cmd;

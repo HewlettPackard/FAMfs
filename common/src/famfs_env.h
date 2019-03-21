@@ -107,7 +107,11 @@ static inline int str2argv(char *str, char **argv, int argmax) {
     char *tok, *p = str;
 
     while ((tok = strsep(&p, " \t")) && argc < argmax) {
-        argv[argc++] = tok;
+        /* Ignore empty arg */
+        while (*tok == ' ' || *tok == '\t')
+            tok++;
+        if (*tok)
+            argv[argc++] = tok;
         //DEBUG("tok[%d]=%s", argc - 1, tok);
     }
 
