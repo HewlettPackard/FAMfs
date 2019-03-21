@@ -178,7 +178,15 @@ wup=$(getval $oWARMUP)
 seg=$(getval $oSEGMENT)
 extsz=$(getval $ExtSize)
 
-[[ -z "$fams" ]] && oFAMs="" || oFAMs="-F $fams"
+# Real FAM or emulation?
+oData=""
+if [[ -z "$fams" ]]; then
+  oFAMs=""
+  # Pass the number of data chunks option if zhpe driver is loaded
+  [ -d /sys/module/zhpe ] && oData="-n"
+else
+ oFAMs="-F $fams"
+fi
 
 if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
@@ -191,6 +199,7 @@ if ((oSEQ)); then seq="-S 1"; else seq=""; fi
 for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     export Servers=`make_list "$hh" ${SrvIter[$si]}`
     ns=`count $Servers`
+    [ -z "$oData" ] || oData="${oData::2} $ns"
 
     for ((ci = 0; ci < ${#ClnIter[*]}; ci++)); do
         export Clients=`make_list "$cc" ${ClnIter[$ci]}`
@@ -258,6 +267,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export extsz
                     export lfProgress
                     export oFAMs
+                    export oData
                     source ${SCRIPT_DIR}/test-env
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
