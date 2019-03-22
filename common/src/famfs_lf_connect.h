@@ -142,7 +142,7 @@ typedef struct lf_srv_ {
 	struct n_params_	*params;	/* reference to struct n_params_ */
 	LF_CL_t			*lf_client;	/* open libfabric objects to be closed/freed */
 	void			*virt_addr;	/* mapped memory buffer */
-//	size_t			length;		/* FAM address range (length, bytes) */
+	size_t			length;		/* FAM address range (length, bytes) */
 	int			thread_id;	/* worker's thread id */
 } LF_SRV_t;
 

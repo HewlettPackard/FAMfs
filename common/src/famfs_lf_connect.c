@@ -715,13 +715,14 @@ int lf_srv_init(LF_SRV_t *priv)
     if (params->part_mreg == 0) {
 	len = params->vmem_sz;
 	bufp = &params->fam_buf;
+        priv->length = 0;
     } else {
 	unsigned int page_size = getpagesize();
 	size_t part_length = params->vmem_sz / params->node_servers;
 
 	len = params->fam_map? page_size : part_length;
 	bufp = &buf;
-#if 0
+#if 0 /* posix_memalign or mmap */
 	ON_ERROR(posix_memalign(bufp, page_size, len), "srv memory alloc failed");
 	if (buf == NULL) {
 	    err("%d/%d: Memory allocation failed, partition:%d - %m", my_node_id, priv->thread_id, cl->partition);
@@ -734,6 +735,7 @@ int lf_srv_init(LF_SRV_t *priv)
 	    exit(1);
 	}
 #endif
+	priv->length = len;
     }
     /*
     for (size_t i = 0; i < len/page_size; i++)
@@ -851,7 +853,6 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
 	srv->params = params;
 	srv->thread_id = i;
 	//lf_servers[i]->length = part_length;
-	//lf_servers[i]->virt_addr = NULL;
 
 	cl = (LF_CL_t*) calloc(1, sizeof(LF_CL_t));
 	ASSERT(cl);
@@ -940,8 +941,12 @@ void lf_srv_free(LF_SRV_t *srv) {
     LF_CL_t *cl = srv->lf_client;
 
     lf_client_free(cl);
-    if (srv->params->part_mreg)
+    if (srv->length)
+#if 0 /* posix_memalign or mmap */
 	free(srv->virt_addr);
+#else
+	munmap(srv->virt_addr, srv->length);
+#endif
     free(srv);
 }
 
