@@ -193,7 +193,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define ION_CMD_MAX	16	/* maximum number of commands */
 #define	IO_TIMEOUT_MS	30*1000 /* single I/O execution timeout, 30 sec */
 #define LFSRV_RCTX_BITS 8	/* LF SRV: max number of rx contexts, bits */
-#define LFSRV_START_TMO 15000	/* the timeout for start all LF servers */
+//#define LFSRV_START_TMO 15000	/* the timeout for start all LF servers */
 
 #define ZHPE_MODULE_NAME "zhpe"	/* libfabric provider's backend driver name */
 #define UMMUNOTIFY_MODULE_NAME "ummunotify"
