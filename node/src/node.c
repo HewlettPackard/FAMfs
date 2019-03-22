@@ -102,7 +102,11 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
     }
 
     /* Wait for all LF servers started */
-    rc = pool_wait_works_done(w_srv_pool, LFSRV_START_TMO);
+    uint64_t srv_pool_tmo = LFSRV_START_TMO;
+    /* Use cmd timeout if real Gen-Z */
+    if (params->lf_mr_flags.zhpe_support)
+	srv_pool_tmo = params->cmd_timeout_ms;
+    rc = pool_wait_works_done(w_srv_pool, srv_pool_tmo);
     if (rc) {
 	err("LF SRV start timeout on %s", params->nodelist[node_id]);
 	return 1;
