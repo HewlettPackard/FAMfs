@@ -301,6 +301,7 @@ void ion_usage(const char *name) {
 	   "\t   --memreg <basic|local|basic,local|scalable> (default:scalable)\n"
 	   "\t   --lf_progress <auto|manual|default>\n"
 	   "\t-c --clients <node name list>\n"
+           "\t-q --use_cq use completion queue instead of counters\n"
 	   "\t-a |--affinity\n"
 	   "\t-v |--verbose\n"
 	   "  Command is one of:\n"
@@ -327,7 +328,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     uint64_t            transfer_len = 0; /* transfer [block] size */
     W_TYPE_t		cmd, cmdv[ION_CMD_MAX];
     unsigned int	srv_extents = 0;
-    int			set_affinity = 0, lf_srv_rx_ctx = 0;
+    int			set_affinity = 0, lf_srv_rx_ctx = 0, use_cq = 0;
     int			lf_mr_scalable, lf_mr_local, lf_mr_basic, zhpe_support = 0;
     int			lf_progress_auto = 0, lf_progress_manual = 0;
     uint64_t		*mr_prov_keys = NULL, *mr_virt_addrs = NULL;
@@ -357,6 +358,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	{"affinity",	0, 0, 'a'},
 	{"verbose",	0, 0, 'v'},
 	{"help",	0, 0, 'h'},
+        {"use_cq",      0, 0, 'q'},
 	{"port",	1, 0, 'p'},
 	{"iters",	1, 0, 'i'},
 	{"transfer",	1, 0, 't'},
@@ -385,7 +387,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     };
 
     optind = 0;
-    while ((opt = getopt_long(argc, argv, "avhp:i:t:T:H:F:P:R:M:C:n:c:E:w:",
+    while ((opt = getopt_long(argc, argv, "aqvhp:i:t:T:H:F:P:R:M:C:n:c:E:w:",
 	    long_opts, &opt_idx)) != -1)
     {
         switch (opt) {
@@ -447,6 +449,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    case 'a':
 		set_affinity++;
 		break;
+            case 'q':
+                use_cq++;
+                break;
 	    case 'v':
 		verbose++;
 		break;
@@ -814,6 +819,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 
     params->verbose = verbose;
     params->set_affinity = set_affinity;
+    params->use_cq = use_cq;
     params->lf_srv_rx_ctx = lf_srv_rx_ctx;
     params->srv_extents = srv_extents;
     params->node_servers = srv_cnt;

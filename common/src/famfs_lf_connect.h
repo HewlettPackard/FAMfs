@@ -111,6 +111,7 @@ typedef struct n_params_ {
 	LF_PRG_MODE_t lf_progress_flags;/* libfabric: force FI_PROGRESS_AUTO or _MANUAL */
 	int	    verbose;		/* debug flag */
 	int	    set_affinity;	/* set CPU affinity to workers and CQ */
+        int         use_cq;             /* use completion queue instead of counters */
 	char	    *lf_fabric;		/* libfabric fabric */
 	char	    *lf_domain;		/* libfabric domain */
 	char	    *prov_name;		/* libfabric provider name */
