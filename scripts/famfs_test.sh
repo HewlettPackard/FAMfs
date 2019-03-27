@@ -44,7 +44,7 @@ function make_list() {
     echo $list
 }
 
-OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vqVE:p:F: -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,lf_progress:,fams: -n 'parse-options' -- "$@"`
+OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vqVE:p:F:m: -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,lf_progress:,fams:,md: -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -114,6 +114,7 @@ oSEGMENT="1"
 oWRITES="4K,64K,128K,1M"
 oREADS=""
 oWARMUP="0"
+oMdServers=""
 
 oVERBOSE=0
 oN2N=0
@@ -145,15 +146,16 @@ while true; do
   -E | --extent)     ExtSize="$2"; shift; shift ;;
   -p | --lf_progress) lfProgress="$2"; shift; shift ;;
   -F | --fams)       fams="$2"; shift; shift ;;
+  -m | --md)         oMdServers="$2"; shift; shift ;; # Default: Servers
   -- ) shift; break ;;
   * ) break ;;
   esac
 done
 
 if [ -z "$oREADS" ]; then oREADS=$oWRITES; fi
-
 if [[ -z "$oSERVERS" ]]; then all_h="$oSERVERS"; fi
 if [[ -z "$oCLIENTS" ]]; then all_c="$oCLIENTS"; fi
+
 export all_h
 export all_c
 export hh="${oSERVERS}"
@@ -200,6 +202,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     export Servers=`make_list "$hh" ${SrvIter[$si]}`
     ns=`count $Servers`
     [ -z "$oData" ] || oData="${oData::2} $ns"
+    [ -z "$oMdServers" ] && mdServers="$Servers" || mdServers="$oMdServers"
 
     for ((ci = 0; ci < ${#ClnIter[*]}; ci++)); do
         export Clients=`make_list "$cc" ${ClnIter[$ci]}`
@@ -268,6 +271,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export lfProgress
                     export oFAMs
                     export oData
+                    export mdServers
                     source ${SCRIPT_DIR}/test-env
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
