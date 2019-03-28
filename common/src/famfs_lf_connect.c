@@ -74,7 +74,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     hints = fi_allocinfo();
     hints->caps			= FI_RMA;
     /* Require generation of completion events on RMA target */
-    if (params->cmd_trigger)
+    if (params->cmd_trigger > 0)
 	hints->caps		|= FI_RMA_EVENT;
     if (params->lf_srv_rx_ctx)
 	hints->caps		|= FI_NAMED_RX_CTX;
@@ -118,7 +118,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	ON_ERROR(1, "LF client failed - ambiguous provider:%s in domains %s and %s",
 		    fi->fabric_attr->prov_name, fi->domain_attr->name, fi->next->domain_attr->name);
     }
-    if (params->cmd_trigger &&
+    if ((params->cmd_trigger > 0) &&
 	/* Need AUTO to drive remote events */
 	!(fi->domain_attr->data_progress & FI_PROGRESS_AUTO))
     {
@@ -490,7 +490,7 @@ int lf_clients_init(N_PARAMS_t *params)
 		err("Error in libfabric client init for FAM module %d(p%d)",
 		    i, part);
 		free(cl);
-		continue;
+		return rc;
 	    }
 
 	    lf_all_clients[lf_client_idx] = cl;
@@ -562,7 +562,7 @@ int lf_srv_init(LF_SRV_t *priv)
     hints = fi_allocinfo();
     hints->caps                 = FI_RMA;
     /* Require generation of completion events on RMA target */
-    if (params->cmd_trigger)
+    if (params->cmd_trigger > 0)
 	hints->caps		|= FI_RMA_EVENT;
     if (rx_ctx_n)
 	hints->caps		|= FI_NAMED_RX_CTX;
@@ -606,11 +606,11 @@ int lf_srv_init(LF_SRV_t *priv)
 		fi->fabric_attr->prov_name, fi->domain_attr->name, fi->next->domain_attr->name);
 	return 1;
     }
-    if (params->cmd_trigger &&
+    if ((params->cmd_trigger > 0) &&
 	/* Need AUTO to drive remote events */
 	!(fi->domain_attr->data_progress & FI_PROGRESS_AUTO))
     {
-	err("LF client error: cmd_trigger option not supported!");
+	err("LF target error: cmd_trigger option not supported!");
 	return 1;
     }
 

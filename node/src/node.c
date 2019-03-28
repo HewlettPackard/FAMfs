@@ -221,7 +221,12 @@ int main(int argc, char **argv) {
     }
 
     /* Standalone: FAM clients */
-    lf_clients_init(params);
+    rc = lf_clients_init(params);
+    if (rc) {
+	err("Failed to start LF client on %s",
+	    params->nodelist[node_id]);
+	node_exit(1);
+    }
 
     w_pool = pool_init(params->w_thread_cnt, &worker_func, params->lf_clients[0]->cq_affinity);
     if (w_pool == NULL) {
