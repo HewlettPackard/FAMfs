@@ -558,6 +558,11 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    //goto _free;
 	}
     }
+    /* Is generation of completion events on RMA target required? */
+    if (cmd_trigger && zhpe_support) {
+	err("Warning: cmd_trigger option is ignored - not supported by zhpe provider!");
+	cmd_trigger = 0;
+    }
     if (!transfer_len)
 	transfer_len = getval(N_XFER_SZ, NULL);
     if (io_timeout == 0)
