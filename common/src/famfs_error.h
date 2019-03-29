@@ -12,6 +12,12 @@
 
 #include <rdma/fi_errno.h>
 
+#define FI_ERROR_LOG(err, msg, ...)       \
+    do {                                  \
+        int64_t __err = (int64_t)err;     \
+        fprintf(stderr, #msg ": %ld - %s\n", ## __VA_ARGS__, __err, fi_strerror(-__err)); \
+    } while (0);
+
 #define ON_FI_ERROR(action, msg, ...)       \
     do {                                    \
         int64_t __err;                      \

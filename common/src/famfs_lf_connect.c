@@ -184,9 +184,11 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     }
 
     memset(&cq_attr, 0, sizeof(cq_attr));
+    /*
     cq_attr.format = FI_CQ_FORMAT_TAGGED;
     cq_attr.size = 100;
     cq_attr.wait_obj = FI_WAIT_UNSPEC;
+    */
     //cq_attr.wait_cond = FI_CQ_COND_NONE;
     if (params->set_affinity) {
 	alloc_affinity(&cq_affinity, thread_cnt, node + 2);
@@ -256,26 +258,28 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	    ON_FI_ERROR(fi_ep_bind(tx_epp[i], &av->fid, 0), "fi_ep_bind failed");
 	}
 
-	// Create counters
-	ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &rcnts[i], NULL), "fi_cntr_open r failed");
-	ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &wcnts[i], NULL), "fi_cntr_open w failed");
+        if (params->use_cq) {
+            // Create completion queues
+            cq_attr.format = FI_CQ_FORMAT_CONTEXT;
+            cq_attr.wait_obj = FI_WAIT_NONE;
+            cq_attr.size = fi->tx_attr->size;
+            if (params->set_affinity)
+                cq_attr.signaling_vector = cq_affinity[i];
 
-#if 1
-	// Create completion queues
-	if (params->set_affinity)
-	    cq_attr.signaling_vector = cq_affinity[i];
+            ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &tx_cqq[i], NULL), "fi_cq_open failed");
 
-	ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &tx_cqq[i], NULL), "fi_cq_open failed");
+            // Bind completion queues to endpoint
+            // FI_RECV | FI_TRANSMIT | FI_SELECTIVE_COMPLETION
+            ON_FI_ERROR(fi_ep_bind(tx_epp[i], &tx_cqq[i]->fid, FI_TRANSMIT), "fi_ep_bind tx context failed");
+        } else {
+            // Create counters
+            ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &rcnts[i], NULL), "fi_cntr_open r failed");
+            ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &wcnts[i], NULL), "fi_cntr_open w failed");
 
-	// Bind completion queues to endpoint
-	// FI_RECV | FI_TRANSMIT | FI_SELECTIVE_COMPLETION
-	ON_FI_ERROR(fi_ep_bind(tx_epp[i], &tx_cqq[i]->fid, FI_TRANSMIT | FI_SELECTIVE_COMPLETION),
-		    "fi_ep_bind tx context failed");
-#endif
-
-	// Bind counters to endpoint
-	ON_FI_ERROR(fi_ep_bind(tx_epp[i], &rcnts[i]->fid, FI_READ),  "fi_ep_bind r cnt failed");
-	ON_FI_ERROR(fi_ep_bind(tx_epp[i], &wcnts[i]->fid, FI_WRITE),  "fi_ep_bind w cnt failed");
+            // Bind counters to endpoint
+            ON_FI_ERROR(fi_ep_bind(tx_epp[i], &rcnts[i]->fid, FI_READ),  "fi_ep_bind r cnt failed");
+            ON_FI_ERROR(fi_ep_bind(tx_epp[i], &wcnts[i]->fid, FI_WRITE),  "fi_ep_bind w cnt failed");
+        }
 
 	ON_FI_ERROR(fi_enable(tx_epp[i]), "fi_enable tx_ep failed");
     }
@@ -962,5 +966,106 @@ void lf_srv_free(LF_SRV_t *srv) {
 	munmap(srv->virt_addr, srv->length);
 #endif
     free(srv);
+}
+
+ssize_t lf_cq_read(struct fid_cq *cq, struct fi_cq_tagged_entry *fi_cqe, ssize_t count, struct fi_cq_err_entry *fi_cqerr) {
+
+    ssize_t ret = 0, rc;
+    struct fi_cq_err_entry err_entry;
+
+    bzero(&err_entry, sizeof(err_entry));
+    
+    for (;;) {
+        ret = fi_cq_read(cq, fi_cqe, count);
+        if (ret >= 0)
+            break;
+        if (ret == -FI_EAGAIN) {
+            ret = 0;
+            break;
+        }
+        if (ret != -FI_EAVAIL) {
+            FI_ERROR_LOG(ret, "fi_cq_read");
+            break;
+        }
+        if (!fi_cqerr)
+            fi_cqerr = &err_entry;
+        rc = fi_cq_readerr(cq, fi_cqerr, 0);
+        if (!rc)
+            /* Possibly no error? If so, retry. */
+            continue;
+        if (rc > 0) {
+            if (fi_cqerr == &err_entry) 
+                ret = -fi_cqerr->err;
+            FI_ERROR_LOG(ret, "cq error");
+            break;
+        }
+        if (rc == -FI_EAGAIN)
+            /* Possible no error? If so, retry. */
+            continue;
+        FI_ERROR_LOG(rc, "fi_cq_readerr");
+        ret = rc;
+        break;
+    }
+
+    return ret;
+}
+
+ssize_t lf_completions(struct fid_cq *cq, ssize_t count, void (*cq_callback)(void *arg, void *cqe, int err), void *arg) {
+    ssize_t ret = 0, rc, len, i;
+    struct fi_cq_tagged_entry cqe[1];
+    struct fi_cq_err_entry cqerr;
+    
+    /* The verbs rdm code forces all entries to be tagged, but the msg
+     * code dosn't support tagged. All I want is the context; so we
+     * read a single entry; pass in a fi_cq_tagged; and pull the context
+     * off the front. The entries are designed to be compatible, but
+     * the API means that is not terribly useful.
+     */
+
+    /* If count specified, read up to count entries; if not, all available. */
+    for (ret = 0; !count || ret < count;) {
+        len = sizeof(cqe)/sizeof(cqe[0]);
+        if (count) {
+            rc = count - ret;
+            if (len > rc)
+                rc = len;
+        }
+        rc = lf_cq_read(cq, cqe, len, (cq_callback ? &cqerr : NULL));
+        if (!rc)
+            break;
+        if (rc >= 0) {
+            ret += rc;
+            if (cq_callback) {
+                for (i = 0; i < rc; i++)
+                    cq_callback(arg, cqe + i, 0);
+            }
+            continue;
+        }
+        if (rc == -FI_EAGAIN)
+            break;
+        if (rc != -FI_EAVAIL || !cq_callback) {
+            ret = rc;
+            break;
+        }
+        cq_callback(arg, &cqerr, 1);
+        ret++;
+    }
+
+    return ret;
+}
+
+ssize_t lf_check_progress(struct fid_cq *cq, ssize_t *cmp) {
+    ssize_t ret = 0, rc;
+
+    /* Check both tx and rx sides to make progress.
+     * FIXME: Should rx be necessary for one-sided?
+     */
+    rc = lf_completions(cq, 0, NULL, NULL);
+    if (rc >= 0)
+        *cmp += rc;
+    else
+        ret = rc;
+
+    return ret;
 }
 

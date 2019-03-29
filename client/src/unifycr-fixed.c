@@ -470,13 +470,14 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     N_CHUNK_t *chunk;
     LF_CL_t *node;
     struct famsim_stats *stats_fi_wr;
-    struct fid_cntr *cntr;
+    struct fid_cntr *cntr = NULL;
     fi_addr_t *tgt_srv_addr;
-    struct fid_ep *tx_ep;
+    struct fid_ep *tx_ep = NULL;
+    struct fid_cq *tx_cq = NULL;
     //size_t transfer_sz;
     off_t off;
     //int i, blocks;
-    int dst_node, rc;
+    int dst_node, rc = 0;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     /* to FAM chunk */
@@ -490,10 +491,16 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     node = lfs_params->lf_clients[chunk->lf_client_idx];
 
     /* Do RMA synchronous write */
-    cntr = node->wcnts[0];
     tgt_srv_addr = &node->tgt_srv_addr[0];
-    tx_ep =  node->tx_epp[0];
-    chunk->w_event = fi_cntr_read(cntr);
+    tx_ep = node->tx_epp[0];
+
+    if (lfs_params->use_cq) {
+        tx_cq = node->tx_cqq[0];
+    } else {
+        cntr = node->wcnts[0];
+        chunk->w_event = fi_cntr_read(cntr);
+    }
+
     //transfer_sz = params->transfer_sz;
     //int blocks = len / transfer_sz;
     ASSERT(chunk_offset + len <= unifycr_chunk_size);
@@ -531,54 +538,32 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 
 	//off += transfer_sz;
 	//buf += transfer_sz;
-    chunk->w_event++;
     //}
 
-    rc = fi_cntr_wait(cntr, chunk->w_event, lfs_params->io_timeout_ms);
-    if (rc == -FI_ETIMEDOUT) {
-        err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
-	    lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
-	    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-	    dst_node, node->partition, len, off);
-    } else if (rc) {
-	err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
-		lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
-		fi_cntr_readerr(cntr), rc,
-		fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-		dst_node, node->partition,
-		fi_cntr_read(cntr), chunk->w_event);
-	ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
-    }
-
-#if 0
-    {
-        char *vfy = malloc(len);
-        cntr = node->rcnts[0];
-        chunk->r_event = fi_cntr_read(cntr);
-        printf("rcnt=%d\n", chunk->r_event);
-    
-        int s = fi_read(tx_ep, vfy, len, node->local_desc[0], *tgt_srv_addr, off, node->mr_key, (void*)vfy /* NULL */);
-        if (s) {
-            printf("vfy failed: %d\n", s);
-            free(vfy);
-            return s;
+    if (!lfs_params->use_cq) {
+        chunk->w_event++;
+        rc = fi_cntr_wait(cntr, chunk->w_event, lfs_params->io_timeout_ms);
+        if (rc == -FI_ETIMEDOUT) {
+            err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
+                lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
+                fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+                dst_node, node->partition, len, off);
+        } else if (rc) {
+            err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
+                    lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
+                    fi_cntr_readerr(cntr), rc,
+                    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+                    dst_node, node->partition,
+                    fi_cntr_read(cntr), chunk->w_event);
+            ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
-        chunk->r_event++;
-        printf("wait for rcnt=%d\n", chunk->r_event);
-        s = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
-        if (s) {
-            printf("vfy ctr failed: %d\n", s);
-            free(vfy);
-            return s;
-        }
-        printf("=== read *vfy[0]=%lx\n", *(unsigned long *)vfy);
-        printf("=== read *vfy[1]=%lx\n", *((unsigned long *)vfy + 1));
-        free(vfy);
-        saved_ep = tx_ep;
-        saved_adr = tgt_srv_addr;
-        saved_off = off;
+    } else {
+        ssize_t wcnt = 0;
+        do {        
+            if ((rc = lf_check_progress(tx_cq, &wcnt)) < 0)
+                break;
+        } while (wcnt < 1);
     }
-#endif
 
     UPDATE_STATS(lf_wr_stat, 1, len, start);
 
@@ -592,12 +577,13 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     //char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
     N_CHUNK_t *chunk;
     LF_CL_t *node;
-    struct fid_cntr *cntr;
+    struct fid_cntr *cntr = NULL;
     fi_addr_t *tgt_srv_addr;
-    struct fid_ep *tx_ep;
+    struct fid_ep *tx_ep = NULL;
+    struct fid_cq *tx_cq = NULL;
     //size_t transfer_sz;
     //int i, blocks;
-    int src_node, rc;
+    int src_node, rc = 0;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     /* to FAM chunk */
@@ -614,10 +600,15 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     ASSERT(src_node == nid);
 
     /* Do RMA synchronous read */
-    cntr = node->rcnts[0];
     tgt_srv_addr = &node->tgt_srv_addr[0];
-    tx_ep =  node->tx_epp[0];
-    chunk->r_event = fi_cntr_read(cntr);
+    tx_ep = node->tx_epp[0];
+
+    if (lfs_params->use_cq) {
+        tx_cq = node->tx_cqq[0];
+    } else {
+        cntr = node->rcnts[0];
+        chunk->r_event = fi_cntr_read(cntr);
+    }
     //transfer_sz = params->transfer_sz;
     //int blocks = len / transfer_sz;
     /*
@@ -639,21 +630,28 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
             *tgt_srv_addr, fam_off, node->mr_key, (void*)buf),
         "%d: fi_read failed on FAM module %d(p%d)", lfs_params->node_id, src_node, fam_stripe->partition);
 
-    chunk->r_event++;
-    rc = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
-    if (rc == -FI_ETIMEDOUT) {
-        err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
-	    lfs_params->node_id, cid,
-	    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-	    src_node, node->partition, len, fam_off);
-    } else if (rc) {
-	err("%d: lf_read chunk:%jd has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
-		lfs_params->node_id, cid,
-		fi_cntr_readerr(cntr), rc,
-		fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-		src_node, node->partition,
-		fi_cntr_read(cntr), chunk->r_event);
-	ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
+    if (!lfs_params->use_cq) {
+        chunk->r_event++;
+        rc = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
+        if (rc == -FI_ETIMEDOUT) {
+            err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
+                lfs_params->node_id, cid,
+                fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+                src_node, node->partition, len, fam_off);
+        } else if (rc) {
+            err("%d: lf_read chunk:%jd has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
+                    lfs_params->node_id, cid,
+                    fi_cntr_readerr(cntr), rc,
+                    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+                    src_node, node->partition,
+                    fi_cntr_read(cntr), chunk->r_event);
+            ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
+        }
+    } else {
+        ssize_t rcnt = 0;
+        do {        
+            rc = lf_check_progress(tx_cq, &rcnt);
+        } while (rc >= 0 && rcnt < 1);
     }
 
     UPDATE_STATS(lf_rd_stat, 1, len, start);
