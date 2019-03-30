@@ -42,8 +42,8 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	.flags = 0
     };
     struct fid_ep	**tx_epp;
-    struct fid_cq	**tx_cqq;
-    struct fid_cntr	**rcnts, **wcnts;
+    struct fid_cq	**tx_cqq = NULL;
+    struct fid_cntr	**rcnts = NULL, **wcnts = NULL;
     fi_addr_t		*tgt_srv_addr;
     struct fid_mr	**local_mr = NULL;
     void		**local_desc;
@@ -183,29 +183,13 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	ON_FI_ERROR(fi_scalable_ep_bind(ep, &av->fid, 0), "fi_scalable_ep_bind failed");
     }
 
-    memset(&cq_attr, 0, sizeof(cq_attr));
-    /*
-    cq_attr.format = FI_CQ_FORMAT_TAGGED;
-    cq_attr.size = 100;
-    cq_attr.wait_obj = FI_WAIT_UNSPEC;
-    */
-    //cq_attr.wait_cond = FI_CQ_COND_NONE;
-    if (params->set_affinity) {
-	alloc_affinity(&cq_affinity, thread_cnt, node + 2);
-	cq_attr.flags = FI_AFFINITY;
-    }
-
     tx_attr = *fi->tx_attr;
     tx_attr.comp_order = FI_ORDER_NONE;
- //   tx_attr.op_flags = FI_COMPLETION;
 
     /* per worker --> */
     tx_epp = (struct fid_ep **) malloc(thread_cnt * sizeof(void*));
-    tx_cqq = (struct fid_cq **) malloc(thread_cnt  * sizeof(void*));
-    ASSERT(tx_epp && tx_cqq);
-    rcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
-    wcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
-    ASSERT(rcnts && wcnts);
+    ASSERT(tx_epp);
+    
     local_desc = (void **) calloc(thread_cnt, sizeof(void*));
 
     /* Register the local buffers */
@@ -260,6 +244,16 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 
         if (params->use_cq) {
             // Create completion queues
+
+            memset(&cq_attr, 0, sizeof(cq_attr));
+            if (params->set_affinity) {
+                alloc_affinity(&cq_affinity, thread_cnt, node + 2);
+                cq_attr.flags = FI_AFFINITY;
+            }
+
+            tx_cqq = (struct fid_cq **) malloc(thread_cnt  * sizeof(void*));
+            ASSERT(tx_cqq);
+
             cq_attr.format = FI_CQ_FORMAT_CONTEXT;
             cq_attr.wait_obj = FI_WAIT_NONE;
             cq_attr.size = fi->tx_attr->size;
@@ -271,14 +265,21 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
             // Bind completion queues to endpoint
             // FI_RECV | FI_TRANSMIT | FI_SELECTIVE_COMPLETION
             ON_FI_ERROR(fi_ep_bind(tx_epp[i], &tx_cqq[i]->fid, FI_TRANSMIT), "fi_ep_bind tx context failed");
+
         } else {
             // Create counters
+
+            rcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
+            wcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
+            ASSERT(rcnts && wcnts);
+
             ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &rcnts[i], NULL), "fi_cntr_open r failed");
             ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &wcnts[i], NULL), "fi_cntr_open w failed");
 
             // Bind counters to endpoint
             ON_FI_ERROR(fi_ep_bind(tx_epp[i], &rcnts[i]->fid, FI_READ),  "fi_ep_bind r cnt failed");
             ON_FI_ERROR(fi_ep_bind(tx_epp[i], &wcnts[i]->fid, FI_WRITE),  "fi_ep_bind w cnt failed");
+
         }
 
 	ON_FI_ERROR(fi_enable(tx_epp[i]), "fi_enable tx_ep failed");
@@ -391,9 +392,12 @@ void lf_client_free(LF_CL_t *cl)
 	}
 	free(cl->tx_epp);
 	free(cl->rx_epp);
-	free(cl->rcnts);
-	free(cl->wcnts);
-	free(cl->cq_affinity);
+	if (cl->rcnts)
+            free(cl->rcnts);
+	if (cl->wcnts)
+            free(cl->wcnts);
+	if (cl->cq_affinity)
+            free(cl->cq_affinity);
 	free(cl->local_desc);
 	free(cl->local_mr);
 
@@ -406,8 +410,11 @@ void lf_client_free(LF_CL_t *cl)
 		ON_FI_ERROR(fi_close(&cl->rx_cqq[0]->fid), "close rx cq 0");
 	if (cl->rcnt)
 		ON_FI_ERROR(fi_close(&cl->rcnt->fid), "close rcnt 0");
-	free(cl->rx_cqq);
-	free(cl->tx_cqq);
+
+        if (cl->rx_cqq)
+            free(cl->rx_cqq);
+	if (cl->tx_cqq)
+            free(cl->tx_cqq);
 
 	if (cl->free_domain_fl) {
 	    /* close the domain */

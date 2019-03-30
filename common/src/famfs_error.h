@@ -40,7 +40,7 @@
 #define    ASSERT(x)                    \
     do {                                \
         if (!(x))    {                  \
-            fprintf(stderr, "%s:%s(%d) " #x "\n", __FILE__, __FUNCTION__, __LINE__); \
+            fprintf(stderr, "ASSERT failed %s:%s(%d) " #x "\n", __FILE__, __FUNCTION__, __LINE__); \
             exit(1);                    \
         }                               \
     } while (0);
