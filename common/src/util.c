@@ -742,12 +742,13 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	printf("Extent %zu bytes\n", extent_sz);
 	printf("VMEM %zu bytes in %d partition(s) per node\n", vmem_sz, srv_cnt);
 	printf("Transfer block size %zu bytes\n", transfer_len);
-	printf("libfabric provider:%s/%s mr_mode:%s%s%s progress:%s",
+	printf("libfabric provider:%s/%s mr_mode:%s%s%s progress:%s%s",
 	       lf_provider_name, zhpe_support? "zhpe" : "sockets",
 	       lf_mr_scalable?LF_MR_MODEL_SCALABLE:(lf_mr_basic?LF_MR_MODEL_BASIC:""),
 	       (lf_mr_basic&&lf_mr_local)?",":"",
 	       lf_mr_local?LF_MR_MODEL_LOCAL:"",
-	       lf_progress);
+	       lf_progress_manual?"manual":(lf_progress_auto?"auto":"default"),
+	       use_cq?"/cq":"");
 	printf(" base port:%s\n  number of workers:%d, srv rx ctx:%d, I/O timeout %lu ms\n",
 	       port, workers, lf_srv_rx_ctx, io_timeout);
 	printf("Command timeout %.1f s\n", cmd_timeout/1000.);
