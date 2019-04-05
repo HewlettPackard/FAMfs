@@ -1,5 +1,6 @@
 #!/bin/bash
 SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
+export SCRIPT_DIR
 . ${SCRIPT_DIR}/setup-env.sh
 
 function run-all() { mpirun --hosts ${all_h},${all_c} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }

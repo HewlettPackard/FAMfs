@@ -1,5 +1,5 @@
 #!/bin/bash
-run-all `pwd`/cleanup.sh
+run-all ${SCRIPT_DIR}/cleanup.sh
 
 echo "Starting unifycrd with $MEM of memory"
 mpirun --hosts $AllNodes -ppn 1 $MPIchEnv /bin/bash -c 'ulimit -s 1024; unifycrd' 2>>$MPI_LOG 1>>$SRV_LOG &
@@ -23,7 +23,7 @@ while
         sleep $_dt
     fi
     ((waiting += _dt))
-    [ ! -f /tmp/unifycrd.running.* ]
+    [ ! -f "/tmp/unifycrd.running.${pid}" ]
 do
     :
 done
