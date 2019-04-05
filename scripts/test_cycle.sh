@@ -23,7 +23,7 @@ while
         sleep $_dt
     fi
     ((waiting += _dt))
-    [ ! -f "/tmp/unifycrd.running.${pid}" ]
+    ! ls /tmp/unifycrd.running.* 1>/dev/null 2>&1
 do
     :
 done
