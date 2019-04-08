@@ -154,8 +154,8 @@ while true; do
 done
 
 if [ -z "$oREADS" ]; then oREADS=$oWRITES; fi
-if [[ -z "$oSERVERS" ]]; then all_h="$oSERVERS"; fi
-if [[ -z "$oCLIENTS" ]]; then all_c="$oCLIENTS"; fi
+if [ -z "$all_h" ]; then all_h="$oSERVERS"; fi
+if [ -z "$all_c" ]; then all_c="$oCLIENTS"; fi
 
 export all_h
 export all_c
