@@ -203,11 +203,27 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     export Servers=`make_list "$hh" ${SrvIter[$si]}`
     ns=`count $Servers`
     [ -z "$oData" ] || oData="${oData::2} $ns"
-    [ -z "$oMdServers" ] && mdServers="$Servers" || mdServers="$oMdServers"
+    mdExclusive=""
+    if [ -z "$oMdServers" ]; then
+        mdServers="$Servers"
+    else
+        mdServers="$oMdServers"
+        # Prepare list of MD nodes which are not in Servers
+        declare -A _t
+        mdExclusive=()
+        IFS=','
+        for _e in $Servers; do ((++_t['$_e'])); done
+        for _e in $oMdServers; do ((_t['$_e']==0)) && mdExclusive+=($_e); done
+        ((${#mdExclusive}>0)) && mdExclusive="${mdExclusive[*]}"
+        unset IFS
+        unset _t
+    fi
 
     for ((ci = 0; ci < ${#ClnIter[*]}; ci++)); do
         export Clients=`make_list "$cc" ${ClnIter[$ci]}`
-        echo "=== $Clients -> $Servers ===" >> $TEST_LOG
+        AllNodes="$Servers,$Clients"
+        [ -z "$mdExclusive" ] || AllNodes+=",$mdExclusive"
+        echo "=== $Clients -> $Servers [Meta: $mdServers] ===" >> $TEST_LOG
         nc=`count $Clients`
 
         for ((i = 0; i < ${#RANK[*]}; i++)); do
@@ -265,7 +281,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export OPT="$opt"
                     export DSC="$dsc"
                     export Ranks="${RANK[$i]}"
-                    export AllNodes="$Servers,$Clients"
+                    export AllNodes
                     export MEM=$mem
                     export DSC="$dsc"
                     export extsz
