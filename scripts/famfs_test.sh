@@ -62,7 +62,7 @@ function get_myhostname() {
 # Usage: get_myhostname "Client_nodes"
   local suffix=$(get_suffix "$1")
   local hn=$(hostname)
-  [ -z "$suffix" ] || hn+="-${suffix}"
+  [ -z "$suffix" ] || hn+="${suffix}"
   echo $hn
 }
 
