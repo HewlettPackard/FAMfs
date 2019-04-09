@@ -3,7 +3,7 @@ SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
 export SCRIPT_DIR
 . ${SCRIPT_DIR}/setup-env.sh
 
-function run-all() { mpirun --hosts ${all_h},${all_c} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }
+function run-all() { mpirun --hosts ${all_n} -ppn 1 /bin/bash -c "$@"; }
 function run-cln() { mpirun --hosts ${all_c} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }
 function run-srv() { mpirun --hosts ${all_h} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }
 export -f run-all
@@ -43,6 +43,41 @@ function make_list() {
     done
     list=${list:0:((${#list}-1))}
     echo $list
+}
+
+function strip_hostname() {
+# Example: Strip '-ib' from 'Node101-ib'
+  echo ${1%-[a-z]*}
+}
+
+function get_suffix() {
+# Return node suffix, i.e. '-ib' for 'node101-ib'
+  local cl=${1%%,*}
+  local stripped_cl=$(strip_hostname $cl)
+  local n=${#stripped_cl}
+  echo ${cl:n}
+}
+
+function get_myhostname() {
+# Usage: get_myhostname "Client_nodes"
+  local suffix=$(get_suffix "$1")
+  local hn=$(hostname)
+  [ -z "$suffix" ] || hn+="-${suffix}"
+  echo $hn
+}
+
+function add_mynode() {
+# Add my node to a list
+  local n nodes my found=false
+  IFS=','
+  nodes=($@)
+  my=$(get_myhostname "${nodes[0]}")
+  for n in ${nodes[@]}; do
+    [[ "$my" == "$n" ]] && { found=true; break; }
+  done
+  $found || nodes+=("$my")
+  echo "${nodes[*]}"
+  unset IFS
 }
 
 OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vqVE:p:F:m: -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,lf_progress:,fams:,md: -n 'parse-options' -- "$@"`
@@ -223,6 +258,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
         export Clients=`make_list "$cc" ${ClnIter[$ci]}`
         AllNodes="$Servers,$Clients"
         [ -z "$mdExclusive" ] || AllNodes+=",$mdExclusive"
+        all_n=$(add_mynode "$AllNodes") # Force my node included
         echo "=== $Clients -> $Servers [Meta: $mdServers] ===" >> $TEST_LOG
         nc=`count $Clients`
 
@@ -282,6 +318,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export DSC="$dsc"
                     export Ranks="${RANK[$i]}"
                     export AllNodes
+                    export all_n
                     export MEM=$mem
                     export DSC="$dsc"
                     export extsz
