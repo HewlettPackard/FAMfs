@@ -22,7 +22,7 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
     int nchunks, verbose, rc;
 
     verbose = (rank == 0);
-    if ((rc = arg_parser(argc, argv, verbose, LFS_MAXCLIENTS, params_p))) {
+    if ((rc = arg_parser(argc, argv, verbose, 1, params_p))) {
 	if (verbose)
 	    ion_usage(argv[0]);
 	return rc;

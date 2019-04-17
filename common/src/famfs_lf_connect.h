@@ -89,7 +89,8 @@ typedef struct lf_cl_ {
 
 typedef struct n_params_ {
 	char	    **nodelist;		/* Array of node names; size is .node_cnt */
-	char	    **clientlist;	/* Array of client node names; size is client_cnt */
+	char	    **clientlist;	/* LF client only: array of client node names; size is client_cnt */
+	char	    *node_name;		/* Node name: the pointer to nodelist or clientlist */
 	size_t	    vmem_sz;		/* Size of FAM (single partition) per node, bytes */
 	size_t	    chunk_sz;		/* Chunk size, bytes */
 	size_t	    extent_sz;		/* Extent size, bytes */
@@ -97,7 +98,6 @@ typedef struct n_params_ {
 	off_t	    part_sz;		/* partition size if srv_extents>0 else vmem_sz */
 	uint64_t    cmd_timeout_ms;	/* single command execution timeout, ms */
 	uint64_t    io_timeout_ms;	/* I/O block timeout, ms */
-//	int	    ionode_cnt;		/* Number of IO nodes */
 	int	    client_cnt;		/* Number of LF client nodes */
 	int	    node_cnt;		/* nodelist size */
 	int	    node_id;		/* My node index in clientlist if any otherwise in nodelist */

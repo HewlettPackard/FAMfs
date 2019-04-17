@@ -101,7 +101,7 @@ int mds_by_name() {
         }
     }
 
-    return find_my_node(nlist, ncnt, 1) >= 0;
+    return find_my_node(nlist, ncnt, NULL) >= 0;
 }
 
 int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {

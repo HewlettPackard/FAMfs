@@ -183,13 +183,15 @@ static char *get_myhostname(void) {
     return hostname;
 }
 
-int find_my_node(char* const* nodelist, int node_cnt, int silent) {
+int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 	char *hostname;
 	size_t len;
 	int i, idx = -1;
 
 	hostname = get_myhostname();
 	if (hostname) {
+		if (hostname_p)
+			*hostname_p = strdup(hostname);
 		len = strlen(hostname);
 		for (i = 0; i < node_cnt; i++) {
 			if (!strncmp(hostname, nodelist[i], len)) {
@@ -197,7 +199,9 @@ int find_my_node(char* const* nodelist, int node_cnt, int silent) {
 				break;
 			}
 		}
-	}
+		free(hostname);
+	} else if (hostname_p)
+		*hostname_p = strdup("?");
 
 	if (idx < 0) {
 		struct ifaddrs *ifa;
@@ -222,10 +226,6 @@ int find_my_node(char* const* nodelist, int node_cnt, int silent) {
 		}
 	}
 
-	if (idx < 0 && !silent)
-		printf("Cannot find my node %s in the node list (-H)!\n",
-			hostname?hostname:"?");
-	free(hostname);
 	return idx;
 }
 
@@ -313,10 +313,12 @@ void ion_usage(const char *name) {
 	   name);
 }
 
-int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PARAMS_t **params_p)
+/* Parse the command line for LF client(client_mode:1) or server(:-1) or both(:0) */
+int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_t **params_p)
 {
     int			opt, opt_idx = 0;
     char		port[6], **nodelist = NULL, **clientlist = NULL;
+    char		*node_name = NULL;
     char		**famlist = NULL;
     FAM_MAP_t		*fam_map = NULL;
     int			famnode_cnt = 0;
@@ -626,23 +628,24 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     cmd_timeout = io_timeout * get_batch_stripes(stripes, nchunks*workers);
 
     /* Find my node */
-    if (client_rank_size > 0) {
-	node_id = find_my_node(clientlist, client_cnt, 0);
-	if (client_cnt > client_rank_size) {
-	    err("Bad client node count, cmd:%d > MPI:%d, please check -c [--clientlist]",
-		client_cnt, client_rank_size);
+    switch (client_mode) {
+    case 1:	/* FAMfs: LF client only */
+	node_id = find_my_node(clientlist, client_cnt, &node_name);
+	if (client_cnt > LFS_MAXCLIENTS) {
+	    err("Too many clients: %d, please check -c [--clientlist]", client_cnt);
 	    goto _free;
 	}
 	if (node_id < 0) {
-	    err("Cannot find my node in client list (-c)!");
-	    goto _free;
+		err("Cannot find my node %s in the node list (-c)!", node_name);
+		goto _free;
 	}
-    } else {
+	break;
+    case -1:	/* FAMfs, node: LF server */
 	if (node_cnt == 0) {
 	    err("Bad node count, please check -H [--hostlist]");
 	    goto _free;
 	}
-        node_id = find_my_node(nodelist, node_cnt, (clientlist != NULL));
+        node_id = find_my_node(nodelist, node_cnt, &node_name);
 	if (clientlist) {
 	    /* Ignore clientlist */
 	    nodelist_free(clientlist, client_cnt);
@@ -651,10 +654,30 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
 	    if (be_verbose)
 		err("Ignore clientlist (-c) option");
 	} else if (node_id < 0) {
-	    err("Cannot find my node in FAM emulation node list (-H)!");
+	    err("Cannot find my node %s in FAM emulation node list (-H)!", node_name);
 	    goto _free;
 	}
+	break;
+    case 0:	/* lf_test: LF client or server */
+    default:
+	node_id = find_my_node(clientlist, client_cnt, &node_name);
+	if (node_id >= 0) {
+	    if (client_cnt > LFS_MAXCLIENTS) {
+		err("Too many clients: %d, please check -c [--clientlist]", client_cnt);
+		goto _free;
+	    }
+	} else if (fam_map == NULL) {
+	    node_id = find_my_node(nodelist, node_cnt, NULL);
+	    if (node_id < 0) {
+		err("Cannot find my node %s in FAM emulation node list (-H)!", node_name);
+		goto _free;
+	    }
+	    nodelist_free(clientlist, client_cnt);
+	    clientlist = NULL;
+	}
+	break;
     }
+    ASSERT (node_name);
 
     /* Number of LF server partitions, default:1 */
     if (srv_extents == 0)
@@ -668,7 +691,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     }
 
     if (verbose)
-	printf("Running on node:%d\n", node_id);
+	printf("Running on node %d %s\n", node_id, node_name);
 
     if (be_verbose) {
 	unsigned int exts = vmem_sz/extent_sz;
@@ -789,6 +812,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_rank_size, N_PA
     params->clientlist = clientlist;
     params->client_cnt = client_cnt;
     params->node_id = node_id;
+    params->node_name = node_name;
     params->nchunks = nchunks;
     params->parities = parities;
     params->recover = recover;
@@ -883,6 +907,7 @@ void free_lf_params(N_PARAMS_t **params_p)
     free(params->mr_virt_addrs);
     free_fam_map(&params->fam_map);
     free(params->fam_buf);
+    free(params->node_name);
     free(params);
     *params_p = NULL;
 }

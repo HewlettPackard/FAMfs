@@ -83,7 +83,7 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
         int i, srv_cnt;
 
         /* On each node in nodelist */
-        if (find_my_node(params->nodelist, params->node_cnt, 1) >= 0) {
+        if (find_my_node(params->nodelist, params->node_cnt, NULL) >= 0) {
 
             /* Initialize libfabric target */
             rc = lf_servers_init(&lf_servers, params, 0);

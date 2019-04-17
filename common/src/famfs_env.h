@@ -41,7 +41,7 @@ typedef enum w_type_ {
 
 /* defined in util.c */
 char** getstrlist(const char *buf, int *count);
-int find_my_node(char* const* nodelist, int node_cnt, int silent);
+int find_my_node(char* const* nodelist, int node_cnt, char **hostname);
 void nodelist_free(char **nodelist, int size);
 //int is_module_loaded(const char *name);
 void alloc_affinity(int **affp, int size, int pos);
