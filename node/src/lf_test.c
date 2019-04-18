@@ -49,7 +49,7 @@ static void perf_stats_print(PERF_STAT_t *stats, size_t off, int mask, const cha
 static void perf_stats_print_bw(PERF_STAT_t *stats, int mask, const char *msg, uint64_t tu, uint64_t bu);
 
 
-static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
+static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_comm)
 {
     LF_SRV_t **lf_servers;
     int srv_cnt, node_id, lf_client_idx;
@@ -68,6 +68,7 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
 
 	lf_servers[i] = (LF_SRV_t *) malloc(sizeof(LF_SRV_t));
 	lf_servers[i]->params = params;
+	lf_servers[i]->thread_id = i;
 	//lf_servers[i]->length = part_length;
 	//lf_servers[i]->virt_addr = NULL;
 	cl = (LF_CL_t*) calloc(1, sizeof(LF_CL_t));
@@ -108,7 +109,7 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
 		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Barrier(mpi_comm);
 
     /* Exchange keys */
     if (params->lf_mr_flags.prov_key) {
@@ -120,7 +121,7 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
 	    params->mr_prov_keys[lf_client_idx] = lf_servers[part]->lf_client->mr_key;
 	}
 	ON_ERROR( MPI_Allgather(/* &mr_prov_keys[srv_cnt*node_id] */ MPI_IN_PLACE, len, MPI_BYTE,
-				params->mr_prov_keys, len, MPI_BYTE, MPI_COMM_WORLD),
+				params->mr_prov_keys, len, MPI_BYTE, mpi_comm),
 		 "MPI_Allgather");
     }
     /* Exchange virtual addresses */
@@ -133,12 +134,60 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
 	    params->mr_virt_addrs[lf_client_idx] = (uint64_t) lf_servers[part]->virt_addr;
 	}
 	ON_ERROR( MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
-				params->mr_virt_addrs, len, MPI_BYTE, MPI_COMM_WORLD),
+				params->mr_virt_addrs, len, MPI_BYTE, mpi_comm),
 		 "MPI_Allgather");
     }
 
     *lf_servers_p = lf_servers;
     return 0;
+}
+
+void split_mpi_world(LF_ROLE_t role, MPI_Comm *mpi_comm)
+{
+	LF_ROLE_t	*lf_roles;
+	MPI_Comm	world_comm, comm = MPI_COMM_NULL;
+	MPI_Group	group_all, group;
+	int		*ranks, size, i, rc;
+
+	lf_roles = (LF_ROLE_t *) calloc(rank_size, sizeof(int));
+	lf_roles[rank] = role;
+	rc = MPI_Allgather(MPI_IN_PLACE, sizeof(int), MPI_BYTE,
+			   lf_roles, sizeof(int), MPI_BYTE, MPI_COMM_WORLD);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Allgather");
+		return;
+	}
+	ranks = (int *) calloc(rank_size, sizeof(int));
+	for (i = 0, size = 0; i < rank_size; i++)
+		if (lf_roles[i] == role)
+			ranks[size++] = i;
+	free(lf_roles);
+
+	rc = MPI_Comm_dup(MPI_COMM_WORLD, &world_comm);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_dup failed:%d", rc);
+		return;
+	}
+	rc = MPI_Comm_group(world_comm, &group_all);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_group failed:%d", rc);
+		return;
+	}
+	rc = MPI_Group_incl(group_all, size, ranks, &group);
+	free(ranks);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Group_incl failed:%d role:%d size:%d",
+		    rc, role, size);
+		return;
+	}
+	rc = MPI_Comm_create(world_comm, group, &comm);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_create failed:%d role:%d size:%d",
+		    rc, role, size);
+		return;
+	}
+	ASSERT(comm != MPI_COMM_NULL);
+	memcpy(mpi_comm, &comm, sizeof(MPI_Comm));
 }
 
 static void node_exit(int rc) {
@@ -166,6 +215,8 @@ int main(int argc, char **argv) {
     struct ec_perf	node_stat;
     LF_SRV_t		**lf_servers = NULL;
     N_PARAMS_t		*params = NULL;
+    MPI_Comm		mpi_comm = MPI_COMM_NULL;
+    LF_ROLE_t		lf_role;
     size_t		chunk_sz;
     int			i, k, node_id, srv_cnt, rc;
     int			nchunks, data, parities;
@@ -174,7 +225,8 @@ int main(int argc, char **argv) {
 
 
     ASSERT(sizeof(size_t) == 8);
-    ASSERT(sizeof(PERF_STAT_t) == 4*sizeof(struct ec_perf));
+    ASSERT(sizeof(PERF_STAT_t) == 2*sizeof(struct ec_perf));
+    ON_ERROR( pthread_spin_init(&pstats_lock, PTHREAD_PROCESS_SHARED), "pthr spin init");
 
     rc = MPI_Initialized(&initialized);
     if (rc == MPI_SUCCESS) {
@@ -184,43 +236,65 @@ int main(int argc, char **argv) {
 	    rc = MPI_Query_thread(&provided);
     }
     if (rc != MPI_SUCCESS || provided < MPI_THREAD_MULTIPLE) {
-	printf("MPI_Init failure\n");
+	err("MPI_Init failure rc:%d", rc);
 	exit(1);
     }
     MPI_Comm_size(MPI_COMM_WORLD, &rank_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     /* Parse command */
-    if ((rc = arg_parser(argc, argv, (rank == 0), -1, &params))) {
+    if ((rc = arg_parser(argc, argv, (rank == 0), 0, &params))) {
 	err("Error parsing command arguments");
 	usage(argv[0]);
     }
-    ON_ERROR( pthread_spin_init(&pstats_lock, PTHREAD_PROCESS_SHARED), "pthr spin init");
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    /* Split COMM_WORLD between LF servers and clients */
+    lf_role = params->clientlist? LF_ROLE_CLT : LF_ROLE_SRV;
+    split_mpi_world(lf_role, &mpi_comm);
+    if (mpi_comm == MPI_COMM_NULL) {
+	err("%d: Failed to split MPI world on %s", rank, params->node_name);
+	node_exit(1);
+    }
+
     nchunks = params->nchunks;
     parities = params->parities;
     data = nchunks - parities;
-    node_id = params->node_id;
+    node_id = params->node_id;/* ??? */
     srv_cnt = params->node_servers;
     chunk_sz = params->chunk_sz;
     stripes = params->vmem_sz / chunk_sz;
 
-    /* Emulate ION FAMs with libfabric targets */
-    if (!params->fam_map) {
-	rc = lf_target_init(&lf_servers, params);
-	if (rc) {
-	    err("Can't start FAM emulation target on %s",
-		params->nodelist[node_id]);
-	    node_exit(1);
-	}
+    switch (lf_role) {
+	case LF_ROLE_SRV:
+	    /* Emulate ION FAMs with libfabric targets */
+	    if (!params->fam_map) {
+		rc = lf_target_init(&lf_servers, params, mpi_comm);
+		if (rc) {
+		    err("Can't start FAM emulation target on %s",
+			params->nodelist[node_id]);
+		    node_exit(1);
+		}
+	    }
+	    err("%d: SRV OK", rank);
+	    break;
+
+	case LF_ROLE_CLT:
+	    /* Standalone: FAM clients */
+	    rc = lf_clients_init(params);
+	    if (rc) {
+		err("Failed to start LF client on %s",
+		    params->nodelist[node_id]);
+		node_exit(1);
+	    }
+	    err("%d: CLT Ok", rank);
+	    break;
+
+	default: ASSERT(0);
     }
 
-    /* Standalone: FAM clients */
-    rc = lf_clients_init(params);
-    if (rc) {
-	err("Failed to start LF client on %s",
-	    params->nodelist[node_id]);
-	node_exit(1);
-    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    err("** OK ** rank:%d", rank);
 
     /*
     w_pool = pool_init(params->w_thread_cnt, &worker_func, params->lf_clients[0]->cq_affinity);
@@ -239,7 +313,7 @@ int main(int argc, char **argv) {
 	uint64_t dsize, phy_stripe;
 	int mask = 0;
 
-	MPI_Barrier(MPI_COMM_WORLD);
+	MPI_Barrier(mpi_comm);
 
 	/* if (params->cmd_trigger == (k+1))
 	    lf_srv_wait(w_srv_pool, lf_servers, params); */
@@ -276,14 +350,14 @@ int main(int argc, char **argv) {
 	*/
 	ec_perf_add(&node_stat, dsize);
 
-	MPI_Barrier(MPI_COMM_WORLD);
+	MPI_Barrier(mpi_comm);
 
 	/* Collect performance statistics from all nodes */
 	perf_stats_reduce(&perf_stats, &stats_agg_bw, offsetof(struct ec_perf, data), MPI_SUM);
 	perf_stats_reduce(&perf_stats, &stats_agg_bw, offsetof(struct ec_perf, elapsed), MPI_SUM);
 	//perf_stats_reduce(&perf_stats, &stats_max_time, offsetof(struct ec_perf, elapsed), MPI_MAX);
-	MPI_Reduce(&node_stat.data, &node_stat_agg, 1, MPI_UINT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
-	MPI_Reduce(&node_stat.elapsed, &node_stat_max, 1, MPI_UINT64_T, MPI_MAX, 0, MPI_COMM_WORLD);
+	MPI_Reduce(&node_stat.data, &node_stat_agg, 1, MPI_UINT64_T, MPI_SUM, 0, mpi_comm);
+	MPI_Reduce(&node_stat.elapsed, &node_stat_max, 1, MPI_UINT64_T, MPI_MAX, 0, mpi_comm);
 
 	if (rank == 0) {
 	    printf("Cmd done: %s time %.3lf ms\n  Aggregated FAM R/W %.3lf GiB, bandwidth %.2lf MiB/S\n",
@@ -308,13 +382,13 @@ int main(int argc, char **argv) {
     //rc = pool_exit(w_pool, 0); /* 0: don't cancel */
 
 //exit_srv_thr:
-    if (!params->fam_map) {
+    if (!params->fam_map && lf_role == LF_ROLE_SRV) {
 	//pool_exit(w_srv_pool, 0); /* 0: don't cancel */
 	for (i = 0; i < srv_cnt; i++)
 	    lf_srv_free(lf_servers[i]);
 	free(lf_servers);
 
-	MPI_Barrier(MPI_COMM_WORLD);
+	MPI_Barrier(mpi_comm);
     }
     if (rc == 0)
 	printf("%d: SUCCESS!!!\n", rank);
@@ -323,6 +397,7 @@ int main(int argc, char **argv) {
 
     /* free params->lf_clients and params->stripe_buf */
     free_lf_params(&params);
+    MPI_Barrier(MPI_COMM_WORLD);
     node_exit(rc);
     return rc;
 }

@@ -12,6 +12,12 @@
 #include "ec_perf.h"
 
 
+typedef enum lf_role_ {
+        LF_ROLE_UNDEF = 0,
+	LF_ROLE_SRV,
+	LF_ROLE_CLT,
+} LF_ROLE_t;
+
 /* Performance statistics */
 typedef struct perf_stat_ {
 	struct ec_perf		lw_bw;		/* data transfer from local buffer to FAM */
