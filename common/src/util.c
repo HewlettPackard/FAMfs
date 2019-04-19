@@ -661,12 +661,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     case 0:	/* lf_test: LF client or server */
     default:
 	node_id = find_my_node(clientlist, client_cnt, &node_name);
-	if (node_id >= 0) {
-	    if (client_cnt > LFS_MAXCLIENTS) {
-		err("Too many clients: %d, please check -c [--clientlist]", client_cnt);
-		goto _free;
-	    }
-	} else if (fam_map == NULL) {
+	if (node_id < 0 && fam_map == NULL) {
 	    node_id = find_my_node(nodelist, node_cnt, NULL);
 	    if (node_id < 0) {
 		err("Cannot find my node %s in FAM emulation node list (-H)!", node_name);

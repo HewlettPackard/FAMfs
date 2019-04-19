@@ -835,13 +835,21 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
 {
     LF_SRV_t **lf_servers = NULL;
     int srv_cnt, node_id, lf_client_idx;
-    int rank, size;
+    int rank;
     int i, part;
     int rc = -1;
 
     if (mpi_comm) {
+	int size;
+
 	MPI_Comm_rank(mpi_comm, &rank);
 	MPI_Comm_size(mpi_comm, &size);
+
+	if (size != params->fam_cnt) {
+	    err("%d: MPI communicator has %d nodes but FAM should be emulated on %d",
+		node_id, size, params->fam_cnt);
+            goto _err;
+	}
     } else {
 	if (params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr) {
 	    err("FAM emulator argument error - don't set prov_key:%d or virt_addr:%d !",
@@ -849,20 +857,14 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
             goto _err;
 	}
 	rank = -1;
-	size = params->fam_cnt;
     }
     node_id = params->node_id;
     srv_cnt = params->node_servers;
-    if (size != params->fam_cnt) {
-	err("%d: MPI communicator has %d nodes but FAM should be emulated on %d",
-	    node_id, size, params->fam_cnt);
-        goto _err;
-    }
 
     if (params->part_mreg == 0) {
 	if ((rc = posix_memalign(&params->fam_buf, getpagesize(),
 			params->vmem_sz))) {
-	    err("srv memory alloc failed");
+	    err("%d: srv memory alloc failed", rank);
 	    goto _err;
 	}
     }
@@ -889,8 +891,8 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_c
 
 	rc = lf_srv_init(srv);
 	if (rc) {
-	    err("%d: Error starting FAM module %d(p%d) emulation!",
-		rank, i, cl->partition);
+	    err("%d: Error starting FAM module %d(p%d) emulation on %s!",
+		rank, i, cl->partition, params->node_name);
 	    free(cl);
 	    free(srv);
 	    goto _err;
