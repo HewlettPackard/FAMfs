@@ -83,10 +83,11 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
         int i, srv_cnt;
 
         /* On each node in nodelist */
-        if (find_my_node(params->nodelist, params->node_cnt, NULL) >= 0) {
+	i = find_my_node(params->nodelist, params->node_cnt, NULL);
+        if (i >= 0) {
 
-            /* Initialize libfabric target */
-            rc = lf_servers_init(&lf_servers, params, 0);
+            /* Initialize libfabric target on node 'i' */
+            rc = lf_servers_init(&lf_servers, params, i, 0);
             if (rc)
                 err("Can't start FAM emulation target on %s rc:%d",
                     params->nodelist[params->node_id], rc);

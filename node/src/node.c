@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
     W_POOL_t		*w_pool;
     N_PARAMS_t		*params = NULL;
     size_t		chunk_sz;
-    int			i, k, node_id, srv_cnt, rc;
+    int			i, k, node_id, fam_cnt, srv_cnt, rc;
     int			nchunks, data, parities;
     int			initialized = 0, provided;
     uint64_t		stripes, node_stat_max, node_stat_agg;
@@ -201,14 +201,22 @@ int main(int argc, char **argv) {
 	err("Error parsing command arguments");
 	usage(argv[0]);
     }
+
     ON_ERROR( pthread_spin_init(&pstats_lock, PTHREAD_PROCESS_SHARED), "pthr spin init");
     nchunks = params->nchunks;
     parities = params->parities;
     data = nchunks - parities;
     node_id = params->node_id;
+    fam_cnt = params->fam_cnt;
     srv_cnt = params->node_servers;
     chunk_sz = params->chunk_sz;
     stripes = params->vmem_sz / chunk_sz;
+
+    /* Allocate arrays for exchange of prov_keys and virt_addrs */
+    if (!params->lf_mr_flags.scalable) {
+	params->mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
+	params->mr_virt_addrs = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
+    }
 
     /* Emulate ION FAMs with libfabric targets */
     if (!params->fam_map) {
@@ -226,6 +234,13 @@ int main(int argc, char **argv) {
 	err("Failed to start LF client on %s",
 	    params->nodelist[node_id]);
 	node_exit(1);
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    if (rank == 0) {
+	printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
+		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
     }
 
     w_pool = pool_init(params->w_thread_cnt, &worker_func, params->lf_clients[0]->cq_affinity);

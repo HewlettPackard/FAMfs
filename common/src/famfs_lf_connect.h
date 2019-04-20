@@ -152,7 +152,8 @@ typedef struct lf_srv_ {
 int lf_clients_init(N_PARAMS_t *params);
 int lf_client_init(LF_CL_t *client, N_PARAMS_t *params);
 void lf_client_free(LF_CL_t *client);
-int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_comm);
+int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params,
+    int rank, MPI_Comm mpi_comm);
 int lf_srv_init(LF_SRV_t *priv);
 void lf_srv_free(LF_SRV_t *priv);
 ssize_t lf_check_progress(struct fid_cq *cq, ssize_t *cmp);

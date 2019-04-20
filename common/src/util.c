@@ -333,7 +333,6 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     int			set_affinity = 0, lf_srv_rx_ctx = 0, use_cq = 0;
     int			lf_mr_scalable, lf_mr_local, lf_mr_basic, zhpe_support = 0;
     int			lf_progress_auto = 0, lf_progress_manual = 0;
-    uint64_t		*mr_prov_keys = NULL, *mr_virt_addrs = NULL;
     char		*lf_fabric = NULL, *lf_domain = NULL;
     char		*lf_provider_name = NULL, *memreg = NULL;
     char		*lf_progress = NULL;
@@ -600,27 +599,34 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	free_fam_map(&fam_map);
     }
     nodelist_free(famlist, famnode_cnt);
+
+    /* Number of chunks */
+    if (nchunks == 0)
+	nchunks = node_cnt;
+    if (nchunks == 0) {
+	err("Please specify the number of chunks -n [--nchunks]");
+	goto _free;
+    }
+
     if (fam_map) {
 	fam_cnt = fam_map->total_fam_cnt;
 	if (part_mreg > 0)
 	    err("Option is ignored: --part_mreg %d", part_mreg);
 	part_mreg = 0;
     } else {
-	if (nchunks > node_cnt) {
-	    err("Need more nodes (%d) for FAM emulation; given:%d",
-		nchunks, node_cnt);
-	    goto _free;
-	}
-	fam_cnt = node_cnt; /* FAM emulation: one module per IO node */
+	/* FAM emulation: one module per IO node */
+	fam_cnt = node_cnt;
+	if (nchunks > node_cnt)
+	    fam_cnt = nchunks; /* Allow multiple LF SRV per node */
 	if (part_mreg < 0)
 	    part_mreg = 1; /* 'partition' modules per node */
     }
-
-    /* Number of chunks */
-    if (nchunks == 0)
-	nchunks = node_cnt;
-    ON_ERROR( (nchunks == 0),
-	"Please specify the number of chunks -n [--nchunks]");
+    /* TODO: Allow arbitrary nchunks with stripe allocation */
+    if (fam_cnt % nchunks) {
+	err("FAM count:%d is not a multiple of nchunks:%d",
+	    fam_cnt, nchunks);
+	goto _free;
+    }
 
     data = nchunks - parities;
     extents = (vmem_sz * nchunks) / extent_sz;
@@ -641,8 +647,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	}
 	break;
     case -1:	/* FAMfs, node: LF server */
-	if (node_cnt == 0) {
-	    err("Bad node count, please check -H [--hostlist]");
+	if (!fam_map && nchunks > node_cnt) {
+	    err("Need more nodes (%d) for FAM emulation; given:%d, please check -H [--hostlist]",
+		nchunks, node_cnt);
 	    goto _free;
 	}
         node_id = find_my_node(nodelist, node_cnt, &node_name);
@@ -678,12 +685,6 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     if (srv_extents == 0)
 	srv_extents = vmem_sz/extent_sz;
     srv_cnt = vmem_sz/extent_sz/srv_extents;
-    /* TODO: Allow arbitrary nchunks with stripe allocation */
-    if (fam_cnt % nchunks) {
-	err("FAM count:%d is not a multiple of nchunks:%d",
-	    fam_cnt, nchunks);
-	goto _free;
-    }
 
     if (verbose)
 	printf("Running on node %d %s\n", node_id, node_name);
@@ -789,11 +790,6 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     free(memreg);
     free(lf_progress);
 
-    if (!lf_mr_scalable) {
-	mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
-	mr_virt_addrs = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
-    }
-
     params = (N_PARAMS_t*)malloc(sizeof(N_PARAMS_t));
     params->cmdc = cmdc;
     memcpy(params->cmdv, cmdv, cmdc*sizeof(W_TYPE_t));
@@ -819,6 +815,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->prov_name = lf_provider_name;
     params->lf_fabric = lf_fabric;
     params->lf_domain = lf_domain;
+    params->mr_prov_keys = NULL;
+    params->mr_virt_addrs = NULL;
 
     memset(&params->lf_mr_flags, 0, sizeof(LF_MR_MODE_t));
     if (lf_mr_basic) {
@@ -849,8 +847,6 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->srv_extents = srv_extents;
     params->node_servers = srv_cnt;
     params->part_sz = (off_t)vmem_sz / srv_cnt;
-    params->mr_prov_keys = mr_prov_keys;
-    params->mr_virt_addrs = mr_virt_addrs;
     params->cmd_trigger = cmd_trigger;
     params->part_mreg = part_mreg;
     params->stripe_buf = NULL;

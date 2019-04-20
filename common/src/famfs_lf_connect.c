@@ -436,8 +436,9 @@ int lf_clients_init(N_PARAMS_t *params)
     int verbose, my_node_id;
     int i, part, rc;
 
-    /* Pre-allocate LF client worker's private data buffers */
+    verbose = params->verbose;
     workers = params->w_thread_cnt;
+    /* Pre-allocate LF client worker's private data buffers */
     stripe_buf = (char **)malloc(workers * sizeof(void*));
     ASSERT(stripe_buf);
     psize = getpagesize();
@@ -505,7 +506,7 @@ int lf_clients_init(N_PARAMS_t *params)
 	    }
 
 	    lf_all_clients[lf_client_idx] = cl;
-	    if (params->verbose) {
+	    if (verbose) {
 		if (params->fam_map)
 		    printf("%d CL attached to FAM module %d(p%d) mr_key:%lu\n",
 			   my_node_id, i, part, cl->mr_key);
@@ -516,7 +517,6 @@ int lf_clients_init(N_PARAMS_t *params)
 	}
     }
 
-    verbose = (my_node_id == 0);
     if (verbose) {
 	printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
 		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
@@ -831,32 +831,19 @@ int lf_srv_init(LF_SRV_t *priv)
     return 0;
 }
 
-int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, MPI_Comm mpi_comm)
+int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_Comm mpi_comm)
 {
     LF_SRV_t **lf_servers = NULL;
     int srv_cnt, node_id, lf_client_idx;
-    int rank;
     int i, part;
     int rc = -1;
 
-    if (mpi_comm) {
-	int size;
-
-	MPI_Comm_rank(mpi_comm, &rank);
-	MPI_Comm_size(mpi_comm, &size);
-
-	if (size != params->fam_cnt) {
-	    err("%d: MPI communicator has %d nodes but FAM should be emulated on %d",
-		node_id, size, params->fam_cnt);
-            goto _err;
-	}
-    } else {
+    if (mpi_comm == 0) {
 	if (params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr) {
 	    err("FAM emulator argument error - don't set prov_key:%d or virt_addr:%d !",
 		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr);
             goto _err;
 	}
-	rank = -1;
     }
     node_id = params->node_id;
     srv_cnt = params->node_servers;
