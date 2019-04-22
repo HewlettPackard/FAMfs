@@ -198,6 +198,7 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 			}
 		}
 	}
+	free(hostname);
 
 	if (idx < 0) {
 		struct ifaddrs *ifa;
@@ -225,12 +226,9 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 	if (hostname_p) {
 		if (idx >= 0)
 			*hostname_p = strdup(nodelist[idx]);
-		else if (hostname)
-			*hostname_p = strdup(hostname);
 		else
 			*hostname_p = strdup("?");
 	}
-	free(hostname);
 
 	return idx;
 }
@@ -675,7 +673,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     default:
 	node_id = find_my_node(clientlist, client_cnt, &node_name);
 	if (node_id < 0 && fam_map == NULL) {
-	    node_id = find_my_node(nodelist, node_cnt, NULL);
+	    node_id = find_my_node(nodelist, node_cnt, &node_name);
 	    if (node_id < 0) {
 		err("Cannot find my node %s in FAM emulation node list (-H)!", node_name);
 		goto _free;
