@@ -386,15 +386,15 @@ famfs_mr_list_t known_mrs = {0, NULL};
 
 int famfs_buf_reg(char *buf, size_t len, void **rid) {
     struct fid_mr *mr;
-    N_PARAMS_t *pr = lfs_ctx->lfs_params;
-    LF_CL_t    *me = pr->lf_clients[pr->node_id];
+    N_PARAMS_t *par = lfs_ctx->lfs_params;
+    LF_CL_t    **srv = par->lf_clients;
     int i;
 
     if (fs_type != FAMFS)
         return -EINVAL;
 
     // if local registration is not enabled, do nothing
-    if (!pr->lf_mr_flags.local) 
+    if (!par->lf_mr_flags.local) 
         return 0;
 
     if (!known_mrs.cnt) {
@@ -419,32 +419,42 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
             known_mrs.cnt += FAMFS_MR_AU;
         }
     }
-    unsigned long my_key = LMR_BASE_KEY + me->node_id*10000 + local_rank_idx*100 + i;
-    ON_FI_ERR_RET(fi_mr_reg(me->domain, buf, len, FI_REMOTE_READ | FI_REMOTE_WRITE, 0, my_key, 0, &known_mrs.regs[i].mreg, NULL), "cln fi_mr_reg failed");
-
+    unsigned long my_key = LMR_BASE_KEY + par->node_id*10000 + local_rank_idx*100 + i;
+    int n = par->fam_cnt*par->node_servers;
+    known_mrs.regs[i].mreg = (struct fid_mr **)calloc(n, sizeof(struct fid_mr *));
+    known_mrs.regs[i].desc = (void **)calloc(n, sizeof(void *));
     known_mrs.regs[i].buf = buf;
     known_mrs.regs[i].len = len;
-    known_mrs.regs[i].desc = fi_mr_desc(known_mrs.regs[i].mreg);
-    *rid = (void *)&known_mrs.regs[i];
+    for (int j = 0; j < n; j++) {
+        ON_FI_ERR_RET(fi_mr_reg(srv[j]->domain, buf, len, FI_READ | FI_WRITE, 0, my_key, 0, &known_mrs.regs[i].mreg[j], NULL), "cln fi_mr_reg failed");
+        known_mrs.regs[i].desc[j] = fi_mr_desc(known_mrs.regs[i].mreg[j]);
+    }
+
+    if (rid) 
+        *rid = (void *)&known_mrs.regs[i];
 
     return 0;
 }
 
 int famfs_buf_unreg(void *rid) {
-    N_PARAMS_t *pr = lfs_ctx->lfs_params;
+    N_PARAMS_t *par = lfs_ctx->lfs_params;
 
-    if (!pr->lf_mr_flags.local)
+    if (!par->lf_mr_flags.local)
         return 0;
 
     lf_mreg_t *mr = (lf_mreg_t *)rid;
-    ON_FI_ERR_RET(fi_close(&mr->mreg->fid), "cln fi_close failed");
+    for (int j = 0; j < par->fam_cnt*par->node_servers; j++)
+        ON_FI_ERR_RET(fi_close(&mr->mreg[j]->fid), "cln fi_close failed");
+
+    free(mr->mreg);
+    free(mr->desc);
     mr->buf = 0;
     mr->len = 0;
 
     return 0;
 }
 
-static void *lookup_mreg(char *buf, size_t len) {
+static void *lookup_mreg(char *buf, size_t len, int nid) {
     N_PARAMS_t *pr = lfs_ctx->lfs_params;
     int i; 
 
@@ -455,7 +465,7 @@ static void *lookup_mreg(char *buf, size_t len) {
         if (buf >= known_mrs.regs[i].buf && buf + len <= known_mrs.regs[i].buf + known_mrs.regs[i].len) 
             break;
 
-    return i == known_mrs.cnt ? NULL : known_mrs.regs[i].desc;
+    return i == known_mrs.cnt ? NULL : known_mrs.regs[i].desc[nid];
 }
 
 struct fid_ep   *saved_ep;
@@ -525,7 +535,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     famsim_stats_start(famsim_ctx, stats_fi_wr);
 
     ON_FI_ERROR(
-        fi_write(tx_ep, buf, len, lookup_mreg(buf, len), 
+        fi_write(tx_ep, buf, len, lookup_mreg(buf, len, chunk->lf_client_idx), 
             *tgt_srv_addr, off, node->mr_key, (void*)buf),
         "%d (%s): fi_write failed on FAM module %d(p%d)", 
         lfs_params->node_id, nodelist[lfs_params->node_id],
@@ -626,7 +636,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
 	  len, node->local_desc[0], fam_off, node->mr_key);
 
     ON_FI_ERROR(
-        fi_read(tx_ep, buf, len, lookup_mreg(buf, len), 
+        fi_read(tx_ep, buf, len, lookup_mreg(buf, len, nid), 
             *tgt_srv_addr, fam_off, node->mr_key, (void*)buf),
         "%d: fi_read failed on FAM module %d(p%d)", lfs_params->node_id, src_node, fam_stripe->partition);
 

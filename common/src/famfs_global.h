@@ -54,8 +54,8 @@ typedef struct {
 typedef struct {
     char            *buf;
     size_t          len;
-    struct fid_mr   *mreg;
-    void            *desc;
+    struct fid_mr   **mreg;
+    void            **desc;
 } lf_mreg_t;
 
 typedef struct {
