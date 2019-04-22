@@ -190,8 +190,6 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 
 	hostname = get_myhostname();
 	if (hostname) {
-		if (hostname_p)
-			*hostname_p = strdup(hostname);
 		len = strlen(hostname);
 		for (i = 0; i < node_cnt; i++) {
 			if (!strncmp(hostname, nodelist[i], len)) {
@@ -199,9 +197,7 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 				break;
 			}
 		}
-		free(hostname);
-	} else if (hostname_p)
-		*hostname_p = strdup("?");
+	}
 
 	if (idx < 0) {
 		struct ifaddrs *ifa;
@@ -225,6 +221,16 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 			ifa = ifa->ifa_next;
 		}
 	}
+
+	if (hostname_p) {
+		if (idx >= 0)
+			*hostname_p = strdup(nodelist[idx]);
+		else if (hostname)
+			*hostname_p = strdup(hostname);
+		else
+			*hostname_p = strdup("?");
+	}
+	free(hostname);
 
 	return idx;
 }
