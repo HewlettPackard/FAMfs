@@ -120,7 +120,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     }
     if ((params->cmd_trigger > 0) &&
 	/* Need AUTO to drive remote events */
-	!(fi->domain_attr->data_progress & FI_PROGRESS_AUTO))
+	!(fi->domain_attr->data_progress == FI_PROGRESS_AUTO))
     {
 	err("LF client error: cmd_trigger option not supported!");
 	return 1;
@@ -595,10 +595,13 @@ int lf_srv_init(LF_SRV_t *priv)
 	hints->domain_attr->mr_mode |= FI_MR_LOCAL;
 
     // hints->domain_attr->threading = FI_THREAD_ENDPOINT;
+
+    /* Always need automatic data progress on server */
     if (params->lf_progress_flags.progress_manual)
-	hints->domain_attr->data_progress = FI_PROGRESS_MANUAL;
+	hints->domain_attr->data_progress = FI_PROGRESS_AUTO /* FI_PROGRESS_MANUAL */;
     else if (params->lf_progress_flags.progress_auto)
 	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
+
     hints->ep_attr->type        = FI_EP_RDM;
     free(hints->fabric_attr->prov_name);
     hints->fabric_attr->prov_name = strdup(params->prov_name);
@@ -619,7 +622,7 @@ int lf_srv_init(LF_SRV_t *priv)
     }
     if ((params->cmd_trigger > 0) &&
 	/* Need AUTO to drive remote events */
-	!(fi->domain_attr->data_progress & FI_PROGRESS_AUTO))
+	!(fi->domain_attr->data_progress == FI_PROGRESS_AUTO))
     {
 	err("LF target error: cmd_trigger option not supported!");
 	return 1;
@@ -721,9 +724,15 @@ int lf_srv_init(LF_SRV_t *priv)
 
     if (rx_ctx_n == 0) {
 	/* non-scalable endpoint */
+	uint64_t flags;
+
 	ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &rx_cqq[0], NULL),
 		    "srv fi_cq_open failed");
-	ON_FI_ERROR(fi_ep_bind(ep, &rx_cqq[0]->fid, FI_SEND | FI_RECV | FI_SELECTIVE_COMPLETION),
+	flags = FI_TRANSMIT | FI_SELECTIVE_COMPLETION;
+	/* FI_RECV is required to drive manual progress using CQ */
+	if (fi->domain_attr->data_progress == FI_PROGRESS_MANUAL)
+	    flags |= FI_RECV;
+	ON_FI_ERROR(fi_ep_bind(ep, &rx_cqq[0]->fid, flags),
 		    "srv fi_ep_bind failed");
 
 	if (params->cmd_trigger > 0) {
