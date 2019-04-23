@@ -307,6 +307,7 @@ void ion_usage(const char *name) {
 	   "\t-c --clients <node name list>\n"
            "\t-q --use_cq use completion queue instead of counters\n"
 	   "\t-a |--affinity\n"
+	   "\t-V |--verify [0|1] - default:1; 0: don't fill and verify date with LOAD, VERIFY\n"
 	   "\t-v |--verbose\n"
 	   "  Command is one of:\n"
 	   "\tLOAD - populate data\n"
@@ -329,6 +330,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     int			node_cnt = 0, nchunks = 0, recover = 0, verbose = 0;
     int			cmd_trigger = 0, client_cnt = 0;
     int			part_mreg = -1;
+    int			verify = 1;
     int			iters = -1, parities = -1, workers = -1, lf_port = -1;
     size_t		vmem_sz = 0, chunk_sz = 0, extent_sz = 0;
     uint64_t            transfer_len = 0; /* transfer [block] size */
@@ -378,6 +380,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	{"clients",	1, 0, 'c'},
 	{"extent",	1, 0, 'E'},
 	{"workers",	1, 0, 'w'},
+	{"verify",	1, 0, 'V'},
 	/* no short option */
 	{"provider",	1, 0, OPT_PROVIDER},
 	{"fabric",	1, 0, OPT_FABRIC},
@@ -392,7 +395,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     };
 
     optind = 0;
-    while ((opt = getopt_long(argc, argv, "aqvhp:i:t:T:H:F:P:R:M:C:n:c:E:w:",
+    while ((opt = getopt_long(argc, argv, "aqvhp:i:t:T:H:F:P:R:M:C:n:c:E:w:V:",
 	    long_opts, &opt_idx)) != -1)
     {
         switch (opt) {
@@ -457,6 +460,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
             case 'q':
                 use_cq++;
                 break;
+	    case 'V':
+		verify = atoi(optarg);
+		break;
 	    case 'v':
 		verbose++;
 		break;
@@ -775,7 +781,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	printf(" base port:%s\n  number of workers:%d, srv rx ctx:%d, I/O timeout %lu ms\n",
 	       port, workers, lf_srv_rx_ctx, io_timeout);
 	printf("Command timeout %.1f s\n", cmd_timeout/1000.);
-	printf("Iterations: %d\n", iters);
+	//printf("Iterations: %d\n", iters);
+	if (verify == 0)
+	    printf("Verify is off: LOAD and VERIFY command will not fill/check the data buffer!\n");
 
 	if (extents*extent_sz != vmem_sz*nchunks) {
 		err("Wrong VMEM:%lu, it must be a multiple of extent size (%lu)!",
@@ -844,6 +852,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->lf_progress_flags.progress_manual = lf_progress_manual;
     params->lf_progress_flags.progress_auto = lf_progress_auto;
 
+    params->verify = verify;
     params->verbose = verbose;
     params->set_affinity = set_affinity;
     params->use_cq = use_cq;

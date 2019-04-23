@@ -110,6 +110,7 @@ typedef struct n_params_ {
 	LF_MR_MODE_t  lf_mr_flags;	/* libfabric: 1 - use scalable memory registration model */
 	LF_PRG_MODE_t lf_progress_flags;/* libfabric: force FI_PROGRESS_AUTO or _MANUAL */
 	int	    verbose;		/* debug flag */
+	int	    verify;		/* 0: Don't fill and verify data buffer */
 	int	    set_affinity;	/* set CPU affinity to workers and CQ */
         int         use_cq;             /* use completion queue instead of counters */
 	char	    *lf_fabric;		/* libfabric fabric */

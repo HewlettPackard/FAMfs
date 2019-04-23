@@ -957,7 +957,8 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 
 	for (stripe = bunch->phy_stripe; stripe < (bunch->phy_stripe + bunch->stripes); stripe++)
 	{
-	    populate_stripe(priv, stripe);
+           if (params->verify)
+               populate_stripe(priv, stripe);
 
 	    /* Write all data chunks of one stripe */
 	    ec_perf_start(&priv->perf_stat.lw_bw);
@@ -1009,10 +1010,12 @@ static int worker_func(W_TYPE_t cmd, void *arg, int thread_id)
 	    if (rc) return rc;
 	    ec_perf_add(&priv->perf_stat.lr_bw, params->chunk_sz*(unsigned int)data);
 
-	    ver_err = verify_stripe(priv, stripe);
-	    ver_errors += ver_err;
-	    if (params->verbose)
-		printf("%d: Verify %lu errors in %lu stripe!\n", rank, ver_err, stripe);
+           if (params->verify) {
+               ver_err = verify_stripe(priv, stripe);
+               ver_errors += ver_err;
+               if (params->verbose)
+                   printf("%d: Verify %lu errors in %lu stripe!\n", rank, ver_err, stripe);
+           }
 	}
 	if (params->verbose)
 	    printf("%d/%d Read FAM BW %.2f MiB/S\n",
