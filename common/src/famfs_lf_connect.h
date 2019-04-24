@@ -81,7 +81,7 @@ typedef struct lf_cl_ {
 	int			service;	/* remote port number */
 	//int			chunk;		/* stripe chunk index: 0:D0... P0... */
 	unsigned int		partition;	/* fam (or partition) number served on this node */
-	int			free_domain_fl;	/* flag: free the domain */
+	int			free_domain_fl;	/* true: Free fabric, domain and av */
 	unsigned long long	fam_id;		/* FAM region ID */
 	int			size;		/* Compute: # of workers; IO node: # of contexts or zero */
 	uint64_t		dst_virt_addr;	/* remote buffer virtual address */
@@ -110,6 +110,7 @@ typedef struct n_params_ {
 	LF_MR_MODE_t  lf_mr_flags;	/* libfabric: 1 - use scalable memory registration model */
 	LF_PRG_MODE_t lf_progress_flags;/* libfabric: force FI_PROGRESS_AUTO or _MANUAL */
 	int	    verbose;		/* debug flag */
+	int         multi_domains;	/* 1: Client has to open multiple domains: one per initiator's node */
 	int	    verify;		/* 0: Don't fill and verify data buffer */
 	int	    set_affinity;	/* set CPU affinity to workers and CQ */
         int         use_cq;             /* use completion queue instead of counters */

@@ -308,6 +308,7 @@ void ion_usage(const char *name) {
            "\t-q --use_cq use completion queue instead of counters\n"
 	   "\t-a |--affinity\n"
 	   "\t-V |--verify [0|1] - default:1; 0: don't fill and verify date with LOAD, VERIFY\n"
+	   "\t    --multi_domains [0|1] - default:1 - open multiple domains on client\n"
 	   "\t-v |--verbose\n"
 	   "  Command is one of:\n"
 	   "\tLOAD - populate data\n"
@@ -329,7 +330,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     int			famnode_cnt = 0;
     int			node_cnt = 0, nchunks = 0, recover = 0, verbose = 0;
     int			cmd_trigger = 0, client_cnt = 0;
-    int			part_mreg = -1;
+    int			part_mreg = -1, multi_domains = -1;
     int			verify = 1;
     int			iters = -1, parities = -1, workers = -1, lf_port = -1;
     size_t		vmem_sz = 0, chunk_sz = 0, extent_sz = 0;
@@ -359,6 +360,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	OPT_LF_PROGRESS,
 	OPT_CMD_TRIGGER,
 	OPT_PART_MREG,
+	OPT_MULTI_DOMAINS,
     };
     static struct option long_opts[] =
     {
@@ -390,7 +392,8 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	{"memreg",	1, 0, OPT_MEMREG},
 	{"lf_progress",	1, 0, OPT_LF_PROGRESS},
 	{"cmd_trigger",	0, 0, OPT_CMD_TRIGGER},
-	{"part_mreg",	0, 0, OPT_PART_MREG},
+	{"part_mreg",	1, 0, OPT_PART_MREG},
+	{"multi_domains", 1, 0, OPT_MULTI_DOMAINS},
 	{0, 0, 0, 0}
     };
 
@@ -499,6 +502,9 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 		break;
 	    case OPT_PART_MREG:
 		part_mreg = atoi(optarg);
+		break;
+	    case OPT_MULTI_DOMAINS:
+		multi_domains = atoi(optarg);
 		break;
             case '?':
             case 'h':
@@ -623,13 +629,18 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	if (part_mreg > 0)
 	    err("Option is ignored: --part_mreg %d", part_mreg);
 	part_mreg = 0;
+	if (multi_domains > 0)
+	    err("Option is ignored: --multi_domains %d", multi_domains);
+	multi_domains = 0;
     } else {
 	/* FAM emulation: one module per IO node */
 	fam_cnt = node_cnt;
 	if (nchunks > node_cnt)
-	    fam_cnt = nchunks; /* Allow multiple LF SRV per node */
+	    fam_cnt = nchunks;	/* Allow multiple LF SRV per node */
 	if (part_mreg < 0)
-	    part_mreg = 1; /* 'partition' modules per node */
+	    part_mreg = 1;	/* 'partition' modules per node */
+	if (multi_domains < 0)
+	    multi_domains = 1;	/* Client opens multiple domains */
     }
     /* TODO: Allow arbitrary nchunks with stripe allocation */
     if (fam_cnt % nchunks) {
@@ -851,6 +862,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->lf_mr_flags.zhpe_support = zhpe_support;
     params->lf_progress_flags.progress_manual = lf_progress_manual;
     params->lf_progress_flags.progress_auto = lf_progress_auto;
+    params->multi_domains = multi_domains;
 
     params->verify = verify;
     params->verbose = verbose;

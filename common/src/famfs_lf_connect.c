@@ -309,6 +309,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	    printf("CL attached to FAM node %d(p%d) ID:fam%4Lu from %s\n",
 		   node, partition_id, fam_id, pname);
     } else {
+	/* TODO: Call fi_av_insertsvc instead of fi_getinfo if lf_node->free_domain_fl is zero */
 	if (params->verbose)
 	    printf("CL attached to node %d(p%d) on %s:%s\n",
 		   node, partition_id, pname, port);
@@ -485,7 +486,7 @@ int lf_clients_init(N_PARAMS_t *params)
 		    cl->dst_virt_addr = (uint64_t) params->mr_virt_addrs[lf_client_idx];
 	    }
 
-	    if (!params->fam_map || (i == 0 && part == 0)) {
+	    if (!params->multi_domains || (i == 0 && part == 0)) {
 		/* Join the fabric and domain */
 		cl->fabric = NULL;
 	    } else {
