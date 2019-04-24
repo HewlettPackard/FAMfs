@@ -64,7 +64,7 @@ typedef struct lf_cl_ {
 	struct fid_av		*av;
 	struct fid_mr		*mr;		/* memory region */
 	uint64_t		mr_key;		/* memory region protection key */
-	fi_addr_t		*srv_addr;
+	//fi_addr_t		*srv_addr;
 	struct fid_cntr		*rcnt;		/* Srv: RMA counter */
 	/* per worker arrays of pointers, size:'size' */
 	struct fid_ep		**tx_epp;

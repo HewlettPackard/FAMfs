@@ -34,7 +34,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     struct fid_ep       *ep = NULL;
     struct fi_av_attr   av_attr;
     struct fid_av       *av;
-    fi_addr_t           *srv_addr;
+    fi_addr_t           srv_addr;
     struct fi_cq_attr   cq_attr;
     struct fi_tx_attr	tx_attr;
     static struct fi_cntr_attr cntr_attr = {
@@ -315,9 +315,9 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     }
 
     // Perform address translation
-    srv_addr = (fi_addr_t *)malloc(sizeof(fi_addr_t));
-    ASSERT(srv_addr);
-    if (1 != (i = fi_av_insert(av, fi_dest_addr, 1, srv_addr, 0, NULL))) {
+    //srv_addr = (fi_addr_t *)malloc(sizeof(fi_addr_t));
+    //ASSERT(srv_addr);
+    if (1 != (i = fi_av_insert(av, fi_dest_addr, 1, &srv_addr, 0, NULL))) {
 	ioerr("fi_av_insert failed, returned %d", i);
 	return 1;
     }
@@ -328,10 +328,10 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     /* Convert endpoint address to target receive context */
     for (i = 0; i < thread_cnt; i++) {
 	if (params->lf_srv_rx_ctx) {
-	    tgt_srv_addr[i] = fi_rx_addr(*srv_addr, i % params->lf_srv_rx_ctx, LFSRV_RCTX_BITS);
+	    tgt_srv_addr[i] = fi_rx_addr(srv_addr, i % params->lf_srv_rx_ctx, LFSRV_RCTX_BITS);
 	    ON_FI_ERROR( tgt_srv_addr[i] == FI_ADDR_NOTAVAIL, "FI_ADDR_NOTAVAIL");
 	} else
-	    tgt_srv_addr[i] = *srv_addr;
+	    tgt_srv_addr[i] = srv_addr;
     }
 
     lf_node->fabric = fabric;
@@ -342,7 +342,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     lf_node->tx_cqq = tx_cqq;
     lf_node->rcnts = rcnts;
     lf_node->wcnts = wcnts;
-    lf_node->srv_addr = srv_addr;
+    //lf_node->srv_addr = srv_addr;
     lf_node->tgt_srv_addr = tgt_srv_addr;
     lf_node->local_mr = local_mr;
     lf_node->local_desc = local_desc;
@@ -422,7 +422,7 @@ void lf_client_free(LF_CL_t *cl)
 	    ON_FI_ERROR(fi_close(&cl->domain->fid), "close domain");
 	    ON_FI_ERROR(fi_close(&cl->fabric->fid), "close fabric");
 	}
-	free(cl->srv_addr);
+	//free(cl->srv_addr);
 	free(cl->tgt_srv_addr);
 	free(cl);
 }
