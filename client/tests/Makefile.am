@@ -42,5 +42,5 @@ test_prw_static_LDFLAGS = $(test_static_ldflags)
 
 fabtest_SOURCES = fabtest.c
 fabtest_CPPFLAGS = $(fabtest_cppflags)
-fabtest_LDADD   = $(libdir)/libzhpeq_util_fab.a -luuid $(test_static_ldadd)
-fabtest_LDFLAGS = $(test_static_ldflags)
+fabtest_LDADD   = $(test_static_ldadd)
+fabtest_LDFLAGS = $(test_static_ldflags) -lzhpeq_util_fab -lzhpeq_util -luuid

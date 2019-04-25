@@ -34,7 +34,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <zhpeq_lf.h>
+#include <zhpeq_util_fab.h>
 
 #include <rdma/fi_ext_zhpe.h>
 
