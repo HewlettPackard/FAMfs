@@ -482,7 +482,7 @@ int lf_clients_init(N_PARAMS_t *params)
 		    cl->dst_virt_addr = (uint64_t) params->mr_virt_addrs[lf_client_idx];
 	    }
 
-	    if (!params->multi_domains || (i == 0 && part == 0)) {
+	    if (params->multi_domains || (i == 0 && part == 0)) {
 		/* Join the fabric and domain */
 		cl->fabric = NULL;
 	    } else {
