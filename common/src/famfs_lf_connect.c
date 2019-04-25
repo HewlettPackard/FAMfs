@@ -55,13 +55,9 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     const char		*pname;
     int			i, rc;
 
-    node = lf_node->node_id;
+    node = (params->fam_map)? lf_node->fam_id : lf_node->node_id;
     if (params->lf_fabric) {
 	pname = params->lf_fabric;
-    } else if (params->fam_map) {
-	/* Need just a valid AF. Point to the node nearest to the FAM. */
-	i = fam_node_by_index(params->fam_map, node);
-	pname = params->nodelist[i];
     } else {
 	pname = params->nodelist[node];
     }

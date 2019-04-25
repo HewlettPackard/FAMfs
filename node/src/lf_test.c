@@ -419,7 +419,6 @@ int main(int argc, char **argv) {
 	    /* Collect performance statistics from all nodes */
 	    perf_stats_reduce(&perf_stats, &stats_agg_bw, offsetof(struct ec_perf, data), MPI_SUM, mpi_comm);
 	    perf_stats_reduce(&perf_stats, &stats_agg_bw, offsetof(struct ec_perf, elapsed), MPI_SUM, mpi_comm);
-	    //perf_stats_reduce(&perf_stats, &stats_max_time, offsetof(struct ec_perf, elapsed), MPI_MAX, mpi_comm);
 	    MPI_Reduce(&node_stat.data, &node_stat_agg, 1, MPI_UINT64_T, MPI_SUM, 0, mpi_comm);
 	    MPI_Reduce(&node_stat.elapsed, &node_stat_max, 1, MPI_UINT64_T, MPI_MAX, 0, mpi_comm);
 
@@ -541,88 +540,79 @@ static int assign_map_chunk(N_CHUNK_t **chunk_p, N_PARAMS_t *params,
 static int do_phy_stripes(uint64_t *stripe, W_TYPE_t op, W_PRIVATE_t *priv,
     int cl_rank, int cl_size, uint64_t *done)
 {
-    N_PARAMS_t  *params = priv->params;
-    LF_CL_t	**all_clients = params->lf_clients;
-    int		nchunks = params->nchunks;
-    int		fam_cnt = params->fam_cnt;	/* FAM count */
-    uint64_t	stripes = params->vmem_sz / params->chunk_sz;
-    uint64_t	stripe0 = *stripe;
-    uint64_t	extent_str = params->extent_sz / params->chunk_sz;
-    unsigned int srv_cnt = params->node_servers;
-    unsigned int tmo;
-    int		fam_idx = 0;
-    int		rc = 0;
+	N_PARAMS_t	*params = priv->params;
+	LF_CL_t		**all_clients = params->lf_clients;
+	int		nchunks = params->nchunks;
+	int		fam_cnt = params->fam_cnt;	/* FAM count */
+	uint64_t	stripes = params->vmem_sz / params->chunk_sz;
+	uint64_t	stripe0 = *stripe;
+	uint64_t	extent_str = params->extent_sz / params->chunk_sz;
+	uint64_t	start;
+	unsigned int	srv_cnt = params->node_servers;
+	unsigned int	extent, partition;
+	int		fam_idx = 0;
+	int		n, rc = 0;
 
-    /* Queuing timeout */
-    tmo = params->cmd_timeout_ms / 1000U;
-    tmo = (tmo == 0U)? 1:tmo;
-
-    /* Do stripe banches */
-	uint64_t start;
-	unsigned int extent;
-
-	/* Split stripe batch to extents */
+	/* Map stripes to a client: strided pattern */
 	start = stripe0 + cl_rank;
 	if (start >= stripes)
 		goto _done;
 
+	/* Calculate the extent and partition for this stripe*/
 	extent = start / extent_str;
+	partition = extent_to_part(extent, params->srv_extents);
 
-		unsigned int partition;
-		int n;
+	/* bunch of stripes consists just of one */
+	priv->bunch.extent = extent;
+	priv->bunch.phy_stripe = start;
+	priv->bunch.stripes = 1;
+	priv->bunch.ext_stripes = extent_str;
+	perf_stats_init(&priv->perf_stat);
 
-		partition = extent_to_part(extent, params->srv_extents);
+	/* Setup fabric for extent on each node */
+	for (n = 0; n < nchunks; n++) {
+		int fam_extent = extent;
+		/* TODO: Fix FAM allocation */
+		int lf_client_idx = to_lf_client_id(fam_idx++, srv_cnt, partition);
+		if (fam_idx == fam_cnt)
+			fam_idx = 0;
 
-		/* bunch of stripes belongs to the same extent 'e' */
-		priv->bunch.extent = extent;
-		priv->bunch.phy_stripe = start;
-		priv->bunch.stripes = 1;
-		priv->bunch.ext_stripes = extent_str;
-                perf_stats_init(&priv->perf_stat);
+		priv->lf_clients[n] = all_clients[lf_client_idx];
+		ASSERT(partition == priv->lf_clients[n]->partition);
 
-		/* Setup fabric for extent on each node */
-		for (n = 0; n < nchunks; n++) {
-			int fam_extent = extent;
-			/* TODO: Fix FAM allocation */
-			int lf_client_idx = to_lf_client_id(fam_idx++, srv_cnt, partition);
-			if (fam_idx == fam_cnt)
-				fam_idx = 0;
+		/* Allocate N_CHUNK_t and map chunk to extent */
+		ON_ERROR( assign_map_chunk(&priv->chunks[n], params, extent, n),
+			 "Error allocating chunk");
 
-			priv->lf_clients[n] = all_clients[lf_client_idx];
-			ASSERT(partition == priv->lf_clients[n]->partition);
+		/* Add dest partition offset? */
+		if (params->part_mreg != 0)
+		    fam_extent -= partition * params->srv_extents;
+		ASSERT(fam_extent >= 0);
 
-			/* Allocate N_CHUNK_t and map chunk to extent */
-			ON_ERROR( assign_map_chunk(&priv->chunks[n], params, extent, n),
-				"Error allocating chunk");
+		priv->chunks[n]->lf_client_idx = lf_client_idx;
+		priv->chunks[n]->p_stripe0_off = fam_extent * params->extent_sz;
 
-			/* Add dest partition offset? */
-			if (params->part_mreg != 0)
-			    fam_extent -= partition * params->srv_extents;
-			ASSERT(fam_extent >= 0);
+		/* FI_MR_VIRT_ADDR? */
+		if (params->lf_mr_flags.virt_addr)
+			priv->chunks[n]->p_stripe0_off += (off_t) priv->lf_clients[n]->dst_virt_addr;
+	}
 
-			priv->chunks[n]->lf_client_idx = lf_client_idx;
-			priv->chunks[n]->p_stripe0_off = fam_extent * params->extent_sz;
+	if (params->verbose) {
+		printf("%s: work %s in slab %d for stripe %lu\n",
+			params->node_name, cmd2str(op), extent, start);
+	}
 
-			/* FI_MR_VIRT_ADDR? */
-			if (params->lf_mr_flags.virt_addr)
-				priv->chunks[n]->p_stripe0_off += (off_t) priv->lf_clients[n]->dst_virt_addr;
-		}
-
-		if (params->verbose) {
-			printf("%s: work %s in slab %d for stripe %lu\n",
-				params->node_name, cmd2str(op), extent, start);
-		}
-		/* Actual I/O */
-		rc = worker_func(op, priv, 0);
-		if (rc)
-			goto _done;
+	/* Actual I/O */
+	rc = worker_func(op, priv, 0);
+	if (rc == 0)
 		*done += 1;
 
-    /* mark stripes done */
+	/* mark stripes done */
 _done:
-    stripe0 += cl_size;
-    *stripe = stripe0;
-    return rc;
+	stripe0 += cl_size;
+	*stripe = stripe0;
+
+	return rc;
 }
 
 /* Select libfabric RMA read or write event counter */
