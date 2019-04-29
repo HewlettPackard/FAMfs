@@ -52,7 +52,21 @@ static void perf_stats_print(PERF_STAT_t *stats, size_t off, int mask, const cha
 static void perf_stats_print_bw(PERF_STAT_t *stats, int mask, const char *msg, uint64_t tu, uint64_t bu);
 
 
-void split_mpi_world(LF_ROLE_t role, MPI_Comm *mpi_comm)
+static void node_exit(int rc) {
+	if (rc) {
+		sleep(10);
+		MPI_Abort(MPI_COMM_WORLD, (rc>0)?rc:-rc);
+	}
+	MPI_Finalize();
+	if (rank == 0) {
+		exit(rc);
+	} else if (rc != 0) {
+		{ sleep(10); } while (1);
+	ASSERT(0); /* Should not reach this */
+	}
+}
+
+static void split_mpi_world(LF_ROLE_t role, MPI_Comm *mpi_comm)
 {
 	LF_ROLE_t	*lf_roles;
 	MPI_Comm	world_comm, comm = MPI_COMM_NULL;
@@ -100,18 +114,162 @@ void split_mpi_world(LF_ROLE_t role, MPI_Comm *mpi_comm)
 	memcpy(mpi_comm, &comm, sizeof(MPI_Comm));
 }
 
-static void node_exit(int rc) {
-	if (rc) {
-		sleep(10);
-		MPI_Abort(MPI_COMM_WORLD, (rc>0)?rc:-rc);
+/*
+ * Get the number of servers from MPI: srv_size;
+ * find the rank in COMM_WORLD of SRV zero rank in mpi_comm: zero_srv_rank;
+ * return true if srv_size not equal to SRV node count list (-H) size
+ * and the list should be expanded.
+**/
+static int check_srv_cnt(N_PARAMS_t *params, int role_rank, int role_size,
+    int *size_p, int *rank0_p)
+{
+    LF_ROLE_t lf_role;
+    int i, rc, realloc_nodelist, nchunks, *zero_srv_sz;
+
+    lf_role = params->clientlist? LF_ROLE_CLT : LF_ROLE_SRV;
+    realloc_nodelist = 0;
+    nchunks = params->nchunks;
+    zero_srv_sz = (int *)calloc(rank_size, sizeof(int));
+    zero_srv_sz[rank] = -1;
+    if (lf_role == LF_ROLE_SRV && \
+	!params->fam_map && \
+	role_rank == 0)
+    {
+	/* Number of LF servers must me a multiple of 'nchunks' */
+	if (role_size < nchunks || (role_size % nchunks != 0)) {
+	    err("MPI communicator has %d servers" \
+		" but FAM should be emulated with a multiple of %d",
+		role_size, nchunks);
+	    node_exit(1);
 	}
-	MPI_Finalize();
-	if (rank == 0) {
-		exit(rc);
-	} else if (rc != 0) {
-		{ sleep(10); } while (1);
-	ASSERT(0); /* Should not reach this */
+
+	/* Have to amend LF server node list 'nodelist' & 'node_id'? */
+	if (role_size != params->node_cnt) {
+	    realloc_nodelist = 1;
+	    zero_srv_sz[rank] = role_size;
 	}
+    }
+
+    /* Broadcast realloc_nodelist with the number of LF servers to all */
+    rc = MPI_Allgather(MPI_IN_PLACE, sizeof(int), MPI_BYTE,
+		       zero_srv_sz, sizeof(int), MPI_BYTE, MPI_COMM_WORLD);
+    if (rc != MPI_SUCCESS) {
+	err("MPI_Allgather");
+	node_exit(1);
+    }
+
+    /* SRV MPI size and mpi_comm zero rank in COMM_WORLD */
+    int srv_size = 0;
+    int zero_srv_rank = -1;
+    for (i = 0; i < rank_size; i++) {
+	if (zero_srv_sz[i] >= 0) {
+	    realloc_nodelist = 1;
+	    srv_size = zero_srv_sz[i];
+	    zero_srv_rank = i;
+	    break;
+	}
+    }
+    *size_p = srv_size;
+    *rank0_p = zero_srv_rank;
+
+    return realloc_nodelist;
+}
+
+/*
+ * Exchange the list of LF server nodes across
+ * all ranks in COMM_WORLD:
+ * Re-allocate params->nodelist,
+ * set params->node_cnt, fam_cnt and node_id.
+**/
+static int exchange_nodelist(N_PARAMS_t *params, MPI_Comm mpi_comm,
+    int role_rank, int role_size, int srv_size, int zero_srv_rank)
+{
+	LF_ROLE_t lf_role = params->clientlist? LF_ROLE_CLT : LF_ROLE_SRV;
+	char **newlist;
+	int i, len, rc;
+
+	ASSERT(zero_srv_rank >= 0);
+	ASSERT(srv_size);
+	len = 0;
+	newlist = (char **)malloc(srv_size*sizeof(char*));
+
+	if (lf_role == LF_ROLE_SRV) {
+	    ssize_t slen, dlen;
+	    size_t xlen;
+	    char *p, *endp;
+	    int *ids, id;
+
+	    ASSERT(srv_size == role_size);
+	    ids = (int *)calloc(srv_size, sizeof(int));
+
+	    /* Strip node # from node_name */
+	    p = params->node_name;
+	    while (*p && !isdigit(*++p)) ;
+	    /* In 'node01-ib' slen,dlen,xlen stand for 'node', '01' and '-ib' length */
+	    slen = p - params->node_name;
+	    id = (int) strtol(p, &endp, 10);
+	    dlen = endp - p;
+	    xlen = strlen(endp);
+	    ids[role_rank] = id;
+	    len = slen + dlen + xlen;
+	    ASSERT(len < 16 && len > 1);
+	    ASSERT(id >= 0);
+
+	    rc = MPI_Allgather(MPI_IN_PLACE, sizeof(int), MPI_BYTE,
+			       ids, sizeof(int), MPI_BYTE, mpi_comm);
+	    if (rc != MPI_SUCCESS) {
+		err("%d/%d: MPI_Allgather id:%d", role_rank, srv_size, id);
+		return rc;
+	    }
+	    /* TODO: Gather node lengths and abort if it differs */
+
+	    /* Re-create the node list */
+	    len++;
+	    for (i = 0; i < srv_size; i++) {
+		newlist[i] = (char *)malloc(len*sizeof(char));
+		sprintf(newlist[i], "%.*s%0*u%.*s",
+			(int)slen, params->node_name,
+			(int)dlen, ids[i],
+			(int)xlen, endp);
+	    }
+	    params->node_id = role_rank;
+	    if (role_rank == 0) {
+		printf("Actual libfabric server nodes |");
+		for (i = 0; i < srv_size; i++)
+		    printf("%s%s", (i>0)?",":"", newlist[i]);
+		printf("| (total:%d)\n", srv_size);
+	    }
+	}
+
+	/* Broadcast new nodelist to all */
+	for (i = 0; i < srv_size; i++) {
+	    int nlen;
+
+	    rc = MPI_Bcast(&len, 1, MPI_INT, zero_srv_rank, MPI_COMM_WORLD);
+	    if (rc != MPI_SUCCESS) {
+		err("MPI_Bcast");
+		return rc;
+	    }
+	    nlen = len * sizeof(char);
+	    if (lf_role != LF_ROLE_SRV)
+		newlist[i] = (char *)malloc(nlen);
+
+	    ASSERT(nlen > 1);
+	    rc = MPI_Bcast(newlist[i], nlen, MPI_BYTE, zero_srv_rank, MPI_COMM_WORLD);
+
+	    if (rc != MPI_SUCCESS) {
+		err("MPI_Bcast");
+		return rc;
+	    }
+	}
+
+	/* Replace 'nodelist' */
+	nodelist_free(params->nodelist, params->node_cnt);
+	params->nodelist = newlist;
+	params->fam_cnt = srv_size;
+	params->node_cnt = srv_size;
+
+	return MPI_SUCCESS;
 }
 
 static void usage(const char *name) {
@@ -177,146 +335,33 @@ int main(int argc, char **argv) {
     nchunks = params->nchunks;
     parities = params->parities;
     data = nchunks - parities;
-    node_id = params->node_id;
     srv_cnt = params->node_servers;
     chunk_sz = params->chunk_sz;
     stripes = params->vmem_sz / chunk_sz;
 
     /* Have to expand LF server nodelist? */
-    int realloc_nodelist = 0;
-    int *zero_srv_sz = (int *)calloc(rank_size, sizeof(int));
-    zero_srv_sz[rank] = -1;
-    if (lf_role == LF_ROLE_SRV && \
-	!params->fam_map && \
-	role_rank == 0)
-    {
-	/* Number of LF servers must me a multiple of 'nchunks' */
-	if (role_size < nchunks || (role_size % nchunks != 0)) {
-	    err("MPI communicator has %d servers" \
-		" but FAM should be emulated with a multiple of %d",
-		role_size, nchunks);
-	    node_exit(1);
-	}
-
-	/* Have to amend LF server node list 'nodelist' & 'node_id'? */
-	if (role_size != params->node_cnt) {
-	    realloc_nodelist = 1;
-	    zero_srv_sz[rank] = role_size;
-	}
-    }
-
-    /* Broadcast realloc_nodelist with the number of LF servers to all */
-    rc = MPI_Allgather(MPI_IN_PLACE, sizeof(int), MPI_BYTE,
-		       zero_srv_sz, sizeof(int), MPI_BYTE, MPI_COMM_WORLD);
-    if (rc != MPI_SUCCESS) {
-	err("MPI_Allgather");
-	node_exit(1);
-    }
-    int srv_size = 0;
-    int zero_srv_rank = -1;
-    for (i = 0; i < rank_size; i++) {
-	if (zero_srv_sz[i] >= 0) {
-	    realloc_nodelist = 1;
-	    srv_size = zero_srv_sz[i];
-	    zero_srv_rank = i;
-	    break;
-	}
-    }
+    int srv_size, zero_srv_rank;
+    int realloc_nodelist = check_srv_cnt(params, role_rank, role_size, \
+					&srv_size, &zero_srv_rank);
 
     if (realloc_nodelist) {
-	char **newlist;
-	int len;
-
-	ASSERT(zero_srv_rank >= 0);
-	ASSERT(srv_size);
-	len = 0;
-	newlist = (char **)malloc(srv_size*sizeof(char*));
-
-	if (lf_role == LF_ROLE_SRV) {
-	    ssize_t slen, dlen;
-	    size_t xlen;
-	    char *p, *endp;
-	    int *ids, id;
-
-	    ASSERT(srv_size == role_size);
-	    ids = (int *)calloc(srv_size, sizeof(int));
-
-	    /* Strip node # from node_name */
-	    p = params->node_name;
-	    while (*p && !isdigit(*++p)) ;
-	    /* In 'node01-ib' slen,dlen,xlen stand for 'node', '01' and '-ib' length */
-	    slen = p - params->node_name;
-	    id = (int) strtol(p, &endp, 10);
-	    dlen = endp - p;
-	    xlen = strlen(endp);
-	    ids[role_rank] = id;
-	    len = slen + dlen + xlen;
-	    ASSERT(len < 16 && len > 1);
-	    ASSERT(id >= 0);
-
-	    rc = MPI_Allgather(MPI_IN_PLACE, sizeof(int), MPI_BYTE,
-			       ids, sizeof(int), MPI_BYTE, mpi_comm);
-	    if (rc != MPI_SUCCESS) {
-		err("%d/%d: MPI_Allgather id:%d", role_rank, srv_size, id);
-		node_exit(1);
-	    }
-	    /* TODO: Gather node lengths and abort if it differs */
-
-	    /* Re-create the node list */
-	    len++;
-	    for (i = 0; i < srv_size; i++) {
-		newlist[i] = (char *)malloc(len*sizeof(char));
-		sprintf(newlist[i], "%.*s%0*u%.*s",
-			(int)slen, params->node_name,
-			(int)dlen, ids[i],
-			(int)xlen, endp);
-	    }
-	    params->node_id = role_rank;
-	    if (role_rank == 0) {
-		printf("Actual libfabric server nodes |");
-		for (i = 0; i < srv_size; i++)
-		    printf("%s%s", (i>0)?",":"", newlist[i]);
-		printf("| (total:%d)\n", srv_size);
-	    }
-	}
-
-	/* Broadcast new nodelist to all */
-	for (i = 0; i < srv_size; i++) {
-	    int nlen;
-
-	    rc = MPI_Bcast(&len, 1, MPI_INT, zero_srv_rank, MPI_COMM_WORLD);
-	    if (rc != MPI_SUCCESS) {
-		err("MPI_Bcast");
-		node_exit(1);
-	    }
-	    nlen = len * sizeof(char);
-	    if (lf_role != LF_ROLE_SRV)
-		newlist[i] = (char *)malloc(nlen);
-
-	    ASSERT(nlen > 1);
-	    rc = MPI_Bcast(newlist[i], nlen, MPI_BYTE, zero_srv_rank, MPI_COMM_WORLD);
-
-	    if (rc != MPI_SUCCESS) {
-		err("MPI_Bcast");
-		node_exit(1);
-	    }
-	}
-
-	/* Replace 'nodelist' */
-	nodelist_free(params->nodelist, params->node_cnt);
-	params->nodelist = newlist;
-	params->fam_cnt = srv_size;
-	params->node_cnt = srv_size;
-
-	if (!params->lf_mr_flags.scalable) {
-	    int fam_cnt = params->fam_cnt;
-
-	    params->mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
-	    params->mr_virt_addrs = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
+	/* Exchange new SRV node list; re-allocate params->nodelist */
+	rc = exchange_nodelist(params, mpi_comm, role_rank, role_size, \
+			srv_size, zero_srv_rank);
+	if (rc != MPI_SUCCESS) {
+	    err("%d: Failed to exchange the new SRV node list", rank);
+	    node_exit(1);
 	}
     }
 
     /* Initialize libfabric */
+    node_id = params->node_id;
+    if (!params->lf_mr_flags.scalable) {
+	int fam_cnt = params->fam_cnt;
+
+	params->mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
+	params->mr_virt_addrs = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
+    }
     if (lf_role == LF_ROLE_SRV) {
 	/* Emulate ION FAMs with libfabric targets */
 	if (!params->fam_map) {
@@ -334,8 +379,8 @@ int main(int argc, char **argv) {
 
     MPI_Barrier(MPI_COMM_WORLD);
 
+    /* Init LF clients */
     if (lf_role == LF_ROLE_CLT) {
-	/* Standalone: FAM clients */
 	if (params->w_thread_cnt != 1) {
 	    err("Option ignored: -w");
 	    params->w_thread_cnt = 1;
@@ -352,6 +397,7 @@ int main(int argc, char **argv) {
 		   rank, params->node_id, params->node_name);
 
 	MPI_Barrier(mpi_comm);
+
 	if (role_rank == 0) {
 	    printf("LF initiator scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
 		   params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
