@@ -689,15 +689,23 @@ static void stripe_io_counter_clear(W_PRIVATE_t *priv, enum cntr_op_ op)
 
 	switch (op) {
 	case CNTR_OP_R:
+	    if (params->use_cq) {
+		chunk->r_event = 0;
+	    } else {
 		cntr = node->rcnts[thread_id];
 		chunk->r_event = fi_cntr_read(cntr);
 		//ON_FI_ERROR(fi_cntr_set(cntr, cnt), "cntr set");
-		break;
+	    }
+	    break;
 	case CNTR_OP_W:
+	    if (params->use_cq) {
+		chunk->r_event = 0;
+	    } else {
 		cntr = node->wcnts[thread_id];
 		chunk->w_event = fi_cntr_read(cntr);;
 		//ON_FI_ERROR(fi_cntr_set(cntr, cnt), "cntr set");
-		break;
+	    }
+	    break;
 	default:;
 	}
     }
@@ -734,31 +742,49 @@ static void stripe_io_counter_clear(W_PRIVATE_t *priv, enum cntr_op_ op)
 static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 {
     N_PARAMS_t		*params = priv->params;
+    struct fid_cq	*tx_cq = NULL;
+    struct fid_cntr	*cntr = NULL;
+    ssize_t		cnt;
+    uint64_t		*event, count;
     int			i, thread_id, rc;
 
     thread_id = priv->thr_id;
     for (i = 0; i < params->nchunks; i++) {
     	LF_CL_t		*node = priv->lf_clients[i];
 	N_CHUNK_t	*chunk = priv->chunks[i];
-	struct fid_cntr	*cntr;
-	uint64_t	*event;
 
 	switch (op) {
 	case CNTR_OP_R:
-		event = &chunk->r_event;
+	    if (params->use_cq) {
+		tx_cq = node->tx_cqq[thread_id];
+	    } else {
 		cntr = node->rcnts[thread_id];
-		break;
+	    }
+	    event = &chunk->r_event;
+	    break;
 	case CNTR_OP_W:
-		event = &chunk->w_event;
+	    if (params->use_cq) {
+		tx_cq = node->tx_cqq[thread_id];
+	    } else {
 		cntr = node->wcnts[thread_id];
-		break;
+	    }
+	    event = &chunk->w_event;
+	    break;
 	default:
-		return 1;
+	    return 1;
 	}
 	if (*event == 0)
 		continue;
 
-	rc = fi_cntr_wait(cntr, *event, params->io_timeout_ms);
+	if (params->use_cq) {
+	    cnt = *event;
+	    /* TODO: Implement timeout */
+	    do {
+		rc = lf_check_progress(tx_cq, &cnt);
+	    } while (rc >= 0 && cnt > 0);
+	} else {
+	    rc = fi_cntr_wait(cntr, *event, params->io_timeout_ms);
+	}
 	if (rc == -FI_ETIMEDOUT) {
 		printf("%d/%d: Timeout on %s in extent %lu on FAM node %d(p%d) - cnt:%lu/%lu\n",
 			rank, thread_id, cntr_op_to_str(op), priv->bunch.extent,
@@ -770,12 +796,20 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 		printf("FI_EAVAIL on %s\n", params->nodelist[chunk_n]);
 #endif
 	} else if (rc) {
-		printf("%d/%d: %lu %s error(s):%d in %s extent %lu on FAM node %d(p%d) - cnt:%lu/%lu\n",
-			rank, thread_id, fi_cntr_readerr(cntr), cntr_op_to_str(op),
-			rc, params->nodelist[i],
-			priv->bunch.extent, node->node_id, node->partition,
-			fi_cntr_read(cntr), *event);
-		return 1;
+	    int err;
+	    if (params->use_cq) {
+		count = *event - (unsigned int)cnt;
+		err = errno;
+	    } else {
+		count = fi_cntr_read(cntr);
+		err = (int)fi_cntr_readerr(cntr);
+	    }
+	    printf("%d/%d: %d %s error(s):%d in %s extent %lu on FAM node %d(p%d) - cnt:%lu/%lu\n",
+		   rank, thread_id, err, cntr_op_to_str(op),
+		   rc, params->nodelist[i],
+		   priv->bunch.extent, node->node_id, node->partition,
+		   count, *event);
+	    return 1;
 	}
    }
    return 0;

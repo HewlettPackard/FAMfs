@@ -1058,15 +1058,22 @@ ssize_t lf_completions(struct fid_cq *cq, ssize_t count, void (*cq_callback)(voi
 
 ssize_t lf_check_progress(struct fid_cq *cq, ssize_t *cmp) {
     ssize_t ret = 0, rc;
+    ssize_t count = *cmp;
+
+    if (count < 0)
+	return -FI_EAVAIL;
 
     /* Check both tx and rx sides to make progress.
      * FIXME: Should rx be necessary for one-sided?
      */
-    rc = lf_completions(cq, 0, NULL, NULL);
-    if (rc >= 0)
-        *cmp += rc;
-    else
-        ret = rc;
+    rc = lf_completions(cq, count, NULL, NULL);
+    if (rc >= 0) {
+	if (count == 0)
+	    *cmp += rc;
+	else
+	    *cmp -= rc;
+    } else
+	ret = rc;
 
     return ret;
 }
