@@ -124,33 +124,16 @@ static int check_srv_cnt(N_PARAMS_t *params, int role_rank, int role_size,
     int *size_p, int *rank0_p)
 {
     LF_ROLE_t lf_role;
-    int i, rc, realloc_nodelist, nchunks, *zero_srv_sz;
+    int i, rc;
+    int realloc_nodelist, *zero_srv_sz;
 
-    lf_role = params->clientlist? LF_ROLE_CLT : LF_ROLE_SRV;
-    realloc_nodelist = 0;
-    nchunks = params->nchunks;
     zero_srv_sz = (int *)calloc(rank_size, sizeof(int));
     zero_srv_sz[rank] = -1;
-    if (lf_role == LF_ROLE_SRV && \
-	!params->fam_map && \
-	role_rank == 0)
-    {
-	/* Number of LF servers must me a multiple of 'nchunks' */
-	if (role_size < nchunks || (role_size % nchunks != 0)) {
-	    err("MPI communicator has %d servers" \
-		" but FAM should be emulated with a multiple of %d",
-		role_size, nchunks);
-	    node_exit(1);
-	}
+    lf_role = params->clientlist? LF_ROLE_CLT : LF_ROLE_SRV;
+    if (lf_role == LF_ROLE_SRV && role_rank == 0)
+	zero_srv_sz[rank] = role_size;
 
-	/* Have to amend LF server node list 'nodelist' & 'node_id'? */
-	if (role_size != params->node_cnt) {
-	    realloc_nodelist = 1;
-	    zero_srv_sz[rank] = role_size;
-	}
-    }
-
-    /* Broadcast realloc_nodelist with the number of LF servers to all */
+    /* Broadcast the number of LF servers and the rank of SRV#0 to all */
     rc = MPI_Allgather(MPI_IN_PLACE, sizeof(int), MPI_BYTE,
 		       zero_srv_sz, sizeof(int), MPI_BYTE, MPI_COMM_WORLD);
     if (rc != MPI_SUCCESS) {
@@ -163,7 +146,6 @@ static int check_srv_cnt(N_PARAMS_t *params, int role_rank, int role_size,
     int zero_srv_rank = -1;
     for (i = 0; i < rank_size; i++) {
 	if (zero_srv_sz[i] >= 0) {
-	    realloc_nodelist = 1;
 	    srv_size = zero_srv_sz[i];
 	    zero_srv_rank = i;
 	    break;
@@ -171,6 +153,24 @@ static int check_srv_cnt(N_PARAMS_t *params, int role_rank, int role_size,
     }
     *size_p = srv_size;
     *rank0_p = zero_srv_rank;
+
+    /* Have to extend the LF server node list 'nodelist'? */
+    realloc_nodelist = 0;
+    if (rank == zero_srv_rank && !params->fam_map) {
+	int nchunks = params->nchunks;
+
+	ASSERT(lf_role == LF_ROLE_SRV && role_rank == 0);
+	/* Number of servers must me a multiple of 'nchunks' */
+	if (srv_size < nchunks || (srv_size % nchunks != 0)) {
+	    err("MPI communicator has %d servers" \
+		" but FAM should be emulated with a multiple of %d",
+		srv_size, nchunks);
+	    node_exit(1);
+	}
+
+	if (srv_size != params->node_cnt)
+	    realloc_nodelist = 1;
+    }
 
     return realloc_nodelist;
 }
@@ -272,11 +272,17 @@ static int exchange_nodelist(N_PARAMS_t *params, MPI_Comm mpi_comm,
 	return MPI_SUCCESS;
 }
 
+static inline int broadcast_arr64(uint64_t *keys, int size, int rank0)
+{
+    return MPI_Bcast(keys, size*sizeof(uint64_t), MPI_BYTE, rank0, MPI_COMM_WORLD);
+}
+
 static void usage(const char *name) {
     if (rank == 0)
 	ion_usage(name);
     node_exit(1);
 }
+
 
 int main(int argc, char **argv) {
     PERF_STAT_t		stats_agg_bw;
@@ -286,7 +292,7 @@ int main(int argc, char **argv) {
     MPI_Comm		mpi_comm = MPI_COMM_NULL;
     LF_ROLE_t		lf_role;
     size_t		chunk_sz;
-    int			i, k, node_id, srv_cnt, rc;
+    int			i, k, node_id, srv_cnt, total_parts, rc;
     int			nchunks, data, parities;
     int			initialized = 0, provided;
     int			role_rank, role_size;
@@ -338,6 +344,7 @@ int main(int argc, char **argv) {
     srv_cnt = params->node_servers;
     chunk_sz = params->chunk_sz;
     stripes = params->vmem_sz / chunk_sz;
+    total_parts = 0;
 
     /* Have to expand LF server nodelist? */
     int srv_size, zero_srv_rank;
@@ -357,10 +364,9 @@ int main(int argc, char **argv) {
     /* Initialize libfabric */
     node_id = params->node_id;
     if (!params->lf_mr_flags.scalable) {
-	int fam_cnt = params->fam_cnt;
-
-	params->mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
-	params->mr_virt_addrs = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
+	total_parts = params->fam_cnt * srv_cnt;
+	params->mr_prov_keys = (uint64_t *)malloc(total_parts*sizeof(uint64_t));
+	params->mr_virt_addrs = (uint64_t *)malloc(total_parts*sizeof(uint64_t));
     }
     if (lf_role == LF_ROLE_SRV) {
 	/* Emulate ION FAMs with libfabric targets */
@@ -378,6 +384,20 @@ int main(int argc, char **argv) {
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
+
+    /* Broadcast LF MR prov_keys and virt_addrs from SRV#0 to all clients */
+    if (!params->lf_mr_flags.scalable) {
+	rc = broadcast_arr64(params->mr_prov_keys, total_parts, zero_srv_rank);
+	if (rc != MPI_SUCCESS) {
+	    err("%d: Failed to broadcast LF PROV_KEYS", rank);
+	    node_exit(1);
+	}
+	rc = broadcast_arr64(params->mr_virt_addrs, total_parts, zero_srv_rank);
+	if (rc != MPI_SUCCESS) {
+	    err("%d: Failed to broadcast LF VIRT_ADDRS", rank);
+	    node_exit(1);
+	}
+    }
 
     /* Init LF clients */
     if (lf_role == LF_ROLE_CLT) {
@@ -652,6 +672,14 @@ static int do_phy_stripes(uint64_t *stripe, W_TYPE_t op, W_PRIVATE_t *priv,
 	rc = worker_func(op, priv, 0);
 	if (rc == 0)
 		*done += 1;
+
+	/* Free chunks[] */
+	for (n = 0; n < nchunks; n++) {
+	    N_CHUNK_t **chunkpp = &priv->chunks[n];
+
+	    free(*chunkpp);
+	    *chunkpp = NULL;
+	}
 
 	/* mark stripes done */
 _done:
@@ -989,11 +1017,13 @@ static void work_free(W_PRIVATE_t *priv)
     if (priv == NULL)
 	return;
 
+    /*
     for (int n = 0; n < priv->params->nchunks; n++) {
 	N_CHUNK_t *chunk = priv->chunks[n];
 
 	free(chunk);
     }
+    */
     free(priv->chunks);
     free(priv->lf_clients);
     free(priv);
