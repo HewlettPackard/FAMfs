@@ -259,8 +259,8 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
             ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &tx_cqq[i], NULL), "fi_cq_open failed");
 
             // Bind completion queues to endpoint
-            // FI_RECV | FI_TRANSMIT | FI_SELECTIVE_COMPLETION
-            ON_FI_ERROR(fi_ep_bind(tx_epp[i], &tx_cqq[i]->fid, FI_TRANSMIT), "fi_ep_bind tx context failed");
+            ON_FI_ERROR(fi_ep_bind(tx_epp[i], &tx_cqq[i]->fid, FI_RECV | FI_TRANSMIT),
+			"fi_ep_bind tx context failed");
 
         } else {
             // Create counters
@@ -725,7 +725,9 @@ int lf_srv_init(LF_SRV_t *priv)
 
 	ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &rx_cqq[0], NULL),
 		    "srv fi_cq_open failed");
-	flags = FI_TRANSMIT | FI_SELECTIVE_COMPLETION;
+	flags = FI_TRANSMIT;
+	if (!params->use_cq)
+	    flags |= FI_SELECTIVE_COMPLETION;
 	/* FI_RECV is required to drive manual progress using CQ */
 	if (fi->domain_attr->data_progress == FI_PROGRESS_MANUAL)
 	    flags |= FI_RECV;
