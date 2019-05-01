@@ -899,17 +899,8 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	    rc = lf_srv_trigger(priv);
 #endif
 
-    if (!mpi_comm) {
-	*lf_servers_p = lf_servers;
-	return 0;
-    }
-
-    MPI_Barrier(mpi_comm);
-    if (rank == 0) {
-	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
-		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
-		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
-    }
+    if (!mpi_comm)
+	goto _done;
 
     /* Exchange keys */
     if (params->lf_mr_flags.prov_key) {
@@ -941,7 +932,16 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	    goto _err;
 	}
     }
+    if (!params->lf_mr_flags.prov_key && !params->lf_mr_flags.virt_addr)
+	MPI_Barrier(mpi_comm);
 
+    if (rank == 0) {
+	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
+		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
+    }
+
+_done:
     *lf_servers_p = lf_servers;
     return 0;
 

@@ -844,17 +844,21 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     memset(&params->lf_mr_flags, 0, sizeof(LF_MR_MODE_t));
     if (lf_mr_basic) {
 	/* LF_MR_MODEL_BASIC */
-#ifdef MR_MODEL_BASIC_SYM
-	params->lf_mr_flags.prov_key = 0;
-	params->lf_mr_flags.allocated = 1;
-	params->lf_mr_flags.virt_addr = 0;
-#else
-	params->lf_mr_flags.basic = 1;
-	/* basic registration is equivalent to FI_MR_VIRT_ADDR, FI_MR_ALLOCATED, and FI_MR_PROV_KEY set to 1 */
-	params->lf_mr_flags.prov_key = 1;
-	params->lf_mr_flags.allocated = 1;
-	params->lf_mr_flags.virt_addr = 1;
-#endif
+	if (!strcmp(lf_provider_name, "zhpe") ||
+	    !strcmp(lf_provider_name, "sockets"))
+	{
+	    /* basic registration is equivalent to FI_MR_VIRT_ADDR, FI_MR_ALLOCATED, and FI_MR_PROV_KEY set to 1 */
+	    // params->lf_mr_flags.basic = 1;
+	    /* Both providers does not require VIRT_ADDR and PROV_KEY */
+	    params->lf_mr_flags.prov_key = 0;
+	    params->lf_mr_flags.allocated = 1;
+	    params->lf_mr_flags.virt_addr = 0;
+	} else {
+	    /* verbs */
+	    params->lf_mr_flags.prov_key = 1;
+	    params->lf_mr_flags.allocated = 1;
+	    params->lf_mr_flags.virt_addr = 1;
+	}
     } else if (lf_mr_scalable)
 	params->lf_mr_flags.scalable = 1;
 
