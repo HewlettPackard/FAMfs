@@ -864,8 +864,6 @@ static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
     transfer_sz = params->transfer_sz;
     len = params->chunk_sz;
     stripe0 = priv->bunch.extent * priv->bunch.ext_stripes;
-    /* fabric destination address */
-    //off = chunk->lf_stripe0_off + (stripe - stripe0) * len;
     off = (stripe - stripe0) * len;
     ASSERT( off < params->part_sz );
     off += chunk->p_stripe0_off;
@@ -884,13 +882,25 @@ static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
 
     // Do RMA
     for (ii = 0; ii < blocks; ii++) {
-	ON_FI_ERROR(fi_write(tx_ep, buf, transfer_sz, node->local_desc[thread_id], *tgt_srv_addr, off,
-			     node->mr_key, (void*)buf /* NULL */),
+	int rc;
+	ssize_t cnt = 0;
+
+	do {
+	    rc = fi_write(tx_ep, buf, transfer_sz, node->local_desc[thread_id], \
+			  *tgt_srv_addr, off, node->mr_key, (void*)buf /* NULL */);
+	    if (rc != -FI_EAGAIN)
+		break;
+	    if (params->use_cq)
+		lf_check_progress(node->tx_cqq[thread_id], &cnt);
+	} while (rc == -FI_EAGAIN);
+	ON_FI_ERROR(rc,
 		    "%d: block:%d fi_write failed on FAM node %d(p%d)",
 		    rank, ii, node->node_id, node->partition);
 	off += transfer_sz;
 	buf += transfer_sz;
 	chunk->w_event++;
+	ASSERT((unsigned int)cnt <= chunk->w_event);
+	chunk->w_event -= (unsigned int)cnt;
     }
     return 0;
 }
@@ -916,8 +926,6 @@ static int read_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
     transfer_sz = params->transfer_sz;
     len = params->chunk_sz;
     stripe0 = priv->bunch.extent * priv->bunch.ext_stripes;
-    /* fabric destination address */
-    //off = chunk->lf_stripe0_off + (stripe - stripe0) * len;
     off = (stripe - stripe0) * len;
     ASSERT( off < params->part_sz );
     off += chunk->p_stripe0_off;
@@ -934,13 +942,25 @@ static int read_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
 
     // Do RMA
     for (ii = 0; ii < blocks; ii++) {
-	ON_FI_ERROR(fi_read(tx_ep, buf, transfer_sz, node->local_desc[thread_id], *tgt_srv_addr, off,
-			    node->mr_key, (void*)buf /* NULL */),
+	int rc;
+	ssize_t cnt = 0;
+
+	do {
+	    rc = fi_read(tx_ep, buf, transfer_sz, node->local_desc[thread_id], \
+			 *tgt_srv_addr, off, node->mr_key, (void*)buf /* NULL */);
+	    if (rc != -FI_EAGAIN)
+		break;
+	    if (params->use_cq)
+		lf_check_progress(node->tx_cqq[thread_id], &cnt);
+	} while (rc == -FI_EAGAIN);
+	ON_FI_ERROR(rc,
 		    "fi_read failed on FAM node %d(p%d)",
 		    node->node_id, node->partition);
 	off += transfer_sz;
 	buf += transfer_sz;
 	chunk->r_event++;
+	ASSERT((unsigned int)cnt <= chunk->w_event);
+	chunk->w_event -= (unsigned int)cnt;
     }
     return 0;
 }
