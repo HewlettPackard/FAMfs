@@ -725,12 +725,9 @@ int lf_srv_init(LF_SRV_t *priv)
 
 	ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &rx_cqq[0], NULL),
 		    "srv fi_cq_open failed");
-	flags = FI_TRANSMIT;
+	flags = FI_TRANSMIT | FI_RECV;
 	if (!params->use_cq)
 	    flags |= FI_SELECTIVE_COMPLETION;
-	/* FI_RECV is required to drive manual progress using CQ */
-	if (fi->domain_attr->data_progress == FI_PROGRESS_MANUAL)
-	    flags |= FI_RECV;
 	ON_FI_ERROR(fi_ep_bind(ep, &rx_cqq[0]->fid, flags),
 		    "srv fi_ep_bind failed");
 
