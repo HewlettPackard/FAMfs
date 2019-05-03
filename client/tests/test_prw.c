@@ -233,13 +233,15 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
         while (warmup > 0) {
-            ssize_t l = write(fd, buf, 1024*1024);
+            off_t off = 0;
+            ssize_t l = pwrite(fd, buf, 1024*1024, off);
 
             if (l < 0) {
                 printf("%02d warm-up file %s write error\n", rank, fname);
                 exit(1);
             }
             warmup -= l;
+            off += l;
         }
         close(fd);
     }

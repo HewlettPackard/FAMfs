@@ -43,4 +43,4 @@ test_prw_static_LDFLAGS = $(test_static_ldflags)
 fabtest_SOURCES = fabtest.c
 fabtest_CPPFLAGS = $(fabtest_cppflags)
 fabtest_LDADD   = $(test_static_ldadd)
-fabtest_LDFLAGS = $(test_static_ldflags) -lzhpeq_util_fab -lzhpeq_util -luuid
+fabtest_LDFLAGS = $(test_static_ldflags) -latomic -lzhpeq_util_fab -lzhpeq_util -luuid
