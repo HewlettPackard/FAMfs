@@ -29,7 +29,7 @@ unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.a \
                  $(top_builddir)/common/src/.libs/libfamfs_common.a \
                  $(LEVELDB_LIBS) \
-                 -lpthread -lm -lstdc++ -lrt -lmpi -lfabric
+                 -lpthread -lm -lstdc++ -lrt -lmpi -lfabric -lnuma
 
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
               -I$(top_srcdir)/meta/src/uthash \

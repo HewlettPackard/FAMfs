@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
+#include <numaif.h>
 #include <sys/types.h>
 #include <sys/mman.h>
 
@@ -759,6 +760,20 @@ int lf_srv_init(LF_SRV_t *priv)
 	    exit(1);
 	}
 #else
+        char *numa = getenv("FAMFS_NUMA"), *beg = numa, *end;
+        if (numa) {
+            unsigned long nodemask = 0, node;
+            do {
+                node = strtoul(beg, &end, 10);
+                nodemask |= 1<<node;
+                beg = end + 1;
+            } while (*end);
+            if (set_mempolicy(MPOL_BIND, &nodemask, sizeof(nodemask)*8)) {
+                err("%d/%d: NUMA bind failed, node mask 0x%lx\n", my_node_id, priv->thread_id, nodemask);
+                exit(1);
+            }
+        }
+
 	buf = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
 	if (buf == MAP_FAILED) {
 	    err("%d/%d: Memory allocation/map failed, partition:%d - %m", my_node_id, priv->thread_id, cl->partition);

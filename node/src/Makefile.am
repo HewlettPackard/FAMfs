@@ -9,7 +9,7 @@ lf_test_SOURCES	= lf_test.h lf_test.c \
 
 node_LDFLAGS	= -L$(top_builddir)/node/isa-l/.libs/ $(MPI_CLDFLAGS) $(LIBFABRIC_LIBS)
 
-node_LDADD	= -lpthread -lisal \
+node_LDADD	= -lpthread -lisal -lnuma\
 		$(top_builddir)/common/src/libfamfs_common.la
 
 lf_test_LDFLAGS	= $(MPI_CLDFLAGS) $(LIBFABRIC_LIBS)
