@@ -281,6 +281,30 @@ static inline int broadcast_arr64(uint64_t *keys, int size, int rank0)
     return MPI_Bcast(keys, size*sizeof(uint64_t), MPI_BYTE, rank0, MPI_COMM_WORLD);
 }
 
+static void work_alloc(W_PRIVATE_t **priv_p, N_PARAMS_t *params)
+{
+    W_PRIVATE_t *priv;
+    int n, nchunks;
+
+    nchunks = params->nchunks;
+    priv = (W_PRIVATE_t *)malloc(sizeof(W_PRIVATE_t));
+    ASSERT(priv);
+    priv->params = params;
+    //priv->thr_id = -1; /* not set */
+    priv->chunks = (N_CHUNK_t **) malloc(nchunks * sizeof(void*));
+
+    /* Allocate the array (per node) of LF client context references */
+    priv->lf_clients = (LF_CL_t **) calloc(nchunks, sizeof(void*));
+    ASSERT(priv->chunks && priv->lf_clients);
+
+    for (n = 0; n < nchunks; n++) {
+	priv->chunks[n] = (N_CHUNK_t *)calloc(1, sizeof(N_CHUNK_t));
+	ASSERT(priv->chunks[n]);
+    }
+
+    *priv_p = priv;
+}
+
 static void usage(const char *name) {
     if (rank == 0)
 	ion_usage(name);
@@ -405,6 +429,11 @@ int main(int argc, char **argv) {
 
     /* Init LF clients */
     if (lf_role == LF_ROLE_CLT) {
+	if (role_size > LFS_MAXCLIENTS) {
+	    err("Too many clients: %d, please check -c [--clientlist]", role_size);
+	    node_exit(1);
+	}
+
 	if (params->w_thread_cnt != 1) {
 	    err("Option ignored: -w");
 	    params->w_thread_cnt = 1;
@@ -437,20 +466,7 @@ int main(int argc, char **argv) {
     if (lf_role == LF_ROLE_CLT) {
 	W_PRIVATE_t *priv;
 
-	if (role_size > LFS_MAXCLIENTS) {
-	    err("Too many clients: %d, please check -c [--clientlist]", role_size);
-	    node_exit(1);;
-	}
-
-	priv = (W_PRIVATE_t *)malloc(sizeof(W_PRIVATE_t));
-	ASSERT(priv);
-	priv->params = params;
-	//priv->thr_id = -1; /* not set */
-	priv->chunks = (N_CHUNK_t **) malloc(nchunks * sizeof(void*));
-
-	/* Allocate the array (per node) of LF client context references */
-	priv->lf_clients = (LF_CL_t **) calloc(nchunks, sizeof(void*));
-	ASSERT(priv->chunks && priv->lf_clients);
+	work_alloc(&priv, params);
 
 	for (k = 0; k < params->cmdc; k++) {
 	    W_TYPE_t cmd = params->cmdv[k];
@@ -509,8 +525,8 @@ int main(int argc, char **argv) {
 		}
 	    }
 	}
-
 	work_free(priv);
+
 	if (role_rank == 0)
 	    printf("DONE\n");
     }
@@ -591,22 +607,6 @@ static void perf_stats_print_bw(PERF_STAT_t *stats, int mask, const char *msg, u
 				PERF_NAME[i], msg, ((double)p->data/bu)/((double)p->elapsed/tu));
 }
 
-static int assign_map_chunk(N_CHUNK_t **chunk_p, N_PARAMS_t *params,
-    int extent_n, int chunk_n)
-{
-	N_CHUNK_t	*chunk;
-
-	chunk = (N_CHUNK_t *)calloc(1, sizeof(N_CHUNK_t));
-	if(!chunk)
-		return 1;
-
-	chunk->node = chunk_n;
-	map_stripe_chunk(chunk, extent_n, params->nchunks, params->parities);
-
-	*chunk_p = chunk;
-	return 0;
-}
-
 static int do_phy_stripes(uint64_t *stripe, W_TYPE_t op, W_PRIVATE_t *priv,
     int cl_rank, int cl_size, uint64_t *done)
 {
@@ -641,6 +641,7 @@ static int do_phy_stripes(uint64_t *stripe, W_TYPE_t op, W_PRIVATE_t *priv,
 
 	/* Setup fabric for extent on each node */
 	for (n = 0; n < nchunks; n++) {
+		N_CHUNK_t *chunk;
 		int fam_extent = extent;
 		/* TODO: Fix FAM allocation */
 		int lf_client_idx = to_lf_client_id(fam_idx++, srv_cnt, partition);
@@ -650,9 +651,10 @@ static int do_phy_stripes(uint64_t *stripe, W_TYPE_t op, W_PRIVATE_t *priv,
 		priv->lf_clients[n] = all_clients[lf_client_idx];
 		ASSERT(partition == priv->lf_clients[n]->partition);
 
-		/* Allocate N_CHUNK_t and map chunk to extent */
-		ON_ERROR( assign_map_chunk(&priv->chunks[n], params, extent, n),
-			 "Error allocating chunk");
+		/* Map chunk to extent */
+		chunk = priv->chunks[n];
+		chunk->node = n;
+		map_stripe_chunk(chunk, extent, nchunks, params->parities);
 
 		/* Add dest partition offset? */
 		if (params->part_mreg != 0)
@@ -676,14 +678,6 @@ static int do_phy_stripes(uint64_t *stripe, W_TYPE_t op, W_PRIVATE_t *priv,
 	rc = worker_func(op, priv, 0);
 	if (rc == 0)
 		*done += 1;
-
-	/* Free chunks[] */
-	for (n = 0; n < nchunks; n++) {
-	    N_CHUNK_t **chunkpp = &priv->chunks[n];
-
-	    free(*chunkpp);
-	    *chunkpp = NULL;
-	}
 
 	/* mark stripes done */
 _done:
@@ -1017,13 +1011,11 @@ static void work_free(W_PRIVATE_t *priv)
     if (priv == NULL)
 	return;
 
-    /*
     for (int n = 0; n < priv->params->nchunks; n++) {
 	N_CHUNK_t *chunk = priv->chunks[n];
 
 	free(chunk);
     }
-    */
     free(priv->chunks);
     free(priv->lf_clients);
     free(priv);
