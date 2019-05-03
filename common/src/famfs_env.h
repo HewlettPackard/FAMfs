@@ -201,7 +201,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 /* default configuration command line */
 #define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -M 16M -E 8M -P0 --memreg scalable --provider sockets ENCODE"
 #define LFS_MAXARGS     64
-#define LFS_MAXCLIENTS	64
+#define LFS_MAXCLIENTS	128	/* Max number of LF clients */
 
 #define FAMFS_PROGRESS_AUTO	"default" /* "default", "manual" or "auto" */
 #define LF_MR_MODEL_SCALABLE	"scalable"
