@@ -31,6 +31,10 @@
 #include "ec_perf.h"
 
 
+/* If defined: limit send queue depth when CQ is used */
+//#define IBV_SQ_WR_DEPTH 0 /* 1..8; 0 - sync I/O */
+
+
 static int rank, rank_size;
 
 static const char *PERF_NAME[] = { "Write", "Read", 0 };
@@ -810,6 +814,8 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 	    do {
 		rc = lf_check_progress(tx_cq, &cnt);
 	    } while (rc >= 0 && cnt > 0);
+	    if (rc == 0)
+		*event = 0;
 	} else {
 	    rc = fi_cntr_wait(cntr, *event, params->io_timeout_ms);
 	}
@@ -843,16 +849,24 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
    return 0;
 }
 
-/* Write one chunk */
-static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
+static inline ssize_t fi_write_(struct fid_ep *ep, void *buf, size_t len, void *desc,
+    fi_addr_t dest_addr, uint64_t addr, uint64_t key, void *context) {
+	return fi_write(ep, buf, len, desc, dest_addr, addr, key, context);
+}
+
+/* Write or read one chunk */
+static int do_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe, enum cntr_op_ op)
 {
     LF_CL_t		*node = priv->lf_clients[chunk_n];
     N_CHUNK_t		*chunk = priv->chunks[chunk_n];
     N_PARAMS_t		*params = priv->params;
     fi_addr_t		*tgt_srv_addr;
     struct fid_ep	*tx_ep;
+    ssize_t	(*fi_rma)(struct fid_ep*, void*, size_t, void*,
+			  fi_addr_t, uint64_t, uint64_t, void*);
     size_t		transfer_sz, len;
     uint64_t		stripe0;
+    uint64_t		*event, cnt;
     off_t		off;
     char		*buf = chunk->lf_buf;
     int			ii, blocks, thread_id;
@@ -868,100 +882,66 @@ static int write_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
     ASSERT( off < params->part_sz );
     off += chunk->p_stripe0_off;
     blocks = len/transfer_sz;
+    fi_rma = (op == CNTR_OP_R)? &fi_read : &fi_write_;
+    event = (op == CNTR_OP_R)? &chunk->r_event : &chunk->w_event;
 
     if (params->verbose) {
 	ALLOCA_CHUNK_PR_BUF(pr_buf);
 
-	printf("will write %d blocks of %lu bytes to %s chunk of stripe %lu in FAM node %d(p%d) @%p"
+	printf("will %s %d blocks of %lu bytes %s %s chunk of stripe %lu in FAM node %d(p%d) @%p"
 	       " desc:%p mr_key:%lu\n",
-		blocks, transfer_sz,
+		cntr_op_to_str(op), blocks, transfer_sz,
+		(op == CNTR_OP_R)?"from":"to",
 		pr_chunk(pr_buf, chunk->data, chunk->parity), stripe,
 		node->node_id, node->partition, (void*)off,
 		node->local_desc[thread_id], node->mr_key);
     }
 
     // Do RMA
+    cnt = 0;
     for (ii = 0; ii < blocks; ii++) {
 	int rc;
-	ssize_t cnt = 0;
 
 	do {
-	    rc = fi_write(tx_ep, buf, transfer_sz, node->local_desc[thread_id], \
-			  *tgt_srv_addr, off, node->mr_key, (void*)buf /* NULL */);
-	    if (rc != -FI_EAGAIN)
+	    rc = fi_rma(tx_ep, buf, transfer_sz, node->local_desc[thread_id],
+			*tgt_srv_addr, off, node->mr_key, (void*)buf /* NULL */);
+	    if (rc == 0) {
+		off += transfer_sz;
+		buf += transfer_sz;
+		(*event)++;
+	    } else if (rc < 0 && rc != -FI_EAGAIN)
 		break;
-	    if (params->use_cq)
-		lf_check_progress(node->tx_cqq[thread_id], &cnt);
+
+	    if (params->use_cq) {
+#ifdef IBV_SQ_WR_DEPTH
+		if (rc == 0 && *event <= IBV_SQ_WR_DEPTH + cnt)
+#else
+		if (rc == 0)
+#endif
+		    break;
+
+		/* If we got FI_EAGAIN, check LF progress to free some slot(s) in send queue */
+		do {
+		    ssize_t cmp = 0;
+		    ON_FI_ERROR( lf_check_progress(node->tx_cqq[thread_id], &cmp),
+				"lf_check_progress");
+		    if (cmp)
+			cnt += (unsigned)cmp;
+#ifdef IBV_SQ_WR_DEPTH
+		} while (*event > IBV_SQ_WR_DEPTH + cnt);
+#else
+		} while (0);
+#endif
+	    }
 	} while (rc == -FI_EAGAIN);
-	ON_FI_ERROR(rc,
-		    "%d: block:%d fi_write failed on FAM node %d(p%d)",
-		    rank, ii, node->node_id, node->partition);
-	off += transfer_sz;
-	buf += transfer_sz;
-	chunk->w_event++;
-	ASSERT((unsigned int)cnt <= chunk->w_event);
-	chunk->w_event -= (unsigned int)cnt;
-    }
-    return 0;
-}
-
-/* Read one chunk */
-static int read_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe)
-{
-    LF_CL_t		*node = priv->lf_clients[chunk_n];
-    N_CHUNK_t		*chunk = priv->chunks[chunk_n];
-    N_PARAMS_t		*params = priv->params;
-    fi_addr_t		*tgt_srv_addr;
-    struct fid_ep	*tx_ep;
-    size_t		transfer_sz, len;
-    uint64_t		stripe0;
-    off_t		off;
-    char		*buf = chunk->lf_buf;
-    int			ii, blocks, thread_id;
-
-    thread_id = priv->thr_id;
-    ASSERT(thread_id >= 0 && thread_id < params->w_thread_cnt);
-    tx_ep = node->tx_epp[thread_id];
-    tgt_srv_addr = &node->tgt_srv_addr[thread_id];
-    transfer_sz = params->transfer_sz;
-    len = params->chunk_sz;
-    stripe0 = priv->bunch.extent * priv->bunch.ext_stripes;
-    off = (stripe - stripe0) * len;
-    ASSERT( off < params->part_sz );
-    off += chunk->p_stripe0_off;
-    blocks = len/transfer_sz;
-
-    if (params->verbose) {
-	ALLOCA_CHUNK_PR_BUF(pr_buf);
-
-	printf("will read %d blocks of %lu bytes from %s chunk of stripe %lu on FAM node %d(p%d) @%ld\n",
-		blocks, transfer_sz,
-		pr_chunk(pr_buf, chunk->data, chunk->parity), stripe,
-		node->node_id, node->partition, off);
-    }
-
-    // Do RMA
-    for (ii = 0; ii < blocks; ii++) {
-	int rc;
-	ssize_t cnt = 0;
-
-	do {
-	    rc = fi_read(tx_ep, buf, transfer_sz, node->local_desc[thread_id], \
-			 *tgt_srv_addr, off, node->mr_key, (void*)buf /* NULL */);
-	    if (rc != -FI_EAGAIN)
-		break;
-	    if (params->use_cq)
-		lf_check_progress(node->tx_cqq[thread_id], &cnt);
-	} while (rc == -FI_EAGAIN);
-	ON_FI_ERROR(rc,
-		    "fi_read failed on FAM node %d(p%d)",
+	ON_FI_ERROR(rc, "%d: block:%d fi_%s failed on FAM node %d(p%d)",
+		    rank, ii, cntr_op_to_str(op),
 		    node->node_id, node->partition);
-	off += transfer_sz;
-	buf += transfer_sz;
-	chunk->r_event++;
-	ASSERT((unsigned int)cnt <= chunk->w_event);
-	chunk->w_event -= (unsigned int)cnt;
     }
+    /* Some iops already finished due to the limited send queue depth: cnt */
+    ASSERT(cnt <= *event);
+    *event -= cnt;
+
     return 0;
 }
 
@@ -1091,7 +1071,7 @@ static int worker_func(W_TYPE_t cmd, W_PRIVATE_t *priv, int thread_id)
 		chunk = priv->chunks[i];
 		if (chunk->data >= 0) {
 		    /* Read chunk from fabric */
-		    rc = write_chunk(priv, i, stripe);
+		    rc = do_chunk(priv, i, stripe, CNTR_OP_W);
 		    if (rc) return rc;
 		}
 	    }
@@ -1127,7 +1107,7 @@ static int worker_func(W_TYPE_t cmd, W_PRIVATE_t *priv, int thread_id)
 		chunk = priv->chunks[i];
 		if (chunk->data >= 0) {
 		    /* Read chunk from fabric */
-		    rc = read_chunk(priv, i, stripe);
+		    rc = do_chunk(priv, i, stripe, CNTR_OP_R);
 		    if (rc) return rc;
 		}
 	    }
