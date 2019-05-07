@@ -160,18 +160,19 @@ static int check_srv_cnt(N_PARAMS_t *params, int role_rank, int role_size,
 
     /* Have to extend the LF server node list 'nodelist'? */
     realloc_nodelist = 0;
-    if (rank == zero_srv_rank && !params->fam_map) {
-	int nchunks = params->nchunks;
+    if (!params->fam_map) {
+	if (rank == zero_srv_rank) {
+	    int nchunks = params->nchunks;
 
-	ASSERT(lf_role == LF_ROLE_SRV && role_rank == 0);
-	/* Number of servers must me a multiple of 'nchunks' */
-	if (srv_size < nchunks || (srv_size % nchunks != 0)) {
-	    err("MPI communicator has %d servers" \
-		" but FAM should be emulated with a multiple of %d",
-		srv_size, nchunks);
-	    node_exit(1);
+	    ASSERT(lf_role == LF_ROLE_SRV && role_rank == 0);
+	    /* Number of servers must me a multiple of 'nchunks' */
+	    if (srv_size < nchunks || (srv_size % nchunks != 0)) {
+		err("MPI communicator has %d servers" \
+		    " but FAM should be emulated with a multiple of %d",
+		    srv_size, nchunks);
+		node_exit(1);
+	    }
 	}
-
 	if (srv_size != params->node_cnt)
 	    realloc_nodelist = 1;
     }
