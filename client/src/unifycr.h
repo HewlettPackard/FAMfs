@@ -108,7 +108,6 @@ chunk_list_t *unifycr_get_chunk_list(char *path);
  * and to test above function*/
 void unifycr_print_chunk_list(char *path);
 
-int lf_connect(char *addr, char *srvc);
 int famfs_buf_reg(char *buf, size_t len, void **ctx);
 int famfs_buf_unreg(void *ctx);
 

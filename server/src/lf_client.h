@@ -11,6 +11,7 @@
 #include <pthread.h>
 
 #include "famfs_lf_connect.h"
+#include "famfs_global.h"
 
 
 typedef struct lfs_shm_ {
@@ -19,6 +20,9 @@ typedef struct lfs_shm_ {
 	pthread_mutex_t	lock;		/* shared mutex */
 	pthread_cond_t	cond_ready;	/* parent waits for LF server */
 	pthread_cond_t	cond_quit;	/* child waits to quit */
+	unsigned int	node_servers;	/* number of LF parti */
+	/* Array of 'node_servers' size: */
+	struct lfs_excg_ rmk[];		/* LF remote memory keys */
 } LFS_SHM_t;
 
 typedef struct lfs_ctx_ {
@@ -31,6 +35,7 @@ typedef struct lfs_ctx_ {
 
 int lfs_emulate_fams(char * const cmdline, int rank, int size,
     LFS_CTX_t **lfs_ctx_pp);
+int meta_register_fam(LFS_CTX_t *lfs_ctx);
 void free_lfs_ctx(LFS_CTX_t **lfs_ctx_p);
 
 #endif /* LF_CLIENT_H */

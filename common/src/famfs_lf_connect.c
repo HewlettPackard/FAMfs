@@ -186,7 +186,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     /* per worker --> */
     tx_epp = (struct fid_ep **) malloc(thread_cnt * sizeof(void*));
     ASSERT(tx_epp);
-    
+
     local_desc = (void **) calloc(thread_cnt, sizeof(void*));
 
     /* Register the local buffers */
@@ -786,7 +786,7 @@ int lf_srv_init(LF_SRV_t *priv)
     for (size_t i = 0; i < len/page_size; i++)
         *(unsigned long *)&((char *)buf)[page_size*i] = i;
     */
-    
+
     ON_FI_ERROR( fi_mr_reg(domain, *bufp, len, FI_REMOTE_READ|FI_REMOTE_WRITE, 0, mr_key, 0, &mr, NULL),
 		"srv fi_mr_reg (len=%zu, key=%lu) failed", len, mr_key);
     priv->virt_addr = *bufp;
@@ -855,21 +855,13 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 {
     LF_SRV_t **lf_servers = NULL;
     int srv_cnt, node_id, lf_client_idx;
-    int i, part;
-    int rc = -1;
+    int i, part, rc;
 
-    if (mpi_comm == 0) {
-	if (params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr) {
-	    err("FAM emulator argument error - don't set prov_key:%d or virt_addr:%d !",
-		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr);
-            goto _err;
-	}
-    }
     node_id = params->node_id;
     srv_cnt = params->node_servers;
 
     if (params->part_mreg == 0) {
-	if ((rc = posix_memalign(&params->fam_buf, getpagesize(),
+	if ((rc = -posix_memalign(&params->fam_buf, getpagesize(),
 			params->vmem_sz))) {
 	    err("%d: srv memory alloc failed", rank);
 	    goto _err;
@@ -913,6 +905,21 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	    rc = lf_srv_trigger(priv);
 #endif
 
+    if (params->lf_mr_flags.prov_key) {
+	/* For each partition */
+	for (part = 0; part < srv_cnt; part++) {
+	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
+	    params->mr_prov_keys[lf_client_idx] = lf_servers[part]->lf_client->mr_key;
+	}
+    }
+    if (params->lf_mr_flags.virt_addr) {
+	/* For each partition */
+	for (part = 0; part < srv_cnt; part++) {
+	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
+	    params->mr_virt_addrs[lf_client_idx] = (uint64_t) lf_servers[part]->virt_addr;
+	}
+    }
+
     if (!mpi_comm)
 	goto _done;
 
@@ -920,11 +927,6 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
     if (params->lf_mr_flags.prov_key) {
 	size_t len = srv_cnt * sizeof(uint64_t);
 
-	/* For each partition */
-	for (part = 0; part < srv_cnt; part++) {
-	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
-	    params->mr_prov_keys[lf_client_idx] = lf_servers[part]->lf_client->mr_key;
-	}
 	if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
 				params->mr_prov_keys, len, MPI_BYTE, mpi_comm))) {
 	    err("MPI_Allgather failed");
@@ -935,11 +937,6 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
     if (params->lf_mr_flags.virt_addr) {
 	size_t len = srv_cnt * sizeof(uint64_t);
 
-	/* For each partition */
-	for (part = 0; part < srv_cnt; part++) {
-	    lf_client_idx = to_lf_client_id(node_id, srv_cnt, part);
-	    params->mr_virt_addrs[lf_client_idx] = (uint64_t) lf_servers[part]->virt_addr;
-	}
 	if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
 				params->mr_virt_addrs, len, MPI_BYTE, mpi_comm))) {
 	    err("MPI_Allgather failed");
@@ -990,7 +987,7 @@ ssize_t lf_cq_read(struct fid_cq *cq, struct fi_cq_tagged_entry *fi_cqe, ssize_t
     struct fi_cq_err_entry err_entry;
 
     bzero(&err_entry, sizeof(err_entry));
-    
+
     for (;;) {
         ret = fi_cq_read(cq, fi_cqe, count);
         if (ret >= 0)
@@ -1030,7 +1027,7 @@ ssize_t lf_completions(struct fid_cq *cq, ssize_t count, void (*cq_callback)(voi
     ssize_t ret = 0, rc, len, i;
     struct fi_cq_tagged_entry cqe[1];
     struct fi_cq_err_entry cqerr;
-    
+
     /* The verbs rdm code forces all entries to be tagged, but the msg
      * code dosn't support tagged. All I want is the context; so we
      * read a single entry; pass in a fi_cq_tagged; and pull the context

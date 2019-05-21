@@ -11,10 +11,44 @@
 #include <limits.h>
 
 #include "famfs_env.h"
+#include "famfs_global.h"
 #include "lf_client.h"
 #include "fam_stripe.h"
-//#include "unifycr-internal.h"
+#include "unifycr-internal.h" /* DEBUG() macro */
 
+
+static int get_lf_meta(N_PARAMS_t *params)
+{
+    fam_attr_val_t *fam_meta = NULL;
+    int fam_cnt, srv_cnt;
+    int i, part, lf_client_idx;
+    int rc = 0;
+
+    if (params->lf_mr_flags.scalable ||
+        (params->mr_prov_keys == NULL && params->mr_virt_addrs == NULL))
+        return UNIFYCR_SUCCESS;
+
+    fam_cnt = params->fam_cnt;
+    srv_cnt = params->node_servers;
+    for (i = 0; i < fam_cnt; i++) {
+        rc = get_global_fam_meta(i, &fam_meta);
+        if (rc != UNIFYCR_SUCCESS) {
+            err("Get LF meta error:%d id:%d", rc, i);
+            return -1;
+        }
+        for (part = 0; part < srv_cnt && fam_meta; part++) {
+            lf_client_idx = to_lf_client_id(i, srv_cnt, part);
+            params->mr_prov_keys[lf_client_idx] = fam_meta->part_attr[part].prov_key;
+            params->mr_virt_addrs[lf_client_idx] = fam_meta->part_attr[part].virt_addr;
+            DEBUG("get_lf_meta id:%d(p%d) prov_key:%lu virt_addr:%lu\n",
+              i, part,
+              params->mr_prov_keys[lf_client_idx],
+              params->mr_virt_addrs[lf_client_idx]);
+        }
+        free(fam_meta);
+    }
+    return rc;
+}
 
 static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params_p)
 {
@@ -30,6 +64,12 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
     params = *params_p;
     ASSERT(params);
     params->w_thread_cnt = 1;
+
+    if ((rc = get_lf_meta(params))) {
+	DEBUG("rank:%d failed to get LF metadata from the delegator on mount, error:%d",
+	      dbg_rank, rc);
+	return rc;
+    }
 
     rc = lf_clients_init(params);
     if (rc == 0)

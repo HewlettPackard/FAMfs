@@ -34,7 +34,7 @@
 #include "unifycr_metadata.h"
 #include "arraylist.h"
 #include "unifycr_const.h"
-#include "unifycr_global.h"
+
 
 fsmd_key_t **fsmd_keys;
 fsmd_val_t **fsmd_vals;
@@ -57,7 +57,7 @@ int unifycr_val_lens[MAX_META_PER_SEND] = {0};
 int fattr_key_lens[MAX_FILE_CNT_PER_NODE] = {0};
 int fattr_val_lens[MAX_FILE_CNT_PER_NODE] = {0};
 
-struct index_t *unifycr_indexes[2];
+struct index_t *unifycr_indexes[3];
 long max_recs_per_slice;
 int page_sz;
 
@@ -138,6 +138,9 @@ int meta_init_store(unifycr_cfg_t *cfg)
     /*this index is created for storing file attribute metadata*/
     unifycr_indexes[1] = create_global_index(md, ser_ratio, 1,
                          LEVELDB, MDHIM_INT_KEY, "file_attr");
+
+    unifycr_indexes[2] = create_global_index(md, ser_ratio, 1,
+                         LEVELDB, MDHIM_INT_KEY, NULL);
 
     MPI_Comm_size(md->mdhim_comm, &md_size);
 
@@ -277,6 +280,71 @@ int meta_process_attr_get(char *buf, int sock_id,
                     glb_rank, *fattr_keys[0]); */
         ptr_attr_val->file_attr = tmp_ptr_attr->file_attr;
         strcpy(ptr_attr_val->filename, tmp_ptr_attr->fname);
+
+        rc = ULFS_SUCCESS;
+    }
+
+    mdhim_full_release_msg(bgrm);
+    return rc;
+}
+
+int meta_famattr_put(int fam_id, fam_attr_val_t *val)
+{
+    size_t val_sz;
+    uint32_t key;
+    int rc;
+
+    md->primary_index = unifycr_indexes[2];
+
+    if (fam_id < 0)
+        key = MDHIM_MAX_SLICES;
+    else
+        key = (uint32_t)fam_id;
+    *fattr_keys[0] = key;
+    val_sz = fam_attr_val_sz(val->part_cnt);
+    LOG(LOG_DBG, "key:%u size:%zu cnt:%u prov_key:%lu virt_addr:%016lx",
+        key, val_sz, val->part_cnt, val->part_attr[0].prov_key,
+        val->part_attr[0].virt_addr);
+    brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+		   val, val_sz, NULL, NULL);
+
+    if (!brm || brm->error)
+	rc = ULFS_ERROR_MDHIM;
+    else
+	rc = ULFS_SUCCESS;
+
+    mdhim_full_release_msg(brm);
+
+    return rc;
+}
+
+int meta_famattr_get(char *buf, fam_attr_val_t **val_p)
+{
+    *fattr_keys[0] = *((int *)(buf + 2 * sizeof(int)));
+    fam_attr_val_t *tmp_ptr_attr;
+
+    int rc;
+
+    md->primary_index = unifycr_indexes[2];
+    bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
+		    sizeof(fattr_key_t), MDHIM_GET_EQ);
+
+    if (!bgrm || bgrm->error) {
+	*val_p = NULL;
+	rc = ULFS_ERROR_MDHIM;
+    } else {
+	size_t size;
+
+	tmp_ptr_attr = (fam_attr_val_t *)bgrm->values[0];
+	*val_p = (fam_attr_val_t *)malloc(fam_attr_val_sz(tmp_ptr_attr->part_cnt));
+	//fam_id = *fattr_keys[0];
+	(*val_p)->part_cnt = tmp_ptr_attr->part_cnt;
+	size = tmp_ptr_attr->part_cnt*sizeof(LFS_EXCG_t);
+	memcpy((*val_p)->part_attr, tmp_ptr_attr->part_attr, size);
+        LOG(LOG_DBG, "key:%u size:%zu cnt:%u prov_key:%lu virt_addr:%016lx",
+	    *((int*)fattr_keys[0]), size,
+	    (*val_p)->part_cnt, (*val_p)->part_attr[0].prov_key,
+	    (*val_p)->part_attr[0].virt_addr);
 
         rc = ULFS_SUCCESS;
     }

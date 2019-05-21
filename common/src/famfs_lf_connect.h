@@ -122,6 +122,7 @@ typedef struct n_params_ {
 
 	int		cmd_trigger;	/* >0: trigget this command by LF server remote access */
 	int		part_mreg;	/* 1: register separate buffer per LF server partition */
+	MPI_Comm	mpi_comm;	/* MPI communicator for this node in servers/clients */
 	//int		client_only;	/* Run only LF client(s) */
 
 	W_TYPE_t	cmdv[ION_CMD_MAX]; /* parsed commands */
@@ -204,6 +205,19 @@ static inline int fam_node_by_index(FAM_MAP_t *m, int index)
 	}
     }
     return -1;
+}
+
+
+/*
+ * MPI utils
+**/
+
+/* defined in util.c */
+int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role, int gbl_rank, int gbl_size);
+
+static inline int mpi_broadcast_arr64(uint64_t *keys, int size, int rank0)
+{
+    return MPI_Bcast(keys, size*sizeof(uint64_t), MPI_BYTE, rank0, MPI_COMM_WORLD);
 }
 
 #endif /* FAMFS_LF_CONNECT_H */

@@ -840,6 +840,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->lf_domain = lf_domain;
     params->mr_prov_keys = NULL;
     params->mr_virt_addrs = NULL;
+    params->mpi_comm = MPI_COMM_NULL;
 
     memset(&params->lf_mr_flags, 0, sizeof(LF_MR_MODE_t));
     if (lf_mr_basic) {
@@ -881,6 +882,12 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->stripe_buf = NULL;
     params->fam_buf = NULL;
     params->lf_clients = NULL;
+
+    if (!params->lf_mr_flags.scalable) {
+        size_t len = fam_cnt * srv_cnt * sizeof(uint64_t);
+        params->mr_prov_keys = (uint64_t *)malloc(len);
+        params->mr_virt_addrs = (uint64_t *)malloc(len);
+    }
 
     *params_p = params;
     return 0;
@@ -972,5 +979,71 @@ void daemonize(void)
         exit(1);
     } else if (pid > 0)
         exit(0);
+}
+
+/*
+ * MPI utils
+**/
+
+static inline int broadcast_arr64(uint64_t *keys, int size, int rank0)
+{
+    return MPI_Bcast(keys, size*sizeof(uint64_t), MPI_BYTE, rank0, MPI_COMM_WORLD);
+}
+
+/* Return the rank in COMM_WORLD of the first node of role 'zero_role' and
+MPI subcommunicator of MPI_COMM_WORLD for nodes of 'my_role'. */
+int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role,
+    int gbl_rank, int gbl_size)
+{
+	MPI_Comm	world_comm, comm = MPI_COMM_NULL;
+	MPI_Group	group_all, group;
+	int		*lf_roles, *ranks;
+	int		i, size, zero_srv_rank, rc;
+
+	lf_roles = (int *) calloc(gbl_size, sizeof(int));
+	lf_roles[gbl_rank] = my_role;
+	rc = MPI_Allgather(MPI_IN_PLACE, sizeof(int), MPI_BYTE,
+			   lf_roles, sizeof(int), MPI_BYTE, MPI_COMM_WORLD);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Allgather");
+		return rc;
+	}
+	ranks = (int *) calloc(gbl_size, sizeof(int));
+	zero_srv_rank = -1;
+	for (i = 0, size = 0; i < gbl_size; i++) {
+		if (lf_roles[i] == my_role)
+			ranks[size++] = i;
+		if (zero_srv_rank < 0 && lf_roles[i] == zero_role)
+			zero_srv_rank = i;
+	}
+	free(lf_roles);
+
+	rc = MPI_Comm_dup(MPI_COMM_WORLD, &world_comm);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_dup failed:%d", rc);
+		return rc;
+	}
+	rc = MPI_Comm_group(world_comm, &group_all);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_group failed:%d", rc);
+		return rc;
+	}
+	rc = MPI_Group_incl(group_all, size, ranks, &group);
+	free(ranks);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Group_incl failed:%d role:%d size:%d",
+		    rc, my_role, size);
+		return rc;
+	}
+	rc = MPI_Comm_create(world_comm, group, &comm);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_create failed:%d role:%d size:%d",
+		    rc, my_role, size);
+		return rc;
+	}
+	ASSERT(comm != MPI_COMM_NULL);
+
+	memcpy(mpi_comm, &comm, sizeof(MPI_Comm));
+	return zero_srv_rank;
 }
 

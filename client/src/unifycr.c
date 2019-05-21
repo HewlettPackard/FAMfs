@@ -103,7 +103,6 @@ typedef int64_t off64_t;
 #include "famfs_env.h"
 #include "famfs_stats.h"
 #include "lf_client.h"
-#include "famfs_global.h"
 
 
 static int unifycr_fpos_enabled   = 1;  /* whether we can use fgetpos/fsetpos */
@@ -1156,6 +1155,74 @@ static int get_global_file_meta(int gfid, unifycr_fattr_t **file_meta)
     memcpy(*file_meta, cmd_buf + 2 * sizeof(int), sizeof(unifycr_fattr_t));
     return UNIFYCR_SUCCESS;
 }
+
+int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
+{
+    fam_attr_val_t hdr;
+    size_t size;
+    int cmd = COMM_META;
+    int flag = 4;
+
+    memcpy(cmd_buf, &cmd, sizeof(int));
+    memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
+    memcpy(cmd_buf + sizeof(int) + sizeof(int),
+           &fam_id, sizeof(int));
+
+    int rc = __real_write(client_sockfd, cmd_buf, sizeof(cmd_buf));
+    if (rc != 0) {
+        int bytes_read = 0;
+        cmd_fd.events = POLLIN | POLLPRI;
+        cmd_fd.revents = 0;
+
+        rc = poll(&cmd_fd, 1, -1);
+
+        if (rc == 0) {
+            /* encounter timeout*/
+            return -1;
+        } else {
+            if (rc > 0) {
+                if (cmd_fd.revents != 0) {
+                    if (cmd_fd.revents == POLLIN) {
+                        bytes_read = __real_read(client_sockfd,
+                                                 cmd_buf, sizeof(cmd_buf));
+                        if (bytes_read == 0) {
+                            /*remote connection is closed*/
+                            return -1;
+                        } else {
+                            if (*((int *)cmd_buf) != COMM_META || *((int *)cmd_buf + 1)
+                                != ACK_SUCCESS) {
+                                *fam_meta = NULL;
+                                return -1;
+                            } else {
+                                /*success*/
+
+                            }
+                        }
+                    } else {
+                        /*encounter connection error*/
+                        return -1;
+                    }
+                } else {
+                    /*file descriptor is negative*/
+                    return -1;
+                }
+            } else {
+                /* encounter error*/
+                return -1;
+            }
+        }
+    } else {
+        /*write error*/
+        return -1;
+    }
+
+    memcpy(&hdr, cmd_buf + 2 * sizeof(int), sizeof(fam_attr_val_t));
+    size = fam_attr_val_sz(hdr.part_cnt);
+    *fam_meta = (fam_attr_val_t *)malloc(size);
+    memcpy(*fam_meta, cmd_buf + 2 * sizeof(int), size);
+    return UNIFYCR_SUCCESS;
+}
+
 /*
  * insert file attribute to attributed share memory buffer
  * */

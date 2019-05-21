@@ -1,7 +1,9 @@
 #ifndef FAMFS_GLOBAL_H_
-#define FAMFS_GLOBAL_H_ 
+#define FAMFS_GLOBAL_H_
 
 #include <sys/types.h>
+#include <inttypes.h>
+
 
 typedef enum {
     COMM_MOUNT     = 0x1, /*the list of addrs: appid, size of buffer, offset of data section, metadata section*/
@@ -45,7 +47,6 @@ typedef struct {
     };
 } fsmd_val_t;
 
-
 typedef struct {
     fsmd_key_t   k;
     fsmd_val_t   v;
@@ -62,6 +63,27 @@ typedef struct {
     size_t          cnt;
     lf_mreg_t       *regs;
 } famfs_mr_list_t;
+
+typedef struct lfs_excg_ {
+	uint64_t	prov_key;	/* memory registration key */
+	uint64_t	virt_addr;	/* remote virtual address */
+} LFS_EXCG_t;
+
+typedef struct {
+	uint32_t	_f __attribute__((aligned(8))); /* reserved */
+	uint32_t	part_cnt;	/* number of partitions on this FAM */
+	LFS_EXCG_t	part_attr[];	/* partition LF remote key & virt addr */
+} __attribute__((packed))  fam_attr_val_t;
+#define fam_attr_val_sz(cnt) (sizeof(fam_attr_val_t) + (cnt)*sizeof(LFS_EXCG_t))
+
+typedef struct {
+	uint64_t	fam_id;		/* FAM Id */
+	uint32_t	_f;		/* reserved */
+	uint32_t	part_cnt;	/* number of partitions on this FAM */
+	LFS_EXCG_t	part_attr[];	/* partition LF remote key & virt addr */
+} fam_attr_t;
+#define fam_attr_sz(cnt) (sizeof(fam_attr_t) + (cnt)*sizeof(LFS_EXCG_t))
+
 
 extern famfs_mr_list_t known_mrs;
 

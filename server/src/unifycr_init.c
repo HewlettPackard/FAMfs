@@ -140,7 +140,6 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
 
 int main(int argc, char *argv[])
 {
-
     char dbg_fname[GEN_STR_LEN] = {0};
     int provided;
     int rc;
@@ -257,6 +256,12 @@ int main(int argc, char *argv[])
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
         exit(1);
+    }
+
+    rc = meta_register_fam(lfs_ctx_p);
+    if (rc != ULFS_SUCCESS) {
+	LOG(LOG_ERR, "%s reg FAM", ULFS_str_errno(rc));
+	exit(1);
     }
 
     MPI_Barrier(MPI_COMM_WORLD);

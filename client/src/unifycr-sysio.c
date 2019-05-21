@@ -1551,7 +1551,7 @@ static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt, fsmd_kv_t  *md, int
             }
 
             if (fam_len) {
-                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - rq[i].buf, fam_off, 
+                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - rq[i].buf, fam_off,
                     md[j].v.node, md[j].v.chunk);
                 if ((rc = lf_fam_read(bufp, fam_len, fam_off, md[j].v.node, md[j].v.chunk))) {
                     ioerr("lf_fam_read failed ret:%d", rc);

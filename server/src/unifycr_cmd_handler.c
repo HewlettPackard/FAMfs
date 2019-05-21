@@ -135,6 +135,18 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
             ret_sz = pack_ack_msg(ptr_ack, cmd, rc, NULL, 0);
             rc = sock_ack_cli(sock_id, ret_sz);
         }
+
+        if (type == 4) {
+            /*get FAM attribute*/
+            fam_attr_val_t *attr_val = NULL;
+            rc = meta_famattr_get(ptr_cmd, &attr_val);
+
+            ptr_ack = sock_get_ack_buf(sock_id);
+            ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
+                                  attr_val, fam_attr_val_sz(attr_val->part_cnt));
+            rc = sock_ack_cli(sock_id, ret_sz);
+            free(attr_val);
+        }
         break;
 
     case COMM_READ:

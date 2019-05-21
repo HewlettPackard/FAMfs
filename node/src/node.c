@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
     W_POOL_t		*w_pool;
     N_PARAMS_t		*params = NULL;
     size_t		chunk_sz;
-    int			i, k, node_id, fam_cnt, srv_cnt, rc;
+    int			i, k, node_id, srv_cnt, rc;
     int			nchunks, data, parities;
     int			initialized = 0, provided;
     uint64_t		stripes, node_stat_max, node_stat_agg;
@@ -207,16 +207,9 @@ int main(int argc, char **argv) {
     parities = params->parities;
     data = nchunks - parities;
     node_id = params->node_id;
-    fam_cnt = params->fam_cnt;
     srv_cnt = params->node_servers;
     chunk_sz = params->chunk_sz;
     stripes = params->vmem_sz / chunk_sz;
-
-    /* Allocate arrays for exchange of prov_keys and virt_addrs */
-    if (!params->lf_mr_flags.scalable) {
-	params->mr_prov_keys = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
-	params->mr_virt_addrs = (uint64_t *)malloc(srv_cnt*fam_cnt*sizeof(uint64_t));
-    }
 
     /* Emulate ION FAMs with libfabric targets */
     if (!params->fam_map) {

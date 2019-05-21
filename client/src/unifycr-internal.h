@@ -587,4 +587,7 @@ int unifycr_match_received_ack(read_req_t *read_req, int count,
                                read_req_t *match_req);
 int unifycr_locate_req(read_req_t *read_req, int count,
                        read_req_t *match_req);
+int lf_connect(char *addr, char *srvc);
+int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta);
+
 #endif /* UNIFYCR_INTERNAL_H */

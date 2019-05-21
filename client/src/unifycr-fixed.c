@@ -487,6 +487,8 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     //size_t transfer_sz;
     off_t off;
     //int i, blocks;
+    ssize_t wcnt;
+    uint64_t *event, evnt;
     int dst_node, rc = 0;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
@@ -506,9 +508,12 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 
     if (lfs_params->use_cq) {
         tx_cq = node->tx_cqq[0];
+        evnt = 0;
+        event = &evnt;
     } else {
         cntr = node->wcnts[0];
         chunk->w_event = fi_cntr_read(cntr);
+        event = &chunk->w_event;
     }
 
     //transfer_sz = params->transfer_sz;
@@ -521,12 +526,13 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
     if (trg_off)
         *trg_off = off;
+    off += node->dst_virt_addr;
 
     stats_fi_wr = lfs_ctx->famsim_stats_fi_wr;
     STATS_START(start);
 
     //for (i = 0; i < blocks; i++) {
-    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
+    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%016lx mr_key:%lu",
         lfs_params->node_id, chunk_phy_id, chunk_offset,
         fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
         dst_node, node->partition,
@@ -534,12 +540,33 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 
     famsim_stats_start(famsim_ctx, stats_fi_wr);
 
-    ON_FI_ERROR(
-        fi_write(tx_ep, buf, len, lookup_mreg(buf, len, chunk->lf_client_idx), 
-            *tgt_srv_addr, off, node->mr_key, (void*)buf),
-        "%d (%s): fi_write failed on FAM module %d(p%d)", 
-        lfs_params->node_id, nodelist[lfs_params->node_id],
-        dst_node, fam_stripe->partition);
+    do {
+        rc = fi_write(tx_ep, buf, len, lookup_mreg(buf, len, chunk->lf_client_idx),
+                      *tgt_srv_addr, off, node->mr_key, (void*)buf);
+        if (rc == 0) {
+            (*event)++;
+            break;
+        } else if (rc < 0 && rc != -FI_EAGAIN)
+            break;
+
+        if (lfs_params->use_cq) {
+            int ret;
+
+            wcnt = 0;
+            ret = lf_check_progress(tx_cq, &wcnt);
+            if (ret < 0) {
+                rc = ret;
+                err("lf_check_progress error:%d - %m", rc);
+                break;
+            }
+            if (wcnt)
+                (*event)--;
+        }
+    } while (rc == -FI_EAGAIN);
+    /* TODO: Return I/O error */
+    ON_FI_ERROR(rc, "%d (%s): fi_write failed on FAM module %d(p%d)",
+                    lfs_params->node_id, nodelist[lfs_params->node_id],
+                    dst_node, fam_stripe->partition);
 
     if (fam_stripe->extent == 0 && fam_stripe->stripe_in_part == 0)
         famsim_stats_stop(stats_fi_wr, 1);
@@ -551,10 +578,9 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     //}
 
     if (!lfs_params->use_cq) {
-        chunk->w_event++;
         rc = fi_cntr_wait(cntr, chunk->w_event, lfs_params->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
-            err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
+            err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%016lx",
                 lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
                 fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
                 dst_node, node->partition, len, off);
@@ -568,11 +594,11 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
     } else {
-        ssize_t wcnt = 0;
-        do {        
-            if ((rc = lf_check_progress(tx_cq, &wcnt)) < 0)
-                break;
-        } while (wcnt < 1);
+        wcnt = *event;
+        do {
+            rc = lf_check_progress(tx_cq, &wcnt);
+        } while (rc == 0 && wcnt > 0);
+        // if (rc == 0) *event = 0;
     }
 
     UPDATE_STATS(lf_wr_stat, 1, len, start);
@@ -593,18 +619,19 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     struct fid_cq *tx_cq = NULL;
     //size_t transfer_sz;
     //int i, blocks;
+    ssize_t wcnt;
+    uint64_t *event, evnt;
     int src_node, rc = 0;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     /* to FAM chunk */
-    
     chunk = get_fam_chunk(cid, fam_stripe, &src_node);
     if (chunk == NULL) {
 	DEBUG("%d chunk:%jd - ENOSPC\n", lfs_params->node_id, cid);
 	errno = ENOSPC;
 	return UNIFYCR_ERR_NOSPC;
     }
-   
+
     node = lfs_params->lf_clients[nid];
     ASSERT(src_node == node->node_id);
     ASSERT(src_node == nid);
@@ -615,9 +642,12 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
 
     if (lfs_params->use_cq) {
         tx_cq = node->tx_cqq[0];
+        evnt = 0;
+        event = &evnt;
     } else {
         cntr = node->rcnts[0];
         chunk->r_event = fi_cntr_read(cntr);
+        event = &chunk->w_event;
     }
     //transfer_sz = params->transfer_sz;
     //int blocks = len / transfer_sz;
@@ -628,20 +658,42 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
 
     STATS_START(start);
 
-    off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*lfs_params->chunk_sz; 
-    DEBUG("%d: read chunk:%jd @%lu to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%jd mr_key:%lu",
+    off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*lfs_params->chunk_sz;
+    fam_off += node->dst_virt_addr;
+    DEBUG("%d: read chunk:%jd @%lu to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%016lx mr_key:%lu",
 	  lfs_params->node_id, cid, coff,
 	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
 	  src_node, node->partition,
 	  len, node->local_desc[0], fam_off, node->mr_key);
 
-    ON_FI_ERROR(
-        fi_read(tx_ep, buf, len, lookup_mreg(buf, len, nid), 
-            *tgt_srv_addr, fam_off, node->mr_key, (void*)buf),
-        "%d: fi_read failed on FAM module %d(p%d)", lfs_params->node_id, src_node, fam_stripe->partition);
+    do {
+        rc = fi_read(tx_ep, buf, len, lookup_mreg(buf, len, nid),
+                     *tgt_srv_addr, fam_off, node->mr_key, (void*)buf);
+        if (rc == 0) {
+            (*event)++;
+            break;
+        } else if (rc < 0 && rc != -FI_EAGAIN)
+            break;
+
+        if (lfs_params->use_cq) {
+            int ret;
+
+            wcnt = 0;
+            ret = lf_check_progress(tx_cq, &wcnt);
+            if (ret < 0) {
+                rc = ret;
+                err("lf_check_progress error:%d - %m", rc);
+                break;
+            }
+            if (wcnt)
+                (*event)--;
+        }
+    } while (rc == -FI_EAGAIN);
+    /* TODO: Return I/O error */
+    ON_FI_ERROR(rc, "%d: fi_read failed on FAM module %d(p%d)",
+                    lfs_params->node_id, src_node, fam_stripe->partition);
 
     if (!lfs_params->use_cq) {
-        chunk->r_event++;
         rc = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
             err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
@@ -658,10 +710,11 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
     } else {
-        ssize_t rcnt = 0;
-        do {        
-            rc = lf_check_progress(tx_cq, &rcnt);
-        } while (rc >= 0 && rcnt < 1);
+        wcnt = *event;
+        do {
+            rc = lf_check_progress(tx_cq, &wcnt);
+        } while (rc == 0 && wcnt > 0);
+        // if (rc == 0) *event = 0;
     }
 
     UPDATE_STATS(lf_rd_stat, 1, len, start);
@@ -788,7 +841,7 @@ static int unifycr_logio_chunk_write(
             //chunk_offset = off_in_chunk(pos);
 
             chunk_phy_id = physical_chunk_id(meta, chunk_id);
-            DEBUG("%d: write %zu bytes @%d phy_chunk:%d @%lu\n",
+            DEBUG("%d: write %zu bytes chunk:%d phy_chunk:%d @%lu\n",
                   lfs_ctx->lfs_params->node_id, count, chunk_id, chunk_phy_id, chunk_offset);
             int rc = lf_write((char *)buf, count, chunk_phy_id, chunk_offset, &my_node, &my_off);
             if (rc) {
