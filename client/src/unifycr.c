@@ -2164,14 +2164,14 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     }
 
     if ((rc = unifycrfs_mount(prefix, size, rank))) {
-        printf("unifycrfs_mount failed %d\n", rc);
+        printf("unifycrfs_mount failed: %d\n", rc);
         return rc;
     }
 
     if (subtype == FAMFS) {
         char *cmdline = getstr(LFS_COMMAND);
         if ((rc = lfs_connect(cmdline, rank, size, &lfs_ctx))) {
-            printf("lf-connect failed on mount\n");
+            printf("lf-connect failed on mount: %d\n", rc);
             return rc;
         }
     }
