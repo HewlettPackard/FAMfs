@@ -6,7 +6,6 @@
 #include <string.h>
 #include <getopt.h>
 #include <malloc.h>
-#include <signal.h>
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
