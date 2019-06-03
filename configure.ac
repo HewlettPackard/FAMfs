@@ -333,7 +333,11 @@ AC_CONFIG_FILES([Makefile
                  common/src/Makefile
                  node/Makefile
                  node/src/Makefile
-                 client/famfs.pc])
+                 client/famfs.pc
+                 util/Makefile
+                 util/unifycr/Makefile
+                 util/unifycr/src/Makefile
+])
 
 # Call node/isa-l configure script recursively
 AC_CONFIG_SUBDIRS([node/isa-l])
