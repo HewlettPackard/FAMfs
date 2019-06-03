@@ -958,6 +958,7 @@ struct index_t *create_global_index(struct mdhim_t *md, int server_factor,
 	//	printf("open store failed with error %d, rank%d\n", ret, md->mdhim_rank);
 		mlog(MDHIM_CLIENT_CRIT, "Rank: %d - Error opening data store for index: %d", 
 		     md->mdhim_rank, gi->id);
+		MPI_Abort(md->mdhim_comm, 0);
 	}
 
 	//Initialize the range server threads if they haven't been already
