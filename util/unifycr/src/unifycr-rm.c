@@ -345,8 +345,10 @@ static size_t construct_server_argv(unifycr_args_t* args,
         } else {
             server_argv[0] = strdup(BINDIR "/unifycrd");
         }
+        server_argv[1] = strdup("-D");
+        server_argv[2] = strdup("on");
     }
-    argc = 1;
+    argc = 3;
 
     if (args->debug) {
         if (server_argv != NULL) {
