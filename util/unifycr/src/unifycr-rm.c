@@ -127,14 +127,13 @@ static int parse_hostfile(unifycr_resource_t* resource,
 
     while (fgets(buf, 1024, fp) != NULL) {
         buf[strlen(buf) - 1] = '\0';    /* discard the newline */
-        if (i > 0) {
-            if (strcmp(buf, nodes[i - 1]) == 0) {
-                continue;    // skip duplicate
-            }
-            nodes[i] = strdup(buf);
-        } else {
-            nodes[i] = strdup(buf);
+        if (i > 0 && (strcmp(buf, nodes[i - 1]) == 0))
+            continue;    // skip duplicate
+        if (i >= n_nodes) {
+            ret = -EINVAL;
+            goto out;
         }
+        nodes[i] = strdup(buf);
         i++;
     }
 
@@ -345,10 +344,9 @@ static size_t construct_server_argv(unifycr_args_t* args,
         } else {
             server_argv[0] = strdup(BINDIR "/unifycrd");
         }
-        server_argv[1] = strdup("-D");
-        server_argv[2] = strdup("on");
+        server_argv[1] = strdup("-Don");
     }
-    argc = 3;
+    argc = 2;
 
     if (args->debug) {
         if (server_argv != NULL) {
