@@ -418,7 +418,7 @@ int unifycr_config_process_cli_args(unifycr_cfg_t *cfg,
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)   \
         case opt: {                                                     \
             if (cfg->sec##_##key[cfg->n_##sec##_##key] != NULL)         \
-                free(cfg->sec##_##key[cfg->n_##sec##_##key];            \
+                free(cfg->sec##_##key[cfg->n_##sec##_##key]);           \
             cfg->sec##_##key[cfg->n_##sec##_##key++] = strdup(optarg);  \
             break;                                                      \
         }
