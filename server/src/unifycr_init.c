@@ -68,7 +68,7 @@ pthread_t data_thrd;
 arraylist_t *thrd_list;
 
 int invert_sock_ids[MAX_NUM_CLIENTS]; /*records app_id for each sock_id*/
-int log_print_level = 5;
+int log_print_level = LOG_WARN;
 
 unifycr_cfg_t server_cfg;
 static LFS_CTX_t *lfs_ctx_p = NULL;
@@ -144,10 +144,16 @@ int main(int argc, char *argv[])
     int provided;
     int rc;
     bool daemon;
+    long l;
 
     rc = unifycr_config_init(&server_cfg, argc, argv);
     if (rc != 0)
 	exit(1);
+
+    rc = configurator_int_val(server_cfg.log_verbosity , &l);
+    if (rc != 0)
+	exit(1);
+    log_print_level = (int)l;
 
     rc = configurator_bool_val(server_cfg.unifycr_daemonize, &daemon);
     if (rc != 0)
