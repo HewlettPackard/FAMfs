@@ -1040,7 +1040,7 @@ int get_rangesrvs(struct mdhim_t *md, struct index_t *index) {
  */
 int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 	int size;
-	int ret;
+	int i, ret;
 	int rangesrv_num = 0;
 
 	//If a local index, check to see if the rank is a range server for the primary index
@@ -1054,7 +1054,7 @@ int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
             int n = 0;
 
             if (mds_vec[rank]) {
-                for (int i = 0; i <= rank; i++) {
+                for (i = 0; i <= rank; i++) {
                     if (mds_vec[i])
                         n++;
                 }

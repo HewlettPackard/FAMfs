@@ -105,7 +105,7 @@ int mds_by_name() {
 }
 
 int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
-    int n = 0;
+    int i, n = 0;
     char *vec;
 
     if (!(vec = malloc(wsize))) {
@@ -118,7 +118,7 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
     ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
              vec, 1, MPI_BYTE, MPI_COMM_WORLD),
             "MPI_Allgather");
-    for (int i = 0; i < wsize; i++) {
+    for (i = 0; i < wsize; i++) {
         if (vec[i] < 0) {
             free(vec);
             return 0;
@@ -129,7 +129,7 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
     if (rank == 0) {
         char buf[1024];
         int l = snprintf(buf, sizeof(buf), "MDS rank(s): ");
-        for (int i = 0; i < wsize; i++)
+        for (i = 0; i < wsize; i++)
             if (vec[i])
                 l += snprintf(&buf[l], sizeof(buf), "%d ", i);
         LOG(LOG_INFO, "%s\n", buf);

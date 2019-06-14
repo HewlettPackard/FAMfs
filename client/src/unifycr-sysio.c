@@ -1518,15 +1518,16 @@ static inline off_t choff_nxt(off_t off) {
 }
 
 static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt, fsmd_kv_t  *md, int md_cnt, size_t ttl ) {
-    int rc;
-    for (int i = 0; i < rq_cnt; i++) {
+    int i, rc;
+    for (i = 0; i < rq_cnt; i++) {
         off_t fam_off;
         size_t fam_len;
         off_t rq_b = rq[i].offset;
         off_t rq_e = rq_b + rq[i].length;
         char *bufp;
+        int j;
 
-        for (int j = 0; j < md_cnt; j++) {
+        for (j = 0; j < md_cnt; j++) {
             off_t md_b = md[j].k.offset;
             off_t md_e = md[j].k.offset + md[j].v.len;
 

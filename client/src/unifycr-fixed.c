@@ -388,7 +388,7 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
     struct fid_mr *mr;
     N_PARAMS_t *par = lfs_ctx->lfs_params;
     LF_CL_t    **srv = par->lf_clients;
-    int i;
+    int i, j;
 
     if (fs_type != FAMFS)
         return -EINVAL;
@@ -425,7 +425,7 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
     known_mrs.regs[i].desc = (void **)calloc(n, sizeof(void *));
     known_mrs.regs[i].buf = buf;
     known_mrs.regs[i].len = len;
-    for (int j = 0; j < n; j++) {
+    for (j = 0; j < n; j++) {
         ON_FI_ERR_RET(fi_mr_reg(srv[j]->domain, buf, len, FI_READ | FI_WRITE, 0, my_key, 0, &known_mrs.regs[i].mreg[j], NULL), "cln fi_mr_reg failed");
         known_mrs.regs[i].desc[j] = fi_mr_desc(known_mrs.regs[i].mreg[j]);
     }
@@ -438,12 +438,13 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
 
 int famfs_buf_unreg(void *rid) {
     N_PARAMS_t *par = lfs_ctx->lfs_params;
+    int j;
 
     if (!par->lf_mr_flags.local)
         return 0;
 
     lf_mreg_t *mr = (lf_mreg_t *)rid;
-    for (int j = 0; j < par->fam_cnt*par->node_servers; j++)
+    for (j = 0; j < par->fam_cnt*par->node_servers; j++)
         ON_FI_ERR_RET(fi_close(&mr->mreg[j]->fid), "cln fi_close failed");
 
     free(mr->mreg);
