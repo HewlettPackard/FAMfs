@@ -290,7 +290,7 @@ static int slurm_read_resource(unifycr_resource_t* resource)
     const char* tmp = "/tmp";
 
     // get num nodes
-    num_nodes_str = getenv("SLURM_NNODES");
+    num_nodes_str = getenv("SLURM_JOB_NUM_NODES");
     if (num_nodes_str == NULL) {
         return -EINVAL;
     }
