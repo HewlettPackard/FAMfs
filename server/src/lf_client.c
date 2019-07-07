@@ -69,7 +69,8 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
     lfs_shm->lfs_ready = 0;
     pthread_mutexattr_init(&pattr);
     pthread_mutexattr_setpshared(&pattr, PTHREAD_PROCESS_SHARED);
-    pthread_mutex_init(&lfs_shm->lock, &pattr);
+    pthread_mutex_init(&lfs_shm->lock_ready, &pattr);
+    pthread_mutex_init(&lfs_shm->lock_quit, &pattr);
     pthread_condattr_init(&cattr);
     pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED);
     pthread_cond_init(&lfs_shm->cond_ready, &cattr);
@@ -109,17 +110,17 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
         }
 
         /* It's Ok for parent process to proceed with MPI communication */
-        pthread_mutex_lock(&lfs_shm->lock);
+        pthread_mutex_lock(&lfs_shm->lock_ready);
         lfs_shm->lfs_ready = rc? -1 : 1;
-        pthread_mutex_unlock(&lfs_shm->lock);
+        pthread_mutex_unlock(&lfs_shm->lock_ready);
         pthread_cond_signal(&lfs_shm->cond_ready);
 
         /* Sleep if libfabric was initialized successfully */
         if (rc == 0) {
-            pthread_mutex_lock(&lfs_shm->lock);
+            pthread_mutex_lock(&lfs_shm->lock_quit);
             while (lfs_shm->quit_lfs == 0)
-                pthread_cond_wait(&lfs_shm->cond_quit, &lfs_shm->lock);
-            pthread_mutex_unlock(&lfs_shm->lock);
+                pthread_cond_wait(&lfs_shm->cond_quit, &lfs_shm->lock_quit);
+            pthread_mutex_unlock(&lfs_shm->lock_quit);
         }
         pthread_cond_destroy(&lfs_shm->cond_quit);
         munmap(lfs_shm, shm_size);
@@ -135,10 +136,10 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
     }
 
     /* Parent thread should wait */
-    pthread_mutex_lock(&lfs_shm->lock);
+    pthread_mutex_lock(&lfs_shm->lock_ready);
     while (lfs_shm->lfs_ready == 0)
-            pthread_cond_wait(&lfs_shm->cond_ready, &lfs_shm->lock);
-    pthread_mutex_unlock(&lfs_shm->lock);
+            pthread_cond_wait(&lfs_shm->cond_ready, &lfs_shm->lock_ready);
+    pthread_mutex_unlock(&lfs_shm->lock_ready);
     if (lfs_shm->lfs_ready != 1) {
         LOG(LOG_ERR, "Failed to start FAM emulator process!");
         rc = -1;
@@ -214,9 +215,9 @@ void free_lfs_ctx(LFS_CTX_t **lfs_ctx_pp) {
     if (lfs_shm) {
         /* Signal FAM emulator to quit */
         if (lfs_ctx_p->child_pid) {
-            pthread_mutex_lock(&lfs_shm->lock);
+            pthread_mutex_lock(&lfs_shm->lock_quit);
             lfs_shm->quit_lfs = 1;
-            pthread_mutex_unlock(&lfs_shm->lock);
+            pthread_mutex_unlock(&lfs_shm->lock_quit);
             pthread_cond_signal(&lfs_shm->cond_quit);
         }
         munmap(lfs_ctx_p->lfs_shm,

@@ -17,8 +17,9 @@
 typedef struct lfs_shm_ {
 	int		lfs_ready;	/* 1: tell parent that server is ready */
 	int		quit_lfs;	/* 1: tell child to quit */
-	pthread_mutex_t	lock;		/* shared mutex */
+	pthread_mutex_t	lock_ready;	/* shared mutex for ready condition */
 	pthread_cond_t	cond_ready;	/* parent waits for LF server */
+	pthread_mutex_t	lock_quit;	/* shared mutex for quit condition */
 	pthread_cond_t	cond_quit;	/* child waits to quit */
 	unsigned int	node_servers;	/* number of LF parti */
 	/* Array of 'node_servers' size: */
