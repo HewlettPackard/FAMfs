@@ -582,7 +582,7 @@ static int srun_launch(unifycr_resource_t* resource,
 
     // full command: srun <srun args> <server args>
 
-    srun_argc = 5;
+    srun_argc = 6;
     snprintf(n_nodes, sizeof(n_nodes), "%zu", resource->n_nodes);
 
     server_argc = construct_server_argv(args, NULL);
@@ -595,6 +595,7 @@ static int srun_launch(unifycr_resource_t* resource,
     argv[2] = strdup(n_nodes);
     argv[3] = strdup("-n");
     argv[4] = strdup(n_nodes);
+    argv[5] = strdup("--mpi=pmi2");
     construct_server_argv(args, argv + srun_argc);
 
     execvp(argv[0], argv);
