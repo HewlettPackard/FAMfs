@@ -5,6 +5,8 @@
  */
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <time.h>
 
 //#include "famfs_bbitops.h"
 #include "famfs_bbitmap.h"
@@ -20,11 +22,15 @@ int main (void) {
     BBIT_VALUE_t val;
     unsigned int pat;
     unsigned long bbit;
+    /* for random pattern test */
+    int v0, v1;
+    unsigned int pat0, pat1;
+    unsigned short *bbmap16;
 
     /* Test group one: long bitmaps */
     tg = 1;
     printf("Running group %d tests: non-atomic ops\n", tg);
-    /* i: size */
+    /* sz: size */
     for (sz = bb_size_start; sz <= bb_size_end; sz++) {
 	/* allocate */
 	bbmap = bbitmap_zalloc(sz);
@@ -108,7 +114,7 @@ int main (void) {
     /* Test group two: long bitmaps with atomics */
     tg = 2;
     printf("Running group %d tests: atomic ops\n", tg);
-    /* i: size */
+    /* sz: size */
     for (sz = bb_size_start; sz <= bb_size_end; sz++) {
 	/* allocate */
 	bbmap = bbitmap_zalloc(sz);
@@ -186,6 +192,51 @@ int main (void) {
 		}
 	    }
 	}
+	bbitmap_free(bbmap); bbmap = NULL;
+    }
+    printf("Test group %d OK\n", tg);
+
+    /* Test group three: random pattern */
+    tg = 3;
+    printf("Running group %d tests: random pattern\n", tg);
+    srand((unsigned int)time(NULL));
+    /* not used in this test */
+    val = k = pos = 0;
+    /* i: repeat random size test */
+    for (i = bb_size_start; i <= bb_size_end; i++) {
+	/* sz: size */
+	sz = rand() % (bb_size_end - bb_size_start + 1) + bb_size_start;
+	bbmap = bbitmap_zalloc(sz);
+	bbmap16 = (unsigned short *) bbmap;
+	/* For random pattern */
+	do {
+	    pat1 = rand() % (BB_PAT11 << 1);
+	    pat0 = ~pat1 & BB_PAT_MASK;
+	} while (bb_pset_chk(pat0) && bb_pset_chk(pat1));
+
+	/* Fill with random */
+	for (j = 0; j < (int)(DIV_ROUND_UP(sz, BBITS_PER_BYTE * sizeof(short))); j++)
+	    bbmap16[j] = rand() % 65536;
+
+	/* Test 1: weight(pat) = sz - weight(~pat) */
+	t = 1;
+	v0 = bbitmap_weight(bbmap, pat0, sz);
+	v1 = bbitmap_weight(bbmap, pat1, sz);
+	if (v0 != (sz - v1)) {
+	    printf("  pat0:%d weight:%d, pat1:%d weight:%d\n", pat0, v0, pat1, v1);
+	    goto err;
+	}
+
+	/* Test 2: Cycles */
+	t = 2;
+	v0 = v1 = 0;
+	for_each_clear_bbit(bbit, bbmap, pat1, sz) v0++;
+	for_each_set_bbit(bbit, bbmap, pat0, sz) v1++;
+	if (v0 != v1) {
+	    printf("  pat0:%d ones:%d, pat1:%d zeros:%d\n", pat0, v1, pat1, v0);
+	    goto err;
+	}
+
 	bbitmap_free(bbmap); bbmap = NULL;
     }
     printf("Test group %d OK\n", tg);
