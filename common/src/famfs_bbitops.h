@@ -1,0 +1,522 @@
+/*
+ * Copyright (c) 2019, HPE
+ *
+ * Written by: Dmitry Ivanov
+ */
+#ifndef FAMFS_BBITOPS_H_
+#define FAMFS_BBITOPS_H_
+
+#include "famfs_ktypes.h"
+#include "famfs_bitops.h"
+
+#if !defined(__BMI2__)
+#error No BMI2
+#endif
+#include <immintrin.h>
+
+
+#define BBITS_PER_LONG		(BITS_PER_LONG >> 1)
+#define BBIT_WORD(nr)		((nr) / BBITS_PER_LONG)
+#define BBITS_PER_BYTE		4
+#define BBITS_TO_LONGS(nr)	DIV_ROUND_UP(nr, BBITS_PER_BYTE * sizeof(long))
+#define BBIT_MASK_VAL(val, nr)	(((unsigned long) val) << (2U*((nr) % BBITS_PER_LONG)))
+
+typedef enum {
+    BBIT_ZERO=0,
+    BBIT_01,
+    BBIT_10,
+    BBIT_11
+} BBIT_VALUE_t;
+#define BBIT_MASK(nr)		BBIT_MASK_VAL(BBIT_11,nr)
+#define BBIT_GET_VAL(buf, nr)	(((unsigned long)BBIT_11) &				\
+				 (buf[BBIT_WORD(nr)] >> (2U*(nr & (BBITS_PER_LONG-1)))))
+
+#define BB_PAT_ZERO	(1U << BBIT_ZERO)
+#define BB_PAT01	(1U << BBIT_01)
+#define BB_PAT10	(1U << BBIT_10)
+#define BB_PAT11	(1U << BBIT_11)
+#define BB_PAT_MASK	((unsigned long) ((BB_PAT11 << 1) - 1))
+
+static __always_inline unsigned long bb_mask(BBIT_VALUE_t val)
+{
+  int i;
+  unsigned long m = 0;
+  for (i=0; i<BBITS_PER_LONG; i++)
+    m |= BBIT_MASK_VAL(val, i);
+  return m;
+}
+
+/* byte mask */
+#define BBITS_MASK_B(val) ({unsigned long v = 0x3U & (unsigned long)(val);	\
+			(v | (v << 2) | (v << 4) | (v << 6)); })
+
+#if BITS_PER_LONG == 64
+/* LONG word mask */
+#define BBITS_MASK_W(val) ({unsigned long v = 0x3U & (unsigned long)(val);	\
+			(v | (v << 2) | (v << 4) | (v << 6)			\
+			|(v << 8)  | (v << 10) | (v << 12) | (v << 14)		\
+			|(v << 16) | (v << 18) | (v << 20) | (v << 22)		\
+			|(v << 24) | (v << 26) | (v << 28) | (v << 30)		\
+			|(v << 32) | (v << 34) | (v << 36) | (v << 38)		\
+			|(v << 40) | (v << 42) | (v << 44) | (v << 46)		\
+			|(v << 48) | (v << 50) | (v << 52) | (v << 54)		\
+			|(v << 56) | (v << 58) | (v << 60) | (v << 62)); })
+#elif BITS_PER_LONG == 32
+#define BBITS_MASK_W(val) ({unsigned long v = 0x3U & (unsigned long)(val);	\
+			(v | (v << 2) | (v << 4) | (v << 6)			\
+			|(v << 8)  | (v << 10) | (v << 12) | (v << 14)		\
+			|(v << 16) | (v << 18) | (v << 20) | (v << 22)		\
+			|(v << 24) | (v << 26) | (v << 28) | (v << 30)); })
+#else
+#error BITS_PER_LONG not 32 or 64
+#endif
+
+#define BBITS_MASK_ARRAY				\
+	{ BBITS_MASK_W(BBIT_ZERO), BBITS_MASK_W(BBIT_01),	\
+	  BBITS_MASK_W(BBIT_10), BBITS_MASK_W(BBIT_11) }
+
+#define BBITS_PAT2VAL(pat)	((pat) & BB_PAT11 ? BBIT_11 :		\
+				  (pat) & BB_PAT10 ? BBIT_10 :		\
+				   (pat) & BB_PAT01 ? BBIT_01 : BBIT_ZERO)
+
+#define BBITS_VAL2PAT(val)	(1U << (val))
+
+#define BBITS_PAT_HAS_VAL(pat, val)					\
+	({int v = 0x3U & (unsigned long)(val);				\
+	  unsigned int p = BB_PAT_MASK & (unsigned long)(pat);	\
+	  int r;							\
+	  switch(v) {							\
+		case BBIT_ZERO: r = (p & BB_PAT_ZERO); break;		\
+		case BBIT_01: r = (p & BB_PAT01); break;		\
+		case BBIT_10: r = (p & BB_PAT10); break;		\
+		case BBIT_11: r = (p & BB_PAT11); break;		\
+		default: r = 0;						\
+	  }								\
+	  !!(r);								\
+	})
+
+/* Check the pattern set: return 0 if Ok */
+static inline int bb_pset_chk(unsigned int pset) {
+	/* Pattern combo should have one to trhee pattern bit(s) set in 3:0 */
+	if (pset & ~BB_PAT_MASK)
+	    return 1;		/* extra bit set */
+	if ((~pset & BB_PAT_MASK) == 0)
+	    return 1;		/* all ones */
+	return pset ? 0 : 1;
+}
+
+/* Return the least significant unset bit in 'pset', starting with one: 0..3 */
+static inline unsigned int bb_pset_ffu(unsigned int pset) {
+	int ffz = __builtin_ffs(~pset);
+	//ASSERT(ffz > 0 && ffz <= 4);
+	return (unsigned int)--ffz;
+}
+
+/* Return the most significant set bit number in 'pset': 0..3 */
+static inline unsigned int bb_pset_log2(unsigned int pset) {
+	/* Empty set (0) defaults to all-ones pattern, BB_PAT11 */
+	if ((pset &= (unsigned int) BB_PAT_MASK))
+		pset = BB_PAT11;
+	/* log2 = w - 1 - clz */
+	int log2 = 32 - 1 - __builtin_clz(pset);
+	return (unsigned int)log2;
+}
+
+/* Return the number of patterns in set: 1..3 */
+static inline unsigned int bb_pset_count(unsigned int pset) {
+	return __builtin_popcount(pset);
+}
+
+/* Reduce one word of the bifold bit array to a bitmap for given set of patterns */
+static __always_inline unsigned int bb_reduce(unsigned long word, unsigned int pset)
+{
+	unsigned int r, p;
+	unsigned long mask[4] = BBITS_MASK_ARRAY;
+	int pat;
+
+	//ASSERT(bb_pset_chk(pset) == 0);
+	r = ~0U;
+
+	/* TODO: Add fast-forward path for all 00(11) and PAT01|PAT11(or 00|10) */
+	p = 1;
+	/* for each pattern */
+	for (pat = 0; pat < 4; pat++) {
+	    if (pset & p) {
+		unsigned long tmp1, tmp2;
+
+		tmp1 = mask[pat] ^ word;
+		tmp2 = _pext_u64(tmp1, BBITS_MASK_W(BBIT_01));
+		tmp2 |= _pext_u64(tmp1, BBITS_MASK_W(BBIT_10));
+		r &= (unsigned int)tmp2;
+	    }
+	    p <<= 1;
+	}
+	return ~r;
+}
+
+/* Expand a bitmap to one word of bifold bit array with given values for 0 and 1 */
+static __always_inline unsigned long bb_expand(unsigned int bitmap,
+    BBIT_VALUE_t one, BBIT_VALUE_t zero)
+{
+	unsigned long mask;
+
+	/* TODO: Fill in "zero" tetrals */
+	mask = _pdep_u64((unsigned long)bitmap, BBITS_MASK_W(BBIT_01));
+	mask |= mask << 1;
+	return (mask & BBITS_MASK_W(one)) | (~mask & BBITS_MASK_W(zero));
+}
+
+/* Find first set bifold bit in 'word', to any of pattern(s) defined by 'pset' */
+static __always_inline unsigned long bb_ffs(unsigned long word, unsigned int pset)
+{
+	unsigned int bmap = bb_reduce(word, pset);
+
+	return __builtin_ffs(bmap);
+}
+
+
+#define for_each_set_bbit(bit, addr, pset, size)				\
+		for ((bit) = find_first_bbit((addr), (pset), (size));		\
+		(bit) < (unsigned long)(size);					\
+		(bit) = find_next_bbit((addr), (pset), (size), (bit) + 1))
+
+/* same as for_each_set_bbit() but use bit as value to start with */
+#define for_each_set_bbit_from(bit, addr, pset, size)				\
+		for ((bit) = find_next_bbit((addr), (pset), (size), (bit));	\
+		(bit) < (unsigned long)(size);					\
+		(bit) = find_next_bbit((addr), (pset), (size), (bit) + 1))
+
+/*
+ * Same as for_each_set_bbit(,,~pset,) but could work a bit faster.
+ */
+#define for_each_clear_bbit(bit, addr, pset, size)				\
+		for ((bit) = find_first_unset_bbit((addr), (pset), (size));	\
+		(bit) < (unsigned long)(size);					\
+		(bit) = find_next_unset_bbit((addr), (pset), (size), (bit) + 1))
+
+/* same as for_each_clear_bbit() but use bit as value to start with */
+#define for_each_clear_bbit_from(bit, addr, pset, size)				\
+		for ((bit) = find_next_unset_bbit((addr), (pset), (size), (bit));\
+		(bit) < (unsigned long)(size);					\
+		(bit) = find_next_unset_bbit((addr), ((pset), size), (bit) + 1))
+
+
+/*
+ * Find the next set bifold bit in a memory region starting at 'offset'.
+ * The bifold is considered set if the pattern (tetral digit) is
+ * in the pattern set 'pset'.
+ * If no bits are set, returns 'size'.
+ */
+static inline unsigned long find_next_bbit(const unsigned long *addr,
+    unsigned int pset, unsigned long size, unsigned long offset)
+{
+	const unsigned long *p;
+	unsigned long result, tmp, mask, mask0;
+	unsigned long wordmask[4] = BBITS_MASK_ARRAY;
+	unsigned int off, bitmap;
+
+	if (offset >= size)
+		return size;
+	/* Return 'size' if the pattern set empty or invalid */
+	if (bb_pset_chk(pset))
+		return size;
+	p = addr + BBIT_WORD(offset);
+	result = offset & ~(BBITS_PER_LONG-1);
+	size -= result;
+	off = offset % BBITS_PER_LONG;
+	mask0 = wordmask[bb_pset_ffu(pset)];
+	if (off) {
+		tmp = *(p++);
+		/* unset LSBB, off:0 */
+		mask = ~0UL << (2U*off);
+		tmp &= mask;
+		if (mask0)
+			tmp |= ~mask & mask0;
+		/* need to unset MSBB? */
+		if (size < BBITS_PER_LONG)
+			goto found_first;
+		/* Any BB set? */
+		if ((bitmap = bb_reduce(tmp, pset)))
+			goto found_middle;
+		size -= BBITS_PER_LONG;
+		result += BBITS_PER_LONG;
+	}
+	while (size & ~(BBITS_PER_LONG-1)) {
+		tmp = *(p++);
+		if ((bitmap = bb_reduce(tmp, pset)))
+			goto found_middle;
+		result += BBITS_PER_LONG;
+		size -= BBITS_PER_LONG;
+	}
+	if (!size)
+		return result;
+	tmp = *p;
+
+found_first:
+	mask = ~0UL >> (2U*(BBITS_PER_LONG - size));
+	tmp &= mask;
+	if (mask0)
+		tmp |= ~mask & mask0;
+	/* None BB set? */
+	if (!(bitmap = bb_reduce(tmp, pset)))
+		return result + size;   /* Nope. */
+found_middle:
+	return result + __builtin_ctz(bitmap);
+}
+
+/*
+ * This implementation of find_{first,next}_zero_bit was stolen from
+ * Linus' asm-alpha/bitops.h.
+ */
+static inline unsigned long find_next_unset_bbit(const unsigned long *addr,
+    unsigned int pset, unsigned long size, unsigned long offset)
+{
+	const unsigned long *p;
+	unsigned long result, tmp;
+	unsigned int off, bitmap, bitmask;
+
+	/* TODO: Optimize for PAT01|PAT11 case */
+
+	if (offset >= size)
+		return size;
+	/* Return 'size' if the pattern set empty or invalid */
+	if (bb_pset_chk(pset))
+		return size;
+
+	p = addr + BBIT_WORD(offset);
+	result = offset & ~(BBITS_PER_LONG-1);
+	size -= result;
+	off = offset % BBITS_PER_LONG;
+	if (off) {
+		tmp = *(p++);
+		/* set LSBB, [off:0] */
+		bitmask = ~0U >> (BITS_PER_INT - off);
+		if (size < BBITS_PER_LONG)
+			goto found_first;
+		bitmap = ~(bb_reduce(tmp, pset) | bitmask);
+		if (bitmap)
+			goto found_middle;
+		size -= BBITS_PER_LONG;
+		result += BBITS_PER_LONG;
+	}
+	while (size & ~(BBITS_PER_LONG-1)) {
+		tmp = *(p++);
+		if ((bitmap = ~bb_reduce(tmp, pset)))
+			goto found_middle;
+		result += BBITS_PER_LONG;
+		size -= BBITS_PER_LONG;
+	}
+	if (!size)
+		return result;
+	tmp = *p;
+	bitmask = ~0U << size;
+
+found_first:
+	/* Is any BB unset? */
+	bitmask |= ~0U << (size % BBITS_PER_LONG);
+	bitmap = ~(bb_reduce(tmp, pset) | bitmask);
+	if (bitmap == 0U)
+		return result + size;   /* Nope. */
+found_middle:
+	/* result + ffs(bitmap) - 1 where bitmap should not be zero */
+	return result + __builtin_ctz(bitmap);
+}
+
+/*
+ * Find the first set bifold bit in a memory region.
+ * The bifold is considered set if the pattern (tetral digit) is
+ * in the pattern set 'pset'.
+ * If no bits are set, returns 'size'.
+ */
+static __always_inline unsigned long find_first_bbit(const unsigned long *addr,
+    unsigned int pset, unsigned long size)
+{
+	const unsigned long *p = addr;
+	unsigned long result = 0;
+	unsigned long tmp, mask, mask0;
+	unsigned long wordmask[4] = BBITS_MASK_ARRAY;
+	unsigned int bitmap;
+
+	while (size & ~(BBITS_PER_LONG-1)) {
+		tmp = *(p++);
+		if ((bitmap = bb_reduce(tmp, pset)))
+			goto found;
+		result += BBITS_PER_LONG;
+		size -= BBITS_PER_LONG;
+	}
+	if (!size)
+		return result;
+
+	mask = ~0UL >> (2U*(BBITS_PER_LONG - size));
+	tmp = (*p) & mask;
+	mask0 = wordmask[bb_pset_ffu(pset)];
+	if (mask0)
+		tmp |= ~mask & mask0;
+	/* None set? */
+	if (!(bitmap = bb_reduce(tmp, pset)))
+		return result + size;
+found:
+	return result + __builtin_ctz(bitmap);;
+}
+
+/*
+ * Find the first cleared bifold bit in a memory region.
+ */
+static inline unsigned long find_first_unset_bbit(const unsigned long *addr,
+    unsigned int pset, unsigned long size)
+{
+	const unsigned long *p = addr;
+	unsigned long result = 0;
+	unsigned long tmp;
+	unsigned int bitmap;
+
+	while (size & ~(BBITS_PER_LONG-1)) {
+		tmp = *(p++);
+		if ((bitmap = ~bb_reduce(tmp, pset)))
+			goto found;
+		result += BBITS_PER_LONG;
+		size -= BBITS_PER_LONG;
+	}
+	if (!size)
+		return result;
+
+	tmp = *p;
+	bitmap = ~(bb_reduce(tmp, pset) | (~0U << size));
+	/* Is any BB unset? */
+	if (bitmap == 0U)
+		return result + size;   /* Nope. */
+found:
+	/* result + ffz(bitmap) */
+	return result + __builtin_ctz(bitmap);
+}
+
+static inline int test_bbit(int nr, BBIT_VALUE_t val, const volatile unsigned long *addr)
+{
+	return (BBIT_GET_VAL(addr, nr) == val);
+}
+
+/**
+ * test_bbit_patterns - Determine whether bifold bitarray element is set
+ * to one of the patterns in pset.
+ * @nr: bit number to test
+ * @pset pattern set
+ * @addr: Address to start counting from
+ */
+static inline int test_bbit_patterns(int nr, unsigned int pset,
+    const volatile unsigned long *addr)
+{
+	unsigned long bbit = BBIT_GET_VAL(addr, nr);
+	return BBITS_PAT_HAS_VAL(pset, bbit);
+}
+
+/* Non-atomic set_bbit() */
+static inline void set_bbit(int nr, int val, volatile unsigned long *addr)
+{
+	unsigned long mask = BBIT_MASK(nr);
+	volatile unsigned long *p = addr + BBIT_WORD(nr);
+
+	*p  &= ~mask;
+	*p  |= mask & BBITS_MASK_W(val);
+}
+
+/* Atomic set_bbit() */
+static __always_inline void atomic_set_bbit(int nr, int val, volatile unsigned long *addr)
+{
+	unsigned long v, mask = BBIT_MASK(nr);
+	volatile unsigned long *p = addr + BBIT_WORD(nr);
+	unsigned long src, dst;
+
+	v = mask & BBITS_MASK_W(val);
+	dst = __atomic_load_8(p, __ATOMIC_SEQ_CST);
+	do {
+		src = dst & ~mask;
+		src |= v;
+	} while (dst != src &&
+	    __atomic_compare_exchange_8(p, &dst, src, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+}
+
+static __always_inline void atomic_set_bbit_pattern(int nr, unsigned int pat,
+    volatile unsigned long *addr)
+{
+	int val = BBITS_PAT2VAL(pat);
+
+	atomic_set_bbit(nr, val, addr);
+}
+
+static inline void set_bbit_pattern(int nr, unsigned int pat, volatile unsigned long *addr) {
+	set_bbit(nr, BBITS_PAT2VAL(pat), addr);
+}
+
+/**
+ * test_and_set_bbit - Set a new and return the old tetral value in bifold bit array
+ * @nr: Bit to set
+ * @val: tetral value
+ * @addr: Address to count from
+ *
+ * This operation is non-atomic and can be reordered.
+ * If two examples of this operation race, one can appear to succeed
+ * but actually fail.  You must protect multiple accesses with a lock.
+ */
+static inline int test_and_set_bbit(int nr, int val, volatile unsigned long *addr)
+{
+	unsigned long mask = BBIT_MASK(nr);
+	volatile unsigned long *p = addr + BBIT_WORD(nr);
+	unsigned long old = *p;
+
+	*p &= ~mask;
+	*p = old | (mask & BBITS_MASK_W(val));
+	return (int)((old & mask) >> (2U*(nr % BBITS_PER_LONG)));
+}
+
+static inline unsigned int test_and_set_bbit_pattern(int nr, unsigned int pat,
+    volatile unsigned long *addr)
+{
+	int val = BBITS_PAT2VAL(pat);
+
+	return BBITS_VAL2PAT(test_and_set_bbit(nr, val, addr));
+}
+
+/**
+ * atomic_est_and_set_bbit - Set a new and return the old tetral value in bifold bit array
+ * @nr: Bit to set
+ * @val: tetral value
+ * @addr: Address to count from
+ *
+ * This operation is atomic.
+ */
+static __always_inline int atomic_test_and_set_bbit(int nr, int val, volatile unsigned long *addr)
+{
+	unsigned long v, mask = BBIT_MASK(nr);
+	volatile unsigned long *p = addr + BBIT_WORD(nr);
+	unsigned long src, dst;
+
+	v = mask & BBITS_MASK_W(val);
+	dst = __atomic_load_8(p, __ATOMIC_SEQ_CST);
+	do {
+		src = dst & ~mask;
+		src |= v;
+	} while (dst != src &&
+	    !__atomic_compare_exchange_8(p, &dst, src, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
+	return (int)((dst & mask) >> (2U*(nr % BBITS_PER_LONG)));
+}
+
+/**
+ * atomic_test_and_set_bbit_pattern
+ * - Set a new pattern and return the old pattern in bifold bit array
+ * @nr: Bit to set
+ * @pat: pattern for setting tetral value, i.e. 1U << val
+ * @addr: Address to count from
+ *
+ * This operation is atomic.
+ */
+static __always_inline unsigned int atomic_test_and_set_bbit_pattern(int nr, unsigned int pat,
+    volatile unsigned long *addr)
+{
+	int val = BBITS_PAT2VAL(pat);
+
+	return BBITS_VAL2PAT(atomic_test_and_set_bbit(nr, val, addr));
+}
+
+#endif /* FAMFS_BBITOPS_H_ */
+
