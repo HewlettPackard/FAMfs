@@ -402,7 +402,7 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
  * @return MDHIM_SUCCESS or MDHIM_ERROR on error
  */
 int send_client_response(struct mdhim_t *md, int dest, void *message, int *sizebuf, 
-			 void **sendbuf, MPI_Request **size_req, MPI_Request **msg_req) {
+			 void **sendbuf) {
 	int return_code = 0;
 	int mtype;
 	int ret = MDHIM_SUCCESS;

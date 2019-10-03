@@ -240,7 +240,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 	bpm_list = malloc(sizeof(struct mdhim_bputm_t *) * lookup_index->num_rangesrvs);
 
 	//Initialize the pointers of the list to null
-	for (i = 0; i < lookup_index->num_rangesrvs; i++) {
+	for (i = 0; i < (int)lookup_index->num_rangesrvs; i++) {
 		bpm_list[i] = NULL;
 	}
 
@@ -276,7 +276,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		//There could be more than one range server returned in the case of the local index
 		while (rl) {
 			gettimeofday(&localbpmstart, NULL);
-			if (rl->ri->rank != md->mdhim_rank) {
+			if ((int)rl->ri->rank != md->mdhim_rank) {
 				//Set the message in the list for this range server
 				bpm = bpm_list[rl->ri->rangesrv_num - 1];
 			} else {
@@ -299,7 +299,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 				bpm->basem.mtype = MDHIM_BULK_PUT;
 				bpm->basem.index = put_index->id;
 				bpm->basem.index_type = put_index->type;
-				if (rl->ri->rank != md->mdhim_rank) {
+				if ((int)rl->ri->rank != md->mdhim_rank) {
 					bpm_list[rl->ri->rangesrv_num - 1] = bpm;
 				} else {
 					lbpm = bpm;
@@ -343,7 +343,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 	}
 	
 	//Free up messages sent
-	for (i = 0; i < lookup_index->num_rangesrvs; i++) {
+	for (i = 0; i < (int)lookup_index->num_rangesrvs; i++) {
 		if (!bpm_list[i]) {
 			continue;
 		}
@@ -375,7 +375,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 	//Create an array of bulk get messages that holds one bulk message per range server
 	bgm_list = malloc(sizeof(struct mdhim_bgetm_t *) * index->num_rangesrvs);
 	//Initialize the pointers of the list to null
-	for (i = 0; i < index->num_rangesrvs; i++) {
+	for (i = 0; i < (int)index->num_rangesrvs; i++) {
 		bgm_list[i] = NULL;
 	}
 
@@ -406,7 +406,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 
 		gettimeofday(&localgetcpystart, NULL);
 		while (rl) {
-			if (rl->ri->rank != md->mdhim_rank) {
+			if ((int)rl->ri->rank != md->mdhim_rank) {
 				//Set the message in the list for this range server
 				bgm = bgm_list[rl->ri->rangesrv_num - 1];
 			} else {
@@ -428,7 +428,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 				bgm->op = (op == MDHIM_GET_PRIMARY_EQ) ? MDHIM_GET_EQ : op;
 				bgm->basem.index = index->id;
 				bgm->basem.index_type = index->type;
-				if (rl->ri->rank != md->mdhim_rank) {
+				if ((int)rl->ri->rank != md->mdhim_rank) {
 					bgm_list[rl->ri->rangesrv_num - 1] = bgm;
 				} else {
 					lbgm = bgm;
@@ -467,7 +467,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
   1000000L*(localgetend.tv_sec-localgetstart.tv_sec)+localgetend.tv_usec-localgetstart.tv_usec);
  */
 
-	for (i = 0; i < index->num_rangesrvs; i++) {
+	for (i = 0; i < (int)index->num_rangesrvs; i++) {
 		if (!bgm_list[i]) {
 			continue;
 		}
@@ -491,7 +491,7 @@ struct mdhim_bgetrm_t *_bget_range_records(struct mdhim_t *md, struct index_t *i
 	struct mdhim_bgetm_t **bgm_list;
 	struct mdhim_bgetm_t *bgm, *lbgm;
 	struct mdhim_bgetrm_t *bgrm_head, *lbgrm;
-	int i;
+	unsigned int i;
 	rangesrv_list *rl = NULL, *rlp;
 
 	gettimeofday(&localgetstart, NULL);
@@ -518,7 +518,7 @@ struct mdhim_bgetrm_t *_bget_range_records(struct mdhim_t *md, struct index_t *i
 	calrangetime+=1000000*(confgetstart.tv_sec-localgetstart.tv_sec)+\
 		confgetstart.tv_usec-localgetstart.tv_usec;
 	while (rl) {
-		if (rl->ri->rank != md->mdhim_rank) {
+		if ((int)rl->ri->rank != md->mdhim_rank) {
 			//Set the message in the list for this range server
 			bgm = bgm_list[rl->ri->rangesrv_num - 1];
 		} else {
@@ -541,7 +541,7 @@ struct mdhim_bgetrm_t *_bget_range_records(struct mdhim_t *md, struct index_t *i
 			bgm->op = MDHIM_GET_NEXT;
 			bgm->basem.index = index->id;
 			bgm->basem.index_type = index->type;
-			if (rl->ri->rank != md->mdhim_rank) {
+			if ((int)rl->ri->rank != md->mdhim_rank) {
 				bgm_list[rl->ri->rangesrv_num - 1] = bgm;
 			} else {
 				lbgm = bgm;
@@ -622,7 +622,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 	//Create an array of bulk del messages that holds one bulk message per range server
 	bdm_list = malloc(sizeof(struct mdhim_bdelm_t *) * index->num_rangesrvs);
 	//Initialize the pointers of the list to null
-	for (i = 0; i < index->num_rangesrvs; i++) {
+	for (i = 0; i < (int)index->num_rangesrvs; i++) {
 		bdm_list[i] = NULL;
 	}
 
@@ -630,6 +630,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 	   If there is not a bulk message in the array for the range server the key belongs to, 
 	   then it is created.  Otherwise, the data is added to the existing message in the array.*/
 	for (i = 0; i < num_keys && i < MAX_BULK_OPS; i++) {
+		rl = NULL;
 		//Get the range server this key will be sent to
 		if (index->type != LOCAL_INDEX && 
 		    (rl = get_range_servers(md, index, keys[i], key_lens[i])) == 
@@ -648,7 +649,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 			continue;
 		}
        
-		if (rl->ri->rank != md->mdhim_rank) {
+		if ((int)rl->ri->rank != md->mdhim_rank) {
 			//Set the message in the list for this range server
 			bdm = bdm_list[rl->ri->rangesrv_num - 1];
 		} else {
@@ -666,7 +667,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 			bdm->basem.mtype = MDHIM_BULK_DEL;
 			bdm->basem.index = index->id;
 			bdm->basem.index_type = index->type;
-			if (rl->ri->rank != md->mdhim_rank) {
+			if ((int)rl->ri->rank != md->mdhim_rank) {
 				bdm_list[rl->ri->rangesrv_num - 1] = bdm;
 			} else {
 				lbdm = bdm;
@@ -694,7 +695,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 		free(rm);	
 	}
 	
-	for (i = 0; i < index->num_rangesrvs; i++) {
+	for (i = 0; i < (int)index->num_rangesrvs; i++) {
 		if (!bdm_list[i]) {
 			continue;
 		}

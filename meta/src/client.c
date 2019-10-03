@@ -100,9 +100,8 @@ struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index,
 	int return_code;
 	struct mdhim_brm_t *brm_head, *brm_tail, *brm;
 	struct mdhim_rm_t **rm_list, *rm;
-	int i;
+	unsigned int i, num_srvs;
 	int *srvs;
-	int num_srvs;
 
 	num_srvs = 0;
 	srvs = malloc(sizeof(int) * index->num_rangesrvs);
@@ -187,9 +186,8 @@ struct mdhim_bgetrm_t *client_bget(struct mdhim_t *md, struct index_t *index,
 	int return_code;
 	struct mdhim_bgetrm_t *bgrm_head, *bgrm_tail, *bgrm;
 	struct mdhim_bgetrm_t **bgrm_list;
-	int i;
+	unsigned int i, num_srvs;
 	int *srvs;
-	int num_srvs;
 
 	num_srvs = 0;
 	srvs = malloc(sizeof(int) * index->num_rangesrvs);
@@ -338,9 +336,8 @@ struct mdhim_brm_t *client_bdelete(struct mdhim_t *md, struct index_t *index,
 	int return_code;
 	struct mdhim_brm_t *brm_head, *brm_tail, *brm;
 	struct mdhim_rm_t **rm_list, *rm;
-	int i;
+	unsigned int i, num_srvs;
 	int *srvs;
-	int num_srvs;
 
 	num_srvs = 0;
 	srvs = malloc(sizeof(int) * index->num_rangesrvs);
