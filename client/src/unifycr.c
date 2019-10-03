@@ -78,16 +78,6 @@
 
 #include "unifycr-internal.h"
 
-#ifdef MACHINE_BGQ
-/* BG/Q to get personality and persistent memory */
-#include <sys/mman.h>
-#include <hwi/include/common/uci.h>
-#include <firmware/include/personality.h>
-#include <spi/include/kernel/memory.h>
-#include "mpi.h"
-#include <mpix.h>
-#endif /* MACHINE_BGQ */
-
 #ifdef UNIFYCR_GOTCHA
 #include "gotcha/gotcha_types.h"
 #include "gotcha/gotcha.h"

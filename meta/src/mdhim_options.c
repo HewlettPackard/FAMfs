@@ -58,7 +58,7 @@ struct mdhim_options_t *mdhim_options_init()
 	opts->db_path = "./";
 	opts->db_name = "mdhimTstDB-";
 	opts->manifest_path = NULL;
-	opts->db_type = 2;
+	opts->db_type = 1; /* LEVELDB */
 	opts->db_key_type = 1;
 	opts->db_create_new = 1;
 	opts->db_value_append = MDHIM_DB_OVERWRITE;
@@ -215,6 +215,71 @@ void mdhim_options_set_num_worker_threads(mdhim_options_t* opts, int num_wthread
 		opts->num_wthreads = num_wthreads;
 	}
 };
+
+/* mdhim configuration: DB options */
+int mdhim_options_cfg(unifycr_cfg_t *cfg, mdhim_options_t **db_opts_p)
+{
+    mdhim_options_t *db_opts;
+    char *manifest_path;
+    long l;
+    int path_len, ret = -1;
+
+    db_opts = mdhim_options_init();
+    if (!db_opts) {
+        return -1;
+    }
+
+    /* UNIFYCR_META_DB_PATH: file that stores the key value pair*/
+    if (cfg->meta_db_path)
+        db_opts->db_path = strdup(cfg->meta_db_path);
+    if (db_opts->db_path == NULL)
+        goto _err;
+
+    db_opts->manifest_path = NULL;
+    //db_opts->db_type = LEVELDB;
+    db_opts->db_create_new = 1;
+
+    /* UNIFYCR_META_SERVER_RATIO: number of metadata servers =
+        number of processes/META_SERVER_RATIO */
+    if (configurator_int_val(cfg->meta_server_ratio, &l))
+	goto _err;
+    db_opts->rserver_factor = (int)l;
+
+    db_opts->db_paths = NULL;
+    db_opts->num_paths = 0;
+    db_opts->num_wthreads = 1;
+
+    path_len = strlen(db_opts->db_path) + strlen(MANIFEST_FILE_NAME) + 2;
+    manifest_path = malloc(path_len);
+    if (!manifest_path)
+        goto _err;
+
+    sprintf(manifest_path, "%s/%s", db_opts->db_path, MANIFEST_FILE_NAME);
+    db_opts->manifest_path = manifest_path;
+
+    /* UNIFYCR_META_DB_NAME */
+    if (cfg->meta_db_name)
+        db_opts->db_name = strdup(cfg->meta_db_name);
+    if (db_opts->db_name == NULL)
+        goto _err;
+
+    //db_opts->db_key_type = MDHIM_UNIFYCR_KEY;
+    //db_opts->debug_level = MLOG_CRIT;
+
+    /* indices/attributes are striped to servers according
+     * to UnifyCR_META_RANGE_SZ.
+     * */
+    if (configurator_int_val(cfg->meta_range_size, &l))
+        goto _err;
+    db_opts->max_recs_per_slice = (unsigned long)l;
+
+    *db_opts_p = db_opts;
+    return 0;
+
+_err:
+    mdhim_options_destroy(db_opts);
+    return ret;
+}
 
 void mdhim_options_destroy(mdhim_options_t *opts) {
 	int i;

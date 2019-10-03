@@ -39,6 +39,8 @@
 
 #include <stdint.h>
 
+#include "famfs_configurator.h"
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -120,6 +122,7 @@ void mdhim_options_set_server_factor(struct mdhim_options_t* opts, int server_fa
 void mdhim_options_set_max_recs_per_slice(struct mdhim_options_t* opts, uint64_t max_recs_per_slice);
 void mdhim_options_set_num_worker_threads(struct mdhim_options_t* opts, int num_wthreads);
 void set_manifest_path(mdhim_options_t* opts, char *path);
+int mdhim_options_cfg(unifycr_cfg_t *mdhim_cfg, mdhim_options_t **db_opts_p);
 void mdhim_options_destroy(struct mdhim_options_t *opts);
 #ifdef __cplusplus
 }

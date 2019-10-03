@@ -88,7 +88,6 @@
 #define UNIFYCR_SUPERBLOCK_KEY   ( 4321 )
 
 // const for unifycr
-#define GEN_STR_LEN 1024
 #define SOCKET_PATH "/tmp/unifycr_server_sock"
 #define UNIFYCR_MAX_SPLIT_CNT 1048576
 #define UNIFYCR_MAX_READ_CNT 1048576

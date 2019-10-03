@@ -93,8 +93,6 @@ void partitioner_init();
 void partitioner_release();
 rangesrv_list *get_range_servers(struct mdhim_t *md, struct index_t *index,
 				 void *key, int key_len);
-rangesrv_info *get_range_server_by_slice(struct mdhim_t *md, 
-					 struct index_t *index, int slice);
 void build_alphabet();
 int verify_key(struct index_t *index, void *key, int key_len, int key_type);
 long double get_str_num(void *key, uint32_t key_len);

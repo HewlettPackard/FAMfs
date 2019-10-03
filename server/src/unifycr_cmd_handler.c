@@ -51,7 +51,7 @@
 * @param sock_id: position in poll_set
 * @return success/error code
 */
-int delegator_handle_command(char *ptr_cmd, int sock_id)
+int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_slice)
 {
 
     /*init setup*/
@@ -59,6 +59,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id)
     int rc = 0, ret_sz = 0;
     int cmd = *((int *)ptr_cmd);
     int num;
+    long max_recs_per_slice = db_max_recs_per_slice;
     char *ptr_ack;
 
     LOG(LOG_DBG, "DLG command %x, masked %x\n", cmd, cmd & ~COMM_OPT_MASK);

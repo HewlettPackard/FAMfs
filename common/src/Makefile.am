@@ -1,3 +1,6 @@
+AM_CPPFLAGS = -mbmi2 -funroll-loops --param max-completely-peel-times=64
+AM_CFLAGS = -std=gnu99 -Wall -Wextra
+
 noinst_LTLIBRARIES = libfamfs_common.la
 
 include_HEADERS = err_enumerator.h
@@ -15,15 +18,13 @@ BASE_SRCS = famfs_env.h famfs_error.h famfs_stats.h \
 	famfs_stats.c \
 	famfs_ktypes.h famfs_bitops.h famfs_bitmap.h famfs_bitmap.c \
 	famfs_bbitops.h famfs_bbitmap.h famfs_bbitmap.c \
-	util.c
+	famfs_maps.h famfs_maps.c util.c
 
 libfamfs_common_la_SOURCES = $(BASE_SRCS)
-libfamfs_common_la_CPPFLAGS = -D_GNU_SOURCE=1 $(COMMON_CPPFLAGS) $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+libfamfs_common_la_CPPFLAGS = -D_GNU_SOURCE=1 $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+libfamfs_common_la_CFLAGS = $(AM_CFLAGS)
 libfamfs_common_la_LDFLAGS = $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 libfamfs_common_la_LIBADD = -lm -lnuma -lrt
-
-AM_CFLAGS = -std=gnu99 -Wall -Wextra
-AM_CFLAGS += -mbmi2 -funroll-loops --param max-completely-peel-times=64
 
 # For tests
 LDADD = libfamfs_common.la

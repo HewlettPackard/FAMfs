@@ -91,6 +91,7 @@ struct index_t {
         //Maximum size of a slice. A range server may serve several slices.
 	uint64_t mdhim_max_recs_per_slice; 
 
+	MPI_Comm md_comm; /* protected copy of md_comm for this index */
 	//This communicator is for range servers only to talk to each other
 	MPI_Comm rs_comm;   
 	/* The rank of the range server master that will broadcast stat data to all clients
@@ -127,7 +128,6 @@ typedef struct index_manifest_t {
 
 int update_stat(struct mdhim_t *md, struct index_t *bi, void *key, uint32_t key_len);
 int load_stats(struct mdhim_t *md, struct index_t *bi);
-int write_stats(struct mdhim_t *md, struct index_t *bi);
 int open_db_store(struct mdhim_t *md, struct index_t *index);
 uint32_t get_num_range_servers(struct mdhim_t *md, struct index_t *index);
 struct index_t *create_local_index(struct mdhim_t *md, int db_type, int key_type, char *index_name);
@@ -140,7 +140,7 @@ int index_init_comm(struct mdhim_t *md, struct index_t *bi);
 int get_stat_flush(struct mdhim_t *md, struct index_t *index);
 struct index_t *get_index(struct mdhim_t *md, int index_id);
 struct index_t *get_index_by_name(struct mdhim_t *md, char *index_name);
-void indexes_release(struct mdhim_t *md);
+int indexes_release(struct mdhim_t *md);
 int im_range_server(struct index_t *index);
 
 #endif

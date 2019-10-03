@@ -79,9 +79,12 @@ int main (void) {
 			/* Find next unset */
 			i = (int)find_next_unset_bbit(bbmap, pat, sz, j);
 			t++; if (i != (pos+1)) goto err;
+			/* Count all ones in pos.. */
+			i = __bbitmap_weight(bbmap, pat, j, sz-j);
+			t++; if (i != (pos-j+1)) goto err;
 		    } /* all (k) ones are set */
 		    /* Check loops */
-		    t=15; i = 0;
+		    t=16; i = 0;
 		    for_each_clear_bbit(bbit, bbmap, pat, sz) {
 			if (!test_bbit(bbit, BBIT_ZERO, bbmap)) goto err;
 			i++;

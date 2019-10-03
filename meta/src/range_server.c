@@ -150,7 +150,7 @@ int send_locally_or_remote(struct mdhim_t *md, int dest, void *message) {
 		void *sendbuf;
 
 		ret = send_client_response(md, dest, message,
-			&sizebuf, &sendbuf, (MPI_Request**)NULL, (MPI_Request**)NULL);
+			&sizebuf, &sendbuf);
 		mdhim_full_release_msg(message);
 	} else {
 		//Sends the message locally
@@ -1163,6 +1163,10 @@ int range_server_bget_op(struct mdhim_t *md, struct mdhim_bgetm_t *bgm, int sour
 						bgm->num_keys * bgm->num_recs,
 						&num_records);
 
+		/* It's Ok to do bulk get with op=MDHIM_GET_NEXT and
+		retreive any number of records */
+		if (error == MDHIM_DB_RESIDUAL)
+			error = MDHIM_SUCCESS;
 	}
 
 respond:
@@ -1278,7 +1282,10 @@ void *worker_thread(void *data) {
 	struct timeval worker_zero;
 
 	/* Get worker id */
-	int i, worker_id = -1;
+	int i;
+	/* We want worker_id declared volatile to prevent clobbering if re-ordered
+	inside pthread_cleanup_push/pop */
+	volatile int worker_id = -1;
 	pthread_t thId = pthread_self();
 	for (i = 0; i < md->db_opts->num_wthreads; i++) {
 		if (pthread_equal(*md->mdhim_rs->workers[i], thId)) {

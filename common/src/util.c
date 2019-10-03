@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <unistd.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -1046,4 +1047,201 @@ int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role,
 	memcpy(mpi_comm, &comm, sizeof(MPI_Comm));
 	return zero_srv_rank;
 }
+
+static char *strnchr(const char *s, size_t count, int c)
+{
+	uint64_t	ix;
+	const char	*cp = s;
+
+	for (ix = 0; ix < count; ++ix, ++cp) {
+		if (*cp == c)
+			return (char *)cp;
+	}
+	return NULL;
+}
+
+/*
+ * Capacity string parser
+ *
+ * K, M, G, T, P, E
+ * Ki, Mi, Gi, Ti, Pi, Ei
+ * S
+ */
+static int f_parse_capacity(const char *s, uint64_t *c)
+{
+    char *p;
+    uint64_t x, y;
+
+    x = strtoll(s, &p, 10);
+    if (p > s && *p) {
+	switch (tolower(*p++)) {
+	case 'k':	y = 1;	break;
+	case 'm':	y = 2;	break;
+	case 'g':	y = 3;	break;
+	case 't':	y = 4;	break;
+	case 'p':	y = 5;	break;
+	case 'e':	y = 6;	break;
+	case 'b':	if (*p) {
+				/* should not be anything after B */
+				return 1;
+			}
+			*c = x;
+			return 0;
+
+	case 's':	if (*p) {
+				/* should not be anything after S */
+				return 1;
+			}
+			*c = x*512;
+			return 0;
+
+	default:	return 1;
+	}
+
+	switch (tolower(*p)) {
+	case 'i':
+	case 0:		/* "K" will be treated as Ki */
+		*c = x <<= y*10L;
+		return 0;
+
+	case 'b':	/* "KB" will be treated as KB */
+		while (y--) {
+			x *= 1000;
+		}
+		*c = x;
+		return 0;
+
+	default: ;
+	}
+    } else if (p > s && !*p) {
+	/* skipped B allowed */
+	*c = x;
+	return 0;
+    }
+    return 1;
+}
+
+/*
+ * Moniker	Data	Parity	Mirror	D+P+M	Chunk_size
+ * 5D+P:4M	5	1	0	6	4194304	(4MiB)
+ * 9D+2P:1M	9	2	0	11	1MiB
+ * 9D:2M	9	0	0	9	2MiB
+ * D=D:512K	1	0	1	2	512KiB
+ * D=2D:4K	1	0	2	3	4096 (4KiB)
+**/
+int f_parse_moniker(const char *moniker, int *data, int *parity,
+    int *mirrors, size_t *chunk_size)
+{
+    const char *t = moniker, *t0;
+    char *t1;
+    const char *chunk_sz_token, *next;
+    int m, d, p, n;
+    size_t c;
+
+    m = d = p = 0;
+    c = 0L;
+
+    /* find tokens: '*2' or ':4K' */
+    chunk_sz_token = next = strnchr(t, FVAR_MONIKER_MAX, ':');
+    if (!chunk_sz_token) {
+	if (chunk_size) {
+	    err("chunk size not found in moniker:%s", moniker);
+	    goto _fail;
+	}
+	next = t + strnlen(t, FVAR_MONIKER_MAX);
+    }
+
+    /* nD[=nD][+nP] */
+    while (t < next) {
+	/* quantity */
+	t0 = t;
+
+	n = strtol(t0, &t1, 10);
+	if (!n) {
+	    if (t == t0)
+		n = 1;
+	    else
+		goto _syntax;
+	}
+	t = t1;
+
+	/* type */
+	switch (*t++) {
+	case 'D':
+	    if (m)
+		m = n;
+	    else
+		d += n;
+	    break;
+
+	case 'P':
+	    if (p) {
+		err("parity specified more than once:%s", moniker);
+		goto _fail;
+	    }
+	    p = n;
+	    break;
+
+	default:
+	    goto _syntax;
+	}
+
+	/* separator */
+	if (*t == '=') {
+	    if (m == 0) {
+		if (d > 1) {
+		    /* in "nD=..." n must be 1 if present */
+		    err("only one primary mirror device allowed:%s", moniker);
+		    goto _fail;
+		}
+	    } else {
+		/* don't support "D=nD=mD..." syntax */
+		err("asymmetric mirrors not supported yet:%s", moniker);
+		goto _fail;
+	    }
+	    m++;
+	    t++;
+	    continue;
+	} else if (*t == '+') {
+	    t++;
+	}
+    }
+
+    t = chunk_sz_token;
+    if (t++ && f_parse_capacity(t, &c)) {
+	err("invalid chunk size:%s", moniker);
+	goto _fail;
+    }
+
+    if (!d) {
+	err("at least one data chunk is required:%s", moniker);
+	goto _fail;
+    }
+    if (!IS_POWER2(c) ||
+	  !IN_RANGE(c, F_CHUNK_SIZE_MIN, F_CHUNK_SIZE_MAX)) {
+	err("invalid chunk size value:%s", moniker);
+	goto _fail;
+    }
+
+    if (data) {
+        *data = d;
+    }
+    if (parity) {
+        *parity = p;
+    }
+    if (mirrors) {
+        *mirrors = m;
+    }
+    if (chunk_size) {
+        *chunk_size = c;
+    }
+
+    return 0;
+
+_syntax:
+    err("invalid layout moniker:%s", moniker);
+_fail:
+    return 1;
+}
+
 

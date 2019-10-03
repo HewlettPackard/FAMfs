@@ -847,7 +847,7 @@ int mdhim_levedb_batch_next(void *dbh, char **key, int *key_len, char **data, in
 	leveldb_readoptions_t *options;
 	leveldb_iterator_t *iter;
 	const char *res;
-	int len = 0;
+	size_t len = 0;
 	void *old_key;
 	int old_key_len;
 
@@ -900,7 +900,7 @@ int mdhim_levedb_batch_next(void *dbh, char **key, int *key_len, char **data, in
 			+ dbngetend.tv_usec - dbngetstart.tv_usec;
 	leveldb_iter_destroy(iter);
 	if (*num_records < tot_records)
-		return MDHIM_DB_ERROR;
+		return MDHIM_DB_RESIDUAL;
 	else
 		return 0;
 error:

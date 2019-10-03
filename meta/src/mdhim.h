@@ -57,6 +57,7 @@ extern "C"
 #define MDHIM_SUCCESS 0
 #define MDHIM_ERROR -1
 #define MDHIM_DB_ERROR -2
+#define MDHIM_DB_RESIDUAL -3 /* got less records than requested */
 
 #define SECONDARY_GLOBAL_INFO 1
 #define SECONDARY_LOCAL_INFO 2
@@ -174,6 +175,9 @@ struct secondary_bulk_info *mdhimCreateSecondaryBulkInfo(struct index_t *seconda
 void mdhimReleaseSecondaryBulkInfo(struct secondary_bulk_info *si);
 int mdhimSanitize(char *dbfilename, char *statfilename, char *manifestfilename);
 int rmrf(char *path);
+
+ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *buf,
+    size_t size, uint64_t *keys);
 
 #ifdef __cplusplus
 }

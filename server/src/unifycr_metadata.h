@@ -41,6 +41,7 @@
 #include "famfs_global.h"
 
 #define MANIFEST_FILE_NAME "mdhim_manifest_"
+#define F_MD_IDX_MAPS_START 3 /* map indexes start with 3 (unifycr_indexes) */
 
 
 typedef struct {
@@ -54,7 +55,8 @@ extern arraylist_t *ulfs_vals;
 extern arraylist_t *ulfs_metas;
 
 int meta_sanitize();
-int meta_init_store(unifycr_cfg_t *cfg);
+int meta_init_conf(unifycr_cfg_t *cfg, mdhim_options_t **db_opts_p);
+int meta_init_store(mdhim_options_t *db_opts);
 void print_bget_indices(int app_id, int cli_id,
                         send_msg_t *index_set, int tot_num);
 int meta_process_fsync(int sock_id);
@@ -70,4 +72,5 @@ int meta_process_attr_get(char *buf, int sock_id,
 int meta_famattr_put(int fam_id, fam_attr_val_t *val);
 int meta_famattr_get(char *buf, fam_attr_val_t **ptr_val);
 int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv);
+
 #endif

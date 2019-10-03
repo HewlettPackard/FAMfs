@@ -83,7 +83,7 @@ static __always_inline unsigned long bb_mask(BBIT_VALUE_t val)
 
 #define BBITS_PAT_HAS_VAL(pat, val)					\
 	({int v = 0x3U & (unsigned long)(val);				\
-	  unsigned int p = BB_PAT_MASK & (unsigned long)(pat);	\
+	  unsigned int p = BB_PAT_MASK & (unsigned long)(pat);		\
 	  int r;							\
 	  switch(v) {							\
 		case BBIT_ZERO: r = (p & BB_PAT_ZERO); break;		\
@@ -92,7 +92,7 @@ static __always_inline unsigned long bb_mask(BBIT_VALUE_t val)
 		case BBIT_11: r = (p & BB_PAT11); break;		\
 		default: r = 0;						\
 	  }								\
-	  !!(r);								\
+	  !!(r);							\
 	})
 
 /* Check the pattern set: return 0 if Ok */
@@ -128,7 +128,8 @@ static inline unsigned int bb_pset_count(unsigned int pset) {
 }
 
 /* Reduce one word of the bifold bit array to a bitmap for given set of patterns */
-static __always_inline unsigned int bb_reduce(unsigned long word, unsigned int pset)
+static __always_inline unsigned int bb_reduce(const unsigned long word,
+    const unsigned int pset)
 {
 	unsigned int r, p;
 	unsigned long mask[4] = BBITS_MASK_ARRAY;

@@ -5,6 +5,9 @@
 #include <inttypes.h>
 
 
+#define GEN_STR_LEN 1024
+
+
 typedef enum {
     COMM_MOUNT     = 0x1, /*the list of addrs: appid, size of buffer, offset of data section, metadata section*/
     COMM_META      = 0x2,

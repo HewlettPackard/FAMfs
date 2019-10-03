@@ -73,6 +73,14 @@
     UNIFYCR_CFG(spillover, data_dir, STRING, NULLSTRING, "spillover data directory", configurator_directory_check) \
     UNIFYCR_CFG(spillover, meta_dir, STRING, NULLSTRING, "spillover metadata directory", configurator_directory_check) \
     UNIFYCR_CFG(spillover, size, INT, UNIFYCR_SPILLOVER_SIZE, "spillover max data size in bytes", NULL) \
+    UNIFYCR_CFG(unifycr, extent_size, INT, UNIFYCR_EXTENT_SIZE, "pool extent size in bytes", NULL) \
+    UNIFYCR_CFG(unifycr, extent0_offset, INT, UNIFYCR_EXTENT0_OFFSET, "extent zero starts with offset in bytes", NULL) \
+    UNIFYCR_CFG(unifycr, ioncount, INT, UNIFYCR_ION_COUNT, "IO node (device) count", NULL) \
+    UNIFYCR_CFG(unifycr, layouts_count, INT, UNIFYCR_LAYOUTS_COUNT, "number of layouts", NULL) \
+    UNIFYCR_CFG(layout0, name, STRING, LAYOUT0_NAME, "Name (moniker) of the first layout", configurator_moniker_check) \
+    UNIFYCR_CFG(layout0, devnum, INT, 1, "total number of devices in Layout 0", NULL) \
+    UNIFYCR_CFG(layout1, name, STRING, NULLSTRING, "Name (moniker) of the first layout", configurator_moniker_check) \
+    UNIFYCR_CFG(layout1, devnum, INT, 1, "total number of devices in Layout 1", NULL) \
     UNIFYCR_CFG(client, max_files, INT, UNIFYCR_MAX_FILES, "client max file count", NULL) \
 
 #ifdef __cplusplus
@@ -109,8 +117,7 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
                         int argc,
                         char **argv);
 
-int unifycr_config_fini(unifycr_cfg_t *cfg);
-
+void unifycr_config_free(unifycr_cfg_t *cfg);
 
 /* print configuration to specified file (or stderr if fp==NULL) */
 void unifycr_config_print(unifycr_cfg_t *cfg,
@@ -180,6 +187,10 @@ int configurator_directory_check(const char *section,
                                  const char *val,
                                  char **oval);
 
+int configurator_moniker_check(const char *section,
+                                 const char *key,
+                                 const char *val,
+                                 char **oval);
 
 #ifdef __cplusplus
 } /* extern C */

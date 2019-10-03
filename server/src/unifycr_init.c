@@ -54,6 +54,7 @@
 #include "unifycr_request_manager.h"
 #include "famfs_env.h"
 #include "famfs_error.h"
+#include "famfs_maps.h"
 #include "lf_client.h"
 
 
@@ -73,8 +74,8 @@ int log_print_level = LOG_WARN;
 unifycr_cfg_t server_cfg;
 static LFS_CTX_t *lfs_ctx_p = NULL;
 
-char *mds_vec = NULL;
-int  num_mds = 0;
+extern char *mds_vec;
+extern int  num_mds;
 
 int mds_by_name() {
     static char **nlist = NULL;
@@ -84,9 +85,9 @@ int mds_by_name() {
     if (ncnt < 0)
         return -1;
 
-    if (!(ev = getenv("FAMFS_MDS_LIST"))) 
+    if (!(ev = getenv("FAMFS_MDS_LIST")))
         return  ncnt = -1;
-    
+
     if (!ncnt) {
         int m = 64;
         char *tok, *p = ev;
@@ -140,6 +141,7 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
 
 int main(int argc, char *argv[])
 {
+    mdhim_options_t *db_opts = NULL;
     char dbg_fname[GEN_STR_LEN] = {0};
     int provided;
     int rc;
@@ -190,6 +192,12 @@ int main(int argc, char *argv[])
     if (rc != ULFS_SUCCESS)
         LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
 
+    rc = meta_init_conf(&server_cfg, &db_opts);
+    if (rc != 0) {
+        LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
+        exit(1);
+    }
+
     app_config_list = arraylist_create();
     if (app_config_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
@@ -217,9 +225,15 @@ int main(int argc, char *argv[])
         num_mds = 0;
     }
 
-   /* Fork LF server process if FAM emulation is required */
-   char *lfs_cmd = getstr(LFS_COMMAND);
-   if (lfs_cmd) {
+    rc = f_set_layout_info(&server_cfg);
+    if (rc != 0) {
+	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_CFG));
+	exit(1);
+    }
+
+    /* Fork LF server process if FAM emulation is required */
+    char *lfs_cmd = getstr(LFS_COMMAND);
+    if (lfs_cmd) {
 	rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size, &lfs_ctx_p);
 	if (rc) {
 	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
@@ -258,7 +272,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    rc = meta_init_store(&server_cfg);
+    rc = meta_init_store(db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
         exit(1);
@@ -303,7 +317,8 @@ int main(int argc, char *argv[])
             /*sock_id is 0 if it is a listening socket*/
             if (sock_id != 0) {
                 char *cmd = sock_get_cmd_buf(sock_id);
-                int cmd_rc = delegator_handle_command(cmd, sock_id);
+                int cmd_rc = delegator_handle_command(cmd, sock_id,
+						db_opts->max_recs_per_slice);
                 if (cmd_rc != ULFS_SUCCESS) {
                     LOG(LOG_ERR, "%s",
                         ULFS_str_errno(cmd_rc));
@@ -608,8 +623,8 @@ static int unifycr_exit()
         }
     }
 
-    /* shutdown the metadata service*/
-    meta_sanitize();
+    /* shutdown the metadata service */
+    meta_sanitize(); /* mdhim_options_destroy(db_opts) */
     /* notify the service threads to exit*/
 
     /* destroy the sockets except for the ones
@@ -619,5 +634,12 @@ static int unifycr_exit()
     /* Close FAM emulation fabric */
     free_lfs_ctx(&lfs_ctx_p);
 
+    /* Allocated at common lib: free F_LAYOUT_INFO_t */
+    f_free_layout_info();
+
+    /* Allocated at main(): free unifycr_cfg_t */
+    unifycr_config_free(&server_cfg);
+
     return rc;
 }
+

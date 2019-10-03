@@ -27,10 +27,10 @@
  * Please read https://github.com/llnl/burstfs/LICNSE for full license text.
  */
 
-#include "famfs_global.h"
 #include "mdhim.h"
 #include "indexes.h"
 #include "log.h"
+#include "famfs_maps.h"
 #include "unifycr_metadata.h"
 #include "arraylist.h"
 #include "unifycr_const.h"
@@ -42,116 +42,92 @@ fsmd_val_t **fsmd_vals;
 fattr_key_t **fattr_keys;
 fattr_val_t **fattr_vals;
 
-char *manifest_path;
-
 struct mdhim_brm_t *brm, *brmp;
 struct mdhim_bgetrm_t *bgrm, *bgrmp;
-
-mdhim_options_t *db_opts;
 struct mdhim_t *md;
 
-int md_size;
 int fsmd_ley_lens[MAX_META_PER_SEND] = {0};
 int unifycr_val_lens[MAX_META_PER_SEND] = {0};
 
 int fattr_key_lens[MAX_FILE_CNT_PER_NODE] = {0};
 int fattr_val_lens[MAX_FILE_CNT_PER_NODE] = {0};
 
-struct index_t *unifycr_indexes[3];
-long max_recs_per_slice;
+/* Need two maps per layout: CV and SM */
+#define F_MD_IDX_MAPS_END	(F_MD_IDX_MAPS_START + F_LAYOUTS_MAX *2 - 1)
+#define F_MD_IDX_SIZE		(F_MD_IDX_MAPS_END + 1)
+struct index_t *unifycr_indexes[F_MD_IDX_SIZE];
 int page_sz;
 
 extern char *mds_vec;
 extern int  num_mds;
 
+static int create_persistent_map(int map_id, int intl, char *name);
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+static int ps_bput(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+
+static F_META_IFACE_t iface = {
+	.create_map_fn = &create_persistent_map,
+	.bget_fn = &ps_bget,
+	.bput_fn = &ps_bput,
+};
+
+/* metadata configuration: set DB options and map interface */
+int meta_init_conf(unifycr_cfg_t *server_cfg_p, mdhim_options_t **db_opts_p)
+{
+    f_set_meta_iface(&iface);
+    return mdhim_options_cfg(server_cfg_p, db_opts_p);
+}
+
 /**
 * initialize the key-value store
 */
-int meta_init_store(unifycr_cfg_t *cfg)
+int meta_init_store(mdhim_options_t *db_opts)
 {
-    long l;
+    int i, rc;
 
-    db_opts = malloc(sizeof(struct mdhim_options_t));
-    if (!db_opts) {
-        return -1;
-    }
-
-    /* UNIFYCR_META_DB_PATH: file that stores the key value pair*/
-    if (cfg->meta_db_path)
-        db_opts->db_path = strdup(cfg->meta_db_path);
-    if (db_opts->db_path == NULL)
-        return -1;
-
-    db_opts->manifest_path = NULL;
-    db_opts->db_type = LEVELDB;
-    db_opts->db_create_new = 1;
-
-    /* UNIFYCR_META_SERVER_RATIO: number of metadata servers =
-        number of processes/META_SERVER_RATIO */
-
-    int ser_ratio = 1;
-    if (mds_vec == NULL) {
-        if (configurator_int_val(cfg->meta_server_ratio, &l))
-            return -1;
-        ser_ratio = (int)l;
-    }
-
-    db_opts->rserver_factor = ser_ratio;
-    db_opts->db_paths = NULL;
-    db_opts->num_paths = 0;
-    db_opts->num_wthreads = 1;
-
-    int path_len = strlen(db_opts->db_path) + strlen(MANIFEST_FILE_NAME) + 2;
-
-
-    manifest_path = malloc(path_len);
-    if (!manifest_path) {
-        return -1;
-    }
-
-    sprintf(manifest_path, "%s/%s", db_opts->db_path, MANIFEST_FILE_NAME);
-    db_opts->manifest_path = manifest_path;
-
-    /* UNIFYCR_META_DB_NAME */
-    if (cfg->meta_db_name)
-        db_opts->db_name = strdup(cfg->meta_db_name);
-    if (db_opts->db_name == NULL)
-        return -1;
-
-    db_opts->db_key_type = MDHIM_UNIFYCR_KEY;
     db_opts->debug_level = MLOG_CRIT;
+    db_opts->db_key_type = MDHIM_UNIFYCR_KEY;
+    if (mds_vec)
+	db_opts->rserver_factor = 1;
 
-    /* indices/attributes are striped to servers according
-     * to UnifyCR_META_RANGE_SZ.
-     * */
-    if (configurator_int_val(cfg->meta_range_size, &l))
-        return -1;
-    max_recs_per_slice = (size_t)l;
-    db_opts->max_recs_per_slice = (uint64_t) max_recs_per_slice;
-
-    MPI_Comm comm = MPI_COMM_WORLD;
-    md = mdhimInit(&comm, db_opts);
+    md = mdhimInit(NULL, db_opts);
 
     /*this index is created for storing index metadata*/
     unifycr_indexes[0] = md->primary_index;
 
     /*this index is created for storing file attribute metadata*/
-    unifycr_indexes[1] = create_global_index(md, ser_ratio, 1,
+    unifycr_indexes[1] = create_global_index(md, md->db_opts->rserver_factor, 1,
                          LEVELDB, MDHIM_INT_KEY, "file_attr");
 
-    unifycr_indexes[2] = create_global_index(md, ser_ratio, 1,
-                         LEVELDB, MDHIM_INT_KEY, NULL);
+    unifycr_indexes[2] = create_global_index(md, md->db_opts->rserver_factor, 1,
+                         LEVELDB, MDHIM_INT_KEY, "fam_map");
 
-    MPI_Comm_size(md->mdhim_comm, &md_size);
+    for (i = F_MD_IDX_MAPS_START; i <= F_MD_IDX_MAPS_END; i++)
+	unifycr_indexes[i] = NULL;
 
-    int rc = meta_init_indices();
+    rc = meta_init_indices();
     if (rc != 0) {
         return -1;
     }
 
     page_sz = getpagesize();
     return 0;
+}
 
+static int create_persistent_map(int map_id, int intl, char *name)
+{
+    int id = F_MD_IDX_MAPS_START + map_id;
+
+    if (!IN_RANGE(id, F_MD_IDX_MAPS_START, F_MD_IDX_MAPS_END) ||
+	intl < 0 || md == NULL)
+	    return -1;
+    if (unifycr_indexes[id] == NULL) {
+	unifycr_indexes[id] = create_global_index(md, md->db_opts->rserver_factor,
+					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
+	if (unifycr_indexes[id] == NULL)
+		return -1;
+    }
+    return 0;
 }
 
 /**
@@ -747,39 +723,58 @@ int meta_free_indices()
     return 0;
 }
 
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+{
+	struct index_t *primary_index = unifycr_indexes[F_MD_IDX_MAPS_START + map_id];
+
+	return mdhim_ps_bget(md, primary_index, buf, size, keys);
+}
+
+static int ps_bput(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+{
+	struct index_t *primary_index;
+	int ret = 0;
+
+	primary_index = unifycr_indexes[F_MD_IDX_MAPS_START + map_id];
+
+
+	return ret;
+}
+
 int meta_sanitize()
 {
-    int rc = ULFS_SUCCESS;
-
-    meta_free_indices();
+    mdhim_options_t *db_opts;
+    int i, rank, ret, rc = ULFS_SUCCESS;
 
     char dbfilename[GEN_STR_LEN] = {0};
     char statfilename[GEN_STR_LEN+12] = {0};
     char manifestname[GEN_STR_LEN] = {0};
 
-    char dbfilename1[GEN_STR_LEN] = {0};
-    char statfilename1[GEN_STR_LEN+12] = {0};
-    char manifestname1[GEN_STR_LEN] = {0};
-    sprintf(dbfilename, "%s/%s-%d-%d", md->db_opts->db_path,
-            md->db_opts->db_name, unifycr_indexes[0]->id, md->mdhim_rank);
+    meta_free_indices();
 
-    sprintf(statfilename, "%s_stats", dbfilename);
-    sprintf(manifestname, "%s%d_%d_%d", md->db_opts->manifest_path,
-            unifycr_indexes[0]->type,
-            unifycr_indexes[0]->id, md->mdhim_rank);
-
-    sprintf(dbfilename1, "%s/%s-%d-%d", md->db_opts->db_path,
-            md->db_opts->db_name, unifycr_indexes[1]->id, md->mdhim_rank);
-
-    sprintf(statfilename1, "%s_stats", dbfilename1);
-    sprintf(manifestname1, "%s%d_%d_%d", md->db_opts->manifest_path,
-            unifycr_indexes[1]->type,
-            unifycr_indexes[1]->id, md->mdhim_rank);
-
+    db_opts = md->db_opts;
+    rank = md->mdhim_rank;
     mdhimClose(md);
-    rc = mdhimSanitize(dbfilename, statfilename, manifestname);
-    rc = mdhimSanitize(dbfilename1, statfilename1, manifestname1);
+
+    /* TODO: For each registered DB table */
+    for (i = 0; i < F_MD_IDX_SIZE; i++) {
+	struct index_t *index = &unifycr_indexes[i];
+
+	if (!index)
+		continue;
+	sprintf(dbfilename, "%s/%s-%d-%d", db_opts->db_path,
+		db_opts->db_name, index->id, rank);
+	sprintf(statfilename, "%s_stats", dbfilename);
+	sprintf(manifestname, "%s%d_%d_%d", db_opts->manifest_path,
+		index->type, index->id, rank);
+
+	ret = mdhimSanitize(dbfilename, statfilename, manifestname);
+	if (rc == ULFS_SUCCESS)
+		rc = ret; /* report first error */
+    }
 
     mdhim_options_destroy(db_opts);
+
     return rc;
 }
+

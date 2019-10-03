@@ -45,7 +45,7 @@ double calslicetime = 0;
 struct timeval rangehashstart, rangehashend;
 double rangehashtime = 0;
 struct timeval serhashstart, serhashend;
-double serhashtime = 0; 
+double serhashtime = 0;
 unsigned long meta_pair[2] = {0};
 //Global hashtable for alphabet used in partitioner algorithm
 struct mdhim_char *mdhim_alphabet = NULL;
@@ -65,7 +65,8 @@ void delete_alphabet() {
 }
 
 long double get_str_num(void *key, uint32_t key_len) {
-  int id, i;
+  int id;
+  unsigned int i;
   struct mdhim_char *mc;
   long double str_num;
 
@@ -76,7 +77,7 @@ long double get_str_num(void *key, uint32_t key_len) {
     if (i == key_len - 1 && ((char *)key)[i] == '\0') {
       break;
     }
-    
+
     id = (int) ((char *)key)[i];
     HASH_FIND_INT(mdhim_alphabet, &id, mc);
     str_num += mc->pos * powl(2, MDHIM_ALPHABET_EXPONENT * -(i + 1));
@@ -85,7 +86,9 @@ long double get_str_num(void *key, uint32_t key_len) {
   return str_num;
 }
 
-unsigned long * get_meta_pair(void *key, uint32_t key_len) {
+unsigned long * get_meta_pair(void *key,
+    __attribute__((unused)) uint32_t key_len)
+{
 	ulong *meta_pair = (ulong *)malloc (2*sizeof(ulong));
 	memset(meta_pair, 0, 2*sizeof(unsigned long));
 	meta_pair[0] = *((unsigned long *)(((char *)key)));
@@ -94,7 +97,9 @@ unsigned long * get_meta_pair(void *key, uint32_t key_len) {
 	return meta_pair;
 }
 
-uint64_t get_byte_num(void *key, uint32_t key_len) {
+uint64_t get_byte_num(void *key,
+    __attribute__((unused)) uint32_t key_len)
+{
 	uint64_t byte_num;
 
 	byte_num = *((long *)(((char *)key)+sizeof(long)));
@@ -134,7 +139,7 @@ void add_char(int id, int pos) {
 	mc->pos = pos;
 
 	//Add it to the hash table
-	HASH_ADD_INT(mdhim_alphabet, id, mc);    
+	HASH_ADD_INT(mdhim_alphabet, id, mc);
 
 	return;
 }
@@ -148,8 +153,8 @@ void build_alphabet() {
 	int i, indx;
 
         /* Index of the character in the our alphabet
-	   This is to number each character we care about so we can map 
-	   a string to a range server 
+	   This is to number each character we care about so we can map
+	   a string to a range server
 
 	   0 - 9 have indexes 0 - 9
 	   A - Z have indexes 10 - 35
@@ -158,21 +163,21 @@ void build_alphabet() {
 	indx = 0;
 
 	//Start with numbers 0 - 9
-	c = '0';	
+	c = '0';
 	for (i = (int) c; i <= (int) '9'; i++) {
 		add_char(i, indx);
 		indx++;
 	}
 
 	//Next deal with A-Z
-	c = 'A';	
+	c = 'A';
 	for (i = (int) c; i <= (int) 'Z'; i++) {
 		add_char(i, indx);
 		indx++;
 	}
 
         //Next deal with a-z
-	c = 'a';	
+	c = 'a';
 	for (i = (int) c; i <= (int) 'z'; i++) {
 		add_char(i, indx);
 		indx++;
@@ -188,7 +193,7 @@ void _add_to_rangesrv_list(rangesrv_list **list, rangesrv_info *ri) {
 	entry->ri = ri;
 	entry->next = NULL;
 	if (!*list) {
-		*list = entry;	
+		*list = entry;
 	} else {
 		list_p = *list;
 		if (list_p->ri == ri)	return;
@@ -213,7 +218,7 @@ void _add_to_rangesrv_list(rangesrv_list **list, rangesrv_info *ri) {
  *
  * @return        MDHIM_ERROR if the key is not valid, otherwise the MDHIM_SUCCESS
  */
-int verify_key(struct index_t *index, void *key, 
+int verify_key(struct index_t *index, void *key,
 	       int key_len, int key_type) {
 	int i;
 	int id;
@@ -234,14 +239,14 @@ int verify_key(struct index_t *index, void *key,
 			if (i == key_len - 1 && ((char *)key)[i] == '\0') {
 				break;
 			}
-			
+
 			id = (int) ((char *)key)[i];
 			HASH_FIND_INT(mdhim_alphabet, &id, mc);
 			if (!mc) {
 				return MDHIM_ERROR;
 			}
 		}
-	} 
+	}
 
 	if (key_type == MDHIM_INT_KEY) {
 		ikey = *(uint32_t *)key;
@@ -255,11 +260,11 @@ int verify_key(struct index_t *index, void *key,
 
 	size_check = ikey/index->mdhim_max_recs_per_slice;
 	if (size_check >= MDHIM_MAX_SLICES) {
-		mlog(MDHIM_CLIENT_CRIT, "Error - Not enough slices for this key." 
+		mlog(MDHIM_CLIENT_CRIT, "Error - Not enough slices for this key."
 		     "  Try increasing the slice size.");
 		return MDHIM_ERROR;
 	}
-	
+
 	return MDHIM_SUCCESS;
 }
 
@@ -278,7 +283,7 @@ int is_float_key(int type) {
 		ret = 0;
 	} else if (type == MDHIM_BYTE_KEY) {
 		ret = 1;
-	} 
+	}
 
 	return ret;
 }
@@ -312,7 +317,7 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 
 	//Make sure this key is valid
 	if ((ret = verify_key(index, key, key_len, key_type)) != MDHIM_SUCCESS) {
-		mlog(MDHIM_CLIENT_INFO, "Rank: %d - Invalid key given", 
+		mlog(MDHIM_CLIENT_INFO, "Rank: %d - Invalid key given",
 		     md->mdhim_rank);
 		return MDHIM_ERROR;
 	}
@@ -328,25 +333,25 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 
 		break;
 	case MDHIM_BYTE_KEY:
-		/* Algorithm used		   
+		/* Algorithm used
 		   1. Iterate through each byte
 		   2. Transform each byte into a floating point number
 		   3. Add this floating point number to map_num
-		   4. Multiply this number times the total number of keys to get the number 
+		   4. Multiply this number times the total number of keys to get the number
 		      that represents the position in a range
 
 		   For #2, the transformation is as follows:
-		   
-		   Take the position of the character in the mdhim alphabet 
-                   times 2 raised to 8 * -(i + 1) 
+
+		   Take the position of the character in the mdhim alphabet
+                   times 2 raised to 8 * -(i + 1)
 		   where i is the current iteration in the loop
-		*/		
- 
+		*/
+
                 //Used for calculating the range server to use for this string
 	  //		map_num = 0;
-	  //		map_num = get_byte_num(key, key_len);	
+	  //		map_num = get_byte_num(key, key_len);
 	  //		key_num = floorl(map_num * total_keys);
-		key_num = get_byte_num(key, key_len);	
+		key_num = get_byte_num(key, key_len);
 //		printf("key_num is: %ld\n", key_num);
 //		fflush(stdout);
 		break;
@@ -366,27 +371,29 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 		break;
 	case MDHIM_STRING_KEY:
 		/* Algorithm used
-		   
+
 		   1. Iterate through each character
 		   2. Transform each character into a floating point number
 		   3. Add this floating point number to map_num
-		   4. Multiply this number times the total number of keys to get the number 
+		   4. Multiply this number times the total number of keys to get the number
 		      that represents the position in a range
 
 		   For #2, the transformation is as follows:
-		   
-		   Take the position of the character in the mdhim alphabet 
-                   times 2 raised to the MDHIM_ALPHABET_EXPONENT * -(i + 1) 
+
+		   Take the position of the character in the mdhim alphabet
+                   times 2 raised to the MDHIM_ALPHABET_EXPONENT * -(i + 1)
 		   where i is the current iteration in the loop
-		*/		
- 
+		*/
+
                 //Used for calculating the range server to use for this string
 		map_num = 0;
-		map_num = get_str_num(key, key_len);	
+		map_num = get_str_num(key, key_len);
 		key_num = floorl(map_num * total_keys);
 
 		break;
-	case MDHIM_UNIFYCR_KEY: break;
+	case MDHIM_UNIFYCR_KEY:
+		key_num = 0;
+		break;
 	default:
 		return MDHIM_ERROR;
 	}
@@ -418,7 +425,7 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
  * @param slice     the slice number
  * @return the rank of the range server or NULL on error
  */
-rangesrv_info *get_range_server_by_slice(struct mdhim_t *md, struct index_t *index, int slice) {
+static rangesrv_info *get_range_server_by_slice(struct index_t *index, int slice) {
 	//The number that maps a key to range server (dependent on key type)
 	uint32_t rangesrv_num;
 	//The range server number that we return
@@ -448,8 +455,9 @@ rangesrv_info *get_range_server_by_slice(struct mdhim_t *md, struct index_t *ind
  * @param key_len   length of the key
  * @return the rank of the range server or NULL on error
  */
-rangesrv_list *get_range_servers(struct mdhim_t *md, struct index_t *index, 
-				 void *key, int key_len) {
+rangesrv_list *get_range_servers(struct mdhim_t *md, struct index_t *index,
+				 void *key, int key_len)
+{
 	//The number that maps a key to range server (dependent on key type)
 	int slice_num;
 	//The range server number that we return
@@ -460,7 +468,7 @@ rangesrv_list *get_range_servers(struct mdhim_t *md, struct index_t *index,
 		return NULL;
 	}
 
-	ret_rp = get_range_server_by_slice(md, index, slice_num);       
+	ret_rp = get_range_server_by_slice(index, slice_num);
 	rl = NULL;
 	_add_to_rangesrv_list(&rl, ret_rp);
 
@@ -468,19 +476,19 @@ rangesrv_list *get_range_servers(struct mdhim_t *md, struct index_t *index,
 	return rl;
 }
 
-struct mdhim_stat *get_next_slice_stat(struct mdhim_t *md, struct index_t *index, 
-				       int slice_num) {
+static struct mdhim_stat *get_next_slice_stat(struct index_t *index, int slice_num)
+{
 	struct mdhim_stat *stat, *tmp, *next_slice;
 
 	next_slice = NULL;
 
-	//Iterate through the stat hash entries to find the slice 
+	//Iterate through the stat hash entries to find the slice
 	//number next after the given slice number
-	HASH_ITER(hh, index->stats, stat, tmp) {	
+	HASH_ITER(hh, index->stats, stat, tmp) {
 		if (!stat) {
 			continue;
 		}
-		
+
 		if (stat->key > slice_num && !next_slice) {
 			next_slice = stat;
 		} else if (next_slice && stat->key > slice_num && stat->key < next_slice->key) {
@@ -491,19 +499,19 @@ struct mdhim_stat *get_next_slice_stat(struct mdhim_t *md, struct index_t *index
 	return next_slice;
 }
 
-struct mdhim_stat *get_prev_slice_stat(struct mdhim_t *md, struct index_t *index, 
-				       int slice_num) {
+static struct mdhim_stat *get_prev_slice_stat(struct index_t *index, int slice_num)
+{
 	struct mdhim_stat *stat, *tmp, *prev_slice;
 
 	prev_slice = NULL;
 
-	//Iterate through the stat hash entries to find the slice 
+	//Iterate through the stat hash entries to find the slice
 	//number next after the given slice number
-	HASH_ITER(hh, index->stats, stat, tmp) {	
+	HASH_ITER(hh, index->stats, stat, tmp) {
 		if (!stat) {
 			continue;
 		}
-		
+
 		if (stat->key < slice_num && !prev_slice) {
 			prev_slice = stat;
 		} else if (prev_slice && stat->key < slice_num && stat->key > prev_slice->key) {
@@ -514,18 +522,19 @@ struct mdhim_stat *get_prev_slice_stat(struct mdhim_t *md, struct index_t *index
 	return prev_slice;
 }
 
-struct mdhim_stat *get_last_slice_stat(struct mdhim_t *md, struct index_t *index) {
+static struct mdhim_stat *get_last_slice_stat(struct index_t *index)
+{
 	struct mdhim_stat *stat, *tmp, *last_slice;
 
 	last_slice = NULL;
 
-	//Iterate through the stat hash entries to find the slice 
+	//Iterate through the stat hash entries to find the slice
 	//number next after the given slice number
-	HASH_ITER(hh, index->stats, stat, tmp) {	
+	HASH_ITER(hh, index->stats, stat, tmp) {
 		if (!stat) {
 			continue;
 		}
-		
+
 		if (!last_slice) {
 			last_slice = stat;
 		} else if (stat->key > last_slice->key) {
@@ -536,18 +545,19 @@ struct mdhim_stat *get_last_slice_stat(struct mdhim_t *md, struct index_t *index
 	return last_slice;
 }
 
-struct mdhim_stat *get_first_slice_stat(struct mdhim_t *md, struct index_t *index) {
+static struct mdhim_stat *get_first_slice_stat(struct index_t *index)
+{
 	struct mdhim_stat *stat, *tmp, *first_slice;
 
 	first_slice = NULL;
 
-	//Iterate through the stat hash entries to find the slice 
+	//Iterate through the stat hash entries to find the slice
 	//number next after the given slice number
-	HASH_ITER(hh, index->stats, stat, tmp) {	
+	HASH_ITER(hh, index->stats, stat, tmp) {
 		if (!stat) {
 			continue;
 		}
-		
+
 		if (!first_slice) {
 			first_slice = stat;
 		} else if (stat->key < first_slice->key) {
@@ -558,8 +568,9 @@ struct mdhim_stat *get_first_slice_stat(struct mdhim_t *md, struct index_t *inde
 	return first_slice;
 }
 
-int get_slice_from_fstat(struct mdhim_t *md, struct index_t *index, 
-			 int cur_slice, long double fstat, int op) {
+static int get_slice_from_fstat(struct index_t *index, int cur_slice,
+				long double fstat, int op)
+{
 	int slice_num = 0;
 	struct mdhim_stat *cur_stat, *new_stat;
 
@@ -579,24 +590,24 @@ int get_slice_from_fstat(struct mdhim_t *md, struct index_t *index,
 			slice_num = cur_slice;
 			goto done;
 		} else {
-			new_stat = get_prev_slice_stat(md, index, cur_slice);
+			new_stat = get_prev_slice_stat(index, cur_slice);
 			goto new_stat;
 		}
 
 		break;
 	case MDHIM_GET_FIRST:
-		new_stat = get_first_slice_stat(md, index);
+		new_stat = get_first_slice_stat(index);
 		goto new_stat;
 		break;
 	case MDHIM_GET_LAST:
-		new_stat = get_last_slice_stat(md, index);
+		new_stat = get_last_slice_stat(index);
 		goto new_stat;
 		break;
 	default:
 		slice_num = 0;
 		break;
 	}
-	
+
 done:
 	return slice_num;
 
@@ -608,13 +619,14 @@ new_stat:
 	}
 }
 
-int get_slice_from_istat(struct mdhim_t *md, struct index_t *index, 
-			 int cur_slice, uint64_t istat, int op) {
+static int get_slice_from_istat(struct index_t *index, int cur_slice,
+			 uint64_t istat, int op)
+{
 	int slice_num = 0;
 	struct mdhim_stat *cur_stat, *new_stat;
 
 	if (!index->stats) {
-		return 0;
+		return cur_slice;
 	}
 
 	new_stat = cur_stat = NULL;
@@ -623,40 +635,40 @@ int get_slice_from_istat(struct mdhim_t *md, struct index_t *index,
 
 	switch(op) {
 	case MDHIM_GET_NEXT:
-		if (cur_stat && *(uint64_t *)cur_stat->max > istat && 
+		if (cur_stat && *(uint64_t *)cur_stat->max >= istat &&
 		    *(uint64_t *)cur_stat->min <= istat) {
 			slice_num = cur_slice;
 			goto done;
-		} else {		
-			new_stat = get_next_slice_stat(md, index, cur_slice);
+		} else {
+			new_stat = get_next_slice_stat(index, cur_slice);
 			goto new_stat;
 		}
 
 		break;
 	case MDHIM_GET_PREV:
-		if (cur_stat && *(uint64_t *)cur_stat->min < istat && 
+		if (cur_stat && *(uint64_t *)cur_stat->min < istat &&
 		    *(uint64_t *)cur_stat->max >= istat ) {
 			slice_num = cur_slice;
 			goto done;
 		} else {
-			new_stat = get_prev_slice_stat(md, index, cur_slice);
+			new_stat = get_prev_slice_stat(index, cur_slice);
 			goto new_stat;
 		}
 
 		break;
 	case MDHIM_GET_FIRST:
-		new_stat = get_first_slice_stat(md, index);
+		new_stat = get_first_slice_stat(index);
 		goto new_stat;
 		break;
 	case MDHIM_GET_LAST:
-		new_stat = get_last_slice_stat(md, index);
+		new_stat = get_last_slice_stat(index);
 		goto new_stat;
 		break;
 	default:
 		slice_num = 0;
 		break;
 	}
-	
+
 done:
 	return slice_num;
 
@@ -670,7 +682,7 @@ new_stat:
 
 /* Iterate through the multi-level hash table in index->stats to find the range servers
    that could have the key */
-rangesrv_list *get_rangesrvs_from_istat(struct mdhim_t *md, struct index_t *index, 
+rangesrv_list *get_rangesrvs_from_istat(struct index_t *index, 
 					uint64_t istat, int op) {
 	struct mdhim_stat *cur_rank, *cur_stat, *tmp, *tmp2;
 	rangesrv_list *head, *lp, *entry;
@@ -691,22 +703,22 @@ rangesrv_list *get_rangesrvs_from_istat(struct mdhim_t *md, struct index_t *inde
 			if (cur_stat->num <= 0) {
 				continue;
 			}
-			
+
 			slice_num = -1;
 			switch(op) {
 			case MDHIM_GET_NEXT:
-				if (cur_stat && *(uint64_t *)cur_stat->max > istat && 
+				if (cur_stat && *(uint64_t *)cur_stat->max > istat &&
 				    *(uint64_t *)cur_stat->min - 1 <= istat) {
 					slice_num = cur_stat->key;
-				} 
+				}
 
 				break;
 			case MDHIM_GET_PREV:
-				if (cur_stat && *(uint64_t *)cur_stat->min < istat && 
+				if (cur_stat && *(uint64_t *)cur_stat->min < istat &&
 				    *(uint64_t *)cur_stat->max + 1 >= istat ) {
 					slice_num = cur_stat->key;
-				} 
-				
+				}
+
 				break;
 			case MDHIM_GET_FIRST:
 				if (!i) {
@@ -719,17 +731,17 @@ rangesrv_list *get_rangesrvs_from_istat(struct mdhim_t *md, struct index_t *inde
 				}
 				break;
 			case MDHIM_GET_EQ:
-				if (cur_stat && *(uint64_t *)cur_stat->max >= istat && 
+				if (cur_stat && *(uint64_t *)cur_stat->max >= istat &&
 				    *(uint64_t *)cur_stat->min <= istat) {
 					slice_num = cur_stat->key;
-				} 
+				}
 
 				break;
 			default:
 				slice_num = 0;
 				break;
 			}
-			
+
 			if (slice_num < 0) {
 				continue;
 			}
@@ -743,7 +755,7 @@ rangesrv_list *get_rangesrvs_from_istat(struct mdhim_t *md, struct index_t *inde
 			}
 
 			if (!head) {
-				lp = head = entry;				
+				lp = head = entry;
 			} else {
 				lp->next = entry;
 				lp = lp->next;
@@ -756,9 +768,9 @@ rangesrv_list *get_rangesrvs_from_istat(struct mdhim_t *md, struct index_t *inde
 	return head;
 }
 
-/* Iterate through the multi-level hash table in index->stats to find the range servers 
+/* Iterate through the multi-level hash table in index->stats to find the range servers
    that could have the key */
-rangesrv_list *get_rangesrvs_from_fstat(struct mdhim_t *md, struct index_t *index, 
+rangesrv_list *get_rangesrvs_from_fstat(struct index_t *index,
 					long double fstat, int op) {
 	struct mdhim_stat *cur_rank, *cur_stat, *tmp, *tmp2;
 	rangesrv_list *head, *lp, *entry;
@@ -779,21 +791,21 @@ rangesrv_list *get_rangesrvs_from_fstat(struct mdhim_t *md, struct index_t *inde
 			if (cur_stat->num <= 0) {
 				continue;
 			}
-			
+
 			slice_num = -1;
 			switch(op) {
 			case MDHIM_GET_NEXT:
-				if (cur_stat && *(long double *)cur_stat->max > fstat && 
+				if (cur_stat && *(long double *)cur_stat->max > fstat &&
 				    *(long double *)cur_stat->min - 1.0L <= fstat) {
 					slice_num = cur_stat->key;
-				} 
+				}
 				break;
 			case MDHIM_GET_PREV:
-				if (cur_stat && *(long double *)cur_stat->min < fstat && 
+				if (cur_stat && *(long double *)cur_stat->min < fstat &&
 				    *(long double *)cur_stat->max + 1.0L >= fstat ) {
 					slice_num = cur_stat->key;
-				} 
-				
+				}
+
 				break;
 			case MDHIM_GET_FIRST:
 				if (!i) {
@@ -806,17 +818,17 @@ rangesrv_list *get_rangesrvs_from_fstat(struct mdhim_t *md, struct index_t *inde
 				}
 				break;
 			case MDHIM_GET_EQ:
-				if (cur_stat && *(long double *)cur_stat->max >= fstat && 
+				if (cur_stat && *(long double *)cur_stat->max >= fstat &&
 				    *(long double *)cur_stat->min <= fstat) {
 					slice_num = cur_stat->key;
-				} 
-				
+				}
+
 				break;
 			default:
 				slice_num = 0;
 				break;
 			}
-			
+
 			if (slice_num < 0) {
 				continue;
 			}
@@ -829,7 +841,7 @@ rangesrv_list *get_rangesrvs_from_fstat(struct mdhim_t *md, struct index_t *inde
 			}
 
 			if (!head) {
-				lp = head = entry;				
+				lp = head = entry;
 			} else {
 				lp->next = entry;
 				lp = lp->next;
@@ -879,13 +891,15 @@ rangesrv_list *get_range_servers_from_stats(struct mdhim_t *md, struct index_t *
 			istat = *(uint64_t *) key;
 		} else if (index->key_type == MDHIM_BYTE_KEY) {
 			fstat = get_byte_num(key, key_len);
-		} 
+		}
 	}
 
-	//If we don't have any stats info, then return null	
-	if (!index->stats) {
-		mlog(MDHIM_CLIENT_CRIT, "Rank: %d - No statistics data available." 
-		     " Perform a mdhimStatFlush first.", 
+	//If we don't have any stats info, then return null
+	if (!index->stats &&
+	    op != MDHIM_GET_NEXT) /* Let GET_NEXT pass if no stats */
+	{
+		mlog(MDHIM_CLIENT_CRIT, "Rank: %d - No statistics data available."
+		     " Perform a mdhimStatFlush first.",
 		     md->mdhim_rank);
 		return NULL;
 	}
@@ -901,43 +915,43 @@ rangesrv_list *get_range_servers_from_stats(struct mdhim_t *md, struct index_t *
 
 			if (cur_slice == MDHIM_ERROR) {
 
-				mlog(MDHIM_CLIENT_CRIT, "Rank: %d - Error: could not determine a" 
-				     " valid a slice number", 
+				mlog(MDHIM_CLIENT_CRIT, "Rank: %d - Error: could not determine a"
+				     " valid a slice number",
 				     md->mdhim_rank);
 				return NULL;
-			}	
+			}
 		} else if (op != MDHIM_GET_FIRST && op != MDHIM_GET_LAST) {
 			//If the op is not first or last, then we expect a key
 
 			return NULL;
 		}
-	
+
 		if (float_type) {
-			slice_num = get_slice_from_fstat(md, index, cur_slice, fstat, op);
-		} else {	
-			slice_num = get_slice_from_istat(md, index, cur_slice, istat, op);
+			slice_num = get_slice_from_fstat(index, cur_slice, fstat, op);
+		} else {
+			slice_num = get_slice_from_istat(index, cur_slice, istat, op);
 		}
 
 		if (slice_num == MDHIM_ERROR) {
 			return NULL;
 		}
 
-		ret_rp = get_range_server_by_slice(md, index, slice_num);
+		ret_rp = get_range_server_by_slice(index, slice_num);
 		if (!ret_rp) {
-			mlog(MDHIM_CLIENT_INFO, "Rank: %d - Did not get a valid range server from" 
-			     " get_range_server_by_size", 
+			mlog(MDHIM_CLIENT_INFO, "Rank: %d - Did not get a valid range server from"
+			     " get_range_server_by_size",
 			     md->mdhim_rank);
 			return NULL;
 		}
-      
+
 		rl = NULL;
 		_add_to_rangesrv_list(&rl, ret_rp);
 	} else {
 		if (float_type) {
-			rl = get_rangesrvs_from_fstat(md, index, fstat, op);
-		} else {	
-			rl = get_rangesrvs_from_istat(md, index, istat, op);
-		}	       
+			rl = get_rangesrvs_from_fstat(index, fstat, op);
+		} else {
+			rl = get_rangesrvs_from_istat(index, istat, op);
+		}
 	}
 
 	//Return the range server information
@@ -988,7 +1002,7 @@ rangesrv_list *get_range_servers_from_range(struct mdhim_t *md, struct index_t *
 		gettimeofday(&rangehashend, NULL);
 		rangehashtime+=1000000*(rangehashend.tv_sec-rangehashstart.tv_sec)+rangehashend.tv_usec-rangehashstart.tv_usec;
 		gettimeofday(&serhashstart, NULL);
-		ret_rp = get_range_server_by_slice(md, index, i);
+		ret_rp = get_range_server_by_slice(index, i);
 		gettimeofday(&serhashend, NULL);
 		serhashtime+=1000000*(serhashend.tv_sec-serhashstart.tv_sec)+serhashend.tv_usec-serhashstart.tv_usec;
 
@@ -1011,7 +1025,7 @@ rangesrv_list *get_range_servers_from_range(struct mdhim_t *md, struct index_t *
 		rangehashtime+=1000000*(rangehashend.tv_sec-rangehashstart.tv_sec)+rangehashend.tv_usec-rangehashstart.tv_usec;
 
 		gettimeofday(&serhashstart, NULL);
-		ret_rp = get_range_server_by_slice(md, index, i);
+		ret_rp = get_range_server_by_slice(index, i);
 		gettimeofday(&serhashend, NULL);
 		serhashtime+=1000000*(serhashend.tv_sec-serhashstart.tv_sec)+serhashend.tv_usec-serhashstart.tv_usec;
 		if (!ret_rp) {
@@ -1029,12 +1043,12 @@ rangesrv_list *get_range_servers_from_range(struct mdhim_t *md, struct index_t *
 			if (unifycr_compare(ret_rp->first_key, cur_stat->min) > 0 ) {
 				ret_rp->first_key = cur_stat->min;
 			}
-		}	
+		}
 
 		_add_to_rangesrv_list(&rl, ret_rp);
 	}
 
 	//Return the range server information
 	return rl;
-
 }
+

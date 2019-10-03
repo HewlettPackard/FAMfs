@@ -58,7 +58,7 @@
 #define ULFS_ERROR_SOCK_LISTEN (ULFS_ERROR_BASE - 19)
 #define ULFS_ERROR_RM_INIT (ULFS_ERROR_BASE - 20)
 #define ULFS_ERROR_RM_RECV (ULFS_ERROR_BASE - 21)
-
+#define ULFS_ERROR_CFG (ULFS_ERROR_BASE - 22)
 
 
 #define ULFS_ERROR_ADDR ( ULFS_ERROR_BASE+10 )
@@ -127,6 +127,7 @@
 #define ULFS_STR_ERROR_ARRAY_EXCEED "Array out of bound."
 #define ULFS_STR_ERROR_RM_INIT "Fail to init request manager."
 #define ULFS_STR_ERROR_RM_RECV "Fail to receive data in request manager"
+#define ULFS_STR_ERROR_CFG "Fail to parse pool or layout configuration"
 #define ULFS_STR_ERROR_READ "Disk read error"
 #define ULFS_STR_ERROR_SEND "Send error"
 #define ULFS_STR_ERROR_RECV "Receive error"

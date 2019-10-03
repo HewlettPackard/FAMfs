@@ -1,5 +1,12 @@
 bin_PROGRAMS = unifycrd
 
+AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
+              -I$(top_srcdir)/meta/src/uthash \
+              -I$(top_srcdir)/meta/src/Mlog2 \
+              -I$(top_srcdir)/common/src
+
+AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+
 unifycrd_SOURCES = arraylist.c \
                    arraylist.h \
                    unifycr_cmd_handler.c \
@@ -24,18 +31,13 @@ unifycrd_SOURCES = arraylist.c \
                    lf_client.h \
                    log.h
 
+# Preprocessor options for inlined code from common/src/famfs_bbitops.h
+unifycrd_CPPFLAGS = -mbmi2 -funroll-loops --param max-completely-peel-times=64 $(AM_CPPFLAGS)
+
 unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 
-unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.a \
-                 $(top_builddir)/common/src/.libs/libfamfs_common.a \
-                 $(LEVELDB_LIBS) \
-                 -lpthread -lm -lstdc++ -lrt -lmpi -lfabric -lnuma
-
-AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
-              -I$(top_srcdir)/meta/src/uthash \
-              -I$(top_srcdir)/meta/src/Mlog2 \
-              -I$(top_srcdir)/common/src
-
-AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+unifycrd_LDADD = $(top_builddir)/meta/src/libmdhim.la \
+                 $(top_builddir)/common/src/libfamfs_common.la \
+                 $(LEVELDB_LIBS)
 
 CLEANFILES = $(bin_PROGRAMS)

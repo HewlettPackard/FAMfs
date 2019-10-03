@@ -7,6 +7,7 @@
 #ifndef FAMFS_ENV_H
 #define FAMFS_ENV_H
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,18 @@
 	_a > _b ? _a : _b; })
 #endif /* max */
 
+#define	IN_RANGE(v, mn, mx)	((v)>=(mn) && (v)<=(mx))/* [mn, mx] */
+#define	IS_POWER2(v)		(!(((v)-1) & (v)))	/* is the value a power of 2? */
+#define	DIV_CEIL(x, y)		(((x)+(y)-1)/(y))	/* divide and round up */
+#define	ROUND_UP(x, y)		((((x)+(y)-1)/(y))*(y))	/* round up */
+#define	ROUND_DOWN(n, sz)	(((n)/(sz)) * (sz))	/* floor */
+
+#ifndef container_of	/* defined in rdma/fabric.h */
+#define container_of(ptr, type, member)	({					\
+		const __typeof__( ((type *) NULL)->member ) *__mptr = (ptr);	\
+		(type *)( (char *)__mptr - offsetof(type,member) );})
+#endif /* container_of */
+
 typedef enum w_type_ {
 	W_T_LOAD = 0,
 	W_T_ENCODE,
@@ -47,6 +60,8 @@ void nodelist_free(char **nodelist, int size);
 void alloc_affinity(int **affp, int size, int pos);
 void ion_usage(const char *name);
 void daemonize(void);
+int f_parse_moniker(const char *moniker, int *data, int *parity,
+    int *mirrors, size_t *chunk_size);
 
 
 static inline size_t _getval(char *name, char *v, size_t df) {
@@ -143,6 +158,20 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define META_DEFAULT_SERVER_RATIO 1
 #define META_DEFAULT_RANGE_SZ MIB
 
+/* Pool and layout defaults */
+#define UNIFYCR_EXTENT_SIZE	(1 * GIB)
+#define UNIFYCR_EXTENT0_OFFSET	0
+#define UNIFYCR_ION_COUNT	1
+#define UNIFYCR_LAYOUTS_COUNT	1
+#define LAYOUT0_NAME		"1D:1M"
+
+/* Slabs, stripes and layout */
+#define FVAR_MONIKER_MAX	14	/* Max moniker string lemgth */
+#define F_CHUNK_SIZE_MIN	(4*KIB)	/* Minimum chunk size - 4K */
+#define F_CHUNK_SIZE_MAX	(16*MIB)
+#define F_LAYOUTS_MAX		2	/* Maximum number of layouts, for config & maps */
+
+
 /* Client */
 #define UNIFYCR_INDEX_BUF_SIZE (20 * MIB)
 #define UNIFYCR_FATTR_BUF_SIZE MIB
@@ -220,5 +249,6 @@ static inline const char *cmd2str(W_TYPE_t type)
 
 #define ION_FORCE_RAID	256
 #define ION_HW_MASK	0xff
+
 
 #endif /* FAMFS_ENV_H */

@@ -101,7 +101,7 @@ extern int __bbitmap_empty(const unsigned long *map, int size);
 extern int __bbitmap_full(const unsigned long *map, unsigned int pset, int size);
 extern int __bbitmap_equal(const unsigned long *map1,
     const unsigned long *map2, int size);
-extern int __bbitmap_weight(const unsigned long *map, unsigned int pset, int size);
+extern int __bbitmap_weight(const unsigned long *map, unsigned int pset, int start, int nr);
 extern void bbitmap_set(unsigned long *map, unsigned int val, int pos, int len);
 
 extern unsigned long bbitmap_find_next_unset_area(unsigned long *map,
@@ -182,7 +182,7 @@ static inline int bbitmap_weight(const unsigned long *src, unsigned int pset, in
 {
 	if (bb_pset_chk(pset))
 		return -1; /* ASSERT? */
-	return __bbitmap_weight(src, pset, nbits);
+	return __bbitmap_weight(src, pset, 0, nbits);
 }
 
 #if 0

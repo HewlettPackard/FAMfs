@@ -93,10 +93,10 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
 }
 
 // cleanup allocated state
-int unifycr_config_fini(unifycr_cfg_t *cfg)
+void unifycr_config_free(unifycr_cfg_t *cfg)
 {
     if (cfg == NULL)
-        return -1;
+        return;
 
 #define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)       \
     if (cfg->sec##_##key != NULL) {                     \
@@ -133,8 +133,6 @@ int unifycr_config_fini(unifycr_cfg_t *cfg)
 #undef UNIFYCR_CFG_CLI
 #undef UNIFYCR_CFG_MULTI
 #undef UNIFYCR_CFG_MULTI_CLI
-
-    return 0;
 }
 
 // print configuration to specified file (or stderr)
@@ -256,10 +254,14 @@ int unifycr_config_set_defaults(unifycr_cfg_t *cfg)
     if (cfg == NULL)
         return -1;
 
-#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)       \
-    val = stringify(dv);                                \
-    if (0 != strcmp(val, "NULLSTRING"))                 \
-        cfg->sec##_##key = strdup(val);
+#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)		\
+    val = stringify(dv);					\
+    if (0 != strcmp(val, "NULLSTRING")) {			\
+      if (!strcmp(#typ, "STRING") && val[0] == '\"' && strlen(val) > 1)\
+	cfg->sec##_##key = strndup(val+1, strlen(val)-2);	\
+      else							\
+        cfg->sec##_##key = strdup(val);				\
+    }
 
 #define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use) \
     val = stringify(dv);                                        \
@@ -995,5 +997,21 @@ int configurator_directory_check(const char *s __attribute__ ((unused)),
         else
             return errno; // invalid
     }
+}
+
+int configurator_moniker_check(const char *s __attribute__ ((unused)),
+                               const char *k __attribute__ ((unused)),
+                               const char *val,
+                               char **o __attribute__ ((unused)))
+{
+    size_t chunk_size;
+    int data, parity, mirrors, rc;
+
+    if (val) {
+	rc = f_parse_moniker(val, &data, &parity, &mirrors, &chunk_size);
+	if (mirrors || rc)
+		return -1;
+    }
+    return 0; /* pass null strings */
 }
 

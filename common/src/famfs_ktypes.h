@@ -29,8 +29,9 @@ typedef int16_t s16;
 typedef int32_t s32;
 typedef int64_t s64;
 typedef uint64_t dma_addr_t;
-
 #if 0
+typedef unsigned uint128_t __attribute__ ((mode (TI)));
+
 #define be16_to_cpup(X) __be16_to_cpup(X)
 #define be32_to_cpup(X) __be32_to_cpup(X)
 #define be64_to_cpup(X) __be64_to_cpup(X)
@@ -63,17 +64,19 @@ static inline int WARN_ON_ONCE(int val) { if(val != 0) printf("WARN_ON_ONCE\n");
 static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return val; }
 
 //RCU
+#define rcu_dereference_raw(p) (rcu_dereference(p))
+#define __must_check __attribute__((warn_unused_result))
+#define __force
+#define __user
+#if 0
 #define rcu_assign_pointer(a,b) ((a) = (b))
 #define rcu_dereference(X) ((X))
 #define rcu_dereference_protected(X, LOCK) ((X))
 #define rcu_read_lock()
 #define rcu_read_unlock()
 #define __bitwise__
-#define __must_check
-#define __user
 #define __kernel
 #define __safe
-#define __force
 #define __nocast
 #define __iomem
 #define __chk_user_ptr(x) (void)0
@@ -89,6 +92,7 @@ static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return va
 #define __rcu
 #define __read_mostly
 #define ____cacheline_aligned_in_smp __rte_cache_aligned
+#endif
 
 #define __pure                          __attribute__((pure))
 #define __aligned(x)                    __attribute__((aligned(x)))

@@ -175,6 +175,5 @@ extern int glb_rank, glb_size;
 extern int local_rank_idx;
 extern int *local_rank_lst;
 extern int local_rank_cnt;
-extern long max_recs_per_slice;
 extern int fam_fs;
 #endif

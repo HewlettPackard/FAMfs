@@ -61,8 +61,8 @@ double metatime=0;
 struct timeval sleepstart, sleepend;
 double sleeptime=0;
 
-extern char *mds_vec;
-extern int  num_mds;
+char *mds_vec = NULL;
+int  num_mds = 0;
 
 /**
  * to_lower
@@ -73,7 +73,7 @@ void to_lower(size_t in_length, char *in, char *out) {
     memset(out, 0, in_length);
 
     // Make sure that the name passed is lowercase
-    int i=0;
+    size_t i=0;
     for(i=0; i < in_length; i++) {
         out[i] = tolower(in[i]);
     }
@@ -530,7 +530,7 @@ int load_stats(struct mdhim_t *md, struct index_t *index) {
  * @param md  Pointer to the main MDHIM structure
  * @return MDHIM_SUCCESS or MDHIM_ERROR on error
  */
-int write_stats(struct mdhim_t *md, struct index_t *bi) {
+int write_stats(struct index_t *bi) {
 	struct mdhim_stat *stat, *tmp;
 	struct mdhim_db_stat *dbstat;
 	int float_type = 0;
@@ -695,8 +695,7 @@ uint32_t get_num_range_servers(struct mdhim_t *md, struct index_t *rindex) {
 struct index_t *create_local_index(struct mdhim_t *md, int db_type, int key_type, char *index_name) {
 	struct index_t *li;
 	struct index_t *check = NULL;
-	uint32_t rangesrv_num;
-	int ret;
+	int rangesrv_num, ret;
 
 	MPI_Barrier(md->mdhim_client_comm);
 
@@ -844,8 +843,7 @@ struct index_t *create_global_index(struct mdhim_t *md, int server_factor,
 				    int db_type, int key_type, char *index_name) {
 	struct index_t *gi;
 	struct index_t *check = NULL;
-	uint32_t rangesrv_num;
-	int ret;
+	int rangesrv_num, ret;
 
 	MPI_Barrier(md->mdhim_client_comm);
 	//Check that the key type makes sense
@@ -997,8 +995,7 @@ done:
  */
 int get_rangesrvs(struct mdhim_t *md, struct index_t *index) {
 	struct rangesrv_info *rs_entry_num, *rs_entry_rank;
-	uint32_t rangesrv_num;
-	int i;
+	int rangesrv_num, i;
 
 	//Iterate through the ranks to determine which ones are range servers
 	for (i = 0; i < md->mdhim_comm_size; i++) {
@@ -1093,7 +1090,7 @@ int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 		rangesrv_num++;
 	}
       		
-	if (rangesrv_num > index->num_rangesrvs) {
+	if (rangesrv_num > (int)index->num_rangesrvs) {
 		rangesrv_num = 0;
 	}
 
@@ -1116,7 +1113,7 @@ int index_init_comm(struct mdhim_t *md, struct index_t *bi) {
 	int i = 0;
 	int ret;
 	int comm_size, size;
-	MPI_Comm new_comm;
+	MPI_Comm comm, new_comm;
 	struct rangesrv_info *rangesrv, *tmp;
 
 	ranks = NULL;
@@ -1147,8 +1144,13 @@ int index_init_comm(struct mdhim_t *md, struct index_t *bi) {
 		}
 	}
 
+	if ((ret = MPI_Comm_dup(md->mdhim_comm, &comm)) != MPI_SUCCESS) {
+		mlog(MDHIM_SERVER_CRIT, "MDHIM Rank: %d - "
+		     "Error while dupping mdhim communicator", md->mdhim_rank);
+		return MDHIM_ERROR;
+	}
 	//Create a new group with the range servers only
-	if ((ret = MPI_Comm_group(md->mdhim_comm, &orig)) != MPI_SUCCESS) {
+	if ((ret = MPI_Comm_group(comm, &orig)) != MPI_SUCCESS) {
 		mlog(MDHIM_SERVER_CRIT, "MDHIM Rank: %d - " 
 		     "Error while creating a new group in range_server_init_comm", 
 		     md->mdhim_rank);
@@ -1162,7 +1164,7 @@ int index_init_comm(struct mdhim_t *md, struct index_t *bi) {
 		return MDHIM_ERROR;
 	}
 
-	if ((ret = MPI_Comm_create(md->mdhim_comm, new_group, &new_comm)) 
+	if ((ret = MPI_Comm_create(comm, new_group, &new_comm)) 
 	    != MPI_SUCCESS) {
 		mlog(MDHIM_SERVER_CRIT, "MDHIM Rank: %d - " 
 		     "Error while creating the new communicator in range_server_init_comm", 
@@ -1170,9 +1172,11 @@ int index_init_comm(struct mdhim_t *md, struct index_t *bi) {
 		return MDHIM_ERROR;
 	}
 	if ((ret = im_range_server(bi)) == 1) {
+		memcpy(&bi->md_comm, &comm, sizeof(MPI_Comm));
 		memcpy(&bi->rs_comm, &new_comm, sizeof(MPI_Comm));
 	} else {
 		MPI_Comm_free(&new_comm);
+		MPI_Comm_free(&comm);
 	}
 
 	MPI_Group_free(&orig);
@@ -1237,10 +1241,10 @@ get_index_by_name ( struct mdhim_t *md, char *index_name )
 return index;
 }		/* -----  end of function get_index_by_name  ----- */
 
-void indexes_release(struct mdhim_t *md) {
+int indexes_release(struct mdhim_t *md) {
 	struct index_t *cur_indx, *tmp_indx;
 	struct rangesrv_info *cur_rs, *tmp_rs;
-	int ret;
+	int ret, rc = 0;
 	struct mdhim_stat *stat, *tmp;
 
 	HASH_ITER(hh, md->indexes, cur_indx, tmp_indx) {
@@ -1259,10 +1263,11 @@ void indexes_release(struct mdhim_t *md) {
 		//Clean up the storage if I'm a range server for this index
 		if (cur_indx->myinfo.rangesrv_num > 0) {
 			//Write the stats to the database
-			if ((ret = write_stats(md, cur_indx)) != MDHIM_SUCCESS) {
+			if ((ret = write_stats(cur_indx)) != MDHIM_SUCCESS) {
 				mlog(MDHIM_SERVER_CRIT, "MDHIM Rank: %d - " 
 				     "Error while loading stats", 
 				     md->mdhim_rank);
+				rc = (rc == 0)?ret:rc;
 			}
 
 			if (cur_indx->myinfo.rangesrv_num == 1) {
@@ -1276,12 +1281,14 @@ void indexes_release(struct mdhim_t *md) {
 			    != MDHIM_SUCCESS) {
 				mlog(MDHIM_SERVER_CRIT, "Rank: %d - Error closing database", 
 				     md->mdhim_rank);
+				rc = (rc == 0)?ret:rc;
 			}
 			
 			pthread_rwlock_destroy(cur_indx->mdhim_store->mdhim_store_stats_lock);
 			free(cur_indx->mdhim_store->mdhim_store_stats_lock);
 			if (cur_indx->type != LOCAL_INDEX) {
 				MPI_Comm_free(&cur_indx->rs_comm);
+				MPI_Comm_free(&cur_indx->md_comm);
 			}
 			free(cur_indx->mdhim_store);
 		}
@@ -1301,6 +1308,7 @@ void indexes_release(struct mdhim_t *md) {
 	
 		free(cur_indx);
 	}
+	return rc;
 }
 
 int pack_stats(struct index_t *index, void *buf, int size, 
@@ -1414,7 +1422,9 @@ int get_stat_flush_global(struct mdhim_t *md, struct index_t *index) {
                     sendsize = num_items * sizeof(struct mdhim_db_istat);
 	}
 
-	if (index->myinfo.rangesrv_num > 0) {	
+	if (index->myinfo.rangesrv_num > 0) {
+		unsigned int j;
+
 		//Get the master range server rank according the range server comm
 		if ((ret = MPI_Comm_size(index->rs_comm, &master)) != MPI_SUCCESS) {
 			mlog(MPI_CRIT, "Rank: %d - " 
@@ -1439,16 +1449,16 @@ int get_stat_flush_global(struct mdhim_t *md, struct index_t *index) {
 			free(recvbuf);
 			goto error;
 		}
-		
+
 		num_items = 0;
 		displs = malloc(sizeof(int) * index->num_rangesrvs);
 		recvcounts = malloc(sizeof(int) * index->num_rangesrvs);
-		for (i = 0; i < index->num_rangesrvs; i++) {
-			displs[i] = num_items * stat_size;
-			num_items += ((int *)recvbuf)[i];
-			recvcounts[i] = ((int *)recvbuf)[i] * stat_size;
+		for (j = 0; j < index->num_rangesrvs; j++) {
+			displs[j] = num_items * stat_size;
+			num_items += ((int *)recvbuf)[j];
+			recvcounts[j] = ((int *)recvbuf)[j] * stat_size;
 		}
-		
+
 		free(recvbuf);
 		recvbuf = NULL;
 

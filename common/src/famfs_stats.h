@@ -154,7 +154,6 @@ extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
 #if (HAVE_FAM_SIM == 1)
 
 #include <stddef.h>		/* offsetof(type,member) */
-#include <rdma/fabric.h>	/* container_of(ptr, type, member) */
 #include <btrfs/list.h>	/* Simple doubly linked list implementation. */
 
 enum {

@@ -29,7 +29,7 @@
 
 #ifndef UNIFYCR_CMD_HANDLER_H
 #define UNIFYCR_CMD_HANDLER_H
-int delegator_handle_command(char *ptr_cmd, int sock_id);
+int delegator_handle_command(char *ptr_cmd, int sock_id, long max_recs_per_slice);
 int sync_with_client(char *buf, int client_id);
 int open_log_file(app_config_t *app_config,
                   int app_id, int client_id);

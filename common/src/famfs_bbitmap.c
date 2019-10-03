@@ -9,6 +9,7 @@
  * Version 2.  See the file COPYING for more details.
  */
 #include "famfs_ktypes.h"
+#include "famfs_bitmap.h"
 #include "famfs_bbitmap.h"
 #include "famfs_bbitops.h"
 
@@ -87,22 +88,36 @@ int __bbitmap_equal(const unsigned long *bbmap1,
 	return 1;
 }
 
-int __bbitmap_weight(const unsigned long *bbmap, unsigned int pset, int bits)
+int __bbitmap_weight(const unsigned long *map, unsigned int pset, int start, int nr)
 {
-	unsigned int bitmap;
-	int k, w, lim = bits/BBITS_PER_LONG;
+	const unsigned long *p = map + BBIT_WORD(start);
+	unsigned int bitmap, mask;
+	int s = start % BBITS_PER_LONG;
+	uint64_t w = 0;
 
-	w = 0;
-	for (k = 0; k < lim; k++) {
-		bitmap = bb_reduce(bbmap[k], pset);
-		w += __builtin_popcount(bitmap);
-	}
+	if (s) {
+		int bit0 = BBITS_PER_LONG - s;
 
-	bits %= BBITS_PER_LONG;
-	if (bits) {
-		bitmap = bb_reduce(bbmap[k], pset) & BITMAP_INT_MASK(bits);
-		w += __builtin_popcount(bitmap);
+		mask = (unsigned int) BITMAP_FIRST_WORD_MASK(s);
+		if (nr < bit0) {
+			 mask &= BITMAP_INT_MASK(s + nr);
+			goto _tail;
+		}
+		nr -= bit0;
+		bitmap = bb_reduce(*p++, pset) & mask;
+		w = __builtin_popcount(bitmap);
 	}
+	while (nr >= BBITS_PER_LONG) {
+		bitmap = bb_reduce(*p++, pset);
+		w += __builtin_popcount(bitmap);
+		nr -= BBITS_PER_LONG;
+	}
+	if (nr == 0)
+		return w;
+	mask = BITMAP_INT_MASK(nr);
+_tail:
+	bitmap = bb_reduce(*p, pset) & mask;
+	w += __builtin_popcount(bitmap);
 
 	return w;
 }
@@ -111,28 +126,31 @@ void bbitmap_set(unsigned long *map, unsigned int val, int start, int nr)
 {
 	unsigned long *p = map + BBIT_WORD(start);
 	const unsigned long wordmask = bb_mask(val);
-	unsigned long mask_to_set = BB_FIRST_WORD_MASK(start);
-	const int size = start + nr;
+	unsigned long mask_to_set;
+	int s = start % BBITS_PER_LONG;
 
-	if (start % BBITS_PER_LONG) {
-		int bits_to_set = BBITS_PER_LONG - (start % BBITS_PER_LONG);
+	if (s) {
+		int bits_to_set = BBITS_PER_LONG - s;
 
-		nr -= bits_to_set;
-		if (nr < 0)
+		mask_to_set = BB_FIRST_WORD_MASK(s);
+		if (nr < bits_to_set) {
+			mask_to_set &= BB_LAST_WORD_MASK(s + nr);
 			goto _tail;
+		}
+		nr -= bits_to_set;
 		*p &= ~mask_to_set;
 		*p |= wordmask & mask_to_set;
 		p++;
 	}
-	while (nr >= BITS_PER_LONG) {
+	while (nr >= BBITS_PER_LONG) {
 		*p = wordmask;
-		nr -= BITS_PER_LONG;
+		nr -= BBITS_PER_LONG;
 		p++;
 	}
 	if (nr == 0)
 		return;
+	mask_to_set = BB_LAST_WORD_MASK(nr);
 _tail:
-	mask_to_set &= BB_LAST_WORD_MASK(size);
 	*p &= ~mask_to_set;
 	*p |= wordmask & mask_to_set;
 }

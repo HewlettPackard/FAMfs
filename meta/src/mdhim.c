@@ -34,12 +34,13 @@
  *
  */
 
-#define _XOPEN_SOURCE 500
 #include <stdlib.h>
 #include <sys/time.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <ftw.h>
+#include <assert.h>
+
 #include "mdhim.h"
 #include "range_server.h"
 #include "client.h"
@@ -69,7 +70,7 @@
  */
 
 int dbg_rank;
-int unlink_cb(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf);
+
 struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 	int ret = 0;
 	int flag, provided;
@@ -219,7 +220,6 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 		     md->mdhim_rank);
 		return NULL;
 	}
-
 	//Create the default remote primary index
 	primary_index = create_global_index(md, opts->rserver_factor, opts->max_recs_per_slice, 
 					    opts->db_type, opts->db_key_type, NULL);
@@ -268,7 +268,8 @@ int mdhimClose(struct mdhim_t *md) {
 	partitioner_release();
 
 	//Free up memory used by indexes
-	indexes_release(md);
+	ret = indexes_release(md);
+	if (ret) return MDHIM_ERROR;
 
 	//Destroy the receive condition variable
 	if ((ret = pthread_cond_destroy(md->receive_msg_ready_cv)) != 0) {
@@ -300,6 +301,7 @@ int mdhimClose(struct mdhim_t *md) {
 
 	MPI_Comm_free(&md->mdhim_client_comm);
 	MPI_Comm_free(&md->mdhim_comm);
+	/* free(md->db_opts); */
         free(md);
 
 	//Close MLog
@@ -794,8 +796,7 @@ struct mdhim_bgetrm_t *mdhimBGetOp(struct mdhim_t *md, struct index_t *index,
 	void **keys;
 	int *key_lens;
 	struct mdhim_bgetrm_t *bgrm_head;
-	printf("num_records is is %d, MAX_BULK_OPS is %d\n", num_records,
-	       MAX_BULK_OPS);
+ //	printf("num_records is %d, MAX_BULK_OPS is %d\n", num_records, MAX_BULK_OPS);
 	fflush(stdout);
 
 	if (num_records > MAX_BULK_OPS) {
@@ -896,8 +897,10 @@ struct mdhim_brm_t *mdhimBDelete(struct mdhim_t *md, struct index_t *index,
 	return brm_head;
 }
 
-int unlink_cb(const char *fpath,\
-		const struct stat *sb, int typeflag, struct FTW *ftwbuf)
+static int unlink_cb(const char *fpath,
+    __attribute__((unused)) const struct stat *sb,
+    __attribute__((unused)) int typeflag,
+    __attribute__((unused)) struct FTW *ftwbuf)
 {
     int rv = remove(fpath);
 
@@ -1024,3 +1027,37 @@ void mdhimReleaseSecondaryBulkInfo(struct secondary_bulk_info *si) {
 
 	return;
 }
+
+ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *buf,
+    size_t size, uint64_t *keys)
+{
+	struct mdhim_bgetrm_t *bgrm;
+	int i, key_len;
+	void *keyp = keys;
+	unsigned long *p = buf;
+	ssize_t ret;
+
+	/* TODO: Pass buffer through _bget_records() */
+	key_len = sizeof(uint64_t);
+
+	bgrm = _bget_records(md, index, &keyp, &key_len, 1,
+			     size, MDHIM_GET_NEXT);
+	if (!bgrm || bgrm->error) {
+		ret = bgrm? bgrm->error : -1;
+		assert(ret < 0);
+		goto _err;
+	}
+	assert (bgrm->next == NULL);
+	assert (bgrm->keys && bgrm->values);
+	assert (IN_RANGE(bgrm->num_keys, 0, (int)size));
+
+	for (i = 0; i < bgrm->num_keys; i++) {
+		keys[i] = *((unsigned long*) bgrm->keys[i]);
+		memcpy(p, bgrm->values[i], bgrm->value_lens[i]);
+	}
+	ret = bgrm->num_keys;
+_err:
+	mdhim_full_release_msg(bgrm);
+	return ret;
+}
+

@@ -1,6 +1,14 @@
-noinst_LIBRARIES = libmdhim.a
+AM_CPPFLAGS = -I$(top_srcdir)/meta/src/Mlog2 \
+              -I$(top_srcdir)/meta/src/uthash \
+              -I$(top_srcdir)/common/src
+AM_CPPFLAGS += -mbmi2 -funroll-loops --param max-completely-peel-times=64
 
-libmdhim_a_SOURCES = Mlog2/mlog2.c \
+AM_CFLAGS = -DLEVELDB_SUPPORT -D_GNU_SOURCE=1 $(LEVELDB_CFLAGS) $(MPI_CFLAGS)
+AM_CFLAGS += -std=gnu99 -Wall -Wextra
+
+noinst_LTLIBRARIES = libmdhim.la
+
+libmdhim_la_SOURCES = Mlog2/mlog2.c \
                      Mlog2/mlog2.h \
                      Mlog2/mlogfacs2.h \
                      client.c \
@@ -25,13 +33,23 @@ libmdhim_a_SOURCES = Mlog2/mlog2.c \
                      indexes.h \
                      mdhim.c \
                      mdhim.h \
-                     uthash/uthash.h
+                     uthash/uthash.h \
+                     f_map.h f_map.c
 
-AM_CPPFLAGS = -I$(top_srcdir)/meta/src/Mlog2 \
-              -I$(top_srcdir)/meta/src/uthash \
-              -I$(top_srcdir)/common/src
+libmdhim_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la -lurcu-qsbr -lurcu-cds
 
-AM_CFLAGS = -DLEVELDB_SUPPORT $(LEVELDB_CFLAGS) $(MPI_CFLAGS)
-AM_CFLAGS += -Wall
+# unittests
+LDADD = $(top_builddir)/common/src/libfamfs_common.la libmdhim.la
+f_map_test_LDADD = $(LDADD) -lleveldb
+unit_tests = f_map_test
+EXTRA_PROGRAMS = ${unit_tests}
 
-CLEANFILES =
+tests: ${unit_tests}
+test: $(addsuffix .run,$(unit_tests))
+
+# Build rule to run tests
+%.run: %
+	./$<
+	 @echo Completed run: $<
+
+CLEANFILES = ${EXTRA_PROGRAMS}
