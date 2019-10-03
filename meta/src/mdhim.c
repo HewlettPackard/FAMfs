@@ -919,9 +919,8 @@ int mdhimSanitize(char *dbfilename, char *statfilename, char *manifestfilename) 
 	int rc = 0;
 
 	rc = rmrf(dbfilename);
-	rc = rmrf(statfilename);
-	rc = unlink(manifestfilename);
-
+	rc = (rc)? rc:rmrf(statfilename);
+	rc = (rc)? rc:unlink(manifestfilename);
 	return rc;
 
 }

@@ -64,33 +64,44 @@ static void meta_init_store(mdhim_options_t *db_opts) {
 }
 
 static int meta_sanitize() {
-    mdhim_options_t *db_opts = md->db_opts;
-    int i, rank, ret, rc = 0;
+    mdhim_options_t *db_opts;
+    int *ids, *types, max_id, indexes, i;
+    int rank, ret, rc = 0;
 
     char dbfilename[GEN_STR_LEN] = {0};
     char statfilename[GEN_STR_LEN+12] = {0};
     char manifestname[GEN_STR_LEN] = {0};
 
-    mdhimClose(md);
+    db_opts = md->db_opts;
     rank = md->mdhim_rank;
 
-    /* TODO: For each registered DB table */
-    for (i = 0; i < 2*F_LAYOUTS_MAX+1; i++) {
-	struct index_t *index = &unifycr_indexes[i];
-
-	if (!index)
+    indexes = 2*F_LAYOUTS_MAX+1;
+    ids = (int*) malloc(sizeof(int)*indexes);
+    types = (int*) malloc(sizeof(int)*indexes);
+    max_id = 0;
+    for (i = 0; i < indexes; i++) {
+	if (!unifycr_indexes[i])
 		continue;
+	ids[max_id] = unifycr_indexes[i]->id;
+	types[max_id] = unifycr_indexes[i]->type;
+	max_id++;
+    }
+    mdhimClose(md);
+
+    /* TODO: For each registered DB table */
+    for (i = 0; i < max_id; i++) {
         sprintf(dbfilename, "%s/%s-%d-%d", db_opts->db_path,
-                db_opts->db_name, index->id, rank);
+                db_opts->db_name, ids[i], rank);
         sprintf(statfilename, "%s_stats", dbfilename);
         sprintf(manifestname, "%s%d_%d_%d", db_opts->manifest_path,
-                index->type, index->id, rank);
+                types[i], ids[i], rank);
 
         ret = mdhimSanitize(dbfilename, statfilename, manifestname);
         if (rc == 0)
                 rc = ret; /* report first error */
     }
-
+    free(ids);
+    free(types);
     mdhim_options_destroy(db_opts);
 
     return rc;
@@ -518,7 +529,8 @@ int main (int argc, char *argv[]) {
     tg = 6;
     printf("Running group %d tests: KV store shutdown\n", tg);
     t = 0;
-    meta_sanitize(); /* must rurvive */
+    rc = meta_sanitize();
+    if (rc) goto err1;
     f_free_layout_info();
 
     printf("SUCCESS\n");

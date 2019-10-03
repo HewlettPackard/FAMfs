@@ -744,7 +744,8 @@ static int ps_bput(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
 int meta_sanitize()
 {
     mdhim_options_t *db_opts;
-    int i, rank, ret, rc = ULFS_SUCCESS;
+    int *ids, *types, max_id, i;
+    int rank, ret, rc = ULFS_SUCCESS;
 
     char dbfilename[GEN_STR_LEN] = {0};
     char statfilename[GEN_STR_LEN+12] = {0};
@@ -754,25 +755,31 @@ int meta_sanitize()
 
     db_opts = md->db_opts;
     rank = md->mdhim_rank;
+    ids = (int*) malloc(sizeof(int)*F_MD_IDX_SIZE);
+    types = (int*) malloc(sizeof(int)*F_MD_IDX_SIZE);
+    max_id = 0;
+    for (i = 0; i < F_MD_IDX_SIZE; i++) {
+	if (!unifycr_indexes[i])
+	    continue;
+	ids[max_id] = unifycr_indexes[i]->id;
+	types[max_id] = unifycr_indexes[i]->type;
+	max_id++;
+    }
     mdhimClose(md);
 
-    /* TODO: For each registered DB table */
-    for (i = 0; i < F_MD_IDX_SIZE; i++) {
-	struct index_t *index = &unifycr_indexes[i];
-
-	if (!index)
-		continue;
+    for (i = 0; i < max_id; i++) {
 	sprintf(dbfilename, "%s/%s-%d-%d", db_opts->db_path,
-		db_opts->db_name, index->id, rank);
+		db_opts->db_name, ids[i], rank);
 	sprintf(statfilename, "%s_stats", dbfilename);
 	sprintf(manifestname, "%s%d_%d_%d", db_opts->manifest_path,
-		index->type, index->id, rank);
+		types[i], ids[i], rank);
 
 	ret = mdhimSanitize(dbfilename, statfilename, manifestname);
 	if (rc == ULFS_SUCCESS)
 		rc = ret; /* report first error */
     }
-
+    free(ids);
+    free(types);
     mdhim_options_destroy(db_opts);
 
     return rc;
