@@ -51,8 +51,6 @@ AC_CHECK_HEADERS([stddef.h stdint.h strings.h syslog.h])
 AC_CHECK_HEADERS([inttypes.h wchar.h wctype.h])
 AC_CHECK_HEADER([openssl/md5.h], [], [AC_MSG_FAILURE([
         *** openssl/md5.h missing, openssl-devel package required])])
-AC_CHECK_HEADER([btrfs/list.h], [], [AC_MSG_FAILURE([
-        *** btrfs/list.h missing, btrfs-tools (btrfs-progs-devel) package required])])
 
 # Checks for library functions.
 AC_FUNC_MALLOC
