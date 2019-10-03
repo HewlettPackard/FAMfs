@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 
 #define SLICE_SIZE 10

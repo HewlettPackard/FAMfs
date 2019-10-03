@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 #include "db_options.h"
 

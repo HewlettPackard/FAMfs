@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 
 int main(int argc, char **argv) {

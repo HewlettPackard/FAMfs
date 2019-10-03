@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <sys/time.h>
 #include <assert.h>
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 
 #define KEYS 10000

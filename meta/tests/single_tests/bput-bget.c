@@ -3,12 +3,12 @@
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 
 //#define KEYS 100
 //#define TOTAL 100000000
-#define GEN_STR_LEN 1024
+//#define GEN_STR_LEN 1024
 
 extern double memgettime, ssdgettime;
 extern double imemgettime, maytime;

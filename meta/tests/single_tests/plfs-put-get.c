@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <linux/limits.h>
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 #include "mdhim_options.h"
 

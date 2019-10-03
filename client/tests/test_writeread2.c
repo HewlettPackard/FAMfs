@@ -25,7 +25,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
-#include "mpi.h"
+#include <mpi.h>
 
 //size_t filesize = 100*1024*1024;
 size_t filesize = 1024*1024;

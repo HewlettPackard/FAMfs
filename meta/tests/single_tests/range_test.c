@@ -40,11 +40,11 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/time.h>
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 
 #define MANIFEST_FILE_NAME "/mdhim_manifest_"
-#define GEN_STR_LEN 1024
+//#define GEN_STR_LEN 1024
 
 struct timeval putstart, putend;
 struct timeval calstart, calend;

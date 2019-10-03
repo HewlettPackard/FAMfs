@@ -193,7 +193,7 @@ int main(int argc, char *argv[]) {
 	if (direct_io)
 		fsync(fd);
 
-	printf("write to file\n");
+	printf("pre-warm write\n");
 
 	gettimeofday(&write_start, NULL);
 	long i, j, offset, rc, lw_off = 0;
@@ -201,7 +201,7 @@ int main(int argc, char *argv[]) {
 	for (i = 0; i < seg_num; i++) {
 		long jj;
 		for (jj = 0; jj < blk_sz/tran_sz; jj++) {
-			if (sequential_io) {
+			if (!sequential_io) {
 				j = jj;
 			} else {
 				j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
@@ -279,6 +279,114 @@ int main(int argc, char *argv[]) {
 			MPI_MAX, 0, MPI_COMM_WORLD);
 
 	if (rank == 0) {
+			printf("PW Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",\
+					agg_write_bw, min_write_bw);
+			printf("Per-process sync time %lf sec, Max %lf sec\n",
+				agg_meta_time / rank_num, max_meta_time);
+			fflush(stdout);
+	}
+	//free(buf);
+
+	printf("open file: %s\n", tmpfname);
+
+	flags = O_RDWR | O_CREAT | O_TRUNC;
+	if (direct_io)
+		flags |= O_DIRECT;
+	fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
+	if (fd < 0) {
+		printf("open file failure\n");
+		fflush(stdout);
+		return -1;
+	}
+	if (direct_io)
+		fsync(fd);
+
+	printf("write to file\n");
+
+	gettimeofday(&write_start, NULL);
+	lw_off = 0;
+	offset = 0;
+	for (i = 0; i < seg_num; i++) {
+		long jj;
+		for (jj = 0; jj < blk_sz/tran_sz; jj++) {
+			if (sequential_io) {
+				j = jj;
+			} else {
+				j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
+				if (j < 0)
+					j += (blk_sz/tran_sz - 1);
+			}
+			if (pat == 0)
+				offset = i * rank_num * blk_sz +
+					rank * blk_sz + j * tran_sz;
+			else if (pat == 1)
+				offset = i * blk_sz + j * tran_sz;
+
+			int k;
+                        lw_off = 0;
+			for (k = 0; k < tran_sz/sizeof(unsigned long); k++) {
+				unsigned long *p = &(((unsigned long*)buf)[k]);
+				//*p = offset + k;
+                                *p = offset + lw_off*sizeof(long);
+                                lw_off++;
+			}
+
+			rc = pwrite(fd, buf, tran_sz, offset);
+			if (rc < 0) {
+				printf("write failure\n");
+				fflush(stdout);
+				return -1;
+			}
+		}
+	}
+
+	printf("sync file\n");
+
+	gettimeofday(&meta_start, NULL);
+	fsync(fd);
+	gettimeofday(&meta_end, NULL);
+	meta_time += 1000000 * (meta_end.tv_sec - meta_start.tv_sec)\
+			+ meta_end.tv_usec - meta_start.tv_usec;
+	meta_time /= 1000000;
+	gettimeofday(&write_end, NULL);
+	write_time+=1000000 * (write_end.tv_sec - write_start.tv_sec)\
+			+ write_end.tv_usec - write_start.tv_usec;
+	write_time = write_time/1000000;
+
+	printf("close file\n");
+
+	close(fd);
+	if (direct_io) {
+		MPI_Barrier(MPI_COMM_WORLD);
+		printf("%s: drop_caches\n", hostname);
+		system("echo 1 > /proc/sys/vm/drop_caches");
+	}
+	MPI_Barrier(MPI_COMM_WORLD);
+
+
+	write_bw = (double)blk_sz\
+			* seg_num / 1048576 /write_time;
+	agg_write_bw = 0.;
+	MPI_Reduce(&write_bw, &agg_write_bw, 1, MPI_DOUBLE,\
+			MPI_SUM, 0, MPI_COMM_WORLD);
+
+	max_write_time = 0.;
+	MPI_Reduce(&write_time, &max_write_time, 1, MPI_DOUBLE,\
+			MPI_MAX, 0, MPI_COMM_WORLD);
+
+	min_write_bw = 0.;
+	min_write_bw=(double)blk_sz\
+			* seg_num * rank_num / 1048576 / max_write_time;
+
+	agg_meta_time = 0.;
+	MPI_Reduce(&meta_time, &agg_meta_time,  1, MPI_DOUBLE,\
+			MPI_SUM, 0, MPI_COMM_WORLD);
+
+	max_meta_time = 0.;
+	MPI_Reduce(&meta_time, &max_meta_time, 1, MPI_DOUBLE,\
+			MPI_MAX, 0, MPI_COMM_WORLD);
+
+	if (rank == 0) {
 			printf("Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",\
 					agg_write_bw, min_write_bw);
 			printf("Per-process sync time %lf sec, Max %lf sec\n",
@@ -288,8 +396,8 @@ int main(int argc, char *argv[]) {
 	//free(buf);
 
 	//MPI_Finalize();
-	MPI_Barrier(MPI_COMM_WORLD);
 	if (write_only) {
+	MPI_Barrier(MPI_COMM_WORLD);
 		MPI_Finalize();
 		exit(rc);
 	}

@@ -1,6 +1,9 @@
 include ../../Makefile.cfg
-CLIBS += -L../../src
+CLIBS += -L../../src/.libs
+CLIBS += -L../../../../../lib
 CINC += -I../../src -I../../src/uthash
+CC = mpicc
+
 all:	put-get bput-bget put-del bput-bdel put-getn \
 	put-getp puts-gets bput-bgetn bput-bgetp \
 	bput-bget_secondary put-get_secondary \
@@ -8,7 +11,7 @@ all:	put-get bput-bget put-del bput-bdel put-getn \
 	put-getn_secondary put-getn_secondary_local \
 	put-del_secondary put-getp_secondary put-get_2secondary_local \
 	put-del_secondary_local plfs-put-get index_name range_test \
-	range_bget put-bget
+	range_bget put-getn_primary
 
 put-get: put-get.c 
 	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
@@ -29,6 +32,9 @@ puts-gets: puts-gets.c
 	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
 
 put-getn: put-getn.c 
+	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
+
+put-getn_primary: put-getn_primary.c
 	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
 
 put-getn_secondary: put-getn_secondary.c 
@@ -80,9 +86,6 @@ bput-bdel: bput-bdel.c
 index_name: index_name.c
 	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
 
-put-bget: put-bget.c
-	$(CC) $< $(CINC) $(CLIBS) $(CFLAGS) -o $@
-
 clean:
 	rm -rf put-get bput-bget put-del bput-bdel\
 		put-getn put-getp range_test\
@@ -92,5 +95,5 @@ clean:
 		bput-bget_secondary_local put-getn_secondary_local \
 		put-getn_secondary put-del_secondary put-getp_secondary \
 		put-get_2secondary_local put-del_secondary_local plfs-put-get index_name \
-	  range_test range_bget put-bget
+	  range_test range_bget put-getn_primary
 

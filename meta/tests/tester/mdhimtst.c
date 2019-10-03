@@ -42,7 +42,7 @@ char * mdhimTst_c_id = "$Id: mdhimTst.c,v 1.00 2013/07/08 20:56:50 JHR Exp $";
 #include <fcntl.h>
 #include <ctype.h>
 
-#include "mpi.h"
+#include <mpi.h>
 #include "mdhim.h"
 #include "mdhim_options.h"
 
