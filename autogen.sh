@@ -68,6 +68,13 @@ if [ ! -f ${ISAL_DIR}/configure.ac ]; then
   SUGGEST="$SUGGEST\n (try to run 'git submodule update --init')"
 fi
 
+# Check for URCU
+URCU_DIR=userspace-rcu
+if [ ! -f ${URCU_DIR}/configure.ac ]; then
+  MISSING="$MISSING URCU"
+  SUGGEST="$SUGGEST\n (try to run 'cd FAMfs; git submodule update --init --recursive --remote')"
+fi
+
 # Check for yasm
 env yasm --version > /dev/null 2>&1
 if [ $? -ne 0 ]; then
@@ -91,6 +98,9 @@ fi
 
 echo Running autoreconf for $ISAL_DIR
 autoreconf --install --symlink -f $ISAL_DIR || { echo "FAILED to auto-configure ISA-L package!"; exit 1; }
+
+echo Running autoreconf for $URCU_DIR
+autoreconf --install --symlink -f $URCU_DIR || { echo "FAILED to auto-configure URCU package!"; exit 1; }
 
 ## Do the autogeneration
 echo Running ${ACLOCAL}...

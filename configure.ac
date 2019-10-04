@@ -340,6 +340,9 @@ AC_CONFIG_FILES([Makefile
 # Call node/isa-l configure script recursively
 AC_CONFIG_SUBDIRS([node/isa-l])
 
+# Call userspace-rcu configure script recursively
+AC_CONFIG_SUBDIRS([userspace-rcu])
+
 UNIFYCR_VERSION=${PACKAGE_VERSION}
 AC_SUBST(UNIFYCR_VERSION)
 AC_SUBST([LIBUNIFYCR_LT_VERSION], [1:0:0])
