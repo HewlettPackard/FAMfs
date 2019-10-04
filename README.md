@@ -46,6 +46,21 @@ For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PA
    cd <path_to_FAMfs>; source scripts/setup-env
 ```
 
+## Configure FAMfs
+Configure and build the package:
+```
+   make distclean; ./autogen.sh && ./configure --prefix=$TEST_DIR --disable-debug --with-gotcha=$TEST_DIR --enable-shared=famfs,libisal && echo Ok
+   make clean; make -j && make install && echo Ok
+```
+
+## Tests
+Run the regression and unit tests:
+```
+   make check && echo Ok
+   make -C common/src test
+   make -C meta/src test
+```
+
 ## Run Server
 mpirun -hosts 127.0.0.1 -np 1 -env LFS_COMMAND "x -H 172.24.186.96 -P0 --memreg scalable --provider sockets ENCODE" /bin/bash -c 'unifycrd'
 

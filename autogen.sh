@@ -102,6 +102,7 @@ autoreconf --install --symlink -f $ISAL_DIR || { echo "FAILED to auto-configure 
 echo
 echo Running autoreconf for $URCU_DIR
 autoreconf --install --symlink -f $URCU_DIR || { echo "FAILED to auto-configure URCU package!"; exit 1; }
+echo
 
 ## Do the autogeneration
 echo Running ${ACLOCAL}...

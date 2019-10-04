@@ -36,7 +36,7 @@ unifycrd_CPPFLAGS = -mbmi2 -funroll-loops --param max-completely-peel-times=64 $
 
 unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 
-unifycrd_LDADD = $(top_builddir)/userspace-rcu/src/.libs/liburcu.la \
+unifycrd_LDADD = $(top_builddir)/userspace-rcu/src/liburcu.la \
                  $(top_builddir)/meta/src/libmdhim.la \
                  $(top_builddir)/common/src/libfamfs_common.la \
                  $(LEVELDB_LIBS)

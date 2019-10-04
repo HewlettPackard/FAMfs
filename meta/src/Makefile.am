@@ -38,11 +38,14 @@ libmdhim_la_SOURCES = Mlog2/mlog2.c \
                      uthash/uthash.h \
                      f_map.h f_map.c
 
-libmdhim_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la -lurcu-qsbr -lurcu-cds
+LDADD = $(top_builddir)/common/src/libfamfs_common.la \
+        $(top_builddir)/userspace-rcu/src/liburcu.la
+
+libmdhim_la_LIBADD = $(LDADD) -lleveldb -lurcu-qsbr -lurcu-cds
 
 # unittests
-LDADD = $(top_builddir)/common/src/libfamfs_common.la libmdhim.la
-f_map_test_LDADD = $(LDADD) -lleveldb
+tests_LDADD = $(LDADD) libmdhim.la
+f_map_test_LDADD = $(tests_LDADD)
 unit_tests = f_map_test
 EXTRA_PROGRAMS = ${unit_tests}
 
