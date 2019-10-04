@@ -17,13 +17,33 @@ scalable metadata indexing, co-located I/O delegation, and server-side read
 clustering and pipelining.
 
 ## Checkout
-git clone --recurse-submodules https://github.hpe.com/pathforward-wp5/FAMfs.git
+```
+   git clone https://github.hpe.com/pathforward-wp5/FAMfs.git
+   cd FAMfs; git submodule init
+   git submodule update --recursive --remote
+```
+
+Note 1: If behind a firewall you may need to specify the proxy in 'git submodule update' command:
+```
+   git -c http.proxy=http://web-proxy.corp.hpecorp.net:8080 submodule update --recursive --remote
+```
+
+Note 2: Ensure you have "diff.submodule" property set in your git config to "log":
+```
+   git config --global diff.submodule "log"
+```
 
 ## Set ENV
+Ensure you have installed the dependencies: yasm (or masm), mpich, leveldb, gotcha, libfabric (zhpe-support, zhpe-libfabric and probably zhpe-driver).
+For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PATH and PATH to corresponding path in your test folder. Then source the additional envioronment variables from 'scripts/setup-env' file in FAMfs folder.
 ```
-   source /etc/profile.d/modules.sh && source /lvol/${USER}/spack/share/spack/setup-env.sh && source /ibnfs/${USER}/scripts/mpich-env && spack load leveldb && spack load gotcha && spack load libfabric
-   cd ~/FAMfs
-   source scripts/setup-env.sh
+   export TEST_DIR=<my_test_dir>
+   export CPPFLAGS+=" -I${TEST_DIR}/include"
+   export LDFLAGS+=" -L${TEST_DIR}/lib"
+   export LD_LIBRARY_PATH="${TEST_DIR}/lib:${LD_LIBRARY_PATH}"
+   export PKG_CONFIG_PATH="${TEST_DIR}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+   export PATH="${TEST_DIR}/bin:$PATH"
+   cd <path_to_FAMfs>; source scripts/setup-env
 ```
 
 ## Run Server
