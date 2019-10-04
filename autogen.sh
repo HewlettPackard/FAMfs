@@ -99,6 +99,7 @@ fi
 echo Running autoreconf for $ISAL_DIR
 autoreconf --install --symlink -f $ISAL_DIR || { echo "FAILED to auto-configure ISA-L package!"; exit 1; }
 
+echo
 echo Running autoreconf for $URCU_DIR
 autoreconf --install --symlink -f $URCU_DIR || { echo "FAILED to auto-configure URCU package!"; exit 1; }
 
@@ -108,9 +109,9 @@ $ACLOCAL
 echo Running ${AUTOHEADER}...
 $AUTOHEADER
 echo Running ${TOOL}...
-$TOOL --automake --copy --force
+$TOOL --automake --copy --force || exit 1
 echo Running ${AUTOCONF}...
-$AUTOCONF
+$AUTOCONF || exit 1
 echo Running ${AUTOMAKE}...
 $AUTOMAKE --add-missing --force-missing --copy --foreign || exit 1
 
