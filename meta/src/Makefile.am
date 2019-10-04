@@ -1,7 +1,8 @@
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src/Mlog2 \
               -I$(top_srcdir)/meta/src/uthash \
               -I$(top_srcdir)/common/src \
-              -I$(top_srcdir)/userspace-rcu/include
+              -I$(top_srcdir)/userspace-rcu/include \
+              -I$(top_srcdir)/userspace-rcu/src
 AM_CPPFLAGS += -mbmi2 -funroll-loops --param max-completely-peel-times=64
 
 AM_CFLAGS = -DLEVELDB_SUPPORT -D_GNU_SOURCE=1 $(LEVELDB_CFLAGS) $(MPI_CFLAGS)
