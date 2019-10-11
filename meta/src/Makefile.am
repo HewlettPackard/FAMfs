@@ -45,7 +45,7 @@ libmdhim_la_LIBADD = $(LDADD) -lleveldb -lurcu-qsbr -lurcu-cds
 
 # unittests
 tests_LDADD = $(LDADD) libmdhim.la
-f_map_test_LDADD = $(tests_LDADD)
+f_map_test_LDADD = $(tests_LDADD) -lurcu-qsbr -lurcu-cds
 unit_tests = f_map_test
 EXTRA_PROGRAMS = ${unit_tests}
 
