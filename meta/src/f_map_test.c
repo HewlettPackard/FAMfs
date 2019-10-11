@@ -19,18 +19,22 @@
 
 
 /* TEST options */
+#define TEST_MDHIM_DBG	0	/* 1: MDHIM debug enabled */
 #define RND_REPS	1000	/* number of passes for random test */
 #define BOS_PAGE_MAX	4	/* max BoS page size, in kernel pages */
 #define layout_id	0	/* use Layout 0 default configuration */
-
+#define MEM_KEY_BITS	64	/* in-memory maps: max global entry bits */
+#define DB_KEY_BITS	31	/* DB-backed maps: max global entry bits */
 
 /* Set highest and lowest order(RAND_MAX) bits randomly in 64-bit word */
-#define gen_rand_key(ul, v)			\
+#define gen_rand_key(ul, bits)			\
 	({ ul = RAND_MAX+1U;			\
-	v = 64 - __builtin_clzl(ul) + 1;	\
+	int _v = bits - __builtin_clzl(ul) + 1;	\
 	ul = (uint64_t)rand();			\
-	ul = ul << v;				\
-	ul += rand();				\
+	if (_v > 0) {				\
+		ul = ul << _v;			\
+		ul += rand();			\
+	}					\
 	ul; })
 
 /* MDHIM and Layout config */
@@ -41,7 +45,8 @@ struct index_t *unifycr_indexes[2*F_LAYOUTS_MAX+1]; /* +1 for primary_index */
 
 static int create_persistent_map(int map_id, int intl, char *name);
 static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
-static int ps_bput(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
+    size_t value_len);
 
 static F_META_IFACE_t iface = {
 	.create_map_fn = &create_persistent_map,
@@ -56,7 +61,9 @@ static int meta_init_conf(unifycr_cfg_t *server_cfg_p, mdhim_options_t **db_opts
 
 static void meta_init_store(mdhim_options_t *db_opts) {
 	int i;
-
+#if TEST_MDHIM_DBG > 0
+	mdhim_options_set_debug_level(db_opts, MLOG_DBG); /* Uncomment for DB DEBUG! */
+#endif
 	md = mdhimInit(NULL, db_opts);
 	unifycr_indexes[0] = md->primary_index;
 	for (i = 1; i <= 2*F_LAYOUTS_MAX; i++)
@@ -118,6 +125,8 @@ static int create_persistent_map(int map_id, int intl, char *name)
 					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
 	if (unifycr_indexes[id] == NULL)
 		return -1;
+	printf(" create_persistent_map:%d %s index[%u] interleave:%d\n",
+	       map_id, name, id, intl);
     }
     return 0;
 }
@@ -129,9 +138,12 @@ static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *ke
         return mdhim_ps_bget(md, primary_index, buf, size, keys);
 }
 
-static int ps_bput(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
+    size_t value_len)
 {
-	return 0;
+        struct index_t *primary_index = unifycr_indexes[map_id + 1];
+
+	return mdhim_ps_bput(md, primary_index, buf, size, keys, value_len);
 }
 
 
@@ -176,8 +188,8 @@ int main (int argc, char *argv[]) {
     uint64_t e, ul;
     unsigned long *p;
     int pass, tg, t;
-    int all_parts, v, rc;
-    unsigned int e_sz, long_bbits, pages, ext;
+    int global, v, rc;
+    unsigned int e_sz, long_bbits, pages, ext, pui;
     size_t page, page_sz;
 
     srand((unsigned int)time(NULL));
@@ -185,9 +197,12 @@ int main (int argc, char *argv[]) {
 
     rcu_register_thread();
 
-    all_parts = 0;
+    global = 1;
+    pui = 0;
 
-    /* Test group one: in-memory bitmaps */
+    /*
+     * Test group one: in-memory bitmaps
+     */
     tg = 1;
     printf("Running group %d tests: in-memory bitmaps\n", tg);
 
@@ -210,14 +225,14 @@ int main (int argc, char *argv[]) {
 	    /* check BoS size */
 	    if (m->bosl_entries != (unsigned int)(m->bosl_sz*8/e_sz)) goto err1;
 	    /* set partition */
-	    rc = f_map_init_prt(m, 2, 1, 0, 0);
+	    rc = f_map_init_prt(m, 2, 1, 0, global);
 	    if (rc || !f_map_is_partitioned(m)) goto err1;
 
 	    /* Iteration of a test group - we need to repeat tests with a random arg(s) */
 	    for (pass = 0; pass < RND_REPS; pass++) {
 		t = 1; /* Add single entry at random */
 		/* random 64-bit key */
-		e = gen_rand_key(ul, v);
+		e = gen_rand_key(ul, MEM_KEY_BITS);
 		/* set entry @e */
 		bosl = f_map_new_bosl(m, e);
 		if (!bosl || bosl->map->nr_bosl != 1) goto err1;
@@ -294,7 +309,9 @@ int main (int argc, char *argv[]) {
 	}
     }
 
-    /* Test group two: in-memory structured map */
+    /*
+     * Test group two: in-memory structured map
+     */
     tg = 2;
     printf("Running group %d tests: in-memory structured map\n", tg);
 
@@ -318,10 +335,10 @@ int main (int argc, char *argv[]) {
 				(1U << m->geometry.pu_factor);
 	    if (m->bosl_entries != (unsigned int)ul) goto err1;
 
-	    /* Iteration of a test group - we need to repeat tests with a random arg(s) */
+	    /* Iteration of the group - we need to repeat tests with random entry */
 	    for (pass = 0; pass < RND_REPS; pass++) {
 		t = 1; /* Add single entry at random */
-		e = gen_rand_key(ul, v);
+		e = gen_rand_key(ul, MEM_KEY_BITS);
 		/* set entry @e */
 		bosl = f_map_new_bosl(m, e);
 		if (!bosl || bosl->map->nr_bosl != 1) goto err1;
@@ -402,7 +419,9 @@ int main (int argc, char *argv[]) {
     }
     rcu_unregister_thread();
 
-    /* Test group four: Init KV store */
+    /*
+     * Test group three: Init KV store
+     */
     tg = 3;
     printf("Running group %d tests: init KV store\n", tg);
     pass = 0;
@@ -433,7 +452,9 @@ int main (int argc, char *argv[]) {
     meta_init_store(db_opts);
     if (md == NULL || unifycr_indexes[0] == NULL) goto err;
 
-    /* Test group three: Bitmaps with KV store backend */
+    /*
+     * Test group four: Bitmaps with KV store backend
+     */
     tg = 4;
     printf("Running group %d tests: bitmaps with KV store backend\n", tg);
 
@@ -453,28 +474,33 @@ int main (int argc, char *argv[]) {
 	    if (!m) goto err0;
 
 	    /* Test partitioned map with only partition, all partitions */
-	    for (all_parts = 0; all_parts <= 1; all_parts++) {
+	    for (global = 0; global <= 1; global++) {
 
 		t = 1; /* set partition */
-		rc = f_map_init_prt(m, 2, 1, 0, all_parts);
-		if (rc || !(m->own_part ^ (unsigned int)all_parts)) goto err1;
+		e = 0;
+		rc = f_map_init_prt(m, 2, 1, 0, global);
+		if (rc || !(m->own_part ^ (unsigned)global)) goto err1;
+ //printf(" pages:%u e_sz:%u global:%d - Test %d.%d Ok\n", pages, e_sz, global, tg, t);
 
 		/* Test iterations */
 		for (pass = 0; pass < RND_REPS; pass++) {
 		    F_BOSL_t *bosl0 = NULL;
 
 		    t = 2; /* Register map with Layout0 */
+		    e = 0;
 		    rc = f_map_register(m, layout_id);
 		    if (rc != 0) goto err1;
 
 		    t = 3; /* Load empty map */
 		    rc = f_map_load(m);
 		    if (rc != 0) goto err1;
+		    if (m->nr_bosl != 0) goto err1;
 
-		    t = 4; /* f_map_seek_iter(it, 0) */
+		    t = 4; /* f_map_seek_iter(it, 0) - Create BoS #0 */
 		    it = f_map_get_iter(m, F_NO_CONDITION);
 		    if (!it || !((bosl = it->bosl))) goto err2;
-		    if (bosl->entry0 != 0 || !f_map_get_p(m, 0)) goto err3;
+		    if (bosl->entry0 != 0) goto err3;
+		    if (!(p = f_map_get_p(m, 0))) goto err3;
 		    if (m->nr_bosl != 1) goto err3;
 
 		    t = 5; /* Iterate the empty map */
@@ -483,14 +509,21 @@ int main (int argc, char *argv[]) {
 		    f_map_free_iter(it); it = NULL;
 
 		    t = 6; /* Add single entry at random */
-		    /* random 64-bit key */
-		    e = gen_rand_key(ul, v);
+		    /* random 31-bit key */
+		    e = gen_rand_key(ul, DB_KEY_BITS);
+		    /* 'global' entry ID in partition map is limited
+		    to DB_KEY_BITS so make 'local' entry ID shorter */
+		    if (!f_map_has_globals(m))
+			e >>= ilog2(m->parts);
 		    /* save old BoS pointer if 'e' in another BoS */
 		    if (!f_map_entry_in_bosl(bosl, e))
 			bosl0 = bosl;
 		    /* set entry @e */
 		    bosl = f_map_new_bosl(m, e); /* if no BoS, create it */
 		    ul = e - bosl->entry0;
+		    pui = ul/(1U << m->geometry.pu_factor);
+ printf(" e:%lu @%lu in BoS %lu e0:%lu PU:%u\n",
+ e, ul, bosl->entry0/m->bosl_entries, bosl->entry0, pui);
 		    /* set entry */
 		    if (e_sz == 1) {
 			long_bbits = BITS_PER_LONG;
@@ -505,17 +538,20 @@ int main (int argc, char *argv[]) {
 		    v = bitmap_weight(bosl->dirty,
 				      m->geometry.bosl_pu_count);
 		    if (v != 1) goto err2;
+		    ul = find_first_bit(bosl->dirty, m->geometry.bosl_pu_count);
+		    if (ul != pui) goto err2;
+		    //ul = e - bosl->entry0;
 
 		    t = 8; /* flush map */
 		    rc = f_map_flush(m);
 		    if (rc != 0) goto err2;
+ //printf(" - %d Ok\n", t);
 
 		    t = 9; /* delete all BoS entries */
 		    if ((rc = f_map_delete_bosl(m, bosl))) goto err2;
 		    if (bosl0)
 			if ((rc = f_map_delete_bosl(m, bosl0))) goto err2;
 		    if (m->nr_bosl) goto err2;
- //printf(" - %d Ok\n", t);
 		}
 	    }
 	    t = 13; /* map exit: must survive */
@@ -525,7 +561,9 @@ int main (int argc, char *argv[]) {
     }
     rcu_unregister_thread();
 
-    /* Test group six: shutdown KV store thread */
+    /*
+     * Test group six: shutdown KV store thread
+     */
     tg = 6;
     printf("Running group %d tests: KV store shutdown\n", tg);
     t = 0;
@@ -540,16 +578,18 @@ err3:
     printf("   Iterator @%lu BoS#%lu p:%p\n",
 	it->entry,
 	it->bosl->entry0/it->map->bosl_entries,
-	(f_cond_has_vf(it->cond)?NULL:it->word_p));
+	(f_map_is_structured(it->map)?NULL:it->word_p));
 err2:
     printf("  page:%p p:%p BoS #%lu e0:%lu\n",
 	bosl->page, p, e/m->bosl_entries, bosl->entry0);
 err1:
     printf("  Map entry:%lu in BoS sz:%lu (%u entries) BoS count:%lu rc=%d var=%d\n"
-	   "  Part %u of %u - %s\n",
+	   "  Part %u of %u in %spartitioned %s map; interleave:%u entries, %u PUs\n",
 	e, m->bosl_sz, m->bosl_entries, m->nr_bosl, rc, v,
-	m->part, m->parts,
-	m->own_part?"single":"global");
+	m->part, m->parts, (m->parts<=1)?"non-":"",
+	f_map_has_globals(m)?"global":"local",
+	1U<<m->geometry.intl_factor,
+	1U<<(m->geometry.intl_factor-m->geometry.pu_factor));
 err0:
     printf("  entry_size:%u, %u pages per BoS\n", e_sz, pages);
 err:

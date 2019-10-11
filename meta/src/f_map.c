@@ -9,6 +9,8 @@
 //#include <assert.h>
 #include <unistd.h>
 
+#include "famfs_bitmap.h"
+
 #define e_to_bosl(bosl, e) (e - bosl->entry0)
 
 
@@ -20,12 +22,13 @@ static F_BOSL_t *bosl_alloc(size_t size)
 	if (bosl) {
 		if (posix_memalign((void**)&bosl->page, 4096, size)) {
 			free(bosl);
-			bosl = NULL;
-		} else
-			memset(bosl->page, 0, size);
+			return NULL;
+		}
+		memset(bosl->page, 0, size);
+
+		pthread_spin_init(&bosl->dirty_lock, PTHREAD_PROCESS_PRIVATE);
+		pthread_rwlock_init(&bosl->rwlock, NULL);
 	}
-	pthread_spin_init(&bosl->dirty_lock, PTHREAD_PROCESS_PRIVATE);
-	pthread_rwlock_init(&bosl->rwlock, NULL);
 	return bosl;
 }
 
@@ -37,10 +40,17 @@ static void bosl_free(F_BOSL_t *bosl)
 	free(bosl);
 }
 
+static inline void _f_map_clear_pu_dirty_bosl(F_BOSL_t *bosl, uint64_t pu)
+{
+	pthread_spin_lock(&bosl->dirty_lock);
+	clear_bit64(pu, bosl->dirty);
+	pthread_spin_unlock(&bosl->dirty_lock);
+}
+
 static inline void _f_map_mark_pu_dirty_bosl(F_BOSL_t *bosl, uint64_t pu)
 {
 	pthread_spin_lock(&bosl->dirty_lock);
-	set_bit(pu, bosl->dirty);
+	set_bit64(pu, bosl->dirty);
 	pthread_spin_unlock(&bosl->dirty_lock);
 }
 
@@ -147,19 +157,9 @@ static inline F_BOSL_t *map_insert_bosl(F_MAP_t *map, uint64_t entry)
 static unsigned long *_bosl_ffind(F_BOSL_t *bosl, uint64_t e)
 {
 	F_MAP_t *map = bosl->map;
-	unsigned int entry_sz = map->geometry.entry_sz;
-	unsigned long *p;
+	unsigned long *p = bosl->page;
 
-	if (f_map_is_structured(map)) {
-		/* size in bytes */
-		assert(entry_sz % 8 == 0);
-		p = bosl->page + e*entry_sz/sizeof(long);
-	} else {
-		/* size in bits */
-		assert(entry_sz == 1 || entry_sz == 2);
-		p = bosl->page + e*entry_sz/BITS_PER_LONG;
-	}
-	return p;
+	return p + f_map_values_p_off(map, e, p);
 }
 
 /* Return a poiner to the entry in BoS or NULL if out of BoS range */
@@ -170,30 +170,44 @@ static unsigned long *bosl_ffind(F_BOSL_t *bosl, uint64_t e)
 	return NULL;
 }
 
-/* */
-void copy_values_to_bosl(F_BOSL_t *bosl_to, uint64_t off_to,
-    unsigned long *from, uint64_t off_from, size_t size)
+/* Copy one PU from buffer 'from' @pu_from to BoS @pu_to */
+static void copy_pu_to_bosl(F_BOSL_t *bosl_to, uint64_t pu_to,
+    unsigned long *buf_from, uint64_t pu_from)
 {
 	F_MAP_t *map = bosl_to->map;
-	unsigned int entry_sz = map->geometry.entry_sz;
-	unsigned long *to = bosl_to->page;
-	bool bmap = !f_map_is_structured(map);
-	unsigned int per_long, per_byte;
+	size_t size;
+	unsigned long *from, *to;
 
-	if (bmap) {
-		per_byte = 8/entry_sz;
-		size /= per_byte;
-		per_long = per_byte*sizeof(long);
-		to += off_to/per_long;
-		from += off_from/per_long;
-	} else {
-		size *= entry_sz;
-		per_long = entry_sz/sizeof(long);
-		to += off_to*per_long;
-		from += off_from*per_long;
-	}
+	assert(pu_to < F_MAP_MAX_BOS_PUS);
+	assert(pu_to < map->geometry.bosl_pu_count);
+	size = f_map_pu_size(map);
+	from = buf_from + f_map_pu_p_sz(map, pu_from, from);
+	to   = bosl_to->page + f_map_pu_p_sz(map, pu_to, to);
+
+	/* No lock! */
 	memcpy(to, from, size);
 	bosl_to->loaded = 1;
+}
+
+/* Copy one PU from BoS @pu_from to 'buf' @pu_to.
+ * Clear dirty bit.
+ */
+static void copy_pu_from_bosl(unsigned long *buf_to, uint64_t pu_to,
+    F_BOSL_t *bosl, uint64_t pu_from)
+{
+	F_MAP_t *map = bosl->map;
+	size_t size;
+	unsigned long *from, *to;
+
+	assert(pu_from < F_MAP_MAX_BOS_PUS);
+	size = f_map_pu_size(map);
+	from = bosl->page + f_map_pu_p_sz(map, pu_from, from);
+	to   = buf_to + f_map_pu_p_sz(map, pu_to, to);
+
+	pthread_spin_lock(&bosl->dirty_lock);
+	clear_bit64(pu_from, bosl->dirty);
+	memcpy(to, from, size);
+	pthread_spin_unlock(&bosl->dirty_lock);
 }
 
 
@@ -319,10 +333,11 @@ int f_map_register(F_MAP_t *m, int layout_id)
 int f_map_load(F_MAP_t *map)
 {
 	F_BOSL_t *bos_buf;
-	F_ITER_t *it = NULL;
-	unsigned int part, parts, pu_per_bos, e_per_pu, pu_factor;
+	F_ITER_t *it;
+	unsigned int part, parts, pu_per_bos, pu_factor;
 	unsigned int i, count, intl;
 	size_t size;
+	size_t total = 0, pu_cnt = 0;
 	ssize_t rcv_cnt;
 	uint64_t *offsets, *off, *keys;
 	int map_id, ret = 0;
@@ -331,15 +346,14 @@ int f_map_load(F_MAP_t *map)
 		return -1;
 
 	parts = map->parts;
+	pu_per_bos = map->geometry.bosl_pu_count;
 	offsets = (uint64_t *) calloc(sizeof(uint64_t), parts);
-	keys = (uint64_t *) calloc(sizeof(uint64_t), parts);
+	keys = (uint64_t *) calloc(sizeof(uint64_t), pu_per_bos);
 	if (!offsets || !keys)
 		return -ENOMEM;
 
-	pu_per_bos = map->geometry.bosl_pu_count;
 	intl = 1U << map->geometry.intl_factor;
 	pu_factor = map->geometry.pu_factor;
-	e_per_pu = 1U << pu_factor;
 	map_id = map->id;
 
 	/* Allocate I/O buffer */
@@ -349,11 +363,11 @@ int f_map_load(F_MAP_t *map)
 	it = f_map_new_iter(map, F_NO_CONDITION);
 
 	/* Until we reach the end on all partitions */
-	count = map->own_part?1:parts;
+	count = f_map_has_globals(map)? parts:1;
 	do {
 		/* For each map partition */
 		for (part = 0; part < parts; part++) {
-			if (map->own_part && part != map->part)
+			if (part != map->part && !f_map_has_globals(map))
 				continue;
  // printf(" f_map_load parts:%u count:%u part:%u\n", parts, count, part);
 
@@ -378,54 +392,313 @@ int f_map_load(F_MAP_t *map)
 				*off = ~(0UL); /* special mark: at partition end */
 				count--;
 			}
+			total += size; /* stats */
 
 			/* For all buffer PUs */
 			for (i = 0; size > 0; i++, size--) {
 				uint64_t e, pu;
 
-				e = keys[i] * e_per_pu;
+				e = keys[i];
  //printf("      i:%u e:%lu\n", i, e);
-				if (!f_map_prt_has_global(map, e, part)) {
+				if (!f_map_has_globals(map)) {
 					/* TODO: Need a special case for re-partitioning */
-					break;
+					if (!f_map_prt_has_global(map, e, part))
+						break;
+					e = f_map_prt_to_local(map, e);
 				}
-				e = (map->own_part)? f_map_prt_to_local(map, e) : e;
+				pu_cnt++; /* stats */
+
 				/* Prepare BoS */
 				assert (f_map_seek_iter(it, e));
-				/* copy values */
+				/* Copy PU values */
 				e = e_to_bosl(it->bosl, e);
-				copy_values_to_bosl(it->bosl, e,
-						    bos_buf->page, i * e_per_pu,
-						    e_per_pu);
-				/* mark PU dirty */
 				pu = e >> pu_factor;
-				_f_map_mark_pu_dirty_bosl(it->bosl, pu);
+				copy_pu_to_bosl(it->bosl, pu,
+						bos_buf->page, i);
+				/* Clear PU dirty bit */
+				// _f_map_clear_pu_dirty_bosl(it->bosl, pu);
 			}
 		}
 	} while (count > 0);
 	map->loaded = 1;
 
 _exit:
+ printf(" Load map:%d read %zu, got %zu PUs rc:%d\n", map_id, total, pu_cnt, ret);
 	f_map_free_iter(it);
+	bosl_free(bos_buf);
 	free(offsets);
 	free(keys);
-	bosl_free(bos_buf);
 	return ret;
 }
 
 /* Update (load from KV store) only map entries given in the stripe list */
 int f_map_update(F_MAP_t *map, F_STRIPE_HEAD_t *stripes)
 {
-	int ret;
+	F_BOSL_t *bos_buf;
+	F_STRIPE_HEAD_t *done = NULL;
+	F_ITER_t *it = NULL;
+	unsigned int part, parts, pu_per_bos, pu_factor;
+	unsigned int i, count, intl;
+	size_t size;
+	ssize_t rcv_cnt;
+	uint64_t *keys;
+	int map_id, ret = 0;
 
+	if (map == NULL)
+		return -1;
+
+	pu_per_bos = map->geometry.bosl_pu_count;
+	keys = (uint64_t *) malloc(sizeof(uint64_t) * pu_per_bos);
+	if (!keys)
+		return -ENOMEM;
+
+	intl = 1U << map->geometry.intl_factor;
+	pu_factor = map->geometry.pu_factor;
+	map_id = map->id;
+	parts = map->parts;
+
+	/* Allocate I/O buffer */
+	bos_buf = bosl_alloc(map->bosl_sz);
+
+	/* New unconditional map iterator */
+	it = f_map_new_iter(map, F_NO_CONDITION);
+
+	/* Until we reach the end on all partitions */
+	count = f_map_has_globals(map)? parts:1;
+	do {
+		/* For each map partition */
+		for (part = 0; part < parts; part++) {
+			if (part != map->part && !f_map_has_globals(map))
+				continue;
+ // printf(" f_map_load parts:%u count:%u part:%u\n", parts, count, part);
+
+			/* BGET pu_per_bos entries */
+			size = pu_per_bos;
+			rcv_cnt = f_db_bget(bos_buf->page, map_id, keys, size, NULL);
+			if (rcv_cnt < 0) {
+				ret = (int) rcv_cnt;
+				goto _exit;
+			}
+			size = (size_t) rcv_cnt;
+			assert (size <= pu_per_bos);
+		}
+	} while (count > 0);
+	map->loaded = 1;
+
+_exit:
+	f_map_free_iter(it);
+	free(keys);
+	bosl_free(bos_buf);
 	return ret;
 }
 
-/* f_map_flush - Flush map: put all 'dirty' KVs of all BoSses to KV store */
+/* Reset iterator so it could be re-used */
+static void iter_reset(F_ITER_t *it) {
+	it->entry = 0;
+	it->entry--; /* invalid entry */
+	it->bosl = NULL;
+}
+
+/* Round up to this partition if map is global */
+#define pu_round_up_to_part(pu, factor, parts, partition)	\
+	do {							\
+		unsigned int il = (pu >> factor) % parts;	\
+		pu += (1UL << factor) *				\
+		      ((il>partition)?parts:0U +partition -il);	\
+	} while (0)
+
+/* Iterate over dirty PUs on global maps.
+ * It's aware of partition on local (own_part:1) maps.
+ * This call takes and hold BoS R/W lock(s) - until freed.
+ */
+static F_ITER_t *iter_next_dirty_pu(F_ITER_t *iter)
+{
+	F_MAP_t *map = iter->map;
+	F_BOSL_t *bosl;
+	struct cds_ja_node *node;
+	uint64_t node_idx, idx, e;
+	unsigned int pu, pu_factor, factor, e_per_pu, pu_per_bos;
+	unsigned int partition = 0;
+	unsigned long *dirty = NULL;
+	size_t dirty_sz;
+	bool bitmap, global;
+
+	bitmap = !f_map_is_structured(map);
+	global = f_map_has_globals(map);
+	pu_factor = map->geometry.pu_factor;
+	e_per_pu = 1U << pu_factor;
+	factor = map->geometry.intl_factor - pu_factor;
+	pu_per_bos = map->geometry.bosl_pu_count;
+	dirty_sz = DIV_CEIL(pu_per_bos, 8); /* dirty PU bitmap size, bytes */
+	assert(dirty_sz <= sizeof(*dirty)*F_BOSL_DIRTY_SZ);
+	dirty = (unsigned long *) malloc(dirty_sz);
+	if (dirty == NULL) return NULL;
+
+	/* Progress to the next PU */
+	e = iter->entry;
+	e += e_per_pu;
+	e &= ~((uint64_t)e_per_pu - 1); /* PU entry mask */
+	node_idx = e / map->bosl_entries;
+	//printf(" PU Iterator %lu -> %lu, BoS %lu\n", iter->entry, e, node_idx);
+	bosl = iter->bosl;
+	if (!f_map_entry_in_bosl(bosl, e))
+		goto _find_bos;
+
+	/* Round up to this partition if map is global */
+	pu = e_to_bosl(bosl, e) >> pu_factor;
+	if (global) {
+		partition = iter->cond.partition;
+		pu_round_up_to_part(pu, factor, map->parts, partition);
+	}
+	//printf("    continue from PU:%u in BoS %lu\n", pu, bosl->entry0/map->bosl_entries);
+
+	/* For each BoS in Judy array */
+	while (1) {
+		/* Copy dirty bitmap under lock */
+		pthread_spin_lock(&bosl->dirty_lock);
+		memcpy(dirty, bosl->dirty, dirty_sz);
+		pthread_spin_unlock(&bosl->dirty_lock);
+
+		/* Search for dirty PU in current BoS */
+		do {
+			pu = find_next_bit(dirty, pu_per_bos, pu);
+		/* ignore other partitions if map is global */
+		} while (global && pu < pu_per_bos &&
+			 ((pu >> factor) % map->parts != partition));
+
+		/* Is there next dirty PU in BoS? */
+		if (pu < pu_per_bos) {
+			/* Yes; set iterator to 'e' and return it */
+			iter->entry = (pu << pu_factor) + bosl->entry0;
+			if (bitmap)
+				iter->word_p = bosl_ffind(bosl, iter->entry);
+			iter->bosl = bosl;
+			//printf("    found PU:%u for e:%lu in BoS %lu e0:%lu\n", pu, iter->entry, bosl->entry0/map->bosl_entries, bosl->entry0);
+			break;
+		}
+		//printf("    no dirty PU! ");
+
+		/* Leave BoS */
+		//if (pthread_rwlock_unlock(&bosl->rwlock)) return NULL;
+		atomic_dec(&bosl->claimed);
+		node_idx++;
+
+_find_bos:
+		iter->bosl = NULL;
+
+		rcu_read_lock();
+		node = cds_ja_lookup_above_equal(map->bosses,
+						 node_idx, &idx);
+		if (node == NULL) {
+			rcu_read_unlock();
+			iter = NULL; /* No dirty PU found */
+			//printf("    no BoS above_equal %lu\n", node_idx);
+			break;
+		}
+		bosl = container_of(node, F_BOSL_t, node);
+		atomic_inc(&bosl->claimed);
+		rcu_read_unlock();
+
+		/* Enter BoS */
+		//if (pthread_rwlock_rdlock(&bosl->rwlock)) return NULL;
+		pu = 0;
+		if (global) {
+			pu_round_up_to_part(pu, factor,
+					    map->parts, partition);
+		}
+		node_idx = idx;
+		//printf("    Next BoS %lu, looking from PU:%u\n", node_idx, pu);
+	}
+
+	/* TODO: Use per-thread lock count */
+	rcu_quiescent_state();
+	free(dirty);
+	return iter;
+}
+#undef pu_round_up_to_part
+
+/*
+ * f_map_flush
+ * Flush map: put all 'dirty' PUs of all BoSses to KV store.
+ * If the whole PU is zeroed, this flush would delete the PU.
+ */
 int f_map_flush(F_MAP_t *map)
 {
-	int ret;
+	F_BOSL_t *bos_buf;
+	F_ITER_t *it, *iter = NULL;
+	unsigned int part, parts, pu_per_bos, pu_factor;
+	size_t size, value_len;
+	void **keysp;
+	uint64_t *keys;
+	int map_id, ret = 0;
 
+	if (map == NULL)
+		return -1;
+
+	pu_per_bos = map->geometry.bosl_pu_count;
+	assert(pu_per_bos <= F_MAP_MAX_BOS_PUS);
+	keysp = (void **) malloc(sizeof(void *) * pu_per_bos);
+	if (!keysp)
+		return -ENOMEM;
+	keys = (uint64_t *) malloc(sizeof(uint64_t) * pu_per_bos);
+	if (!keys) {
+		free(keysp);
+		return -ENOMEM;
+	}
+
+	pu_factor = map->geometry.pu_factor;
+	value_len = map->geometry.entry_sz * pu_factor;
+	map_id = map->id;
+	parts = map->parts;
+
+	/* Allocate I/O buffer */
+	bos_buf = bosl_alloc(map->bosl_sz);
+
+	/* New iterator */
+	iter = f_map_new_iter(map, F_NO_CONDITION);
+
+	/* For each map partition */
+	for (part = 0; part < parts; part++) {
+		if (part != map->part && !f_map_has_globals(map))
+			continue;
+
+		iter_reset(iter);
+		iter->cond.partition = part;
+		size = 0;
+		//printf(" flush map id:%d part:%u\n", map_id, part);
+		/* For each dirty PU (in this partition if map is global) */
+		while (((it = iter_next_dirty_pu(iter))) || size > 0) {
+			if (it) {
+				uint64_t pu, e;
+
+				/* Key */
+				e = it->entry;
+				e = f_map_has_globals(map)?
+					e : f_map_prt_to_global(map, e);
+				//printf("   key[%zu]=%lu\n", size, e);
+				keys[size] = e;
+				keysp[size] = &keys[size];
+				/* Copy PU value and clear dirty bit */
+				pu = e_to_bosl(it->bosl, it->entry) >> pu_factor;
+				copy_pu_from_bosl(bos_buf->page, size++,
+					it->bosl, pu);
+			}
+			if (size == pu_per_bos || (size > 0 && !it)) {
+				/* Bulk PUT 'size' of PUs */
+				ret = f_db_bput(bos_buf->page, map_id, keysp,
+						size, value_len);
+				//printf("   bput size:%zu map_id:%u value_len:%zu ret:%d\n", size, map_id, value_len, ret);
+				if (ret)
+					goto _err;
+				size = 0;
+			}
+		}
+	}
+_err:
+	f_map_free_iter(iter);
+	free(keys);
+	free(keysp);
+	bosl_free(bos_buf);
 	return ret;
 }
 
@@ -551,9 +824,16 @@ int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl)
 /*
  * Iterator
  */
+
+/* Test bbitmap entry pattern */
 static inline bool _check_iter_cond_bbit(F_ITER_t *it) {
 	return test_bbit_patterns(it->entry % BBITS_PER_LONG,
 				  it->cond.pset, it->word_p);
+}
+
+/* Is bit clear (if cond.pset:0) or set (otherwise)? */
+static inline bool _check_iter_cond_bit(F_ITER_t *it) {
+	return !(it->cond.pset) == !test_bit64(it->entry, it->word_p);
 }
 
 static inline bool __check_iter_cond_vf(const F_ITER_t *it, const F_PU_VAL_t *v) {
@@ -561,79 +841,107 @@ static inline bool __check_iter_cond_vf(const F_ITER_t *it, const F_PU_VAL_t *v)
 }
 
 static inline bool _check_iter_cond_vf(F_ITER_t *it) {
-	F_BOSL_t *bosl = it->bosl;
-	unsigned long *p = _bosl_ffind(bosl, e_to_bosl(bosl, it->entry));
-	int rc = __check_iter_cond_vf(it, (F_PU_VAL_t *)p);
+	F_BOSL_t *bosl;
+	unsigned long *p;
 
-	return rc;
+	bosl = it->bosl;
+	p = _bosl_ffind(bosl, e_to_bosl(bosl, it->entry));
+	return __check_iter_cond_vf(it, (F_PU_VAL_t *)p);
 }
 
 static inline bool check_iter_cond(F_ITER_t *iter)
 {
 	return ((iter->cond.pset == 0U) ||
-		(f_map_is_bbitmap(iter->map)? &_check_iter_cond_bbit :
-					&_check_iter_cond_vf)(iter));
+		(f_map_is_structured(iter->map)? &_check_iter_cond_vf :
+		 (f_map_is_bbitmap(iter->map)? &_check_iter_cond_bbit :
+				&_check_iter_cond_bit))(iter));
 }
 
 /* Find entry in this BoS that matches the iterator's condition */
 static F_ITER_t *bosl_find_cond(F_ITER_t *it)
 {
-	F_BOSL_t *bosl = it->bosl;
-	uint64_t e, length;
+    F_BOSL_t *bosl = it->bosl;
+    uint64_t e, length;
 
-	e = it->entry;
-	length = it->map->bosl_entries;
+    e = it->entry;
+    length = it->map->bosl_entries;
 
-	/* safity check */
-	if (!f_map_entry_in_bosl(bosl, e))
-		return NULL;
-
-	/* fast path */
-	if (check_iter_cond(it))
-		return it;
-
-	e = e_to_bosl(bosl, e);
-	if (f_map_is_structured(it->map)) {
-		for (++e; e < length; e++) {
-			it->entry++;
-			if (_check_iter_cond_vf(it))
-				goto _found;
-		}
-	} else if (f_map_is_bbitmap(it->map)) {
-		e = find_next_bbit(bosl->page, it->cond.pset, length, e);
-		if (e < length) {
-			it->word_p = _bosl_ffind(bosl, e);
-			goto _found;
-		}
-	}
+    /* safity check */
+    if (!f_map_entry_in_bosl(bosl, e))
 	return NULL;
-_found:
-	it->entry = e + bosl->entry0;
-	assert(check_iter_cond(it));
+
+    /* fast path */
+    if (check_iter_cond(it))
 	return it;
+
+    e = e_to_bosl(bosl, e);
+    if (f_map_is_structured(it->map)) {
+	for (++e; e < length; e++) {
+	    it->entry++;
+	    if (_check_iter_cond_vf(it))
+		goto _found;
+	}
+    } else {
+	if (f_map_is_bbitmap(it->map)) {
+	    e = find_next_bbit(bosl->page, it->cond.pset, length, e);
+	} else {
+	    if (it->cond.pset)
+		e = find_next_bit(bosl->page, length, e);
+	    else
+		e = find_next_zero_bit(bosl->page, length, e);
+	}
+	if (e < length) {
+	    it->word_p = _bosl_ffind(bosl, e);
+		goto _found;
+	}
+    }
+    return NULL;
+
+_found:
+    it->entry = e + bosl->entry0;
+    assert(check_iter_cond(it));
+    return it;
 }
 
 /* Create a new iterator */
 F_ITER_t *f_map_new_iter(F_MAP_t *map, F_COND_t cond)
 {
-	F_ITER_t *iter = (F_ITER_t *) calloc(sizeof(F_ITER_t), 1);
+	F_ITER_t *iter;
+	unsigned int entry_sz;
 	uint64_t c = cond.pset;
 
-	iter->map = map;
-	iter->entry--; /* invalid entry */
-	//iter->bosl = NULL;
-	iter->cond.pset = c;
-	if (f_cond_has_vf(cond))
-		iter->vf_arg = calloc(sizeof(long), 1);
+	/* sanity check */
+	assert(map);
+	entry_sz = map->geometry.entry_sz;
+	if (!f_map_is_structured(map))
+		assert(entry_sz == 1 || entry_sz == 2);
+	else
+		assert(entry_sz % 8 == 0);
 
+	iter = (F_ITER_t *) calloc(sizeof(F_ITER_t), 1);
+	if (!iter)
+		return NULL;
+
+	iter_reset(iter);
+	iter->map = map;
+	iter->cond.pset = c;
+	if (f_map_is_structured(map)) {
+		iter->vf_arg = calloc(sizeof(long), 1);
+		if (!iter->vf_arg) {
+			free(iter);
+			iter = NULL;
+		}
+	}
 	return iter;
 }
 
 void f_map_free_iter(F_ITER_t *iter)
 {
-	if (f_cond_has_vf(iter->cond))
-		free(iter->vf_arg);
-	free(iter);
+	if (iter) {
+		if (f_map_is_structured(iter->map))
+			free(iter->vf_arg);
+		free(iter);
+	}
 }
 
 /* Check if iterator's condition is true */
@@ -675,14 +983,6 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
 	if (!f_map_is_structured(it->map))
 		it->word_p = p;
 	it->entry = entry;
-#if 0
-	/* check condition */
-	if (check_iter_cond(it))
-		return it;
-
-	/* slow path */
-	it = f_map_next(it);
-#endif
 	return it;
 }
 
@@ -693,21 +993,30 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
  */
 F_ITER_t *f_map_next(F_ITER_t *iter)
 {
-	F_MAP_t *map = iter->map;
+	F_MAP_t *map;
 	struct cds_ja_node *node;
 	uint64_t node_idx, idx;
-	uint64_t length = map->bosl_entries;
-	bool bbitmap = f_map_is_bbitmap(map);
+	uint64_t length;
+	bool bitmap;
+	unsigned int per_long, entry_sz;
+
+	/* sanity check */
+	if (!iter || !(map = iter->map))
+		return NULL;
+	entry_sz = map->geometry.entry_sz;
+	bitmap = !f_map_is_structured(map);
 
 	/* iter++ */
 	iter->entry++;
 
 	/* fast path? */
+	length = map->bosl_entries;
 	node_idx = iter->entry / length;
+	per_long = BITS_PER_LONG / entry_sz;
 	if (f_map_entry_in_bosl(iter->bosl, iter->entry)) {
 		/* use current BoS */
-		if (bbitmap && iter->entry &&
-		    (iter->entry % BBITS_PER_LONG == 0))
+		if (bitmap && iter->entry &&
+		    (iter->entry % per_long == 0))
 			iter->word_p++;
 		if (bosl_find_cond(iter))
 			return iter;
@@ -728,7 +1037,7 @@ F_ITER_t *f_map_next(F_ITER_t *iter)
 		rcu_read_unlock();
 
 		iter->entry = idx * length;
-		if (bbitmap)
+		if (bitmap)
 			iter->word_p = iter->bosl->page;
 		node_idx = idx + 1;
 	} while (!bosl_find_cond(iter));
@@ -756,14 +1065,19 @@ static uint64_t bosl_weight_vf(const F_ITER_t *it, const unsigned long *p,
 }
 
 static uint64_t bosl_weight(const F_ITER_t *it, const unsigned long *p,
-    uint64_t start, uint64_t len)
+    uint64_t start, uint64_t nr)
 {
-	bool bbitmap = f_map_is_bbitmap(it->map);
+	if (f_map_is_structured(it->map)) {
+		return bosl_weight_vf(it, p, start, nr);;
+	} else {
+		if (it->map->geometry.entry_sz == 1) {
+			uint64_t w = __bitmap_weight64(p, start, nr);
 
-	if (bbitmap)
-		return __bbitmap_weight(p, it->cond.pset, start, len);
-	else
-		return bosl_weight_vf(it, p, start, len);;
+			return (it->cond.pset)? w : (nr-w);
+		} else {
+			return __bbitmap_weight(p, it->cond.pset, start, nr);
+		}
+	}
 }
 
 /*

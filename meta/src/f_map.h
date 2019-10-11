@@ -161,7 +161,8 @@ typedef struct f_map_ {
 	struct {
 	    unsigned int	locking:2;	/* locking level, 0: default */
 	    unsigned int	loaded:1;	/* 1: loaded from persistent storage */
-	    unsigned int	own_part:1;	/* 1: local entries only, from 'part' */
+	    unsigned int	own_part:1;	/* 1: only local entries in partitioned
+						   map, all from partition 'part' */
 	};
     };
 } F_MAP_t;
@@ -170,6 +171,9 @@ typedef struct f_map_ {
 #define f_map_is_structured(map_p)	(map_p->type == F_MAPTYPE_STRUCTURED)
 #define f_map_is_bbitmap(map_p)		(map_p->type == F_MAPTYPE_BITMAP && \
 					 map_p->geometry.entry_sz == 2)
+#define f_map_is_bitmap(map_p)		(map_p->type == F_MAPTYPE_BITMAP && \
+					 map_p->geometry.entry_sz == 1)
+#define f_map_has_globals(map_p)	(map_p->own_part == 0U)
 
 /* Block of slabs */
 #define F_BOSL_DIRTY_SZ	(F_MAP_MAX_BOS_PUS/(8*sizeof(unsigned long))) /* 4 */
@@ -183,13 +187,13 @@ typedef struct f_bosl_ {
     pthread_rwlock_t		rwlock;		/* protect iterators on BoS deletion */
     pthread_spinlock_t		dirty_lock;	/* dirty bitmap lock */
     unsigned long		dirty[F_BOSL_DIRTY_SZ];	/* dirty bitmap */
-    //unsigned int		length;		/* BoS entry count */
     union {
 	uint32_t		_flags;
 	struct {
 	    unsigned int	loaded:1;	/* 1: loaded from persistent storage */
 	};
     };
+    atomic_t			claimed;	/* atomic count of being used by iterators */
 } F_BOSL_t;
 
 
@@ -202,8 +206,9 @@ typedef union {
     /* Condition is either evaluation function or BBIT pattern set */
     F_MAP_GET_fn		vf_get;		/* value evaluation function or NULL */
     uint64_t			pset;		/* BBIT pattern set: [0..BB_PAT_MASK] */
+    uint64_t			partition;	/* Dirty PU Iterator partiton on global map */
 } F_COND_t;
-#define f_cond_has_vf(cond)	(cond.pset > BB_PAT_MASK)
+//#define f_cond_has_vf(cond)	(cond.pset > BB_PAT_MASK)
 #define F_NO_CONDITION		((F_COND_t)0LU)	/* Iterator will iterate ALL entries */
 
 typedef struct f_iter_ {
@@ -219,6 +224,7 @@ typedef struct f_iter_ {
     };
 } F_ITER_t;
 
+
 /*
  * Map API
  */
@@ -230,18 +236,23 @@ int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global);
 void f_map_exit(F_MAP_t *map); /* free memory */
 
 /*
- * Read/write the persistent KV store
+ * Persistent map backend: the KV store
  */
-int f_map_register(F_MAP_t *map, int layout_id); /* Attach map to persistent KV store */
-int f_map_load(F_MAP_t *map); /* load all KVs for [one partition of] the registered map */
+/* Attach map to persistent KV store */
+int f_map_register(F_MAP_t *map, int layout_id);
+/* Load all KVs for [one partition of] the registered map */
+int f_map_load(F_MAP_t *map);
+/* Put all 'dirty' PUs of all BoSses to KV store; delete zero PUs. */
+int f_map_flush(F_MAP_t *map);
 /* Update (load from KV store) only map entries given in the stripe list */
 int f_map_update(F_MAP_t *map, F_STRIPE_HEAD_t *stripe_list);
-int f_map_flush(F_MAP_t *map); /* Put all 'dirty' KVs of all BoSses to KV store */
-void f_map_mark_dirty(F_MAP_t *map, uint64_t entry); /* explicitly mark KV dirty */
+/* Mark KV dirty */
+void f_map_mark_dirty(F_MAP_t *map, uint64_t entry);
 
 /* Note: Please use this function from common library to read the layout configuration
  * for a map: F_LAYOUT_INFO_t *f_get_layout_info(int layout_id);
  */
+
 
 /*
  * Low-level data access.
@@ -253,14 +264,16 @@ unsigned long *f_map_get_p(F_MAP_t *map, uint64_t entry); /* returns NULL if no 
 unsigned long *f_map_new_p(F_MAP_t *map, uint64_t entry); /* if no entry, create it */
 F_BOSL_t *f_map_get_bosl(F_MAP_t *map, uint64_t entry); /* returns NULL if no BoS */
 F_BOSL_t *f_map_new_bosl(F_MAP_t *map, uint64_t entry); /* if no BoS, create it */
+int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl); /* remove all BoS entries from online map */
 void f_map_mark_dirty_bosl(F_BOSL_t *bosl, uint64_t entry); /* mark KV dirty in BoS PU bitmap */
+
 /* Check if the entry belongs to this BoS */
 static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)
 {
 	return (bosl && IN_RANGE(entry, bosl->entry0,
 				 bosl->entry0 + bosl->map->bosl_entries - 1));
 }
-int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl); /* remove all BoS entries from online map */
+
 
 /*
  * Iterators
@@ -276,7 +289,7 @@ static inline F_ITER_t *f_map_get_iter(F_MAP_t *map, F_COND_t cond)
 	F_ITER_t *iter = f_map_new_iter(map, cond);
 	return f_map_seek_iter(iter, 0);
 }
-/* check if iterator's condition is true */
+/* Check if iterator's condition is true */
 bool f_map_check_iter(F_ITER_t *iter);
 
 /* for_each(iterator) - iterate all map entries with given condition */
@@ -286,9 +299,9 @@ bool f_map_check_iter(F_ITER_t *iter);
 	for (iter = f_map_seek_iter(iter, (uint64_t)start),	\
 	     iter != NULL;					\
 	     iter = f_map_next(iter))
-/* get iterator for the next entry which matches the iterator's condition or return NULL */
+/* Iterate to the next entry which matches the iterator's condition or return NULL */
 F_ITER_t *f_map_next(F_ITER_t *iter);
-/* get the number of entries which matches the iterator's condition within given size */
+/* Get the number of entries which matches the iterator's condition within given size */
 uint64_t f_map_weight(const F_ITER_t *iter, size_t size);
 
 
@@ -352,6 +365,42 @@ static inline int f_map_prt_my_global(F_MAP_t *map, uint64_t global)
 {
 	return f_map_prt_has_global(map, global, map->part);
 }
+
+
+/*
+ * Value size calculation
+ */
+
+/* Return the offset of entry 'n' from zero entry, in bytes */
+static inline size_t f_map_value_off(F_MAP_t *map, uint64_t n)
+{
+	size_t entry_sz = map->geometry.entry_sz;
+
+	if (f_map_is_structured(map))
+		return n*entry_sz;
+	else
+		return n*entry_sz/8;
+}
+
+/* Calculate the offset for map entry 'e' in units of type(*p) */
+#define f_map_values_p_off(map, e, p)				\
+    ({	size_t entry_sz = map->geometry.entry_sz;		\
+      e*entry_sz/(sizeof(*p)*(f_map_is_structured(map)? 1:8)); })
+
+/* Calculate the required memory for 'n' entries in units of type(*p) */
+#define f_map_values_sz(map, n, p)				\
+    ({	size_t entry_sz = map->geometry.entry_sz;		\
+      (DIV_CEIL(n * entry_sz,					\
+		(sizeof(*p)*(f_map_is_structured(map)? 1:8))); })
+
+/* Calculate PU memory size (bytes) */
+#define f_map_pu_size(map)					\
+    (f_map_value_off(map, 1UL << map->geometry.pu_factor))
+
+/* Calculate the memory size for 'n' PUs in units of type(*p) */
+#define f_map_pu_p_sz(map, n, p)				\
+    (DIV_CEIL(f_map_value_off(map,				\
+	n * (1UL << map->geometry.pu_factor)), sizeof(*p)))
 
 
 #endif /* F_MAP_H_ */
