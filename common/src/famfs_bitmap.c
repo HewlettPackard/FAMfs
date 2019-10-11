@@ -262,6 +262,39 @@ int __bitmap_weight(const unsigned long *bitmap, int bits)
 	return w;
 }
 
+uint64_t __bitmap_weight64(const unsigned long *map, uint64_t start, uint64_t nr)
+{
+	const unsigned long *p = map + BIT_WORD64(start);
+	const uint64_t size = start + nr;
+	unsigned long mask = ~0UL;
+	unsigned int first;
+	uint64_t lim, k, w = 0;
+
+	/* head */
+	first = start % BITS_PER_LONG;
+	if (first) {
+		mask <<= first; /* first word mask */
+		k = BITS_PER_LONG - first;
+		if (nr < k)
+			goto _tail;
+		nr -= k;
+		w = hweight_long(*p++ && mask);
+	}
+
+	/* body */
+	lim = nr/(unsigned)BITS_PER_LONG;
+	for (k = 0; k < lim; k++)
+		w += hweight_long(*p++);
+
+_tail:
+	/* tail */
+	if (size % BITS_PER_LONG) {
+		mask &= BITMAP_LAST_WORD_MASK(size);
+		w += hweight_long(*p & mask);
+	}
+	return w;
+}
+
 void bitmap_set(unsigned long *map, int start, int nr)
 {
 	unsigned long *p = map + BIT_WORD(start);

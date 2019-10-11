@@ -11,6 +11,7 @@
 #define BIT(nr)			(1UL << (nr))
 #define BIT_MASK(nr)		(1UL << ((nr) % BITS_PER_LONG))
 #define BIT_WORD(nr)		((nr) / BITS_PER_LONG)
+#define BIT_WORD64(nr)		((nr) / (unsigned)BITS_PER_LONG)
 #define BITS_PER_BYTE		8
 #define BITS_PER_INT		(BITS_PER_BYTE*sizeof(int))
 // BITS_PER_LONG - See famfs_ktypes.h
@@ -473,6 +474,27 @@ static inline void clear_bit(int nr, volatile unsigned long *addr)
 {
         unsigned long mask = BIT_MASK(nr);
         volatile unsigned long *p = addr + BIT_WORD(nr);
+
+        *p &= ~mask;
+}
+
+static inline int test_bit64(uint64_t nr, const volatile unsigned long *addr)
+{
+        return 1UL & (addr[BIT_WORD64(nr)] >> (nr & (unsigned long)(BITS_PER_LONG-1)));
+}
+
+static inline void set_bit64(uint64_t nr, volatile unsigned long *addr)
+{
+        unsigned long mask = BIT_MASK(nr);
+        volatile unsigned long *p = addr + BIT_WORD64(nr);
+
+        *p  |= mask;
+}
+
+static inline void clear_bit64(uint64_t nr, volatile unsigned long *addr)
+{
+        unsigned long mask = BIT_MASK(nr);
+        volatile unsigned long *p = addr + BIT_WORD64(nr);
 
         *p &= ~mask;
 }

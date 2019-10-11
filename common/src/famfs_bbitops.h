@@ -109,6 +109,8 @@ static inline int bb_pset_chk(unsigned int pset) {
 static inline unsigned int bb_pset_ffu(unsigned int pset) {
 	int ffz = __builtin_ffs(~pset);
 	//ASSERT(ffz > 0 && ffz <= 4);
+	if (!IN_RANGE(ffz, 1, 4))
+		return 0; /* Don't assert, just return safe value */
 	return (unsigned int)--ffz;
 }
 
@@ -118,8 +120,7 @@ static inline unsigned int bb_pset_log2(unsigned int pset) {
 	if ((pset &= (unsigned int) BB_PAT_MASK))
 		pset = BB_PAT11;
 	/* log2 = w - 1 - clz */
-	int log2 = 32 - 1 - __builtin_clz(pset);
-	return (unsigned int)log2;
+	return (unsigned int)ilog2(pset);
 }
 
 /* Return the number of patterns in set: 1..3 */

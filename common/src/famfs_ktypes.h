@@ -29,9 +29,9 @@ typedef int16_t s16;
 typedef int32_t s32;
 typedef int64_t s64;
 typedef uint64_t dma_addr_t;
-#if 0
 typedef unsigned uint128_t __attribute__ ((mode (TI)));
 
+#if 0
 #define be16_to_cpup(X) __be16_to_cpup(X)
 #define be32_to_cpup(X) __be32_to_cpup(X)
 #define be64_to_cpup(X) __be64_to_cpup(X)
@@ -256,11 +256,12 @@ static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return va
 
 ////#include "list.h"
 
+typedef struct { int32_t counter; } atomic_t;
+
 #if 0  //-------------------------------------------
 
 typedef rte_spinlock_t mutex_t;
 typedef rte_spinlock_t spinlock_t;
-typedef rte_atomic32_t atomic_t;
 typedef rte_spinlock_t rwlock_t;
 
 #define ATOMIC_INIT(X) RTE_ATOMIC32_INIT(X)
@@ -352,23 +353,24 @@ typedef rte_spinlock_t rwlock_t;
 
 #endif //-------------------------------------------
 
+#define atomic_read(a) ((a)->counter)
+#define atomic_set(a,b) ((a)->counter = (b))
+#define atomic_test_and_set(a) (__atomic_test_and_set(&(a)->counter, __ATOMIC_SEQ_CST))
+#define atomic_clear(a) (__atomic_clear(&(a)->counter, __ATOMIC_SEQ_CST))
+#define atomic_inc_return(a) (__atomic_fetch_add(&(a)->counter, 1, __ATOMIC_SEQ_CST))
+#define atomic_inc(a) ((void)atomic_inc_return(a))
+#define atomic_dec_return(a) (__atomic_fetch_sub(&(a)->counter, 1, __ATOMIC_SEQ_CST))
+#define atomic_dec(a) ((void)atomic_dec_return(a))
+#define atomic_inc_and_test(a) (atomic_inc_return(a) == 0)
+#define atomic_dec_and_test(a) (atomic_dec_return(a) == 0)
+
 #if 0  //-------------------------------------------
 
 #define atomic_cmpset(a,b,c) rte_atomic32_cmpset(a,b,c)
 #define atomic_init(a) rte_atomic32_init(a)
-#define atomic_set(a,b) rte_atomic32_set(a,b)
-#define atomic_read(a) rte_atomic32_read(a)
 #define atomic_add(a,b) rte_atomic32_add(b,a)
 #define atomic_sub(a,b) rte_atomic32_sub(b,a)
-#define atomic_inc(a) rte_atomic32_inc(a)
-#define atomic_dec(a) rte_atomic32_dec(a)
 #define atomic_add_return(a,b) rte_atomic32_add_return(b,a)
-#define atomic_inc_return(a) rte_atomic32_add_return(a,1)
-#define atomic_dec_return(a) rte_atomic32_add_return(a,-1)
-#define atomic_inc_and_test(a) rte_atomic32_inc_and_test(a)
-#define atomic_dec_and_test(a) rte_atomic32_dec_and_test(a)
-#define atomic_test_and_set(a) rte_atomic32_test_and_set(a)
-#define atomic_clear(a) rte_atomic32_clear(a)
 #define cond_resched() rte_pause()
 
 #define jiffies_to_msecs(X) (MSEC_PER_SEC*(X)/HZ)
@@ -460,6 +462,10 @@ static inline int __must_check PTR_ERR_OR_ZERO(__force const void *ptr)
 		return 0;
 }
 
+/*
+ * Arithmetics
+ */
+
 /* Get floating point exponent - see arch/ia64/include/uapi/asm/gcc_intrin.h */
 #define ia64_getf_exp(x)					\
 ({								\
@@ -479,6 +485,93 @@ static inline int get_order(unsigned long size)
 	if (order < 0)
 		order = 0;
 	return order;
+}
+
+#define const_ilog2(n)				\
+(						\
+	__builtin_constant_p(n) ? (		\
+		(n) < 2 ? 0 :			\
+		(n) & (1ULL << 63) ? 63 :	\
+		(n) & (1ULL << 62) ? 62 :	\
+		(n) & (1ULL << 61) ? 61 :	\
+		(n) & (1ULL << 60) ? 60 :	\
+		(n) & (1ULL << 59) ? 59 :	\
+		(n) & (1ULL << 58) ? 58 :	\
+		(n) & (1ULL << 57) ? 57 :	\
+		(n) & (1ULL << 56) ? 56 :	\
+		(n) & (1ULL << 55) ? 55 :	\
+		(n) & (1ULL << 54) ? 54 :	\
+		(n) & (1ULL << 53) ? 53 :	\
+		(n) & (1ULL << 52) ? 52 :	\
+		(n) & (1ULL << 51) ? 51 :	\
+		(n) & (1ULL << 50) ? 50 :	\
+		(n) & (1ULL << 49) ? 49 :	\
+		(n) & (1ULL << 48) ? 48 :	\
+		(n) & (1ULL << 47) ? 47 :	\
+		(n) & (1ULL << 46) ? 46 :	\
+		(n) & (1ULL << 45) ? 45 :	\
+		(n) & (1ULL << 44) ? 44 :	\
+		(n) & (1ULL << 43) ? 43 :	\
+		(n) & (1ULL << 42) ? 42 :	\
+		(n) & (1ULL << 41) ? 41 :	\
+		(n) & (1ULL << 40) ? 40 :	\
+		(n) & (1ULL << 39) ? 39 :	\
+		(n) & (1ULL << 38) ? 38 :	\
+		(n) & (1ULL << 37) ? 37 :	\
+		(n) & (1ULL << 36) ? 36 :	\
+		(n) & (1ULL << 35) ? 35 :	\
+		(n) & (1ULL << 34) ? 34 :	\
+		(n) & (1ULL << 33) ? 33 :	\
+		(n) & (1ULL << 32) ? 32 :	\
+		(n) & (1ULL << 31) ? 31 :	\
+		(n) & (1ULL << 30) ? 30 :	\
+		(n) & (1ULL << 29) ? 29 :	\
+		(n) & (1ULL << 28) ? 28 :	\
+		(n) & (1ULL << 27) ? 27 :	\
+		(n) & (1ULL << 26) ? 26 :	\
+		(n) & (1ULL << 25) ? 25 :	\
+		(n) & (1ULL << 24) ? 24 :	\
+		(n) & (1ULL << 23) ? 23 :	\
+		(n) & (1ULL << 22) ? 22 :	\
+		(n) & (1ULL << 21) ? 21 :	\
+		(n) & (1ULL << 20) ? 20 :	\
+		(n) & (1ULL << 19) ? 19 :	\
+		(n) & (1ULL << 18) ? 18 :	\
+		(n) & (1ULL << 17) ? 17 :	\
+		(n) & (1ULL << 16) ? 16 :	\
+		(n) & (1ULL << 15) ? 15 :	\
+		(n) & (1ULL << 14) ? 14 :	\
+		(n) & (1ULL << 13) ? 13 :	\
+		(n) & (1ULL << 12) ? 12 :	\
+		(n) & (1ULL << 11) ? 11 :	\
+		(n) & (1ULL << 10) ? 10 :	\
+		(n) & (1ULL <<  9) ?  9 :	\
+		(n) & (1ULL <<  8) ?  8 :	\
+		(n) & (1ULL <<  7) ?  7 :	\
+		(n) & (1ULL <<  6) ?  6 :	\
+		(n) & (1ULL <<  5) ?  5 :	\
+		(n) & (1ULL <<  4) ?  4 :	\
+		(n) & (1ULL <<  3) ?  3 :	\
+		(n) & (1ULL <<  2) ?  2 :	\
+		1) :				\
+	-1)
+
+/* ilog2 - log base 2 of 32-bit or a 64-bit unsigned value */
+#define ilog2(n) \
+( \
+	__builtin_constant_p(n) ?	\
+	const_ilog2(n) :		\
+	(sizeof(n) <= 4) ?		\
+	__ilog2_u32(n) :		\
+	__ilog2_u64(n)			\
+)
+
+static inline __attribute__((const)) int __ilog2_u32(uint32_t n) {
+	return (8*sizeof (uint32_t) - __builtin_clz((unsigned int)(n)) - 1);
+}
+
+static inline __attribute__((const)) int __ilog2_u64(uint64_t n) {
+	return (8*sizeof (uint64_t) - __builtin_clzl((unsigned long)(n)) - 1);
 }
 
 //#include "kcompat.h"
