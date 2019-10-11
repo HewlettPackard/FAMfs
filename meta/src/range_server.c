@@ -1323,7 +1323,8 @@ void *worker_thread(void *data) {
 #ifdef DEBUG_WRK_THREAD
 			mlog(MDHIM_SERVER_INFO, ". worker[%d] - msg from rank:%d of type:%d (%s), current time:%ld",
 			     worker_id, item->source, mtype,
-			     (mtype==MDHIM_PUT)?"PUT":((mtype==MDHIM_BULK_GET)?"BGET":"?"),
+			     (mtype==MDHIM_PUT)?"PUT":(mtype==MDHIM_BULK_GET)?"BGET":
+				(mtype==MDHIM_BULK_PUT)?"BPUT":"?",
 			     1000000L*(worker_start.tv_sec-worker_zero.tv_sec)+worker_start.tv_usec-worker_zero.tv_usec);
 #endif
 

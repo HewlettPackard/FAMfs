@@ -73,12 +73,21 @@ ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
 	ssize_t ret;
 
 	keys[0] = *off_p;
- //printf(" f_db_bget key:%lu\n", keys[0]);
 	ret = meta_iface->bget_fn(buf, map_id, size, keys);
- //printf(" f_db_bget ret:%zd\n", ret);
 	if (ret > 0)
 		*off_p = keys[ret-1] + 1U;
 	return ret;
+}
+
+int f_db_bput(unsigned long *buf, int map_id, void **keys, size_t size,
+    size_t value_len)
+{
+	return meta_iface->bput_fn(buf, map_id, size, keys, value_len);
+}
+
+int f_db_bdel(int map_id, void **keys, size_t size)
+{
+	return meta_iface->bdel_fn(map_id, size, keys);
 }
 
 static int set_layouts_cfg(unifycr_cfg_t *c)

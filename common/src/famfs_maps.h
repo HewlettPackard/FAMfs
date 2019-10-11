@@ -9,8 +9,6 @@
 
 #include <sys/types.h>
 #include <stdint.h>
-typedef unsigned uint128_t __attribute__ ((mode (TI)));
-
 #include <inttypes.h>
 
 #include "famfs_env.h"
@@ -269,12 +267,15 @@ typedef ssize_t (*F_PS_BGET_fn)(unsigned long *buf, int map_id, size_t size,
     uint64_t *keys);
 /* ps_bput() function type: */
 typedef int (*F_PS_BPUT_fn)(unsigned long *buf, int map_id, size_t size,
-    uint64_t *keys);
+    void **keys, size_t value_len);
+/* ps_bdel() function type: */
+typedef int (*F_PS_BDEL_fn)(int map_id, size_t size, void **keys);
 
 typedef struct f_meta_iface_ {
 	F_CREATE_PERSISTENT_MAP_fn	create_map_fn;
 	F_PS_BGET_fn			bget_fn;
 	F_PS_BPUT_fn			bput_fn;
+	F_PS_BDEL_fn			bdel_fn;
 } F_META_IFACE_t;
 
 /* Defined in famfs_maps.c */
@@ -288,6 +289,8 @@ int f_create_persistent_sm(int layout_id, int intl, int *mapid_p);
 int f_create_persistent_cv(int layout_id, int intl, int *mapid_p);
 ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
     uint64_t *off_p);
-int f_db_bput(unsigned long *buf, int map_id, uint64_t *keys, size_t size);
+int f_db_bput(unsigned long *buf, int map_id, void **keys, size_t size,
+    size_t value_len);
+int f_db_bdel(int map_id, void **keys, size_t size);
 
 #endif /* FAMFS_MAPS_H_ */

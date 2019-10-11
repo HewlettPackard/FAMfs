@@ -63,12 +63,15 @@ extern int  num_mds;
 
 static int create_persistent_map(int map_id, int intl, char *name);
 static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
-static int ps_bput(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
+    size_t value_len);
+static int ps_bdel(int map_id, size_t size, void **keys);
 
 static F_META_IFACE_t iface = {
 	.create_map_fn = &create_persistent_map,
 	.bget_fn = &ps_bget,
 	.bput_fn = &ps_bput,
+	.bdel_fn = &ps_bdel,
 };
 
 /* metadata configuration: set DB options and map interface */
@@ -730,15 +733,19 @@ static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *ke
 	return mdhim_ps_bget(md, primary_index, buf, size, keys);
 }
 
-static int ps_bput(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
+    size_t value_len)
 {
-	struct index_t *primary_index;
-	int ret = 0;
+	struct index_t *primary_index = unifycr_indexes[F_MD_IDX_MAPS_START + map_id];
 
-	primary_index = unifycr_indexes[F_MD_IDX_MAPS_START + map_id];
+	return mdhim_ps_bput(md, primary_index, buf, size, keys, value_len);
+}
 
+static int ps_bdel(int map_id, size_t size, void **keys)
+{
+	struct index_t *primary_index = unifycr_indexes[F_MD_IDX_MAPS_START + map_id];
 
-	return ret;
+	return mdhim_ps_bdel(md, primary_index, size, keys);
 }
 
 int meta_sanitize()
