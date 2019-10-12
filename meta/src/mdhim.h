@@ -180,7 +180,7 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
     size_t size, uint64_t *keys);
 int mdhim_ps_bput(struct mdhim_t *md, struct index_t *index, unsigned long *buf,
     size_t size, void **keys, size_t value_len);
-int mdhim_ps_del(struct mdhim_t *md, struct index_t *index, size_t size,
+int mdhim_ps_bdel(struct mdhim_t *md, struct index_t *index, size_t size,
     void **keys);
 
 #ifdef __cplusplus
