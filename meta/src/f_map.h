@@ -208,7 +208,6 @@ typedef union {
     uint64_t			pset;		/* BBIT pattern set: [0..BB_PAT_MASK] */
     uint64_t			partition;	/* Dirty PU Iterator partiton on global map */
 } F_COND_t;
-//#define f_cond_has_vf(cond)	(cond.pset > BB_PAT_MASK)
 #define F_NO_CONDITION		((F_COND_t)0LU)	/* Iterator will iterate ALL entries */
 
 typedef struct f_iter_ {
@@ -216,12 +215,15 @@ typedef struct f_iter_ {
     uint64_t			entry;		/* current position */
     F_BOSL_t			*bosl;		/* current BoS or NULL */
     F_COND_t			cond;		/* condition (or zero, i.e. all entries) */
+    unsigned long		*word_p;	/* current entry pointer in BoS->page */
     union {
-	/* BBIT map */
-	unsigned long		*word_p;	/* current entry pointer in BoS->page */
-	/* Stuctured map */
-	void			*vf_arg;	/* optional vf_get() argument */
+	uint32_t		_flags;
+	struct {
+	    unsigned int	at_end:1;	/* 1: depleted */
+	};
     };
+    /* Only on stuctured map */
+    void			*vf_arg;	/* optional vf_get() argument */
 } F_ITER_t;
 
 
@@ -233,7 +235,8 @@ typedef struct f_iter_ {
 F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz, F_MAPLOCKING_t locking);
 /* Set map is partitioned; chose only 'own' partition (local) entries or whole (global) */
 int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global);
-void f_map_exit(F_MAP_t *map); /* free memory */
+/* Free all map structures */
+void f_map_exit(F_MAP_t *map);
 
 /*
  * Persistent map backend: the KV store
@@ -260,7 +263,7 @@ void f_map_mark_dirty(F_MAP_t *map, uint64_t entry);
  * however, QSBR threads need to be online and rcu_quiescent_state() must be called
  * some time later.
  */
-unsigned long *f_map_get_p(F_MAP_t *map, uint64_t entry); /* returns NULL if no entry */
+unsigned long *f_map_get_p(F_MAP_t *map, uint64_t entry); /* returns NULL if no BoS */
 unsigned long *f_map_new_p(F_MAP_t *map, uint64_t entry); /* if no entry, create it */
 F_BOSL_t *f_map_get_bosl(F_MAP_t *map, uint64_t entry); /* returns NULL if no BoS */
 F_BOSL_t *f_map_new_bosl(F_MAP_t *map, uint64_t entry); /* if no BoS, create it */
@@ -278,31 +281,56 @@ static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)
 /*
  * Iterators
  */
+
 /* Create new iterator */
 F_ITER_t *f_map_new_iter(F_MAP_t *map, F_COND_t cond);
+
+/* Release iterator */
 void f_map_free_iter(F_ITER_t *iter);
-/* Reset the iterator unconditionally and ensure BoS is created */
+
+/* Iterate to the next entry which matches the iterator's condition or return NULL */
+F_ITER_t *f_map_next(F_ITER_t *iter);
+
+/* Reset the iterator unconditionally and ensure BoS is created for 'entry' */
 F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry);
-/* Create a new iterator with condition on map */
+
+/* Create an iterator with condition, find the first entry or return NULL */
 static inline F_ITER_t *f_map_get_iter(F_MAP_t *map, F_COND_t cond)
 {
-	F_ITER_t *iter = f_map_new_iter(map, cond);
-	return f_map_seek_iter(iter, 0);
+	F_ITER_t *ret, *iter = f_map_new_iter(map, cond);
+
+	if (!(ret = f_map_next(iter)))
+		f_map_free_iter(iter); /* no map entry matches the condition */
+	return ret;
 }
+
 /* Check if iterator's condition is true */
 bool f_map_check_iter(F_ITER_t *iter);
 
-/* for_each(iterator) - iterate all map entries with given condition */
+/* Check if iterator's condition is true would it point at entry 'e' */
+bool f_map_probe_iter_at(const F_ITER_t *it, uint64_t entry, void *value_p);
+
+
+/* Iterator loops - iterate entries that match iterator's condition */
+
+/* for_each(iterator) - iterate map entries from the current position */
 #define for_each_iter(iter)					\
-	for (; iter; iter = f_map_next(iter))
-#define for_each_iter_from(iter, start, size)			\
+	for (; !f_map_iter_depleted(iter); (void)f_map_next(iter))
+
+/* for_each_iter_from() - loop over at most 'count' entries from 'start' */
+#define for_each_iter_from(iter, start, count, tmp_count)	\
 	for (iter = f_map_seek_iter(iter, (uint64_t)start),	\
-	     iter != NULL;					\
-	     iter = f_map_next(iter))
-/* Iterate to the next entry which matches the iterator's condition or return NULL */
-F_ITER_t *f_map_next(F_ITER_t *iter);
+	     tmp_count = 0;					\
+	     iter != NULL && tmp_count < count;			\
+	     iter = f_map_next(iter), tmp_count++)
+
 /* Get the number of entries which matches the iterator's condition within given size */
 uint64_t f_map_weight(const F_ITER_t *iter, size_t size);
+
+/* Is Iterator at end? */
+static inline bool f_map_iter_depleted(const F_ITER_t *iter) {
+	return iter->at_end == 1;
+}
 
 
 /*

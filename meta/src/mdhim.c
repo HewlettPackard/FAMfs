@@ -1052,6 +1052,9 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 	for (i = 0; i < bgrm->num_keys; i++) {
 		keys[i] = *((unsigned long*) bgrm->keys[i]);
 		memcpy(p, bgrm->values[i], bgrm->value_lens[i]);
+		p += bgrm->value_lens[i]/sizeof(*p);
+		mlog(MDHIM_CLIENT_DBG, "MDHIM Rank %d: get %d key:%lu",
+		     md->mdhim_rank, i, keys[i]);
 	}
 	ret = bgrm->num_keys;
 _err:
@@ -1080,6 +1083,8 @@ int mdhim_ps_bput(struct mdhim_t *md, struct index_t *index, unsigned long *buf,
 		value_lens[i] = (int)value_len;
 		values[i] = p;
 		p += value_len;
+		mlog(MDHIM_CLIENT_DBG, "MDHIM Rank %d: put %d key:%lu",
+		     md->mdhim_rank, i, *((unsigned long*)keys[i]));
 	}
 
 	/* MDHIM_BULK_PUT */
