@@ -9,12 +9,9 @@
 
 #include <sys/types.h>
 #include <inttypes.h>
-//#include <stdint.h>
 #include <pthread.h>
 
 #include "famfs_global.h"
-//#include "famfs_env.h"
-//#include "famfs_bbitmap.h"
 #include "famfs_maps.h"
 
 #include <urcu-qsbr.h>
@@ -109,16 +106,18 @@
  */
 
 /*
- * Virtual map functions (for STRUCTURED entry only):
- * F_MAP_GET_fn(*entry) - reduce the entry value to a bit;
- * F_MAP_SET_fn(*entry, value) - set the entry to the value.
+ * Virtual map entry value evaluation function (for STRUCTURED maps only):
+ * F_MAP_EVAL_SE_fn - reduce the entry value to one bit;
  */
-typedef int (*F_MAP_GET_fn)(void *arg, const F_PU_VAL_t *entry);
-/* TODO
-typedef void (*F_MAP_SET_fn)(void *arg, F_PU_VAL_t *entry, bool value);
-typedef void (*F_MAP_SETBB_fn)(void *arg, F_PU_VAL_t *entry, \
-	unsigned int bit, BBIT_VALUE_t value);
-*/
+typedef int (*F_MAP_EVAL_SE_fn)(void *arg, const F_PU_VAL_t *entry);
+/*
+ * The virtual function may receive one arbitrary argument.
+ * The map API client could pass some data to the function that
+ * would determine the entry value. For example, for a slab map 'entry'
+ * *arg is the extent number 'n' in map entry: *entry.ee[n]
+ * Note: By default iterator allocates sizeof(long) bytes for *arg,
+ * if more data is needed, please re-alloc iterator.vf_arg
+ */
 
 /* Map can store the [bifold] bitmaps or a long word aligned structures. */
 typedef enum {
@@ -171,11 +170,12 @@ typedef struct f_map_ {
 #define f_map_is_structured(map_p)	(map_p->type == F_MAPTYPE_STRUCTURED)
 #define f_map_is_bbitmap(map_p)		(map_p->type == F_MAPTYPE_BITMAP && \
 					 map_p->geometry.entry_sz == 2)
-#define f_map_is_bitmap(map_p)		(map_p->type == F_MAPTYPE_BITMAP && \
-					 map_p->geometry.entry_sz == 1)
 #define f_map_has_globals(map_p)	(map_p->own_part == 0U)
 
-/* Block of slabs */
+
+/*
+ * Block of slabs (BoS)
+ */
 #define F_BOSL_DIRTY_SZ	(F_MAP_MAX_BOS_PUS/(8*sizeof(unsigned long))) /* 4 */
 /* Judy node */
 typedef struct f_bosl_ {
@@ -201,12 +201,16 @@ typedef struct f_bosl_ {
  * Iterators
  */
 
+/* There are two types of condition in iterators: one for structured maps and
+ * one for bitmaps. Also there is the third type for the internal dirty PU iterator.
+ * Because the iterator created with one and only condition, the union is used.
+ */
 /* Iterator's condition */
 typedef union {
     /* Condition is either evaluation function or BBIT pattern set */
-    F_MAP_GET_fn		vf_get;		/* value evaluation function or NULL */
+    F_MAP_EVAL_SE_fn		vf_get;		/* structured entry evaluation function */
     uint64_t			pset;		/* BBIT pattern set: [0..BB_PAT_MASK] */
-    uint64_t			partition;	/* Dirty PU Iterator partiton on global map */
+    uint64_t			partition;	/* dirty PU Iterator partiton */
 } F_COND_t;
 #define F_NO_CONDITION		((F_COND_t)0LU)	/* Iterator will iterate ALL entries */
 
@@ -279,7 +283,7 @@ static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)
 
 
 /*
- * Iterators
+ * Map iterators
  */
 
 /* Create new iterator */
@@ -290,9 +294,6 @@ void f_map_free_iter(F_ITER_t *iter);
 
 /* Iterate to the next entry which matches the iterator's condition or return NULL */
 F_ITER_t *f_map_next(F_ITER_t *iter);
-
-/* Reset the iterator unconditionally and ensure BoS is created for 'entry' */
-F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry);
 
 /* Create an iterator with condition, find the first entry or return NULL */
 static inline F_ITER_t *f_map_get_iter(F_MAP_t *map, F_COND_t cond)
@@ -310,6 +311,14 @@ bool f_map_check_iter(F_ITER_t *iter);
 /* Check if iterator's condition is true would it point at entry 'e' */
 bool f_map_probe_iter_at(const F_ITER_t *it, uint64_t entry, void *value_p);
 
+/* Reset the iterator unconditionally.
+ * Also ensure that BoS is created for 'entry'.
+ * seek_iter() may return NULL if out-of-memory.
+ * Hint: Create a new iterator or call this function on existing iterator
+ * before creating a new entry in the map or calling f_map_weight().
+ */
+F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry);
+
 
 /* Iterator loops - iterate entries that match iterator's condition */
 
@@ -320,16 +329,18 @@ bool f_map_probe_iter_at(const F_ITER_t *it, uint64_t entry, void *value_p);
 /* for_each_iter_from() - loop over at most 'count' entries from 'start' */
 #define for_each_iter_from(iter, start, count, tmp_count)	\
 	for (iter = f_map_seek_iter(iter, (uint64_t)start),	\
-	     tmp_count = 0;					\
-	     iter != NULL && tmp_count < count;			\
-	     iter = f_map_next(iter), tmp_count++)
+	     (void)f_map_next(iter), tmp_count = 0;		\
+	     !f_map_iter_depleted(iter) && tmp_count < count;	\
+	     (void)f_map_next(iter), tmp_count++)
 
-/* Get the number of entries which matches the iterator's condition within given size */
+/* Return the number of entries which matches the iterator's condition
+ within given size; pass F_MAP_WHOLE for weighting the whole map. */
 uint64_t f_map_weight(const F_ITER_t *iter, size_t size);
+#define F_MAP_WHOLE (~(size_t)0)
 
 /* Is Iterator at end? */
 static inline bool f_map_iter_depleted(const F_ITER_t *iter) {
-	return iter->at_end == 1;
+	return !iter || (iter->at_end == 1);
 }
 
 

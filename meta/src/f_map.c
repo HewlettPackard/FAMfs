@@ -363,6 +363,8 @@ int f_map_load(F_MAP_t *map)
 
 	if (map == NULL)
 		return -1;
+	if (map->id == -1)
+		return 0; /* no DB backend for in-memory map */
 
 	parts = map->parts;
 	pu_per_bos = map->geometry.bosl_pu_count;
@@ -464,6 +466,8 @@ int f_map_update(F_MAP_t *map, F_STRIPE_HEAD_t *stripes)
 
 	if (map == NULL)
 		return -1;
+	if (map->id == -1)
+		return 0; /* no DB backend for in-memory map */
 
 	pu_per_bos = map->geometry.bosl_pu_count;
 	keys = (uint64_t *) malloc(sizeof(uint64_t) * pu_per_bos);
@@ -647,6 +651,8 @@ int f_map_flush(F_MAP_t *map)
 
 	if (map == NULL)
 	    return -1;
+	if (map->id == -1)
+		return 0; /* no DB backend for in-memory map */
 
 	pu_per_bos = map->geometry.bosl_pu_count;
 	assert(pu_per_bos <= F_MAP_MAX_BOS_PUS);
@@ -1017,9 +1023,10 @@ bool f_map_check_iter(F_ITER_t *iter) {
 /*
  * f_map_seek_iter
  *
- * (Re-)set the iterator to 'entry' unconditionally.
+ * Reset the iterator to 'entry' unconditionally.
  * Create a new BoS for 'entry' if it does not exist.
  * Use this function to populate online map starting at 'entry'.
+ * If out-of-memory, it would return NULL free the iterator.
  */
 F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
 {
@@ -1028,9 +1035,7 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
 	F_BOSL_t *bosl;
 	unsigned long *p = NULL;
 
-	/* fast path? */
-	if (it->entry == entry)
-		return it;
+	iter_reset(iter);
 	if ((bosl = it->bosl))
 		p = bosl_ffind(bosl, entry);
 	if (p == NULL) {
@@ -1039,8 +1044,11 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
 		/* update BoS pointer; create a new BoS on demand */
 		rc = _map_insert_bosl(map, entry, &bosl);
 
-		if (rc && rc != -EEXIST)
+		if (rc && rc != -EEXIST) {
+			assert(rc == ENOMEM);
+			f_map_free_iter(iter);
 			return NULL;
+		}
 		it->bosl = bosl;
 		p = bosl_ffind(bosl, entry);
 	}

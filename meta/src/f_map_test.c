@@ -25,6 +25,7 @@
 #define layout_id	0	/* use Layout 0 default configuration */
 #define MEM_KEY_BITS	64	/* in-memory maps: max global entry bits */
 #define DB_KEY_BITS	31	/* DB-backed maps: max global entry bits */
+//#define MAX_PMAP_SZ	(1UL << DB_KEY_BITS)
 #define META_DB_PATH	"/dev/shm"
 
 
@@ -167,8 +168,8 @@ static int ps_bdel(int map_id, size_t size, void **keys)
 }
 
 
-/* Virtual map function example */
-/* Default F_MAP_GET_fn function: it reduces the entry value to a bit */
+/* Virtual map function (F_MAP_EVAL_SE_fn) example.
+   It reduces the slab map entry value to single bit */
 int f_sm_is_extent_failed(void *arg, const F_PU_VAL_t *entry)
 {
     int r = 0;
@@ -532,7 +533,6 @@ int main (int argc, char *argv[]) {
      */
     tg = 4;
     printf("Running group %d tests: bitmaps with KV store backend\n", tg);
-#define MAX_PMAP_SZ (1UL << DB_KEY_BITS)
 
     /* For different BoS page size */
     rcu_register_thread();
@@ -589,7 +589,7 @@ int main (int argc, char *argv[]) {
 		    it = f_map_new_iter(m, f_cv_laminated);
 		    it = f_map_seek_iter(it, 0);
 		    if (!it) goto err2;
-		    v = (int)f_map_weight(it, MAX_PMAP_SZ);
+		    v = (int)f_map_weight(it, F_MAP_WHOLE);
 		    if (v != pass) goto err3;
 
 		    t = 7; /* Add an unique random entry */

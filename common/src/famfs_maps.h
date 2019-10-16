@@ -257,9 +257,15 @@ typedef struct f_layout_info_ {
 #define LO_TO_CV_ID(layout_id)	((layout_id) *2 + 1)	/* Layout ID to Claim vector */
 #define LO_MAP_TO_ID(map_id)	(map_id/2)		/* Map ID to layout ID */
 
+/* Layout configutation functions; defined in famfs_maps.c */
+int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
+int f_set_layout_info(unifycr_cfg_t *cfg);
+F_LAYOUT_INFO_t *f_get_layout_info(int layout_id);
+void f_free_layout_info(void);
+
 /*
- * Metadata: persistent KV store interface
-**/
+ * DB-independent persistent KV store interface
+ */
 /* create_persistent_map() function type: create/open KV store global index */
 typedef int (*F_CREATE_PERSISTENT_MAP_fn)(int map_id, int intl, char *name);
 /* ps_bget() function type: BGET_NEXT */
@@ -278,12 +284,7 @@ typedef struct f_meta_iface_ {
 	F_PS_BDEL_fn			bdel_fn;
 } F_META_IFACE_t;
 
-/* Defined in famfs_maps.c */
-int f_layout_parse_name(struct f_layout_info_ *info);
-int f_set_layout_info(unifycr_cfg_t *cfg);
-F_LAYOUT_INFO_t *f_get_layout_info(int layout_id);
-void f_free_layout_info(void);
-/* Persistent KV store interface for map API */
+/* Map API: persistent KV store interface */
 void f_set_meta_iface(F_META_IFACE_t *iface);
 int f_create_persistent_sm(int layout_id, int intl, int *mapid_p);
 int f_create_persistent_cv(int layout_id, int intl, int *mapid_p);
