@@ -3,5 +3,5 @@
 	url = https://github.com/01org/isa-l
 [submodule "userspace-rcu"]
 	path = userspace-rcu
-	url = https://github.com/urcu/userspace-rcu.git
+	url = https://github.com/ivadmitry/userspace-rcu
 	branch = urcu/rcuja-simple-int
