@@ -1065,6 +1065,7 @@ int range_server_bget_op(struct mdhim_t *md, struct mdhim_bgetm_t *bgm, int sour
 						keys[num_records] = NULL;
 						key_lens[num_records] = sizeof(int32_t);
 					}
+					/* FALLTHROUGH */
 				case MDHIM_GET_NEXT:
 
 					if (j && (ret =
@@ -1102,6 +1103,7 @@ int range_server_bget_op(struct mdhim_t *md, struct mdhim_bgetm_t *bgm, int sour
 						keys[num_records] = NULL;
 						key_lens[num_records] = sizeof(int32_t);
 					}
+					/* FALLTHROUGH */
 				case MDHIM_GET_PREV:
 					if (j && (ret =
 						  index->mdhim_store->get_prev(index->mdhim_store->db_handle,
@@ -1264,6 +1266,10 @@ void *listener_thread(void *data) {
 	return NULL;
 }
 
+static void _pthread_mutex_unlock(pthread_mutex_t *mutex) {
+	(void) pthread_mutex_unlock(mutex);
+}
+
 /*
  * worker_thread
  * Function for the thread that processes work in work queue
@@ -1300,7 +1306,7 @@ void *worker_thread(void *data) {
 		if (md->shutdown) {
 			break;
 		}
-		pthread_cleanup_push((void (*)(void *)) pthread_mutex_unlock,
+		pthread_cleanup_push((void (*)(void *)) &_pthread_mutex_unlock,
 				     (void *) md->mdhim_rs->work_queue_mutex);
 		//Lock the work queue mutex
 		pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);
@@ -1310,13 +1316,13 @@ void *worker_thread(void *data) {
 			pthread_cond_wait(md->mdhim_rs->work_ready_cv, md->mdhim_rs->work_queue_mutex);
 			item = get_work(md);
 		}
-	       
+
 		pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);
 		pthread_cleanup_pop(0);
 
 		gettimeofday(&worker_start, NULL);
 		while (item) {
-			//Call the appropriate function depending on the message type			
+			//Call the appropriate function depending on the message type
 			//Get the message type
 			mtype = ((struct mdhim_basem_t *) item->message)->mtype;
 
@@ -1332,8 +1338,8 @@ void *worker_thread(void *data) {
 			case MDHIM_PUT:
 				gettimeofday(&worker_put_start, NULL);
 				//Pack the put message and pass to range_server_put
-				range_server_put(md, 
-						 item->message, 
+				range_server_put(md,
+						 item->message,
 						 item->source);
 				gettimeofday(&worker_put_end, NULL);
 				worker_put_time += 1000000*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec;
@@ -1346,8 +1352,8 @@ void *worker_thread(void *data) {
 			case MDHIM_BULK_PUT:
 				//Pack the bulk put message and pass to range_server_put
 				gettimeofday(&worker_put_start, NULL);
-				range_server_bput(md, 
-						  item->message, 
+				range_server_bput(md,
+						  item->message,
 						  item->source);
 				gettimeofday(&worker_put_end, NULL);
 				worker_put_time += 1000000*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec;
@@ -1359,12 +1365,12 @@ void *worker_thread(void *data) {
 				num_keys = ((struct mdhim_bgetm_t *) item->message)->num_keys;
 				//The client is sending one key, but requesting the retrieval of more than one
 				if (num_records > 1 && num_keys == 1) {
-					range_server_bget_op(md, 
-							     item->message, 
+					range_server_bget_op(md,
+							     item->message,
 							     item->source, op);
 				} else {
-					range_server_bget(md, 
-							  item->message, 
+					range_server_bget(md,
+							  item->message,
 							  item->source);
 				}
 
@@ -1384,22 +1390,22 @@ void *worker_thread(void *data) {
 				break;
 			case MDHIM_COMMIT:
 				range_server_commit(md, item->message, item->source);
-				break;		
+				break;
 			default:
-				printf("Rank: %d - Got unknown work type: %d" 
+				printf("Rank: %d - Got unknown work type: %d"
 				       " from: %d\n", md->mdhim_rank, mtype, item->source);
 				break;
 			}
 
 			item_tmp = item;
-			pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);			
+			pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);
 			item = item->next;
 			pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);
 			free(item_tmp);
 		}
 
 		//Clean outstanding sends
-		if (putflag == 0) {	
+		if (putflag == 0) {
 			gettimeofday(&resp_get_comm_end, NULL);
 			resp_get_comm_time+=1000000*(resp_get_comm_end.tv_sec\
 			-resp_get_comm_start.tv_sec)+resp_get_comm_end.tv_usec\
@@ -1409,10 +1415,10 @@ void *worker_thread(void *data) {
 			gettimeofday(&resp_put_comm_end, NULL);
 			resp_put_comm_time+=1000000*(resp_put_comm_end.tv_sec\
 			-resp_put_comm_start.tv_sec)+resp_put_comm_end.tv_usec\
-			-resp_put_comm_start.tv_usec;	
+			-resp_put_comm_start.tv_usec;
 		}
 		gettimeofday(&worker_end, NULL);
-		worker_time += 1000000*(worker_end.tv_sec-worker_start.tv_sec)+worker_end.tv_usec-worker_start.tv_usec;	
+		worker_time += 1000000*(worker_end.tv_sec-worker_start.tv_sec)+worker_end.tv_usec-worker_start.tv_usec;
 #ifdef DEBUG_WRK_THREAD
 		mlog(MDHIM_SERVER_INFO, ". worker[%d] time:%ld (total:%.0lf) current:%ld",
 		     worker_id,
