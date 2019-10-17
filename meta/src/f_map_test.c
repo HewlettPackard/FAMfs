@@ -218,6 +218,10 @@ int main (int argc, char *argv[]) {
     page = getpagesize();
     global = 1;
 
+	    pass = rc = v = 0;
+	    e = ul = 0;
+	    ui = 0;
+	    p = NULL; it = NULL;
     /*
      * Test group one: in-memory bitmaps
      */
@@ -230,9 +234,6 @@ int main (int argc, char *argv[]) {
 	page_sz = pages*page;
 	/* One and two-bits bitmaps */
 	for (e_sz = 1; e_sz <= 2; e_sz++) {
-	    pass = rc = v = 0;
-	    e = 0;
-	    p = NULL; it = NULL;
 
 	    t = 0; /* create bifold map */
 	    m = f_map_init(F_MAPTYPE_BITMAP, e_sz, (pages==1)?0:page_sz,
@@ -336,7 +337,7 @@ int main (int argc, char *argv[]) {
     /* For dofferent BoS page size */
     for (pages = 1; pages < BOS_PAGE_MAX; pages++) {
 	page_sz = pages*page;
-	/* One and two-bits bitmaps */
+	/* Number of extents in slab entry */
 	for (ext = 1; ext <= 3; ext++) {
 	    pass = rc = v = 0;
 	    e = 0;
