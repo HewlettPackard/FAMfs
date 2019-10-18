@@ -479,7 +479,7 @@ static inline unsigned int test_and_set_bbit_pattern(int nr, unsigned int pat,
 }
 
 /**
- * atomic_est_and_set_bbit - Set a new and return the old tetral value in bifold bit array
+ * atomic_test_and_set_bbit - Set a new and return the old tetral value in bifold bit array
  * @nr: Bit to set
  * @val: tetral value
  * @addr: Address to count from

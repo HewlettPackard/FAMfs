@@ -93,9 +93,9 @@
  * Allocation and deallocation of bitmap.
  * Provided in lib/bitmap.c to avoid circular dependency.
  */
-extern unsigned long *__bitmap_alloc(unsigned int nbits, gfp_t flags);
-extern unsigned long *__bitmap_zalloc(unsigned int nbits, gfp_t flags);
-extern void __bitmap_free(const unsigned long *bitmap);
+extern unsigned long *bitmap_alloc(size_t nbits);
+extern unsigned long *bitmap_zalloc(size_t nbits);
+extern void bitmap_free(unsigned long *bitmap);
 
 /*
  * lib/bitmap.c provides these functions:

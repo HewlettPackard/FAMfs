@@ -1201,7 +1201,7 @@ static uint64_t bosl_weight(const F_ITER_t *it, const unsigned long *p,
 
 			return (it->cond.pset)? w : (nr-w);
 		} else {
-			return __bbitmap_weight(p, it->cond.pset, start, nr);
+			return __bbitmap_weight64(p, it->cond.pset, start, nr);
 		}
 	}
 }

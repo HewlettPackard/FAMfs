@@ -30,7 +30,7 @@ libfamfs_common_la_LIBADD = -lm -lnuma -lrt
 LDADD = libfamfs_common.la
 
 check_tests = famfs_bbitops_test
-unit_tests = famfs_bbitops_test
+unit_tests = famfs_bbitops_test famfs_bitops_test
 
 check_PROGRAMS = ${check_tests}
 TESTS = ${check_tests}

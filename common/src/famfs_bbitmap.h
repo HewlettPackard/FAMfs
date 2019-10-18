@@ -89,8 +89,8 @@
 /*
  * Allocation and deallocation of bifold bitmap.
  */
-extern unsigned long *bbitmap_alloc(unsigned int size);
-extern unsigned long *bbitmap_zalloc(unsigned int size);
+extern unsigned long *bbitmap_alloc(size_t size);
+extern unsigned long *bbitmap_zalloc(size_t size);
 extern void bbitmap_free(unsigned long *map);
 
 /*
@@ -101,7 +101,6 @@ extern int __bbitmap_empty(const unsigned long *map, int size);
 extern int __bbitmap_full(const unsigned long *map, unsigned int pset, int size);
 extern int __bbitmap_equal(const unsigned long *map1,
     const unsigned long *map2, int size);
-extern int __bbitmap_weight(const unsigned long *map, unsigned int pset, int start, int nr);
 extern void bbitmap_set(unsigned long *map, unsigned int val, int pos, int len);
 
 extern unsigned long bbitmap_find_next_unset_area(unsigned long *map,
@@ -111,6 +110,12 @@ extern int bbitmap_pos_to_ord(const unsigned long *map, unsigned int pset,
     int pos, int size);
 extern int bbitmap_ord_to_pos(const unsigned long *map, unsigned int pset,
     int ord, int size);
+
+/*
+ * 64 bits bit position
+ */
+extern uint64_t __bbitmap_weight64(const unsigned long *map, unsigned int pset,
+    uint64_t start, uint64_t nr);
 
 #define BB_FIRST_WORD_MASK(start)				\
 	(~0UL << (2U*((start) % BBITS_PER_LONG)))
@@ -178,6 +183,12 @@ static inline int bbitmap_full(const unsigned long *src, unsigned int pset, int 
 	return __bbitmap_full(src, pset, nbits);
 }
 
+static inline int __bbitmap_weight(const unsigned long *map, unsigned int pset,
+    int start, int nr)
+{
+	return (int)__bbitmap_weight64(map, pset, (uint64_t)start, (uint64_t)nr);
+}
+
 static inline int bbitmap_weight(const unsigned long *src, unsigned int pset, int nbits)
 {
 	if (bb_pset_chk(pset))
@@ -192,6 +203,7 @@ static inline int bitmap_parse(const char *buf, unsigned int buflen,
 	return __bitmap_parse(buf, buflen, 0, maskp, nmaskbits);
 }
 #endif
+
 
 #endif /* __ASSEMBLY__ */
 

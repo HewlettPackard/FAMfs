@@ -131,26 +131,26 @@ static __always_inline int fls64(u64 x)
 
 
 
-#define for_each_set_bit(bit, addr, size) \
+#define for_each_set_bit(bit, addr, size)				\
 		for ((bit) = find_first_bit((addr), (size));		\
-		(bit) < (size);					\
+		(bit) < (unsigned long)(size);				\
 		(bit) = find_next_bit((addr), (size), (bit) + 1))
 
 /* same as for_each_set_bit() but use bit as value to start with */
-#define for_each_set_bit_from(bit, addr, size) \
+#define for_each_set_bit_from(bit, addr, size)				\
 		for ((bit) = find_next_bit((addr), (size), (bit));	\
-		(bit) < (size);					\
+		(bit) < (unsigned long)(size);				\
 		(bit) = find_next_bit((addr), (size), (bit) + 1))
 
-#define for_each_clear_bit(bit, addr, size) \
+#define for_each_clear_bit(bit, addr, size)				\
 		for ((bit) = find_first_zero_bit((addr), (size));	\
-		(bit) < (size);					\
+		(bit) < (unsigned long)(size);				\
 		(bit) = find_next_zero_bit((addr), (size), (bit) + 1))
 
 /* same as for_each_clear_bit() but use bit as value to start with */
-#define for_each_clear_bit_from(bit, addr, size) \
+#define for_each_clear_bit_from(bit, addr, size)			\
 		for ((bit) = find_next_zero_bit((addr), (size), (bit));	\
-		(bit) < (size);					\
+		(bit) < (unsigned long)(size);				\
 		(bit) = find_next_zero_bit((addr), (size), (bit) + 1))
 
 static __inline__ int get_count_order(unsigned int count)
@@ -565,5 +565,85 @@ static inline int test_and_change_bit(int nr,
         *p = old ^ mask;
         return (old & mask) != 0;
 }
+
+
+/*
+ * Atomic bitmap ops
+ */
+
+/* Atomically set bit 'nr' in bitmap 'addr' */
+static __always_inline void atomic_set_bit(int nr, volatile unsigned long *addr)
+{
+	unsigned long mask = BIT_MASK(nr);
+	volatile unsigned long *p = addr + BIT_WORD(nr);
+	unsigned long src, dst;
+
+	dst = __atomic_load_8(p, __ATOMIC_SEQ_CST);
+	do {
+		src = dst | mask;
+	} while (dst != src &&
+	    __atomic_compare_exchange_8(p, &dst, src, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+}
+
+/* Atomically set or clear bit 'nr' in bitmap 'addr' */
+static __always_inline void atomic_clear_bit(int nr, volatile unsigned long *addr)
+{
+	unsigned long mask = BIT_MASK(nr);
+	volatile unsigned long *p = addr + BIT_WORD(nr);
+	unsigned long src, dst;
+
+	dst = __atomic_load_8(p, __ATOMIC_SEQ_CST);
+	do {
+		src = dst & ~mask;
+	} while (dst != src &&
+	    __atomic_compare_exchange_8(p, &dst, src, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+}
+
+/**
+ * atomic_test_and_set_bit - Set a bit in bit array and return the old value
+ * @nr: Bit to set
+ * @val: value
+ * @addr: Address to count from
+ *
+ * This operation is atomic.
+ */
+static __always_inline int atomic_test_and_set_bit(int nr, volatile unsigned long *addr)
+{
+	unsigned long mask = BIT_MASK(nr);
+	volatile unsigned long *p = addr + BIT_WORD(nr);
+	unsigned long src, dst;
+
+	dst = __atomic_load_8(p, __ATOMIC_SEQ_CST);
+	do {
+		src = dst | mask;
+	} while (dst != src &&
+	    !__atomic_compare_exchange_8(p, &dst, src, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
+	return (int)((dst & mask) >> (nr % BITS_PER_LONG));
+}
+
+/**
+ * atomic_test_and_clear_bit - Clear a bit in bit array and return the old value
+ * @nr: Bit to set
+ * @val: value
+ * @addr: Address to count from
+ *
+ * This operation is atomic.
+ */
+static __always_inline int atomic_test_and_clear_bit(int nr, volatile unsigned long *addr)
+{
+	unsigned long mask = BIT_MASK(nr);
+	volatile unsigned long *p = addr + BIT_WORD(nr);
+	unsigned long src, dst;
+
+	dst = __atomic_load_8(p, __ATOMIC_SEQ_CST);
+	do {
+		src = dst & ~mask;
+	} while (dst != src &&
+	    !__atomic_compare_exchange_8(p, &dst, src, 0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
+	return (int)((dst & mask) >> (nr % BITS_PER_LONG));
+}
+
 
 #endif /* FAMFS_BITOPS_H_ */

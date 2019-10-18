@@ -278,13 +278,14 @@ uint64_t __bitmap_weight64(const unsigned long *map, uint64_t start, uint64_t nr
 		if (nr < k)
 			goto _tail;
 		nr -= k;
-		w = hweight_long(*p++ && mask);
+		w = hweight_long(*p++ & mask);
 	}
 
 	/* body */
 	lim = nr/(unsigned)BITS_PER_LONG;
 	for (k = 0; k < lim; k++)
 		w += hweight_long(*p++);
+	mask = ~0UL;
 
 _tail:
 	/* tail */
@@ -489,7 +490,8 @@ void bitmap_remap(unsigned long *dst, const unsigned long *src,
 		const unsigned long *old, const unsigned long *new,
 		int bits)
 {
-	int oldbit, w;
+	unsigned long oldbit;
+	int w;
 
 	if (dst == src)         /* following doesn't handle inplace remaps */
 		return;
@@ -646,7 +648,9 @@ int bitmap_bitremap(int oldbit, const unsigned long *old,
 void bitmap_onto(unsigned long *dst, const unsigned long *orig,
 		const unsigned long *relmap, int bits)
 {
-	int n, m;               /* same meaning as in above comment */
+	/* n, m have the same meaning as in above comment */
+	unsigned long n;
+	int m;
 
 	if (dst == orig)        /* following doesn't handle inplace mappings */
 		return;
@@ -685,7 +689,7 @@ void bitmap_onto(unsigned long *dst, const unsigned long *orig,
 void bitmap_fold(unsigned long *dst, const unsigned long *orig,
 		int sz, int bits)
 {
-	int oldbit;
+	unsigned long oldbit;
 
 	if (dst == orig)        /* following doesn't handle inplace mappings */
 		return;
@@ -850,20 +854,20 @@ static inline void *kmalloc_array(size_t n, size_t size, gfp_t flags)
 		return kmalloc(bytes, flags);
 */
 	if (flags & __GFP_ZERO)
-		return malloc(n * size);
-	else
 		return calloc(n, size);
+	else
+		return malloc(n * size);
 }
 
-unsigned long *bitmap_alloc(unsigned int nbits, gfp_t flags)
+unsigned long *bitmap_alloc(size_t nbits)
+{
+	return kmalloc_array(BITS_TO_LONGS(nbits), sizeof(unsigned long), 0);
+}
+
+unsigned long *bitmap_zalloc(size_t nbits)
 {
 	return kmalloc_array(BITS_TO_LONGS(nbits), sizeof(unsigned long),
-			     flags);
-}
-
-unsigned long *bitmap_zalloc(unsigned int nbits, gfp_t flags)
-{
-	return bitmap_alloc(nbits, flags | __GFP_ZERO);
+			     __GFP_ZERO);
 }
 
 void bitmap_free(unsigned long *bitmap)

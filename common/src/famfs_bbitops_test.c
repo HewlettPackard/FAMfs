@@ -16,8 +16,8 @@ int main (void) {
     int sz, i, j, k, pos;
     int tg, t;
 #define bb_size_start	1
-#define bb_size_end	(32*2+1)
-#define cont_ones_end	(32+1)
+#define bb_size_end	(BBITS_PER_LONG*2+1)
+#define cont_ones_end	(BBITS_PER_LONG+1)
     unsigned long *bbmap = NULL;
     BBIT_VALUE_t val;
     unsigned int pat;
@@ -27,7 +27,7 @@ int main (void) {
     unsigned int pat0, pat1;
     unsigned short *bbmap16;
 
-    /* Test group one: long bitmaps */
+    printf("Unittest - bbitmaps\n");
     tg = 1;
     printf("Running group %d tests: non-atomic ops\n", tg);
     /* sz: size */

@@ -88,15 +88,16 @@ int __bbitmap_equal(const unsigned long *bbmap1,
 	return 1;
 }
 
-int __bbitmap_weight(const unsigned long *map, unsigned int pset, int start, int nr)
+uint64_t __bbitmap_weight64(const unsigned long *map, unsigned int pset,
+    uint64_t start, uint64_t nr)
 {
 	const unsigned long *p = map + BBIT_WORD(start);
 	unsigned int bitmap, mask;
-	int s = start % BBITS_PER_LONG;
+	unsigned int s = start % BBITS_PER_LONG;
 	uint64_t w = 0;
 
 	if (s) {
-		int bit0 = BBITS_PER_LONG - s;
+		unsigned int bit0 = BBITS_PER_LONG - s;
 
 		mask = (unsigned int) BITMAP_FIRST_WORD_MASK(s);
 		if (nr < bit0) {
@@ -278,12 +279,12 @@ int bbitmap_ord_to_pos(const unsigned long *buf, unsigned int pset, int ord, int
  * bbitmap_alloc - allocate memory for an array.
  * @nbits: number of elements.
  */
-unsigned long *bbitmap_alloc(unsigned int nbits)
+unsigned long *bbitmap_alloc(size_t nbits)
 {
 	return malloc(BBITS_TO_LONGS(nbits) * sizeof(unsigned long));
 }
 
-unsigned long *bbitmap_zalloc(unsigned int nbits)
+unsigned long *bbitmap_zalloc(size_t nbits)
 {
 	return calloc(BBITS_TO_LONGS(nbits), sizeof(unsigned long));
 }
