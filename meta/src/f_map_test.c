@@ -170,7 +170,7 @@ static int ps_bdel(int map_id, size_t size, void **keys)
 
 /* Virtual map function (F_MAP_EVAL_SE_fn) example.
    It reduces the slab map entry value to single bit */
-int f_sm_is_extent_failed(void *arg, const F_PU_VAL_t *entry)
+static int sm_is_extent_failed(void *arg, const F_PU_VAL_t *entry)
 {
     int r = 0;
     unsigned int n = *(unsigned int *)arg;
@@ -184,17 +184,20 @@ int f_sm_is_extent_failed(void *arg, const F_PU_VAL_t *entry)
     return r;
 }
 
-/* Default SM entry condition: extent is failed.
- * Set .vf_arg1 to extent number!
+/* Example of Slab map entry condition: extent is failed.
+ * Set .vf_arg to extent number!
  */
-static F_COND_t f_sm_extent_failed = {
-    .vf_get = &f_sm_is_extent_failed,
+static F_COND_t sm_extent_failed = {
+    .vf_get = &sm_is_extent_failed,
 };
 
-/* Default CV entry condition: BBPAT_11 "laminated" */
-static F_COND_t f_cv_laminated = {
+/* Example of Claim Vector condition: BBPAT_11 - entry is "laminated" */
+static F_COND_t cv_laminated = {
     .pset = CV_LAMINATED_P,
 };
+
+/* The [simple] bitmap condition: a bit is set */
+static F_COND_t laminated = F_BIT_CONDITION;
 
 
 /* unittest: f_map */
@@ -297,7 +300,7 @@ int main (int argc, char *argv[]) {
 		if (v != 1) goto err2;
 
 		t = 6; /* Iterate the map */
-		it = f_map_new_iter(m, f_cv_laminated);
+		it = f_map_new_iter(m, (e_sz==1)?laminated:cv_laminated);
 		if (!f_map_seek_iter(it, bosl->entry0)) goto err2; /* ENOMEM */
 		/* @e? */
 		if (f_map_check_iter(it)) {
@@ -384,7 +387,7 @@ int main (int argc, char *argv[]) {
 		ee += ext;
 		ee->failed = 1;
 		/* iterator... */
-		it = f_map_new_iter(m, f_sm_extent_failed);
+		it = f_map_new_iter(m, sm_extent_failed);
 		*(unsigned int*)it->vf_arg = ext;
 		if (!f_map_seek_iter(it, bosl->entry0)) goto err2; /* ENOMEM */
 		/* @e? */
@@ -587,7 +590,10 @@ int main (int argc, char *argv[]) {
 		    f_map_free_iter(it); it = NULL;
 
 		    t = 6; /* Count entries in loaded map */
-		    it = f_map_new_iter(m, f_cv_laminated);
+		    /* Note: For bitmap (e_sz:1) the condition evaluated
+		    as a boolean, cv_laminated is 'true' so that is the same
+		    as F_BIT_CONDITION, i.e. iterate over set bits */
+		    it = f_map_new_iter(m, cv_laminated);
 		    it = f_map_seek_iter(it, 0);
 		    if (!it) goto err2;
 		    v = (int)f_map_weight(it, F_MAP_WHOLE);
@@ -662,7 +668,7 @@ int main (int argc, char *argv[]) {
 
 		t = 12; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(m);
-		it = f_map_get_iter(m, f_cv_laminated);
+		it = f_map_get_iter(m, cv_laminated);
 		for_each_iter(it) {
 		    /* clear PU of 'it->entry' in map */
 		    bosl = it->bosl;

@@ -77,14 +77,29 @@
 #define F_MAP_MAX_BOS_PUS	512
 
 /*
- * Locking
- */
-
-/*
  * Map entry type.
  * BITMAP - one- or bifold bitmap; entry size is one or two bits.
  * STRUCTURED - a structure, aligned to 8 bytes, of arbitrary size (in bytes).
  */
+
+/* Map can store the conventional bitmaps, bifold bitmaps or structures.
+   Check .entry_sz in map geometry to find the entry size, in bits for bitmaps or
+   bytes for the structured map. */
+typedef enum {
+    F_MAPTYPE_BITMAP = 0,
+    F_MAPTYPE_STRUCTURED,
+} F_MAPTYPE_t;
+#define f_map_is_structured(map_p)	(map_p->type == F_MAPTYPE_STRUCTURED)
+#define f_map_is_bbitmap(map_p)		(map_p->type == F_MAPTYPE_BITMAP && \
+					 map_p->geometry.entry_sz == 2)
+/*
+ * Locking
+ */
+typedef enum {
+    F_MAPLOCKING_DEFAULT = 0,
+    F_MAPLOCKING_END,
+} F_MAPLOCKING_t;
+
 
 /*
  * Iterators.
@@ -106,10 +121,12 @@
  */
 
 /*
- * Virtual map entry value evaluation function (for STRUCTURED maps only):
- * F_MAP_EVAL_SE_fn - reduce the entry value to one bit;
+ * Virtual map entry value functions - only for STRUCTURED maps:
+ * F_MAP_EVAL_SE_fn - evaluate the entry value as a boolean;
+ * F_MAP_SET_SE_fn - set the entry value in the cloned map.
  */
 typedef int (*F_MAP_EVAL_SE_fn)(void *arg, const F_PU_VAL_t *entry);
+typedef int (*F_MAP_SET_SE_fn)(void *arg, const F_PU_VAL_t *entry);
 /*
  * The virtual function may receive one arbitrary argument.
  * The map API client could pass some data to the function that
@@ -118,17 +135,6 @@ typedef int (*F_MAP_EVAL_SE_fn)(void *arg, const F_PU_VAL_t *entry);
  * Note: By default iterator allocates sizeof(long) bytes for *arg,
  * if more data is needed, please re-alloc iterator.vf_arg
  */
-
-/* Map can store the [bifold] bitmaps or a long word aligned structures. */
-typedef enum {
-    F_MAPTYPE_BITMAP = 0,
-    F_MAPTYPE_STRUCTURED,
-} F_MAPTYPE_t;
-
-typedef enum {
-    F_MAPLOCKING_DEFAULT = 0,
-    F_MAPLOCKING_END,
-} F_MAPLOCKING_t;
 
 /* Judy sparse array */
 typedef struct cds_ja F_JUDY_t;
@@ -167,9 +173,6 @@ typedef struct f_map_ {
 } F_MAP_t;
 
 #define f_map_is_partitioned(map_p)	(map_p->parts > 1)
-#define f_map_is_structured(map_p)	(map_p->type == F_MAPTYPE_STRUCTURED)
-#define f_map_is_bbitmap(map_p)		(map_p->type == F_MAPTYPE_BITMAP && \
-					 map_p->geometry.entry_sz == 2)
 #define f_map_has_globals(map_p)	(map_p->own_part == 0U)
 
 
@@ -201,18 +204,40 @@ typedef struct f_bosl_ {
  * Iterators
  */
 
-/* There are two types of condition in iterators: one for structured maps and
- * one for bitmaps. Also there is the third type for the internal dirty PU iterator.
+/*
+ * The iterator needs a condition to evaluate every map entry as a true or false.
+ * There are two types of condition in iterators: one for the structured maps and
+ * one for the bitmaps.
+ * Also the condition is internally used by the dirty PU iterator.
  * Because the iterator created with one and only condition, the union is used.
+ * For bifold bitmaps (bbitmaps) 'pset' is a BBIT pattern which can stand for
+ * the combination(s) of bifold values. For conventional bitmaps 'pset' is treated
+ * as a boolean and must be set to true (F_BIT_CONDITION).
+ * Zero condition is a special case. With "no condition" the iterator would loop
+ * over all entries.
  */
-/* Iterator's condition */
+
+/* Iterator's condition - evaluate an entry value as a boolean */
 typedef union {
-    /* Condition is either evaluation function or BBIT pattern set */
     F_MAP_EVAL_SE_fn		vf_get;		/* structured entry evaluation function */
     uint64_t			pset;		/* BBIT pattern set: [0..BB_PAT_MASK] */
     uint64_t			partition;	/* dirty PU Iterator partiton */
 } F_COND_t;
 #define F_NO_CONDITION		((F_COND_t)0LU)	/* Iterator will iterate ALL entries */
+#define F_BIT_CONDITION		((F_COND_t)1LU) /* Iterate over set bits in bitmaps */
+
+/*
+ * Map clone function needs an entry setter. That is similiar to F_COND_t condition,
+ * but instead of evaluating the map entry the setter "sets" the cloned entry.
+ * Note: there is no entry clear function. If a map entry is evaluated as false,
+ * the cloned entry would be filled with zeros.
+ */
+
+/* Map clone entry setter - set the entry value which has been evaluated as true */
+typedef union {
+    F_MAP_SET_SE_fn		vf_set;		/* structured entry set function */
+    BBIT_VALUE_t		one_val;	/* BBIT value */
+} F_SETTER_t;
 
 typedef struct f_iter_ {
     F_MAP_t			*map;		/* back pointer to iterator's map */
@@ -227,7 +252,7 @@ typedef struct f_iter_ {
 	};
     };
     /* Only on stuctured map */
-    void			*vf_arg;	/* optional vf_get() argument */
+    void			*vf_arg;	/* optional vf_get/vf_set argument */
 } F_ITER_t;
 
 
@@ -241,6 +266,8 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz, F_MAPLOCKING
 int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global);
 /* Free all map structures */
 void f_map_exit(F_MAP_t *map);
+/* Clone in-memory map entries to a new map with given evaluator and setter */
+int f_map_clone(F_MAP_t **clone, F_SETTER_t setter, F_MAP_t *origin, F_COND_t cond);
 
 /*
  * Persistent map backend: the KV store
