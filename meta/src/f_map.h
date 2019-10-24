@@ -96,7 +96,8 @@ typedef enum {
  * Locking
  */
 typedef enum {
-    F_MAPLOCKING_DEFAULT = 0,
+    F_MAPLOCKING_DEFAULT = 0,	/* RCU locking only on BoS search */
+    F_MAPLOCKING_BOSL,		/* pthread_rwlock protected BoS access */
     F_MAPLOCKING_END,
 } F_MAPLOCKING_t;
 
@@ -126,7 +127,7 @@ typedef enum {
  * F_MAP_SET_SE_fn - set the entry value in the cloned map.
  */
 typedef int (*F_MAP_EVAL_SE_fn)(void *arg, const F_PU_VAL_t *entry);
-typedef int (*F_MAP_SET_SE_fn)(void *arg, const F_PU_VAL_t *entry);
+typedef void (*F_MAP_SET_SE_fn)(void *arg, const F_PU_VAL_t *entry);
 /*
  * The virtual function may receive one arbitrary argument.
  * The map API client could pass some data to the function that
@@ -268,14 +269,20 @@ int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global);
 void f_map_exit(F_MAP_t *map);
 /* Clone in-memory map entries to a new map with given evaluator and setter */
 int f_map_clone(F_MAP_t **clone, F_SETTER_t setter, F_MAP_t *origin, F_COND_t cond);
+/* Helper: create a bitmap and clone BBIT or structured map to it */
+F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg);
 
 /*
  * Persistent map backend: the KV store
  */
 /* Attach map to persistent KV store */
 int f_map_register(F_MAP_t *map, int layout_id);
+/* Map load callback function - it's called once per PU */
+typedef void (*F_MAP_LOAD_CB_fn)(void *arg, const F_PU_VAL_t *entry);
+/* Load all KVs for [one partition of] the registered map; call back on PU */
+int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg);
 /* Load all KVs for [one partition of] the registered map */
-int f_map_load(F_MAP_t *map);
+static inline int f_map_load(F_MAP_t *map) { return f_map_load_cb(map, NULL, NULL); }
 /* Put all 'dirty' PUs of all BoSses to KV store; delete zero PUs. */
 int f_map_flush(F_MAP_t *map);
 /* Update (load from KV store) only map entries given in the stripe list */
@@ -313,8 +320,8 @@ static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)
  * Map iterators
  */
 
-/* Create new iterator */
-F_ITER_t *f_map_new_iter(F_MAP_t *map, F_COND_t cond);
+/* Create new iterator with condition and optional arg for structured map */
+F_ITER_t *f_map_new_iter(F_MAP_t *map, F_COND_t cond, int arg);
 
 /* Release iterator */
 void f_map_free_iter(F_ITER_t *iter);
@@ -323,9 +330,9 @@ void f_map_free_iter(F_ITER_t *iter);
 F_ITER_t *f_map_next(F_ITER_t *iter);
 
 /* Create an iterator with condition, find the first entry or return NULL */
-static inline F_ITER_t *f_map_get_iter(F_MAP_t *map, F_COND_t cond)
+static inline F_ITER_t *f_map_get_iter(F_MAP_t *map, F_COND_t cond, int arg)
 {
-	F_ITER_t *ret, *iter = f_map_new_iter(map, cond);
+	F_ITER_t *ret, *iter = f_map_new_iter(map, cond, arg);
 
 	if (!(ret = f_map_next(iter)))
 		f_map_free_iter(iter); /* no map entry matches the condition */
@@ -333,7 +340,7 @@ static inline F_ITER_t *f_map_get_iter(F_MAP_t *map, F_COND_t cond)
 }
 
 /* Check if iterator's condition is true */
-bool f_map_check_iter(F_ITER_t *iter);
+bool f_map_check_iter(const F_ITER_t *iter);
 
 /* Check if iterator's condition is true would it point at entry 'e' */
 bool f_map_probe_iter_at(const F_ITER_t *it, uint64_t entry, void *value_p);
@@ -368,6 +375,11 @@ uint64_t f_map_weight(const F_ITER_t *iter, size_t size);
 /* Is Iterator at end? */
 static inline bool f_map_iter_depleted(const F_ITER_t *iter) {
 	return !iter || (iter->at_end == 1);
+}
+
+/* Create new iterator w/o condition; for loop over all entries. */
+static inline F_ITER_t *f_map_new_iter_all(F_MAP_t *map) {
+	return f_map_new_iter(map, F_NO_CONDITION, 0);
 }
 
 
