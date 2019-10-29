@@ -234,11 +234,11 @@ int main (int argc, char *argv[]) {
     srand((unsigned int)time(NULL));
     page = getpagesize();
     global = 1;
+    pass = rc = v = 0;
+    e = ul = 0;
+    ui = ext = 0;
+    p = NULL; it = NULL;
 
-	    pass = rc = v = 0;
-	    e = ul = 0;
-	    ui = 0;
-	    p = NULL; it = NULL;
     /*
      * Test group one: in-memory bitmaps
      */
@@ -740,7 +740,7 @@ int main (int argc, char *argv[]) {
 
 	    /* Test partitioned map with only partition, all partitions */
 	    for (global = 0; global <= 1; global++) {
-		printf(" with BoS pages:%u, %sstructured bitmap, %d extent%s\n",
+		printf(" with BoS pages:%u, %sstructured map, %d extent%s\n",
 		       pages, global?"global ":"", ext, (ext==1)?"":"s");
 
 		t = 2; /* Set map partition */

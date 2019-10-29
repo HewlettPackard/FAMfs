@@ -9,11 +9,6 @@
 #include "famfs_ktypes.h"
 #include "famfs_bitops.h"
 
-#if !defined(__BMI2__)
-#error No BMI2
-#endif
-#include <immintrin.h>
-
 
 #define BBITS_PER_LONG		(BITS_PER_LONG >> 1)
 #define BBIT_WORD(nr)		((nr) / BBITS_PER_LONG)
@@ -128,32 +123,69 @@ static inline unsigned int bb_pset_count(unsigned int pset) {
 	return __builtin_popcount(pset);
 }
 
-/* Reduce one word of the bifold bit array to a bitmap for given set of patterns */
+/* Reduce bbitmap to Morton-encoded bitmap with all zero odd-indexed bits */
+static __always_inline unsigned long _bb_reduce(const unsigned long word,
+    unsigned int pset)
+{
+	unsigned int pcnt = bb_pset_count(pset);
+	unsigned long mask[4] = BBITS_MASK_ARRAY;
+	unsigned long x, w = word;
+
+	switch (pcnt) {
+	case 0: return 0;
+		break;
+
+	case 4:	return 0x5555555555555555;
+		break;
+
+	case 3:	/* Return ~FUNC(~word, ~pset) */
+		pset ^= BB_PAT_MASK;
+		w ^= ~mask[__builtin_ctz(pset)];
+		x = w & BBITS_MASK_W(BBIT_10);
+		w &= x >> 1;
+		return w ^ BBITS_MASK_W(BBIT_01);
+
+	case 1:	/* Single bbit value pattern */
+		w ^= ~mask[__builtin_ctz(pset)]; /* BBITS_MASK[~VAL] */
+		x = w & BBITS_MASK_W(BBIT_10);
+		return w & (x >> 1);
+
+	case 2: /* Pattern has two bbit values */
+		if (pset == 6 || pset == 9) {
+			x = (pset == 9)? ~w : w;
+			w ^= x >> 1;
+		} else {
+			if (pset == 3 || pset == 5)
+				w = ~w;
+			if (pset == 3 || pset == 12)
+				w >>= 1;
+		}
+		return w & BBITS_MASK_W(BBIT_01);
+	default: assert(0);
+	}
+}
+
+/* Reduce bbitmap to Morton-encoded bitmap with all-one odd-indexed bits */
+static __always_inline unsigned long _bb_reduce1(const unsigned long word,
+    unsigned int pset)
+{
+	return _bb_reduce(word, pset) | BBITS_MASK_W(BBIT_10);
+}
+
 static __always_inline unsigned int bb_reduce(const unsigned long word,
     const unsigned int pset)
 {
-	unsigned int r, p;
-	unsigned long mask[4] = BBITS_MASK_ARRAY;
-	int pat;
 
-	//ASSERT(bb_pset_chk(pset) == 0);
-	r = ~0U;
+	unsigned long el = _bb_reduce(word, pset);
 
-	/* TODO: Add fast-forward path for all 00(11) and PAT01|PAT11(or 00|10) */
-	p = 1;
-	/* for each pattern */
-	for (pat = 0; pat < 4; pat++) {
-	    if (pset & p) {
-		unsigned long tmp1, tmp2;
-
-		tmp1 = mask[pat] ^ word;
-		tmp2 = _pext_u64(tmp1, BBITS_MASK_W(BBIT_01));
-		tmp2 |= _pext_u64(tmp1, BBITS_MASK_W(BBIT_10));
-		r &= (unsigned int)tmp2;
-	    }
-	    p <<= 1;
-	}
-	return ~r;
+	/* Decode 2D Morton: unpack all even-indexed bits in 64bit word */
+	//el &= 0x5555555555555555;
+	el = (el ^ (el >> 1)) & 0x3333333333333333;
+	el = (el ^ (el >> 2)) & 0x0f0f0f0f0f0f0f0f;
+	el = (el ^ (el >> 4)) & 0x00ff00ff00ff00ff;
+	el = (el ^ (el >> 8)) & 0x0000ffff0000ffff;
+	el = (el ^ (el >> 16)) /* & 0x00000000ffffffff */;
+	return (unsigned int)el;
 }
 
 /* Expand a bitmap to one word of bifold bit array with given values for 0 and 1 */
@@ -162,8 +194,17 @@ static __always_inline unsigned long bb_expand(unsigned int bitmap,
 {
 	unsigned long mask;
 
+	/* Encode bitmap to 2D Morton */
 	/* TODO: Fill in "zero" tetrals */
+	mask = (unsigned long)bitmap;
+/* PDEP,PEXT take 18c on AMD - Avoid parallel bit instructions!
 	mask = _pdep_u64((unsigned long)bitmap, BBITS_MASK_W(BBIT_01));
+*/
+	mask = (mask ^ (mask << 16)) & 0x0000ffff0000ffff;
+	mask = (mask ^ (mask <<  8)) & 0x00ff00ff00ff00ff;
+	mask = (mask ^ (mask <<  4)) & 0x0f0f0f0f0f0f0f0f;
+	mask = (mask ^ (mask <<  2)) & 0x3333333333333333;
+	mask = (mask ^ (mask <<  1)) & 0x5555555555555555;
 	mask |= mask << 1;
 	return (mask & BBITS_MASK_W(one)) | (~mask & BBITS_MASK_W(zero));
 }
@@ -171,9 +212,9 @@ static __always_inline unsigned long bb_expand(unsigned int bitmap,
 /* Find first set bifold bit in 'word', to any of pattern(s) defined by 'pset' */
 static __always_inline unsigned long bb_ffs(unsigned long word, unsigned int pset)
 {
-	unsigned int bmap = bb_reduce(word, pset);
+	unsigned long bmap = _bb_reduce(word, pset);
 
-	return __builtin_ffs(bmap);
+	return __builtin_ffsl(bmap) >> 1;
 }
 
 
@@ -215,13 +256,13 @@ static inline unsigned long find_next_bbit(const unsigned long *addr,
 	const unsigned long *p;
 	unsigned long result, tmp, mask, mask0;
 	unsigned long wordmask[4] = BBITS_MASK_ARRAY;
-	unsigned int off, bitmap;
+	unsigned long bitmap;
+	unsigned int off;
 
+	/* Return 'size' if the pattern set empty or invalid */
 	if (offset >= size)
 		return size;
-	/* Return 'size' if the pattern set empty or invalid */
-	if (bb_pset_chk(pset))
-		return size;
+
 	p = addr + BBIT_WORD(offset);
 	result = offset & ~(BBITS_PER_LONG-1);
 	size -= result;
@@ -238,14 +279,14 @@ static inline unsigned long find_next_bbit(const unsigned long *addr,
 		if (size < BBITS_PER_LONG)
 			goto found_first;
 		/* Any BB set? */
-		if ((bitmap = bb_reduce(tmp, pset)))
+		if ((bitmap = _bb_reduce(tmp, pset)))
 			goto found_middle;
 		size -= BBITS_PER_LONG;
 		result += BBITS_PER_LONG;
 	}
 	while (size & ~(BBITS_PER_LONG-1)) {
 		tmp = *(p++);
-		if ((bitmap = bb_reduce(tmp, pset)))
+		if ((bitmap = _bb_reduce(tmp, pset)))
 			goto found_middle;
 		result += BBITS_PER_LONG;
 		size -= BBITS_PER_LONG;
@@ -260,10 +301,11 @@ found_first:
 	if (mask0)
 		tmp |= ~mask & mask0;
 	/* None BB set? */
-	if (!(bitmap = bb_reduce(tmp, pset)))
+	if (!(bitmap = _bb_reduce(tmp, pset)))
 		return result + size;   /* Nope. */
 found_middle:
-	return result + __builtin_ctz(bitmap);
+	result += __builtin_ctzl(bitmap) >> 1;
+	return result;
 }
 
 /*
@@ -275,14 +317,13 @@ static inline unsigned long find_next_unset_bbit(const unsigned long *addr,
 {
 	const unsigned long *p;
 	unsigned long result, tmp;
-	unsigned int off, bitmap, bitmask;
+	unsigned long bitmap, bitmask;
+	unsigned int off;
 
 	/* TODO: Optimize for PAT01|PAT11 case */
 
-	if (offset >= size)
-		return size;
 	/* Return 'size' if the pattern set empty or invalid */
-	if (bb_pset_chk(pset))
+	if (offset >= size)
 		return size;
 
 	p = addr + BBIT_WORD(offset);
@@ -291,11 +332,11 @@ static inline unsigned long find_next_unset_bbit(const unsigned long *addr,
 	off = offset % BBITS_PER_LONG;
 	if (off) {
 		tmp = *(p++);
-		/* set LSBB, [off:0] */
-		bitmask = ~0U >> (BITS_PER_INT - off);
+		/* set LSBB, [2*off:0] */
+		bitmask = ~0UL >> 2*(BITS_PER_INT - off);
 		if (size < BBITS_PER_LONG)
 			goto found_first;
-		bitmap = ~(bb_reduce(tmp, pset) | bitmask);
+		bitmap = ~(_bb_reduce1(tmp, pset) | bitmask);
 		if (bitmap)
 			goto found_middle;
 		size -= BBITS_PER_LONG;
@@ -303,7 +344,7 @@ static inline unsigned long find_next_unset_bbit(const unsigned long *addr,
 	}
 	while (size & ~(BBITS_PER_LONG-1)) {
 		tmp = *(p++);
-		if ((bitmap = ~bb_reduce(tmp, pset)))
+		if ((bitmap = ~_bb_reduce1(tmp, pset)))
 			goto found_middle;
 		result += BBITS_PER_LONG;
 		size -= BBITS_PER_LONG;
@@ -311,17 +352,18 @@ static inline unsigned long find_next_unset_bbit(const unsigned long *addr,
 	if (!size)
 		return result;
 	tmp = *p;
-	bitmask = ~0U << size;
+	bitmask = 0;
 
 found_first:
 	/* Is any BB unset? */
-	bitmask |= ~0U << (size % BBITS_PER_LONG);
-	bitmap = ~(bb_reduce(tmp, pset) | bitmask);
+	bitmask |= ~0UL << 2*size;
+	bitmap = ~(_bb_reduce1(tmp, pset) | bitmask);
 	if (bitmap == 0U)
 		return result + size;   /* Nope. */
 found_middle:
 	/* result + ffs(bitmap) - 1 where bitmap should not be zero */
-	return result + __builtin_ctz(bitmap);
+	result += __builtin_ctzl(bitmap) >> 1;
+	return result;
 }
 
 /*
@@ -334,14 +376,13 @@ static __always_inline unsigned long find_first_bbit(const unsigned long *addr,
     unsigned int pset, unsigned long size)
 {
 	const unsigned long *p = addr;
-	unsigned long result = 0;
-	unsigned long tmp, mask, mask0;
+	unsigned long bitmap, tmp, mask, mask0;
 	unsigned long wordmask[4] = BBITS_MASK_ARRAY;
-	unsigned int bitmap;
+	unsigned long result = 0;
 
 	while (size & ~(BBITS_PER_LONG-1)) {
 		tmp = *(p++);
-		if ((bitmap = bb_reduce(tmp, pset)))
+		if ((bitmap = _bb_reduce(tmp, pset)))
 			goto found;
 		result += BBITS_PER_LONG;
 		size -= BBITS_PER_LONG;
@@ -355,10 +396,11 @@ static __always_inline unsigned long find_first_bbit(const unsigned long *addr,
 	if (mask0)
 		tmp |= ~mask & mask0;
 	/* None set? */
-	if (!(bitmap = bb_reduce(tmp, pset)))
+	if (!(bitmap = _bb_reduce(tmp, pset)))
 		return result + size;
 found:
-	return result + __builtin_ctz(bitmap);;
+	result += __builtin_ctzl(bitmap) >> 1;
+	return result;
 }
 
 /*
@@ -368,13 +410,12 @@ static inline unsigned long find_first_unset_bbit(const unsigned long *addr,
     unsigned int pset, unsigned long size)
 {
 	const unsigned long *p = addr;
+	unsigned long tmp, bitmap;
 	unsigned long result = 0;
-	unsigned long tmp;
-	unsigned int bitmap;
 
 	while (size & ~(BBITS_PER_LONG-1)) {
 		tmp = *(p++);
-		if ((bitmap = ~bb_reduce(tmp, pset)))
+		if ((bitmap = ~_bb_reduce1(tmp, pset)))
 			goto found;
 		result += BBITS_PER_LONG;
 		size -= BBITS_PER_LONG;
@@ -383,13 +424,14 @@ static inline unsigned long find_first_unset_bbit(const unsigned long *addr,
 		return result;
 
 	tmp = *p;
-	bitmap = ~(bb_reduce(tmp, pset) | (~0U << size));
+	bitmap = ~(_bb_reduce1(tmp, pset) | (~0UL << 2*size));
 	/* Is any BB unset? */
 	if (bitmap == 0U)
 		return result + size;   /* Nope. */
 found:
 	/* result + ffz(bitmap) */
-	return result + __builtin_ctz(bitmap);
+	result += __builtin_ctzl(bitmap) >> 1;
+	return result;
 }
 
 static inline int test_bbit(int nr, BBIT_VALUE_t val, const volatile unsigned long *addr)

@@ -49,39 +49,41 @@ int main (void) {
 		    t++; if ((i = bbitmap_weight(bbmap, pat, sz))) goto err;
 		    /* pos: Set "1" in this position */
 		    for (pos = j; pos < (j + k) && pos < sz; pos++) {
-			/* Must be clear */
-			t=4; if (!test_bbit(pos, BBIT_ZERO, bbmap)) goto err;
-			/* Test and Set */
+			t=4; /* Buffer must be clear */
+			if (!test_bbit(pos, BBIT_ZERO, bbmap)) goto err;
+			t=5; /* Test and Set value */
 			i = test_and_set_bbit(pos, val, bbmap);
-			t++; if (i != BBIT_ZERO) goto err;
+			if (i != BBIT_ZERO) goto err;
+			t=6; /* Test and Set pattern */
 			i = test_and_set_bbit_pattern(pos, BB_PAT_ZERO, bbmap);
-			t++; if (i != (int)pat) goto err;
+			if (i != (int)pat) goto err;
 			/* Set */
 			set_bbit(pos, val, bbmap);
-			/* Test bit */
-			t++; if(!test_bbit(pos, val, bbmap)) goto err;
-			t++; if(!test_bbit_patterns(pos, pat, bbmap)) goto err;
-			/* Set pattern */
+			t=7; /* Test bit value */
+			if (!test_bbit(pos, val, bbmap)) goto err;
+			t=8; /* Test bit pattern */
+			if (!test_bbit_patterns(pos, pat, bbmap)) goto err;
+			t=9; /* Set pattern */
 			set_bbit_pattern(pos, pat, bbmap);
-			t++; if(!test_bbit(pos, val, bbmap)) goto err;
-			/* Find first one */
+			if (!test_bbit(pos, val, bbmap)) goto err;
+			t=10; /* Find first one */
 			i = (int)find_first_bbit(bbmap, pat, sz);
-			t++; if(i != j) goto err;
-			/* Find next one at pos */
+			if (i != j) goto err;
+			t=11; /* Find next one at pos */
 			i = (int)find_next_bbit(bbmap, pat, sz, pos);
-			t++; if(i != pos) goto err;
-			/* no next! */
+			if (i != pos) goto err;
+			t=12; /* no next set bbit! */
 			i = (int)find_next_bbit(bbmap, pat, sz, pos+1);
-			t++; if(i != sz) goto err;
-			/* Find first unset */
+			if (i != sz) goto err;
+			t=13; /* Find first unset */
 			i = (int)find_first_unset_bbit(bbmap, pat, sz);
-			t++; if(i != (j? 0 : (j+pos+1))) goto err;
-			/* Find next unset */
+			if (i != (j? 0 : (j+pos+1))) goto err;
+			t=14; /* Find next unset */
 			i = (int)find_next_unset_bbit(bbmap, pat, sz, j);
-			t++; if (i != (pos+1)) goto err;
-			/* Count all ones in pos.. */
+			if (i != (pos+1)) goto err;
+			t=15; /* Count all ones in pos.. */
 			i = __bbitmap_weight(bbmap, pat, j, sz-j);
-			t++; if (i != (pos-j+1)) goto err;
+			if (i != (pos-j+1)) goto err;
 		    } /* all (k) ones are set */
 		    /* Check loops */
 		    t=16; i = 0;
@@ -89,24 +91,24 @@ int main (void) {
 			if (!test_bbit(bbit, BBIT_ZERO, bbmap)) goto err;
 			i++;
 		    }
-		    t++; if (i != (sz-k)) goto err;
-		    t++; i = 0; bbit = j;
+		    t=17; if (i != (sz-k)) goto err;
+		    t=18; i = 0; bbit = j;
 		    for_each_set_bbit_from(bbit, bbmap, pat, sz) i++;
 		    if (i != k) goto err;
-		    /* Filled by PAT00 and val */
-		    t++; if (!bbitmap_full(bbmap, BB_PAT_ZERO|pat, sz)) goto err;
-		    /* Count all ones */
-		    t++; if (bbitmap_weight(bbmap, pat, sz) != k) goto err;
-		    /* Zero out all ones */
+		    t=19; /* Filled by PAT00 and val */
+		    if (!bbitmap_full(bbmap, BB_PAT_ZERO|pat, sz)) goto err;
+		    t=20; /* Count all ones */
+		    if (bbitmap_weight(bbmap, pat, sz) != k) goto err;
+		    t=21; /* Zero out all ones */
 		    for (i = j; i < (j+k); i++)
 			set_bbit(i, BBIT_ZERO, bbmap);
-		    t++; if (!bbitmap_empty(bbmap, sz)) goto err;
-		    /* Fill in */
+		    if (!bbitmap_empty(bbmap, sz)) goto err;
+		    t=22; /* Fill in */
 		    bbitmap_fill(bbmap, val, sz);
-		    t++; if (bbitmap_weight(bbmap, pat, sz) != sz) goto err;
-		    /* Zero all buffer */
+		    if (bbitmap_weight(bbmap, pat, sz) != sz) goto err;
+		    t=23; /* Zero all buffer */
 		    bbitmap_zero(bbmap, sz);
-		    t++; if (!bbitmap_empty(bbmap, sz)) goto err;
+		    if (!bbitmap_empty(bbmap, sz)) goto err;
 		}
 	    }
 	}

@@ -15,6 +15,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdlib.h>
 
 /*
  * Bifold maps provide an array of tetral digits, implemented using
@@ -61,7 +62,7 @@ int __bbitmap_full(const unsigned long *bbmap, unsigned int pset, int bits)
 	int k, lim = bits/BBITS_PER_LONG;
 
 	for (k = 0; k < lim; ++k) {
-		if (~bb_reduce(bbmap[k], pset))
+		if (~_bb_reduce1(bbmap[k], pset))
 			return 0;
 	}
 
@@ -92,6 +93,7 @@ uint64_t __bbitmap_weight64(const unsigned long *map, unsigned int pset,
     uint64_t start, uint64_t nr)
 {
 	const unsigned long *p = map + BBIT_WORD(start);
+	unsigned long bitmap64;
 	unsigned int bitmap, mask;
 	unsigned int s = start % BBITS_PER_LONG;
 	uint64_t w = 0;
@@ -109,8 +111,8 @@ uint64_t __bbitmap_weight64(const unsigned long *map, unsigned int pset,
 		w = __builtin_popcount(bitmap);
 	}
 	while (nr >= BBITS_PER_LONG) {
-		bitmap = bb_reduce(*p++, pset);
-		w += __builtin_popcount(bitmap);
+		bitmap64 = _bb_reduce(*p++, pset);
+		w += __builtin_popcountl(bitmap64);
 		nr -= BBITS_PER_LONG;
 	}
 	if (nr == 0)
