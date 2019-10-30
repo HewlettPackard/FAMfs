@@ -267,8 +267,8 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz, F_MAPLOCKING
 int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global);
 /* Free all map structures */
 void f_map_exit(F_MAP_t *map);
-/* Clone in-memory map entries to a new map with given evaluator and setter */
-int f_map_clone(F_MAP_t **clone, F_SETTER_t setter, F_MAP_t *origin, F_COND_t cond);
+/* Copy in-memory map entries to a new map with given evaluator and setter */
+int f_map_reshape(F_MAP_t **new, F_SETTER_t setter, F_MAP_t *origin, F_COND_t cond);
 /* Helper: create a bitmap and clone BBIT or structured map to it */
 F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg);
 

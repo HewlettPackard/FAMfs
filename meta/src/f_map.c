@@ -1550,21 +1550,22 @@ _err:
 }
 
 /*
- * Map clone
+ * Map reshape
  *
- * Clone in-memory map entries to a new map with given evaluator and setter.
- * If *clone is NULL, create the clone of the same map type, otherwise the
- * target map should be created beforehand with f_map_init().
- * Every map entry is evaluated to boolean with 'cond' first then the cloned
+ * Copy in-memory map entries to a new map evaluating the values with given
+ * evaluator condition.
+ * If *clone_p is NULL, create the exact clone of the same map type, otherwise
+ * the target map (*clone_p) should be created beforehand with f_map_init().
+ * Every map entry is evaluated to boolean with 'cond' first then the target
  * value is set by 'setter'.
- * If 'cond' is zero (F_NO_CONDITION), the setter is ignored. If the cloned
- * map has the same type, the entries are being copied as is.
- * If the cloned map is a conventional (one bit) bitmap, 'setter' is ignored.
- * The dirty PU bitmaps are ignored and not copied. Generally the cloned map
- * is in-memory data and is not supposed to be registered with a DB backend.
+ * If 'cond' is zero (F_NO_CONDITION), the setter would be ignored.
+ * If target has the same type of the origin map, entries are being copied as is.
+ * If target is a conventional (one bit) bitmap, 'setter' is ignored.
+ * The dirty PU bitmaps are ignored and not copied. Generally the new map is not
+ * a persistent map and it is not supposed to be registered with a DB backend.
  * Return: 0 on success or -ENOMEM if out-of-memory.
  */
-int f_map_clone(F_MAP_t **clone_p, F_SETTER_t setter, F_MAP_t *orig, F_COND_t cond)
+int f_map_reshape(F_MAP_t **clone_p, F_SETTER_t setter, F_MAP_t *orig, F_COND_t cond)
 {
 	F_MAP_t *clone, *m = NULL;
 	int origin_bbits, clone_bbits;
