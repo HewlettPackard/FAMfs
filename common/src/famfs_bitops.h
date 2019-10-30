@@ -17,6 +17,11 @@
 // BITS_PER_LONG - See famfs_ktypes.h
 #define BITS_TO_LONGS(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
 
+
+static __always_inline unsigned long __ffs(unsigned long word) {
+	return __builtin_ctzl(word);
+}
+#if 0
 static __always_inline unsigned long __ffs(unsigned long word)
 {
 	int num = 0;
@@ -47,7 +52,7 @@ static __always_inline unsigned long __ffs(unsigned long word)
 		num += 1;
 	return num;
 }
-
+#endif
 
 static __always_inline int fls(int x)
 {
@@ -186,9 +191,11 @@ static __inline__ int get_count_order(unsigned int count)
 #define hweight32(w) (__const_hweight32(w))
 #define hweight64(w) (__const_hweight64(w))
 
-static inline unsigned long hweight_long(unsigned long w)
+static __always_inline unsigned long hweight_long(unsigned long w)
 {
-	return sizeof(w) == 4 ? hweight32(w) : hweight64(w);
+    return __builtin_constant_p( w )?
+	(sizeof(w) == 4 ? hweight32(w) : hweight64(w)) :
+	(unsigned) __builtin_popcountl(w);
 }
 
 /**
