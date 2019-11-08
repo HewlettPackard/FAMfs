@@ -73,7 +73,7 @@ typedef struct f_slab_entry_ {
 		} prop;
 	    };
 	}; /* SME */
-	uint128_t    _v;	/* SME as 128 bit word */
+	uint128_t    _v128;	/* SME as 128 bit word */
 	uint64_t     _h[2];	/* SME as two 64 bit words */
     };
 // -------- Extent Map Entry[0] starts here --------------------------------
@@ -135,7 +135,7 @@ typedef struct f_claim_packed__ {
 	    unsigned char	_cve_2: 2;
 	    unsigned char	_cve_3: 2;
 	};
-	unsigned long		v;		/* 64-bit value for bifold-bit api */
+	unsigned long		_v64;		/* 64-bit value for bifold-bit api */
 	unsigned int		_hv[2];
 	unsigned short		_hhv[4];	/* for 16-bit cmpxchg */
 	unsigned char		_hhhv[8];	/* for 8-bit cmpxchg */

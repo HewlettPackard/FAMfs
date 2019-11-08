@@ -54,7 +54,7 @@ int f_create_persistent_sm(int layout_id, int intl, int *mapid_p)
 	char name[6];
 	int map_id = LO_TO_SM_ID(layout_id);
 
-	snprintf(name, sizeof(name), "sm_%1u\n", (unsigned)map_id);
+	snprintf(name, sizeof(name), "sm_%1u", (unsigned)map_id);
 	return create_persistent_map(map_id, intl, name, mapid_p);
 }
 
@@ -63,7 +63,7 @@ int f_create_persistent_cv(int layout_id, int intl, int *mapid_p)
 	char name[6];
 	int map_id = LO_TO_CV_ID(layout_id);
 
-	snprintf(name, sizeof(name), "cv_%1u\n", (unsigned)map_id);
+	snprintf(name, sizeof(name), "cv_%1u", (unsigned)map_id);
 	return create_persistent_map(map_id, intl, name, mapid_p);
 }
 
