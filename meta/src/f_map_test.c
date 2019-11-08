@@ -284,8 +284,8 @@ int main (int argc, char *argv[]) {
 
 		t = 3; /* Check page is clean */
 		if (e_sz == 1) {
-		    // v = bitmap_weight(bosl->page, m->bosl_entries);
-		    v = __bitmap_weight64(bosl->page, 0, m->bosl_entries);
+		    v = bitmap_weight(bosl->page, m->bosl_entries);
+		    // v = __bitmap_weight64(bosl->page, 0, m->bosl_entries);
 		} else {
 		    v = bbitmap_weight(bosl->page, BB_PAT11, m->bosl_entries);
 		}
@@ -680,7 +680,7 @@ int main (int argc, char *argv[]) {
 		t = 14; /* delete all BoS entries */
 		it = f_map_get_iter(m, F_NO_CONDITION, 0);
 		ui = m->nr_bosl;
-		if (ui > RND_REPS+1) goto err2; /* +1 for BoS #0 */
+		if (ui > RND_REPS+1) goto err1; /* +1 for BoS #0 */
 		v = 0;
 		for_each_iter(it) {
 		    if ((rc = f_map_delete_bosl(m, it->bosl))) goto err1;
@@ -688,6 +688,7 @@ int main (int argc, char *argv[]) {
 		    v++;
 		}
 		if (m->nr_bosl) goto err1;
+		if ((unsigned)v != ui) goto err1;
 		f_map_free_iter(it); it = NULL;
 		rcu_quiescent_state();
 	    }
@@ -865,7 +866,7 @@ int main (int argc, char *argv[]) {
 		t = 15; /* delete all BoS entries */
 		it = f_map_get_iter(m, F_NO_CONDITION, 0);
 		ui = m->nr_bosl;
-		if (ui > RND_REPS+1) goto err2; /* +1 for BoS #0 */
+		if (ui > RND_REPS+1) goto err1; /* +1 for BoS #0 */
 		v = 0;
 		for_each_iter(it) {
 		    if ((rc = f_map_delete_bosl(m, it->bosl))) goto err1;
@@ -873,6 +874,7 @@ int main (int argc, char *argv[]) {
 		    v++;
 		}
 		if (m->nr_bosl) goto err1;
+		if ((unsigned)v != ui) goto err1;
 		f_map_free_iter(it); it = NULL;
 		rcu_quiescent_state();
 	    }

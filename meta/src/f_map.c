@@ -3,7 +3,7 @@
  *
  * Written by: Dmitry Ivanov
  */
-//#include <assert.h>
+#include <assert.h>
 #include <unistd.h>
 
 #include "f_map.h"
@@ -42,7 +42,14 @@ static F_BOSL_t *bosl_alloc(size_t size)
 
 static void bosl_free(F_BOSL_t *bosl)
 {
-	assert (atomic_dec_return(&bosl->claimed));
+	/* BoS claimed accounting */
+	int c = atomic_dec_return(&bosl->claimed);
+
+	if (c != 0) {
+		printf(" bosl_free map:%p count:%d e0:%lu\n",
+			bosl->map, c, bosl->entry0);
+		assert(0);
+	}
 
 	pthread_rwlock_destroy(&bosl->rwlock);
 	pthread_spin_destroy(&bosl->dirty_lock);
@@ -67,6 +74,18 @@ static int put_bosl(F_BOSL_t *bosl)
 	if (bosl->map && bosl->map->locking >= F_MAPLOCKING_BOSL)
 		return pthread_rwlock_unlock(&bosl->rwlock);
 	return atomic_dec_return(&bosl->claimed);
+}
+
+static void bosl_free_cb(struct rcu_head *head)
+{
+	F_BOSL_t *bosl = container_of(head, struct f_bosl_, head);
+
+	bosl_free(bosl);
+}
+
+static void rcu_bosl_free(F_BOSL_t *bosl)
+{
+	call_rcu(&bosl->head, bosl_free_cb);
 }
 
 static inline void _f_map_clear_pu_dirty_bosl(F_BOSL_t *bosl, uint64_t pu)
@@ -98,7 +117,7 @@ static int map_free_all_nodes(struct cds_ja *ja)
 			goto _err;
 		/* Alone using the array */
 		bosl = container_of(node, F_BOSL_t, node);
-		bosl_free(bosl);
+		rcu_bosl_free(bosl);
 	}
 _err:
 	rcu_read_unlock();
@@ -110,8 +129,11 @@ static F_MAP_t *map_alloc(void)
 	F_MAP_t *map;
 
 	map = (F_MAP_t *) calloc(sizeof(F_MAP_t), 1);
-	if (map)
+	if (map) {
 		map->bosses = cds_ja_new(64); /* 64-bit key */
+		pthread_spin_init(&map->bosl_lock, PTHREAD_PROCESS_PRIVATE);
+		pthread_mutex_init(&map->pu_lock, NULL);
+	}
 	return map;
 }
 
@@ -283,11 +305,12 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
 		break;
 	default: return NULL;
 	}
-
-	if (bosl_sz % psize) return NULL;
-	if (bosl_sz == 0) bosl_sz = psize;
-
-	if (!IN_RANGE(locking, 0, F_MAPLOCKING_END-1)) return NULL;
+	if (bosl_sz == 0)
+		bosl_sz = psize;
+	else
+		bosl_sz = ROUND_UP(bosl_sz, psize);
+	/* 0: F_MAPLOCKING_DEFAULT */
+	assert (IN_RANGE(locking, 0, F_MAPLOCKING_END-1));
 
 	map = map_alloc();
 	map->type = type;
@@ -307,19 +330,17 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
 	}
 	map->geometry.intl_factor = map->geometry.pu_factor;
 	/* Calculated */
-	map->bosl_entries = map->geometry.bosl_pu_count * \
-		(1 << map->geometry.pu_factor);
+	map->bosl_entries = map->geometry.bosl_pu_count <<
+				map->geometry.pu_factor;
 	/* init locks */
 	map->locking = locking;
-	pthread_mutex_init(&map->pu_lock, NULL);
-	pthread_spin_init(&map->bosl_lock, PTHREAD_PROCESS_PRIVATE);
 
-	if (map->geometry.bosl_pu_count == 0 ||
-	    map->geometry.bosl_pu_count > F_MAP_MAX_BOS_PUS)
-	{
-		map_free(map);
-		map = NULL;
-	}
+	/* Sanity check */
+	assert (map->geometry.intl_factor >=
+		map->geometry.pu_factor);
+	assert (IN_RANGE(map->geometry.bosl_pu_count,
+			 1, F_MAP_MAX_BOS_PUS));
+
 	return map;
 }
 
@@ -336,8 +357,8 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
 int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global)
 {
 	/* sanity */
-	if (map == NULL || parts <= 1 ||
-	    !IN_RANGE(part_0, 0, parts) || !IN_RANGE(node, 0, parts))
+	if (map == NULL || parts <= 0 ||
+	    !IN_RANGE(part_0, 0, parts-1) || !IN_RANGE(node, 0, parts-1))
 		return -EINVAL;
 
 	map->parts = parts;
@@ -365,7 +386,8 @@ int f_map_register(F_MAP_t *m, int layout_id)
 
 	if (m->geometry.intl_factor < m->geometry.pu_factor)
 		return -1;
-	recs_per_slice = 1U << (m->geometry.intl_factor - m->geometry.pu_factor);
+	//recs_per_slice = 1U << (m->geometry.intl_factor - m->geometry.pu_factor);
+	recs_per_slice = 1U << m->geometry.intl_factor;
 
 	/* Attach map to KV store global index */
 	if (f_map_is_structured(m)) {
@@ -453,8 +475,11 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 				e = keys[i];
 				if (!f_map_has_globals(map)) {
 					/* TODO: Need a special case for re-partitioning */
-					if (!f_map_prt_has_global(map, e, part))
+					if (!f_map_prt_has_global(map, e, part)) {
+						/* printf(" L%d:%lu/%lu\n", map->part, e/map->bosl_entries,
+						    (e % map->bosl_entries) >> pu_factor); */
 						continue;
+					}
 					e = f_map_prt_to_local(map, e);
 				}
 				pu_cnt++; /* stats */
@@ -563,13 +588,13 @@ static F_BOSL_t *iter_get_bosl(F_ITER_t *it) {
 	return bosl;
 }
 
-/* Round up to this partition if map is global */
-#define pu_round_up_to_part(pu, factor, parts, partition)	\
-	do {							\
-		unsigned int il = (pu >> factor) % parts;	\
-		pu += (1UL << factor) *				\
-		      ((il>partition)?parts:0U +partition -il);	\
-	} while (0)
+/* Round up continuous PU number to this partition (only for globals!) */
+#define pu_round_up_to_part(cpu, factor, parts, partition)	\
+	({ unsigned int il = (cpu >> (factor)) % (parts);	\
+	   cpu += (((il>partition)?(parts):0U)+(partition)-il)	\
+		   << (factor);					\
+	   cpu; })
+
 
 /* Iterate over dirty PUs on global maps.
  * It's aware of partition on local (own_part:1) maps.
@@ -580,8 +605,9 @@ static F_ITER_t *iter_next_dirty_pu(F_ITER_t *iter)
 	F_MAP_t *map = iter->map;
 	F_BOSL_t *bosl;
 	struct cds_ja_node *node;
-	uint64_t node_idx, idx, e;
-	unsigned int pu, pu_factor, factor, e_per_pu, pu_per_bos;
+	uint64_t node_idx, idx;
+	uint64_t entry, cpu, bosl_pu0;
+	unsigned int pu_factor, factor, pu_per_bos;
 	unsigned int partition = 0;
 	unsigned long *dirty = NULL;
 	size_t dirty_sz;
@@ -589,84 +615,92 @@ static F_ITER_t *iter_next_dirty_pu(F_ITER_t *iter)
 
 	global = f_map_has_globals(map);
 	if (global)
-		partition = iter->cond.partition;
+	    partition = iter->cond.partition;
 	pu_factor = map->geometry.pu_factor;
-	e_per_pu = 1U << pu_factor;
+	/* DB interleave PU factor */
 	factor = map->geometry.intl_factor - pu_factor;
 	pu_per_bos = map->geometry.bosl_pu_count;
-	dirty_sz = DIV_CEIL(pu_per_bos, 8); /* dirty PU bitmap size, bytes */
+	/* Dirty PU bitmap size, bytes */
+	dirty_sz = BITS_TO_LONGS(pu_per_bos)*sizeof(*dirty);
 	assert(dirty_sz <= sizeof(*dirty)*F_BOSL_DIRTY_SZ);
+
 	dirty = (unsigned long *) malloc(dirty_sz);
 	if (dirty == NULL) return NULL;
 
-	/* Progress to the next PU */
-	e = iter->entry;
-	e += e_per_pu;
-	e &= ~((uint64_t)e_per_pu - 1); /* PU entry mask */
-	node_idx = e / map->bosl_entries;
-	bosl = iter->bosl;
-	if (!f_map_entry_in_bosl(bosl, e))
-		goto _find_bos;
+	/* cpu: continuous PU number */
+	if (unlikely(is_iter_reset(iter))) {
+	    cpu = 0;
+	} else {
+	    /* Progress to the next PU */
+	    cpu = (iter->entry >> pu_factor) + 1;
+	}
 
-	/* Round up to this partition if map is global */
-	pu = e_to_bosl(bosl, e) >> pu_factor;
+	/* Round up to this partition's next PU if map is global */
 	if (global)
-		pu_round_up_to_part(pu, factor, map->parts, partition);
+		pu_round_up_to_part(cpu, factor, map->parts, partition);
+
+	entry = cpu << pu_factor;
+	node_idx = entry / map->bosl_entries;
+	bosl = iter->bosl;
+	if (!f_map_entry_in_bosl(bosl, entry))
+		goto _find_bos;
+	bosl_pu0 = node_idx * pu_per_bos;
+
 
 	/* For each BoS in Judy array */
 	while (1) {
-		/* Copy dirty bitmap under lock */
-		pthread_spin_lock(&bosl->dirty_lock);
-		memcpy(dirty, bosl->dirty, dirty_sz);
-		pthread_spin_unlock(&bosl->dirty_lock);
+	    unsigned int pu; /* BoS PU number */
 
-		/* Search for dirty PU in current BoS */
-		do {
-			pu = find_next_bit(dirty, pu_per_bos, pu);
+	    /* Copy dirty bitmap under lock */
+	    pthread_spin_lock(&bosl->dirty_lock);
+	    memcpy(dirty, bosl->dirty, dirty_sz);
+	    pthread_spin_unlock(&bosl->dirty_lock);
+
+	    /* Search for dirty PU in current BoS */
+	    do {
+		pu = cpu - bosl_pu0;
+		pu = find_next_bit(dirty, pu_per_bos, pu);
+		cpu = bosl_pu0 + pu;
+		entry = cpu << pu_factor;
+		cpu++;
+	    } while (pu < pu_per_bos &&
 		/* ignore other partitions if map is global */
-		} while (global && pu < pu_per_bos &&
-			 ((pu >> factor) % map->parts != partition) &&
-			 pu++); /* increment pu for next bit */
+		global && !f_map_prt_has_global(map, entry, partition) &&
+		/* advance pu to the next PU in 'partition' */
+		pu_round_up_to_part(cpu, factor, map->parts, partition));
 
-		/* Is there next dirty PU in BoS? */
-		if (pu < pu_per_bos) {
-			uint64_t e = pu << pu_factor;
+	    /* Is there next dirty PU in BoS? */
+	    if (pu < pu_per_bos) {
+		/* Yes; set iterator to 'e' and return it */
+		iter->entry = entry;
+		iter->word_p = _bosl_ffind(bosl, pu << pu_factor);
+		iter->bosl = bosl;
+		break;
+	    }
 
-			/* Yes; set iterator to 'e' and return it */
-			iter->entry = e + bosl->entry0;
-			iter->word_p = _bosl_ffind(bosl, e);
-			iter->bosl = bosl;
-			break;
-		}
-
-		/* Leave BoS */
-		//if (pthread_rwlock_unlock(&bosl->rwlock)) return NULL;
-		atomic_dec(&bosl->claimed);
-		node_idx++;
-
+	    /* Leave BoS */
+	    node_idx++;
 _find_bos:
-		iter->bosl = NULL;
+	    put_bosl(bosl);
+	    iter->bosl = NULL;
 
-		rcu_read_lock();
-		node = cds_ja_lookup_above_equal(map->bosses,
-						 node_idx, &idx);
-		if (node == NULL) {
-			rcu_read_unlock();
-			iter = NULL; /* No dirty PU found */
-			break;
-		}
-		bosl = container_of(node, F_BOSL_t, node);
-		atomic_inc(&bosl->claimed);
+	    rcu_read_lock();
+	    node = cds_ja_lookup_above_equal(map->bosses,
+					     node_idx, &idx);
+	    if (node == NULL) {
 		rcu_read_unlock();
+		iter = NULL; /* No dirty PU in map */
+		break;
+	    }
+	    bosl = container_of(node, F_BOSL_t, node);
+	    rcu_read_unlock();
 
-		/* Enter BoS */
-		//if (pthread_rwlock_rdlock(&bosl->rwlock)) return NULL;
-		pu = 0;
-		if (global) {
-			pu_round_up_to_part(pu, factor,
-					    map->parts, partition);
-		}
-		node_idx = idx;
+	    /* Enter BoS */
+	    acquire_bosl(bosl);
+	    node_idx = idx;
+	    cpu = bosl_pu0 = node_idx * pu_per_bos;
+	    if (global)
+		pu_round_up_to_part(cpu, factor, map->parts, partition);
 	}
 
 	/* TODO: Use per-thread lock count */
@@ -684,7 +718,8 @@ _find_bos:
 int f_map_flush(F_MAP_t *map)
 {
 	F_BOSL_t *bos_buf = NULL;
-	F_ITER_t *it, *iter = NULL;
+	F_ITER_t *it = NULL;
+	F_ITER_t *iter = NULL;
 	unsigned int part, parts, pu_per_bos, pu_factor;
 	size_t size, value_len;
 	void **keysp;
@@ -723,7 +758,7 @@ int f_map_flush(F_MAP_t *map)
 
 	/* For each map partition */
 	for (part = 0; part < parts; part++) {
-	    if (part != map->part && !f_map_has_globals(map))
+	    if (part != map->part /* && !f_map_has_globals(map) */)
 		continue;
 
 	    iter_reset(iter);
@@ -748,6 +783,15 @@ int f_map_flush(F_MAP_t *map)
 		    pu = e_to_bosl(it->bosl, it->entry) >> pu_factor;
 		    copy_pu_from_bosl(bos_buf->page, size++,
 				      it->bosl, pu);
+
+		    /* Flush should not put/delete PUs in foreign partitions */
+		    if (0 && f_map_has_globals(map) &&
+			((pu >> (map->geometry.intl_factor-pu_factor))%map->parts != map->part))
+		    {
+			printf(" ge:%lu BoS:%lu PU:%lu",
+				e, it->bosl->entry0/map->bosl_entries, pu);
+			assert (0); /* ...assert if it does */
+		    }
 		}
 
 		/* There are PUs to flush */
@@ -771,6 +815,15 @@ int f_map_flush(F_MAP_t *map)
 			if (clean) {
 			    /* Bulk DEL bunch of empty PUs */
 			    ret = f_db_bdel(map_id, &keysp[st], bunch);
+			    if (0 && f_map_has_globals(map)) {
+				printf(" D%d", map->part);
+				for (unsigned int j=st; j<bunch; j++) {
+				    uint64_t ke = *((uint64_t *)keysp[j]);
+				    printf(" %lu/%lu", ke/map->bosl_entries,
+					   (ke % map->bosl_entries)>>pu_factor);
+				}
+				printf("\n");
+			    }
 			    //printf("   bdel bunch of %u @%u map_id:%u ret:%d\n", bunch, st, map_id, ret);
 			} else {
 			    /* Bulk PUT bunch of PUs from buffer @st */
@@ -791,6 +844,8 @@ int f_map_flush(F_MAP_t *map)
 	}
 	ret = 0;
 _err:
+	if (it)
+		f_map_put_bosl(it->bosl);
 	f_map_free_iter(iter);
 	free(keys);
 	free(keysp);
@@ -893,15 +948,20 @@ F_BOSL_t *f_map_new_bosl(F_MAP_t *map, uint64_t entry)
 	return bosl;
 }
 
+int f_map_put_bosl(F_BOSL_t *bosl) {
+	return put_bosl(bosl);
+}
+
 /* Delete all BoS entries. */
 int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl)
 {
 	uint64_t length = map->bosl_entries;
 	int ret;
 
-	if ((map->locking >= F_MAPLOCKING_BOSL) &&
-	    atomic_read(&bosl->claimed) > 0)
-		return -EAGAIN;
+	/* FIXME
+	if ((ret = put_bosl(bosl)))
+		return ret;
+	*/
 
 	rcu_read_lock();
 	ret = cds_ja_del(map->bosses, bosl->entry0 / length,
@@ -913,7 +973,7 @@ int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl)
 	pthread_spin_lock(&map->bosl_lock);
 	map->nr_bosl--;
 	pthread_spin_unlock(&map->bosl_lock);
-	bosl_free(bosl);
+	rcu_bosl_free(bosl);
 	rcu_read_unlock();
 
 	/* TODO: Use per-thread lock count */
@@ -928,7 +988,7 @@ static uint64_t max_bosl(F_MAP_t *map)
 	struct cds_ja_node *node;
 
 	rcu_read_lock();
-	node = cds_ja_lookup_below_equal(map->bosses, UINT64_MAX, &idx);
+	node = cds_ja_lookup_below_equal(map->bosses, F_JA_MAX_KEY64, &idx);
 	if (node)
 		idx++;
 	rcu_read_unlock();
@@ -1051,6 +1111,7 @@ static F_ITER_t *bosl_find_cond(F_ITER_t *it)
     /* fast path */
     if (check_iter_cond(it))
 	return it; /* this one */
+
     e = e_to_bosl(bosl, it->entry) + 1;
     length = it->map->bosl_entries;
     if (e >= length)
@@ -1059,7 +1120,6 @@ static F_ITER_t *bosl_find_cond(F_ITER_t *it)
     /* find from 'e' */
     if (f_map_is_structured(it->map)) {
 	for (; e < length; e++) {
-	    it->entry++;
 	    it->word_p = _bosl_ffind(bosl, e);
 	    if (_check_iter_cond_vf(it))
 		goto _found;
@@ -1104,8 +1164,6 @@ F_ITER_t *f_map_new_iter(F_MAP_t *map, F_COND_t cond, int arg)
 		assert(entry_sz % 8 == 0);
 	if (f_map_is_bbitmap(map))
 		assert(!bb_pset_chk(c) || c == 0U);
-	assert(map->geometry.intl_factor >=
-		map->geometry.pu_factor);
 
 	iter = (F_ITER_t *) calloc(sizeof(F_ITER_t), 1);
 	if (!iter)
@@ -1175,6 +1233,41 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
 	assert(p);
 	it->word_p = p;
 	it->entry = entry;
+	return it;
+}
+
+uint64_t f_map_max_bosl(F_MAP_t *map) {
+	return max_bosl(map);
+}
+
+/* Advance iterator to the next BoS regadring iterator's condition. */
+F_ITER_t *f_map_next_bosl(F_ITER_t *it)
+{
+	F_MAP_t *map;
+	uint64_t idx;
+
+	if (!it || !(map = it->map))
+	    return NULL;
+
+	if (unlikely(is_iter_reset(it))) {
+	    it->entry++;
+	    idx = 0;
+	} else
+	    idx = it->entry/map->bosl_entries + 1;
+
+	do {
+	    it->bosl = _next_bosl(map, it->bosl, idx);
+	    if (it->bosl == NULL) {
+		it->at_end = 1;
+		return NULL;
+	    }
+	    it->entry = it->bosl->entry0;
+	    it->word_p = it->bosl->page;
+	    idx = it->entry/map->bosl_entries + 1;
+	} while (!bosl_find_cond(it));
+
+	/* TODO: Use per-thread lock count */
+	rcu_quiescent_state();
 	return it;
 }
 
@@ -1652,4 +1745,5 @@ F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg
 	}
 	return m;
 }
+
 

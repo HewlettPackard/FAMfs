@@ -20,7 +20,7 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter" /* Matt.7.1 */
 #include <urcu/rcuja.h>
 #pragma GCC diagnostic pop
-
+#define F_JA_MAX_KEY64	(UINT64_MAX-1)
 
 /*
  * Maps are persistent and kept in distributed KV store.
@@ -305,8 +305,10 @@ unsigned long *f_map_get_p(F_MAP_t *map, uint64_t entry); /* returns NULL if no 
 unsigned long *f_map_new_p(F_MAP_t *map, uint64_t entry); /* if no entry, create it */
 F_BOSL_t *f_map_get_bosl(F_MAP_t *map, uint64_t entry); /* returns NULL if no BoS */
 F_BOSL_t *f_map_new_bosl(F_MAP_t *map, uint64_t entry); /* if no BoS, create it */
+int f_map_put_bosl(F_BOSL_t *bosl);
 int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl); /* remove all BoS entries from online map */
 void f_map_mark_dirty_bosl(F_BOSL_t *bosl, uint64_t entry); /* mark KV dirty in BoS PU bitmap */
+uint64_t f_map_max_bosl(F_MAP_t *map);
 
 /* Check if the entry belongs to this BoS */
 static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)
@@ -381,6 +383,16 @@ static inline bool f_map_iter_depleted(const F_ITER_t *iter) {
 static inline F_ITER_t *f_map_new_iter_all(F_MAP_t *map) {
 	return f_map_new_iter(map, F_NO_CONDITION, 0);
 }
+
+/*
+ * Low-level data access to BoSSes with iterator.
+ * Note: RCU read-side lock should not be held when calling these functions,
+ * however, QSBR threads need to be online and rcu_quiescent_state() must be called
+ * some time later.
+ */
+F_ITER_t *f_map_next_bosl(F_ITER_t *it); /* advance to the next BoS */
+#define for_each_bosl(iter)						\
+	for (; !f_map_iter_depleted(iter); (void)f_map_next_bosl(iter))
 
 
 /*
@@ -477,8 +489,10 @@ static inline size_t f_map_value_off(F_MAP_t *map, uint64_t n)
 
 /* Calculate the memory size for 'n' PUs in units of type(*p) */
 #define f_map_pu_p_sz(map, n, p)				\
-    (DIV_CEIL(f_map_value_off(map,				\
-	n * (1UL << map->geometry.pu_factor)), sizeof(*p)))
+    (DIV_CEIL(							\
+	f_map_value_off(map,					\
+		  (unsigned long)n << map->geometry.pu_factor),	\
+	sizeof(*p)))
 
 
 #endif /* F_MAP_H_ */
