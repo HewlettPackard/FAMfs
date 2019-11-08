@@ -915,13 +915,14 @@ int rmrf(char *path)
 }
 
 int mdhimSanitize(char *dbfilename, char *statfilename, char *manifestfilename) {
-	int rc = 0;
+    int rc = 0;
 
-	rc = rmrf(dbfilename);
-	rc = (rc)? rc:rmrf(statfilename);
+    rc = rmrf(dbfilename);
+    rc = (rc)? rc:rmrf(statfilename);
+    if (manifestfilename) {
 	rc = (rc)? rc:unlink(manifestfilename);
-	return rc;
-
+    }
+    return rc;
 }
 
 
