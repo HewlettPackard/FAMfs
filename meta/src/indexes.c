@@ -108,7 +108,7 @@ int open_manifest(struct mdhim_t *md, struct index_t *index, int flags) {
 
 	sprintf(path, "%s%d_%d_%d", md->db_opts->manifest_path, index->type, 
 		index->id, md->mdhim_rank);
-	fd = open(path, flags, 00600);
+	fd = open(path, flags, 00664);
 	if (fd < 0) {
 		mlog(MDHIM_SERVER_DBG, "Rank: %d - Error opening manifest file", 
 		     md->mdhim_rank);
