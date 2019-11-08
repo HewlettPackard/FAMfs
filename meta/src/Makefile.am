@@ -43,10 +43,20 @@ LDADD = $(top_builddir)/common/src/libfamfs_common.la \
 
 libmdhim_la_LIBADD = $(LDADD) -lleveldb -lurcu-qsbr -lurcu-cds
 
+# For tests
+tests_LDADD = $(LDADD) libmdhim.la -lurcu-qsbr -lurcu-cds
+mpitests_LDADD = $(tests_LDADD) -lmpi
+f_map_mnode_test_LDADD = $(mpitests_LDADD)
+check_tests = f_map_mnode_test
+checks: ${check_tests}
+check_PROGRAMS = ${check_tests}
+TESTS = ${check_tests}
+
 # unittests
-tests_LDADD = $(LDADD) libmdhim.la
-f_map_test_LDADD = $(tests_LDADD) -lurcu-qsbr -lurcu-cds
+f_map_test_LDADD = $(tests_LDADD)
 unit_tests = f_map_test
+
+EXTRA_DIST = ${check_tests}
 EXTRA_PROGRAMS = ${unit_tests}
 
 tests: ${unit_tests}
@@ -57,4 +67,4 @@ test: $(addsuffix .run,$(unit_tests))
 	./$<
 	 @echo Completed run: $<
 
-CLEANFILES = ${EXTRA_PROGRAMS}
+CLEANFILES = ${EXTRA_PROGRAMS} ${EXTRA_DIST}
