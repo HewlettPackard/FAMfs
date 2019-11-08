@@ -14,7 +14,8 @@
 #define BBIT_WORD(nr)		((nr) / BBITS_PER_LONG)
 #define BBITS_PER_BYTE		4
 #define BBITS_TO_LONGS(nr)	DIV_ROUND_UP(nr, BBITS_PER_BYTE * sizeof(long))
-#define BBIT_MASK_VAL(val, nr)	(((unsigned long) val) << (2U*((nr) % BBITS_PER_LONG)))
+#define BBIT_NR_IN_LONG(nr)	((nr) % BBITS_PER_LONG)
+#define BBIT_MASK_VAL(val, nr)	(((unsigned long) val) << (2U*BBIT_NR_IN_LONG(nr)))
 
 typedef enum {
     BBIT_ZERO=0,
@@ -26,11 +27,11 @@ typedef enum {
 #define BBIT_GET_VAL(buf, nr)	(((unsigned long)BBIT_11) &				\
 				 (buf[BBIT_WORD(nr)] >> (2U*(nr & (BBITS_PER_LONG-1)))))
 
-#define BB_PAT_ZERO	(1U << BBIT_ZERO)
-#define BB_PAT01	(1U << BBIT_01)
-#define BB_PAT10	(1U << BBIT_10)
-#define BB_PAT11	(1U << BBIT_11)
-#define BB_PAT_MASK	((unsigned long) ((BB_PAT11 << 1) - 1))
+#define BB_PAT_ZERO	(1UL << BBIT_ZERO)
+#define BB_PAT01	(1UL << BBIT_01)
+#define BB_PAT10	(1UL << BBIT_10)
+#define BB_PAT11	(1UL << BBIT_11)
+#define BB_PAT_MASK	((BB_PAT11 << 1) - 1)
 
 static __always_inline unsigned long bb_mask(BBIT_VALUE_t val)
 {
