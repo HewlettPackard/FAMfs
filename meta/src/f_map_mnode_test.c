@@ -450,7 +450,7 @@ int main (int argc, char *argv[]) {
 			} else {
 			    /* 'global' entry ID in partition map is limited
 			    to DB_KEY_BITS so make 'local' entry ID shorter */
-			    e >>= ilog2(m->parts);
+			    e /= m->parts;
 			    assert((f_map_prt_to_global(m, e) >> DB_KEY_BITS) == 0);
 			}
 			/* ensure 'e' is not already in the map */
@@ -778,7 +778,7 @@ int main (int argc, char *argv[]) {
 			} else {
 			    /* 'global' entry ID in partition map is limited
 			    to DB_KEY_BITS so make 'local' entry ID shorter */
-			    e >>= ilog2(m->parts);
+			    e /= m->parts;
 			    assert((f_map_prt_to_global(m, e) >> DB_KEY_BITS) == 0);
 			}
 			/* ensure 'e' is not already in the map */
