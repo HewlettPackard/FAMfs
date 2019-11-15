@@ -1089,12 +1089,12 @@ int is_range_server(struct mdhim_t *md, int rank, struct index_t *index) {
 		rangesrv_num = rank / index->range_server_factor;
 		rangesrv_num++;
 	}
-      		
+
 	if (rangesrv_num > (int)index->num_rangesrvs) {
 		rangesrv_num = 0;
 	}
 
-        printf("rangeser_num is %d, rank is %d, mdhim_rank is %d\n", rangesrv_num, rank, md->mdhim_rank);
+        // printf("rangeser_num is %d, rank is %d, mdhim_rank is %d\n", rangesrv_num, rank, md->mdhim_rank);
 	return rangesrv_num;
 }
 

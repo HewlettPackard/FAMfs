@@ -169,12 +169,15 @@ typedef struct f_map_ {
 	    unsigned int	loaded:1;	/* 1: loaded from persistent storage */
 	    unsigned int	own_part:1;	/* 1: only local entries in partitioned
 						   map, all from partition 'part' */
+	    unsigned int	ronly:1;	/* 1: read-only flag: there isn't any
+						   partition on this node */
 	};
     };
 } F_MAP_t;
 
-#define f_map_is_partitioned(map_p)	(map_p->parts > 1)
+#define f_map_is_partitioned(map_p)	(map_p->parts > 1U)
 #define f_map_has_globals(map_p)	(map_p->own_part == 0U)
+#define f_map_is_ro(map_p)		(map_p->ronly == 1U) /* read-only map on Client */
 
 
 /*
@@ -265,6 +268,8 @@ typedef struct f_iter_ {
 F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz, F_MAPLOCKING_t locking);
 /* Set map is partitioned; chose only 'own' partition (local) entries or whole (global) */
 int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global);
+/* Make persistent map as read-only, so flush would return w/o putting/deleting KVs */
+static inline void f_map_set_ro(F_MAP_t *map, int ro) { map->ronly = (unsigned)ro; }
 /* Free all map structures */
 void f_map_exit(F_MAP_t *map);
 /* Copy in-memory map entries to a new map with given evaluator and setter */
@@ -455,6 +460,20 @@ static inline int f_map_prt_my_global(F_MAP_t *map, uint64_t global)
 {
 	return f_map_prt_has_global(map, global, map->part);
 }
+
+/* Check if the continuous unit number belongs to partition 'part'.
+ * If not, advance the unit up to the next slice in partition.
+ * pu - continious persistent unit number (must be global!);
+ * factor - unit's interleave factor,
+ * parts - number of map partitions.
+ */
+#define f_map_pu_round_up(pu, factor, parts, part)			\
+	({ unsigned int u = (pu) >> (factor);				\
+	   unsigned int il = u % (parts);				\
+	   unsigned int p = (unsigned)(part);				\
+	   if (il != p)							\
+		pu = (u + ((il>p)? (parts):0UL) + p - il) << (factor);	\
+	   (pu); })
 
 
 /*

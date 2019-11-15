@@ -859,6 +859,12 @@ int range_server_bget(struct mdhim_t *md, struct mdhim_bgetm_t *bgm, int source)
 					continue;
 				}
 
+				/* at end? */
+				if (bgm->num_keys == 1 && *bgm->key_lens == 0) {
+					bgm->num_keys = 0;
+					goto done;
+				}
+
 				break;
 				/* Gets the previous key and value that is in order before the passed in key
 				   or the last key if no key was passed in */
@@ -927,7 +933,7 @@ done:
 	//Set the key and value
 	if (source == md->mdhim_rank) {
 		//If this message is coming from myself, copy the keys
-		bgrm->key_lens = malloc(bgm->num_keys * sizeof(int));		
+		bgrm->key_lens = malloc(bgm->num_keys * sizeof(int));
 		bgrm->keys = malloc(bgm->num_keys * sizeof(void *));
 		for (i = 0; i < bgm->num_keys; i++) {
 			bgrm->key_lens[i] = bgm->key_lens[i];
@@ -950,16 +956,7 @@ done:
 
 	//Send response
 	gettimeofday(&resp_get_comm_start, NULL);
- unsigned int key0 = *((unsigned int*)bgrm->keys[0]);
 	ret = send_locally_or_remote(md, source, bgrm);
- struct timeval en, tm_get, tm_send;
- gettimeofday(&en, NULL);
- timersub(&end, &start, &tm_get);
- double t_get = tm_get.tv_sec + tm_get.tv_usec/1000000.0L;
- timersub(&en, &resp_get_comm_start, &tm_send);
- double t_send = tm_send.tv_sec + tm_send.tv_usec/1000000.0L;
- mlog(MDHIM_SERVER_INFO, ".. range_server_bget key:%4.4x time get:%lf send:%lf",
-  key0, t_get, t_send);
 
 	//Release the bget message
 	free(bgm);
@@ -970,7 +967,7 @@ done:
 /**
  * range_server_bget_op
  * Handles the get message given an op and number of records greater than 1
- * 
+ *
  * @param md        Pointer to the main MDHIM struct
  * @param gm        pointer to the get message to handle
  * @param source    source of the message

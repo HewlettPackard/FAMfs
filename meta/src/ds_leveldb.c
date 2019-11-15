@@ -522,24 +522,25 @@ int mdhim_leveldb_get(void *dbh, void *key, int key_len, void **data, int32_t *d
  *
  * @param dbh             in   pointer to the unqlite db handle
  * @param key             out  void ** to the key that we get
- * @param key_len         out  int * to the length of the key 
+ * @param key_len         out  int * to the length of the key
  * @param data            out  void ** to the value belonging to the key
- * @param data_len        out  int * to the length of the value data 
- * @param mstore_opts in   additional cursor options for the data store layer 
- * 
+ * @param data_len        out  int * to the length of the value data
+ * @param mstore_opts in   additional cursor options for the data store layer
+ *
  */
-int mdhim_leveldb_get_next(void *dbh, void **key, int *key_len, 
+int mdhim_leveldb_get_next(void *dbh, void **key, int *key_len,
 			   void **data, int32_t *data_len) {
 	leveldb_readoptions_t *options;
 	struct mdhim_leveldb_t *mdhimdb = (struct mdhim_leveldb_t *) dbh;
 	int ret = MDHIM_SUCCESS;
 	leveldb_iterator_t *iter;
 	const char *res;
-	int len = 0;
+	size_t len = 0;
+	size_t tmp_key_len;
 	void *old_key;
 	int old_key_len;
 	struct timeval start, end;
-	int cmp_ret = -5;
+	// int cmp_ret;
 
 	gettimeofday(&dbngetstart, NULL);
 	//Init the data to return
@@ -566,7 +567,7 @@ int mdhim_leveldb_get_next(void *dbh, void **key, int *key_len,
 		/* Seek to the passed in key.  If that doesn't exist, iterate until we find one greater
 		   or until we exhaust the keys.*/
 		leveldb_iter_seek(iter, old_key, old_key_len);
-
+#if 0
 		if (!leveldb_iter_valid(iter)) {
 
 			leveldb_iter_seek_to_first(iter);
@@ -579,66 +580,57 @@ int mdhim_leveldb_get_next(void *dbh, void **key, int *key_len,
 						old_key, old_key_len)) > 0) {
 					break;
 				}
-				
+
 				leveldb_iter_next(iter);
-			}			
+			}
 		} else {
 
 			if (mdhimdb->compare(NULL, (leveldb_iter_key(iter,\
 					(size_t *) &len)), len, old_key, old_key_len) == 0)
 				leveldb_iter_next(iter);
 		}
+#endif
 	}
 
-	if (!leveldb_iter_valid(iter)) {
-		/*
-		printf("error 1\n");
-		fflush(stdout);
-		*/
-		goto error;
+	if (leveldb_iter_valid(iter)) {
+
+		res = leveldb_iter_value(iter, (size_t *) &len);
+		if (res) {
+			*data = malloc(len);
+			memcpy(*data, res, len);
+			*data_len = len;
+		} else {
+			*data = NULL;
+			*data_len = 0;
+			goto error;
+		}
+
+		res = leveldb_iter_key(iter, (size_t *) &tmp_key_len);
+		if (res) {
+			*key = malloc(tmp_key_len);
+			*key_len = tmp_key_len;
+			memcpy(*key, res, *key_len);
+		} else {
+			*key = NULL;
+			*key_len = 0;
+			goto error;
+		}
 	}
 
-	res = leveldb_iter_value(iter, (size_t *) &len);
-	if (res) {
-		*data = malloc(len);
-		memcpy(*data, res, len);
-		*data_len = len;
-	} else {
-		*data = NULL;
-		*data_len = 0;
-	}
-
-	res = leveldb_iter_key(iter, (size_t *) key_len);
-	if (res) {
-		*key = malloc(*key_len);
-		memcpy(*key, res, *key_len);
-	} else {
-		*key = NULL;
-		*key_len = 0;
-	}
-
-	if (!*data) {
-		goto error;
-		/*
-		printf("error 2\n");
-		fflush(stdout);
-		*/
-	}
-
-        //Destroy iterator
+	//Destroy iterator
 	leveldb_iter_destroy(iter);
 	gettimeofday(&end, NULL);
-	mlog(MDHIM_SERVER_DBG, "Took: %d seconds to get the next record", 
+	mlog(MDHIM_SERVER_DBG, "Took: %d seconds to get the next record",
 	     (int) (end.tv_sec - start.tv_sec));
 	gettimeofday(&dbngetend, NULL);
 	dbngettime += 1000000*(dbngetend.tv_sec-dbngetstart.tv_sec)+dbngetend.tv_usec-dbngetstart.tv_usec;
 	return ret;
 
-error:	
+error:
 	gettimeofday(&dbngetend, NULL);
-	dbngettime += 1000000*(dbngetend.tv_sec-dbngetstart.tv_sec)+dbngetend.tv_usec-dbngetstart.tv_usec; 
-	 //Destroy iterator
-	leveldb_iter_destroy(iter);      
+	dbngettime += 1000000*(dbngetend.tv_sec-dbngetstart.tv_sec)+dbngetend.tv_usec-dbngetstart.tv_usec;
+	//Destroy iterator
+	leveldb_iter_destroy(iter);
 	*key = NULL;
 	*key_len = 0;
 	*data = NULL;

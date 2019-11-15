@@ -52,7 +52,7 @@ struct index_t *unifycr_indexes[2*F_LAYOUTS_MAX+1]; /* +1 for primary_index */
 static int my_node = 1;
 static int node_size = 2;
 
-static int create_persistent_map(int map_id, int intl, char *name);
+static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name);
 static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
     size_t value_len);
@@ -137,9 +137,9 @@ static int meta_sanitize() {
     return rc;
 }
 
-static int create_persistent_map(int map_id, int intl, char *name)
+static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 {
-    unsigned int id = map_id+1;
+    unsigned int id = info->map_id + 1;
 
     if (id > 2*F_LAYOUTS_MAX)
 	return -1;
@@ -150,8 +150,13 @@ static int create_persistent_map(int map_id, int intl, char *name)
 		return -1;
  /*
 	printf(" create_persistent_map:%d %s index[%u] interleave:%d\n",
-	       map_id, name, id, intl);
+	       info->map_id, name, id, intl);
  */
+    }
+    if (unifycr_indexes[id]->myinfo.rangesrv_num == 0) {
+	//info->ro = 1;
+	printf("%d - no range server running!", my_node);
+	return -1;
     }
     return 0;
 }
@@ -605,7 +610,7 @@ int main (int argc, char *argv[]) {
 			} else {
 			    /* 'global' entry ID in partition map is limited
 			    to DB_KEY_BITS so make 'local' entry ID shorter */
-			    e >>= ilog2(m->parts);
+			    e /= m->parts;
 			}
 			/* entry already in the map? */
 			if (!f_map_probe_iter_at(it, e, (void*)&v))
@@ -793,7 +798,7 @@ int main (int argc, char *argv[]) {
 			} else {
 			    /* 'global' entry ID in partition map is limited
 			    to DB_KEY_BITS so make 'local' entry ID shorter */
-			    e >>= ilog2(m->parts);
+			    e /= m->parts;
 			}
 			/* entry already in the map? */
 			if (!f_map_probe_iter_at(it, e, (void*)&se))

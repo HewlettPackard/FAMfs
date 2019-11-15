@@ -229,6 +229,18 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 	}
 }
 
+/* Map info */
+typedef struct f_map_info_ {
+	union {
+	    uint64_t		info;
+	    struct {
+		int		map_id;		/* map id */
+		unsigned int	ro:1;		/* read-only map */
+		unsigned int	_r:31;
+	    } __attribute__((packed));
+	};
+} F_MAP_INFO_t;
+
 /* Pool info */
 typedef struct f_pool_info_ {
 	uint64_t	extent_sz;	/* pool extent size in bytes */
@@ -267,7 +279,7 @@ void f_free_layout_info(void);
  * DB-independent persistent KV store interface
  */
 /* create_persistent_map() function type: create/open KV store global index */
-typedef int (*F_CREATE_PERSISTENT_MAP_fn)(int map_id, int intl, char *name);
+typedef int (*F_CREATE_PERSISTENT_MAP_fn)(F_MAP_INFO_t *i, int intl, char *name);
 /* ps_bget() function type: BGET_NEXT */
 typedef ssize_t (*F_PS_BGET_fn)(unsigned long *buf, int map_id, size_t size,
     uint64_t *keys);
@@ -286,8 +298,8 @@ typedef struct f_meta_iface_ {
 
 /* Map API: persistent KV store interface */
 void f_set_meta_iface(F_META_IFACE_t *iface);
-int f_create_persistent_sm(int layout_id, int intl, int *mapid_p);
-int f_create_persistent_cv(int layout_id, int intl, int *mapid_p);
+int f_create_persistent_sm(int layout_id, int intl, F_MAP_INFO_t *info_p);
+int f_create_persistent_cv(int layout_id, int intl, F_MAP_INFO_t *info_p);
 ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
     uint64_t *off_p);
 int f_db_bput(unsigned long *buf, int map_id, void **keys, size_t size,

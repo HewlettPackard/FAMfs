@@ -36,35 +36,32 @@ void f_set_meta_iface(F_META_IFACE_t *iface)
 		meta_iface = iface;
 }
 
-static int create_persistent_map(int map_id, int intl, char *db_name, int *mapid_p)
+static int create_persistent_map(F_MAP_INFO_t *info_p, int intl, char *db_name)
 {
-	int rc;
-
 	if (!meta_iface || !meta_iface->create_map_fn)
 		return -1;
 
-	rc = meta_iface->create_map_fn(map_id, intl, db_name);
-	if (rc == 0 && mapid_p)
-		*mapid_p = map_id;
-	return rc;
+	return meta_iface->create_map_fn(info_p, intl, db_name);
 }
 
-int f_create_persistent_sm(int layout_id, int intl, int *mapid_p)
+int f_create_persistent_sm(int layout_id, int intl, F_MAP_INFO_t *mapinfo)
 {
 	char name[6];
-	int map_id = LO_TO_SM_ID(layout_id);
+	unsigned int map_id = LO_TO_SM_ID(layout_id);
 
-	snprintf(name, sizeof(name), "sm_%1u", (unsigned)map_id);
-	return create_persistent_map(map_id, intl, name, mapid_p);
+	snprintf(name, sizeof(name), "sm_%1u", map_id);
+	mapinfo->map_id = map_id;
+	return create_persistent_map(mapinfo, intl, name);
 }
 
-int f_create_persistent_cv(int layout_id, int intl, int *mapid_p)
+int f_create_persistent_cv(int layout_id, int intl, F_MAP_INFO_t *mapinfo)
 {
 	char name[6];
-	int map_id = LO_TO_CV_ID(layout_id);
+	unsigned int map_id = LO_TO_CV_ID(layout_id);
 
-	snprintf(name, sizeof(name), "cv_%1u", (unsigned)map_id);
-	return create_persistent_map(map_id, intl, name, mapid_p);
+	snprintf(name, sizeof(name), "cv_%1u", map_id);
+	mapinfo->map_id = map_id;
+	return create_persistent_map(mapinfo, intl, name);
 }
 
 ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,

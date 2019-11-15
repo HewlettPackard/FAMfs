@@ -61,7 +61,7 @@ int page_sz;
 extern char *mds_vec;
 extern int  num_mds;
 
-static int create_persistent_map(int map_id, int intl, char *name);
+static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name);
 static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
     size_t value_len);
@@ -117,9 +117,9 @@ int meta_init_store(mdhim_options_t *db_opts)
     return 0;
 }
 
-static int create_persistent_map(int map_id, int intl, char *name)
+static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 {
-    int id = F_MD_IDX_MAPS_START + map_id;
+    unsigned int id = F_MD_IDX_MAPS_START + (unsigned)info->map_id;
 
     if (!IN_RANGE(id, F_MD_IDX_MAPS_START, F_MD_IDX_MAPS_END) ||
 	intl < 0 || md == NULL)
@@ -130,6 +130,11 @@ static int create_persistent_map(int map_id, int intl, char *name)
 	if (unifycr_indexes[id] == NULL)
 		return -1;
     }
+
+    /* If no range server running, set RO flag to protect persistent map */
+    if (unifycr_indexes[id]->myinfo.rangesrv_num == 0)
+	info->ro = 1;
+
     return 0;
 }
 
@@ -766,7 +771,7 @@ int meta_sanitize()
     types = (int*) malloc(sizeof(int)*F_MD_IDX_SIZE);
     max_id = 0;
     for (i = 0; i < F_MD_IDX_SIZE; i++) {
-	if (!unifycr_indexes[i])
+	if (!unifycr_indexes[i] || unifycr_indexes[i]->myinfo.rangesrv_num == 0)
 	    continue;
 	ids[max_id] = unifycr_indexes[i]->id;
 	types[max_id] = unifycr_indexes[i]->type;

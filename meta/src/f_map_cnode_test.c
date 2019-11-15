@@ -2,6 +2,8 @@
  * Copyright (c) 2019, HPE
  *
  * Written by: Dmitry Ivanov
+ *
+ * Client node test: map access outside of range server nodes.
  */
 #include <limits.h>
 #include <stdio.h>
@@ -25,9 +27,15 @@
 #define DB_KEY_BITS	31	/* DB-backed maps: max global entry bits */
 #define META_DB_PATH	"/dev/shm"
 #define SM_EXT_MAX	3	/* max extent # in Slab map */
+#define CL_DEF_PART	0	/* Default partition to be read on Client */
 
 
-#define MPI_BARRIER		MPI_Barrier(MPI_COMM_WORLD)
+/* MDHIM client communicator includes all nodes; RS - all but node 0. */
+#define BARRIER_WORLD		MPI_Barrier(MPI_COMM_WORLD)
+#define BARRIER_MDHIM		MPI_Barrier(md->mdhim_client_comm)
+#define BARRIER_RS		MPI_Barrier(rs_comm)
+#define is_client_node()	(rank == mpi_size-1)
+
 #define bitmap_new_iter(m, c)	(f_map_new_iter(m, c, 0))
 #define e_to_bosl(bosl, e)	(e - bosl->entry0)
 #define it_to_pu(it)		(e_to_bosl(it->bosl, it->entry) >>	\
@@ -53,13 +61,25 @@
 	}					\
 	ul; })
 
+#define err(str, ...) fprintf(stderr, #str "\n", ## __VA_ARGS__)
+#define msg0(str, ...) if (rank==0) printf( str "\n", ## __VA_ARGS__)
+#define msg(str, ...) printf("%d: " str "\n", rank, ## __VA_ARGS__)
+
+
+/* MDHIM MDS vector: '1' means that range server is running on node */
+extern char *mds_vec;
+extern int  num_mds;
+
 /* MDHIM and Layout config */
 F_LAYOUT_INFO_t *lo_info = NULL;
 unifycr_cfg_t md_cfg;
 struct mdhim_t *md;
 struct index_t *unifycr_indexes[2*F_LAYOUTS_MAX+1]; /* +1 for primary_index */
-static int my_node;
-static int node_size = 0;
+/* MPI node rank and size in COMM_WORLD */
+static int rank = 0;
+static int mpi_size = 0;
+/* MPI range server communicator or COMM_NULL if not on a range server node */
+static MPI_Comm rs_comm = MPI_COMM_NULL;
 
 static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name);
 static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
@@ -102,12 +122,36 @@ static void meta_init_store(mdhim_options_t *db_opts) {
 #endif
 	md = mdhimInit(NULL, db_opts);
 
+	assert(md->primary_index);
 	unifycr_indexes[0] = md->primary_index;
 	for (i = 1; i <= 2*F_LAYOUTS_MAX; i++)
 		unifycr_indexes[i] = NULL;
-	if (node_size == 0) {
-		node_size = md->mdhim_comm_size;
-		my_node = md->mdhim_rank;
+
+	/* Check RS is running on nodes [0..size-2] and not running on last node */
+	if (md->primary_index->myinfo.rangesrv_num > 0) {
+		 int rs_size, rc;
+
+		rc = MPI_Comm_size(md->primary_index->rs_comm, &rs_size);
+		if (rc != MPI_SUCCESS) {
+			err("%d: Cannot get MDHIM RS size:%d", rank, rc);
+			assert(0);
+		}
+		if (rs_size != unifycr_indexes[0]->rangesrv_master + 1) {
+			err("%d: MDHIM reports wrong master:%d RS, rs_size:%d",
+			    rank, unifycr_indexes[0]->rangesrv_master, rs_size);
+			assert(0);
+		}
+		if (rs_size != mpi_size - 1) {
+			err("%d: Wrong MDHIM RS size:%d, MPI size:%d",
+			    rank, rs_size, mpi_size);
+			assert(0);
+		}
+	} else {
+		if (!is_client_node()) {
+			err("%d: RS is running here!? mpi_size:%d",
+			    rank, mpi_size);
+			assert(0);
+		}
 	}
 }
 
@@ -132,16 +176,21 @@ static int meta_sanitize() {
     types = (int*) malloc(sizeof(int)*indexes);
     max_id = 0;
     for (i = 0; i < indexes; i++) {
+        uint32_t rangesrv_num;
+
 	if (!unifycr_indexes[i])
+		continue;
+	rangesrv_num = unifycr_indexes[i]->myinfo.rangesrv_num;
+	if (rangesrv_num == 0)
 		continue;
 	ids[max_id] = unifycr_indexes[i]->id;
 	types[max_id] = unifycr_indexes[i]->type;
-	manifest = (unifycr_indexes[i]->myinfo.rangesrv_num == 1);
+	manifest = (rangesrv_num == 1);
 	max_id++;
     }
     rc = mdhimClose(md);
     if (rc) {
-	printf("%d: mdhimClose error:%d\n", rank, rc);
+	err("%d: mdhimClose error:%d", rank, rc);
 	return rc;
     }
 
@@ -156,12 +205,13 @@ static int meta_sanitize() {
         ret = mdhimSanitize(dbfilename, statfilename,
 			    manifest?manifestname:NULL);
 	if (ret) {
-	    printf("%d: mdhimSanitize %s error:%d\n",
+	    err("%d: mdhimSanitize %s error:%d",
 		rank, dbfilename, ret);
 	    if (rc == 0)
 		rc = ret; /* report first error */
 	}
     }
+
     free(ids);
     free(types);
     mdhim_options_destroy(db_opts);
@@ -178,15 +228,31 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 
     if (id > 2*F_LAYOUTS_MAX)
 	return -1;
+
+    rs_comm = MPI_COMM_NULL;
     if (unifycr_indexes[id] == NULL) {
 	unifycr_indexes[id] = create_global_index(md, md->db_opts->rserver_factor,
 					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
 	if (unifycr_indexes[id] == NULL)
 		return -1;
 
-	printf("%d: create_persistent_map:%d %s index[%u] interleave:%d\n",
-	       md->mdhim_rank, info->map_id, name, id, intl);
+	msg("create_persistent_map:%d %s index[%u] interleave:%d rs:%d",
+	    info->map_id, name, id, intl,
+	    unifycr_indexes[id]->myinfo.rangesrv_num);
 
+    }
+    if (unifycr_indexes[id]->myinfo.rangesrv_num > 0) {
+	/* Copy MPI communicator if a range server */
+	rs_comm = unifycr_indexes[id]->rs_comm;
+	if (mpi_size - 1 != (unifycr_indexes[id]->rangesrv_master + 1)) {
+	    err("%d: create_persistent_map:%u rs_size:%d master:%d",
+		rank, id, mpi_size-1,
+		unifycr_indexes[id]->rangesrv_master);
+	    return -1;
+	}
+    } else {
+	/* If no range server running, set RO flag to protect persistent map */
+	info->ro = 1;
     }
     return 0;
 }
@@ -288,6 +354,7 @@ int main (int argc, char *argv[]) {
     unsigned int dirty_sz, pu_factor;
     int pass, tg, t;
     int global, v, rc, i;
+    int flag, provided, map_part, map_parts;
 
     srand((unsigned int)time(NULL));
     page = getpagesize();
@@ -297,11 +364,49 @@ int main (int argc, char *argv[]) {
     ui = ext = 0;
     p = NULL; it = NULL;
 
+    /* Initialize MPI */
+    if ((rc = MPI_Initialized(&flag)) != MPI_SUCCESS) {
+	err("Error while calling MPI_Initialized");
+	exit(1);
+    }
+    if (!flag) {
+	rc = MPI_Init_thread(NULL, NULL, MPI_THREAD_MULTIPLE, &provided);
+	if (rc != MPI_SUCCESS) {
+	    err("Error while calling MPI_Init_thread");
+	    exit(1);
+	}
+	if (provided != MPI_THREAD_MULTIPLE) {
+	    err("Error while initializing MPI with threads");
+	    exit(1);
+	}
+    }
+    if ((rc = MPI_Comm_size(MPI_COMM_WORLD, &mpi_size)) != MPI_SUCCESS) {
+	err("Error getting the size of the communicator:%d", rc);
+	exit(1);
+    }
+    if ((rc = MPI_Comm_rank(MPI_COMM_WORLD, &rank)) != MPI_SUCCESS) {
+	err("Error getting the rank:%d", rc);
+	exit(1);
+    }
+    /* If rank == mpi_size-1, that's a client node w/o MDHIM RS */
+    map_parts = mpi_size - 1;
+    if (map_parts <= 0) {
+	/* At least three nodes recommended for the test */
+	err("Not enough nodes available for this test: %d", mpi_size);
+	exit(1);
+    }
+    /* Set MDS vector */
+    mds_vec = calloc(sizeof(*mds_vec), mpi_size);
+    num_mds = mpi_size-1;
+    for (i = 0; i < num_mds; i++)
+	mds_vec[i] = 1;
+
+
     /*
      * Test group one: Init KV store
      */
     tg = 1;
-    printf("Running group %d tests: start/stop KV store (MDHIM)\n", tg);
+    msg0("Running group %d tests: start/stop KV store (MDHIM)", tg);
     pass = v = 0;
     e = 0;
     p = NULL; it = NULL;
@@ -319,10 +424,9 @@ int main (int argc, char *argv[]) {
     t = 3; /* Bring up DB thread */
     meta_init_store(db_opts);
     if (md == NULL || unifycr_indexes[0] == NULL) goto err;
-    if (node_size <= 0) goto err;
+    if (md->mdhim_comm_size == 0) goto err;
 
-    printf("%d: Layout%d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
-	my_node,
+    msg("Layout%d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u",
 	lo_info->conf_id, lo_info->name, lo_info->data_chunks,
 	(lo_info->chunks - lo_info->data_chunks), lo_info->chunk_sz,
 	lo_info->slab_stripes, lo_info->devnum);
@@ -336,16 +440,17 @@ int main (int argc, char *argv[]) {
     rcu_register_thread();
     m = map = f_map_init(F_MAPTYPE_BITMAP, e_sz, page_sz, 0);
     if (!m) goto err0;
-    if (node_size <= 0) goto err0; /* check meta_init_store() */
 
-    t = 5; /* Set map partition to part my_node of [0..node_size-1] */
+    t = 5; /* Set map partition to part 'rank' of [0..size-1] */
     global = 0;
-    rc = f_map_init_prt(m, node_size, my_node, 0, global);
+    map_part = (rank == map_parts)? CL_DEF_PART:rank;
+    rc = f_map_init_prt(m, map_parts, map_part, 0, global);
     if (rc) goto err1;
 
     t = 6; /* Register map with Layout0 */
     rc = f_map_register(m, layout_id);
     if (rc) goto err1;
+    if (f_map_is_ro(m) != is_client_node()) goto err1;
 
     t = 7; /* free map */
     f_map_exit(map); m = map = NULL;
@@ -361,7 +466,7 @@ int main (int argc, char *argv[]) {
      * Test group two: Bitmaps with KV store backend
      */
     tg = 2;
-    printf("Running group %d tests: bitmaps with KV store backend\n", tg);
+    msg0("Running group %d tests: bitmaps with KV store backend", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
@@ -399,13 +504,14 @@ int main (int argc, char *argv[]) {
 
 	    /* Test partitioned map with only partition, all partitions */
 	    for (global = 0; global <= 1; global++) {
-		printf("%d: with BoS pages:%u, %s%sbitmap\n",
-		       my_node, pages, global?"global ":"", (e_sz==2)?"b":"");
+
+		msg("with BoS pages:%u, %s%sbitmap",
+		    pages, global?"global ":"", (e_sz==2)?"b":"");
 
 		t = 3; /* Set map partition */
 		m = map;
-		/* partition:my_node of [0..node_size-1] */
-		rc = f_map_init_prt(m, node_size, my_node, 0, global);
+		/* partition: map_node of [0..size-1] */
+		rc = f_map_init_prt(m, map_parts, map_part, 0, global);
 		if (rc || !(m->own_part ^ (unsigned)global)) goto err1;
 
 		t = 4; /* Register map with Layout0 */
@@ -423,14 +529,16 @@ int main (int argc, char *argv[]) {
 		    /* maximal numbers of entries in map */
 		    max_globals = pass;
 		    if (global)
-			max_globals += (node_size - 1)*RND_REPS;
+			max_globals += (map_parts-1)*RND_REPS;
 
 		    t = 6; /* Count entries in loaded map */
 		    it = bitmap_new_iter(m,(e_sz==1)?laminated:cv_laminated);
 		    it = f_map_seek_iter(it, 0); /* create BoS zero */
 		    if (!it) goto err2;
 		    actual = v = (int)f_map_weight(it, F_MAP_WHOLE);
-		    if (!IN_RANGE(v, pass, max_globals)) goto err3;
+		    /* Client node may go ahead of its default partition */
+		    if (!is_client_node() && !IN_RANGE(v, pass, max_globals))
+			goto err3;
 
 		    t = 7; /* Add an unique random entry */
 		    for (i = 0; i <= actual; i++) {
@@ -470,7 +578,11 @@ int main (int argc, char *argv[]) {
 			v = test_and_set_bit(ul, bosl->page);
 		    else
 			v = test_and_set_bbit(ul, BBIT_11, bosl->page);
-		    if (v) goto err2;
+		    /* client node may read this bit set by part 0 node */
+		    if (v && !is_client_node()) goto err2;
+		    /* expect one more entry in map */
+		    if (!v)
+			actual++;
 		    /* printf(" Add e:%lu BoS/PU:%lu/%lu\n",
 			e, e/m->bosl_entries, ul >> m->geometry.pu_factor); */
 
@@ -485,10 +597,13 @@ int main (int argc, char *argv[]) {
 		    ul = find_first_bit(bosl->dirty, dirty_sz);
 		    if (ul != ui) goto err2;
 
-		    t = 11; /* flush map */
+		    t = 11; /* Flush map */
 		    v = 0;
 		    rc = f_map_flush(m);
 		    if (rc != 0) goto err2;
+		    /* on client node flush() should not clear dirty PU bit */
+		    if (is_client_node() && !test_and_clear_bit(ui, bosl->dirty))
+			goto err1;
 		    /* check dirty bit cleared */
 		    v = bitmap_weight(bosl->dirty, dirty_sz);
 		    if (v) goto err2;
@@ -498,7 +613,7 @@ int main (int argc, char *argv[]) {
 		    f_map_next(it);
 		    for_each_iter(it)
 			v++;
-		    if (v != (actual + 1)) goto err3;
+		    if (v != actual) goto err3;
 		    f_map_free_iter(it); it = NULL;
 
 		    t = 13; /* Add 'e' to bitmap 'mlog' */
@@ -508,6 +623,19 @@ int main (int argc, char *argv[]) {
 		    if (test_and_set_bit(i, p)) goto err2; /* already set? */
 		}
 
+		if (!is_client_node())
+		    goto t_2_14;
+
+		t = 14; /* Clear map on Client node */
+		it = f_map_new_iter(map, F_NO_CONDITION, 0);
+		it = f_map_next_bosl(it);
+		for_each_bosl(it)
+		    if ((rc = f_map_delete_bosl(map, it->bosl))) goto err3;
+		if (map->nr_bosl) goto err1;
+		f_map_free_iter(it); it = NULL;
+
+		goto t_2_before_del;
+t_2_14:
 		t = 14; /* Check my entries in loaded map */
 		e = 0;
 		ul = 0;
@@ -575,14 +703,41 @@ int main (int argc, char *argv[]) {
 		    f_map_mark_dirty(map, it->entry);
 		}
 		f_map_free_iter(it); it = NULL;
-		/* delete empty PU in DB */
+
+t_2_before_del:
+		BARRIER_MDHIM;
+
+		if (!is_client_node())
+		    goto t_2_del;
+
+		t = 19; /* Read the whole map */
+		rc = f_map_init_prt(map, map_parts, 0, 0, 1);
+		if (rc != 0) goto err1;
+		rc = f_map_load(map);
+		if (rc != 0) goto err1;
+		it = f_map_new_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_seek_iter(it, 0);
+		rc = (int)f_map_weight(it, F_MAP_WHOLE);
+		/* check the total number of map entries */
+		v = RND_REPS*map_parts;
+		if (rc != v) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+t_2_del:
+		BARRIER_MDHIM;
+
+		t = 20; /* Delete all PUs in DB */
 		rc = f_map_flush(map);
 		if (rc != 0) goto err2;
 
-		t = 19; /* Delete all BoS entries */
+		t = 21; /* Delete all BoS entries */
 		it = f_map_get_iter(map, F_NO_CONDITION, 0);
 		ui = map->nr_bosl;
-		if (!global && (ui > RND_REPS+1)) goto err1; /* +1 for BoS #0 */
+		if (!is_client_node()) {
+		    /* maximum expected number of BoSses; +1 for BoS #0 */
+		    ul = RND_REPS*(global? map_parts:1) + 1;
+		    if (ui > ul) goto err1;
+		}
 		ul = 0;
 		for_each_iter(it) {
 		    unsigned long bit;
@@ -591,7 +746,7 @@ int main (int argc, char *argv[]) {
 		    /* check dirty bits cleared for map partition */
 		    v = bitmap_weight(bosl->dirty, dirty_sz);
 		    for_each_set_bit(bit, bosl->dirty, dirty_sz) {
-			printf("%d: dirty bit:%lu/%lu%s\n", my_node,
+			printf("p%d dirty bit:%lu/%lu%s\n", map_part,
 			    bosl->entry0/bosl->map->bosl_entries, bit,
 			    (global&&!bosl_pu_in_my_part(bosl, bit))?" F":"");
 		    }
@@ -601,7 +756,7 @@ int main (int argc, char *argv[]) {
 		    it->bosl = NULL; /* make for_each_iter() go next BoS */
 		    ul++;
 		}
-		t = 20; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 22; /* Extra check: map BoS accounting (nr_bosl) */
 		if (ul != ui) goto err1;
 		v = f_map_max_bosl(map);
 		if (map->nr_bosl) {
@@ -611,11 +766,12 @@ int main (int argc, char *argv[]) {
 		}
 		if (v) goto err3;
 		f_map_free_iter(it); it = NULL;
+		bosl = NULL; p = NULL;
 
-		MPI_BARRIER;
+		BARRIER_MDHIM;
 
-		t = 21; /* Count foreign entries in loaded map */
-		rc = f_map_init_prt(map, node_size, my_node, 0, 1);
+		t = 23; /* Check the whole map is empty */
+		rc = f_map_init_prt(map, map_parts, map_part, 0, 1);
 		if (rc != 0) goto err1;
 		rc = f_map_load(map);
 		if (rc != 0) goto err1;
@@ -624,12 +780,12 @@ int main (int argc, char *argv[]) {
 		for_each_iter(it) {
 		    e = it->entry;
 		    ul++;
-		    printf("%lu e:%lu buf:%016lX\n", ul, e, *it->word_p);
+		    msg("%lu e:%lu buf:%016lX", ul, e, *it->word_p);
 		}
 		if (ul) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 22; /* Delete all map BoSses */
+		t = 24; /* Delete all map BoSses */
 		it = f_map_new_iter(map, F_NO_CONDITION, 0);
 		it = f_map_next_bosl(it);
 		for_each_bosl(it)
@@ -637,7 +793,7 @@ int main (int argc, char *argv[]) {
 		if (map->nr_bosl) goto err1;
 		f_map_free_iter(it); it = NULL;
 
-		t = 23; /* Delete all bitmap entries */
+		t = 25; /* Delete all bitmap entries */
 		m = mlog; /* for error print */
 		ul = mlog->nr_bosl;
 		it = f_map_new_iter(mlog, F_BIT_CONDITION, 0);
@@ -648,18 +804,18 @@ int main (int argc, char *argv[]) {
 		    if (v != 2) goto err3;
 		    if ((rc = f_map_delete_bosl(mlog, bosl))) goto err3;
 		}
-		t = 24; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 26; /* Extra check: map BoS accounting (nr_bosl) */
 		if ((ul = mlog->nr_bosl)) goto err1;
 		if ((v = f_map_max_bosl(mlog))) goto err2;
 		f_map_free_iter(it); it = NULL;
 		bosl = NULL; p = NULL;
-		// printf(" - %d Ok\n", t);
+		// msg(" - %d Ok", t);
 
 		rcu_quiescent_state();
 
-		MPI_BARRIER;
+		BARRIER_MDHIM;
 	    }
-	    t = 25; /* map exit: must survive */
+	    t = 27; /* map exit: must survive */
 	    f_map_exit(map);
 	    f_map_exit(mlog);
 	    m = mlog = map = NULL;
@@ -667,7 +823,7 @@ int main (int argc, char *argv[]) {
     }
     rcu_unregister_thread();
 
-    t = 26;
+    t = 28;
     rc = meta_sanitize();
     if (rc) goto err;
     f_free_layout_info();
@@ -677,7 +833,7 @@ int main (int argc, char *argv[]) {
      * Test group three: Structured map with KV store backend
      */
     tg = 3;
-    printf("Running group %d tests: structured map with KV store backend\n", tg);
+    msg0("Running group %d tests: structured map with KV store backend", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
@@ -713,19 +869,18 @@ int main (int argc, char *argv[]) {
 	    pu_factor = map->geometry.pu_factor;
 
 	    t = 2; /* Create local bitmap for tracking writes to KV store */
-	    assert(!mlog);
 	    mlog = f_map_init(F_MAPTYPE_BITMAP, 1, 0, 0);
 	    if (!mlog) goto err0;
 
 	    /* Test partitioned map with only partition, all partitions */
 	    for (global = 0; global <= 1; global++) {
-		printf("%d: with BoS pages:%u, %sstructured map, %d extent%s\n",
-		       my_node, pages, global?"global ":"", ext, (ext==1)?"":"s");
+		msg("with BoS pages:%u, %sstructured map, %d extent%s",
+		    pages, global?"global ":"", ext, (ext==1)?"":"s");
 
 		t = 3; /* Set map partition */
 		m = map;
-		/* partition:my_node of [0..node_size-1] */
-		rc = f_map_init_prt(m, node_size, my_node, 0, global);
+		/* partition: 'map_part' of [0..size-1] */
+		rc = f_map_init_prt(m, map_parts, map_part, 0, global);
 		if (rc) goto err1;
 
 		t = 4; /* Register map with Layout0 */
@@ -743,14 +898,16 @@ int main (int argc, char *argv[]) {
 		    /* maximal numbers of entries in map */
 		    max_globals = pass;
 		    if (global)
-			max_globals += (node_size - 1)*RND_REPS;
+			max_globals += (map_parts-1)*RND_REPS;
 
 		    t = 6; /* Count entries in loaded map */
 		    it = f_map_new_iter(m, sm_extent_failed, iext);
 		    it = f_map_seek_iter(it, 0); /* create BoS zero */
 		    if (!it) goto err2;
 		    actual = v = (int)f_map_weight(it, F_MAP_WHOLE);
-		    if (!IN_RANGE(v, pass, max_globals)) goto err3;
+		    /* Client node may go ahead of its default partition */
+		    if (!is_client_node() && !IN_RANGE(v, pass, max_globals))
+			goto err3;
 
 		    t = 7; /* Add an unique random entry */
 		    for (i = 0; i <= actual; i++) {
@@ -791,14 +948,14 @@ int main (int argc, char *argv[]) {
 		    pu = (F_PU_VAL_t *)p;
 		    /* it should be empty */
 		    se = &pu->se;
-		    v = __builtin_popcountll(se->_v128);
-		    if (v) goto err2;
 		    ee = &pu->ee;
-		    for (ui = 0; ui < ext; ui++, ee++) {
+		    v = __builtin_popcountll(se->_v128);
+		    for (ui = 0; ui < ext && v == 0; ui++, ee++)
 			v = __builtin_popcountl(ee->_v64);
-			if (v) goto err2;
-		    }
+		    /* client node may read this bit set by part 0 node */
+		    if (v && !is_client_node()) goto err2;
 		    /* set SM entry to 'mapped' and count 'mapped' entries */
+		    if (!v) actual++;
 		    se->mapped = 1;
 		    ee = &pu->ee + iext; /* index of top extent */
 		    ee->failed = 1;
@@ -814,9 +971,12 @@ int main (int argc, char *argv[]) {
 		    ul = find_first_bit(bosl->dirty, dirty_sz);
 		    if (ul != ui) goto err2;
 
-		    t = 11; /* flush map */
+		    t = 11; /* Flush map */
 		    rc = f_map_flush(m);
 		    if (rc != 0) goto err2;
+		    /* on client node flush() should not clear dirty PU bit */
+		    if (is_client_node() && !test_and_clear_bit(ui, bosl->dirty))
+			goto err1;
 		    /* check dirty bit cleared */
 		    v = bitmap_weight(bosl->dirty, dirty_sz);
 		    if (v) goto err2;
@@ -826,7 +986,7 @@ int main (int argc, char *argv[]) {
 		    f_map_next(it);
 		    for_each_iter(it)
 			v++;
-		    if (v != (actual + 1)) goto err3;
+		    if (v != actual) goto err3;
 		    f_map_free_iter(it); it = NULL;
 
 		    t = 13; /* Add to 'mlog' the new map entry 'e' */
@@ -835,7 +995,19 @@ int main (int argc, char *argv[]) {
 		    i = BIT_NR_IN_LONG(e);
 		    if (test_and_set_bit(i, p)) goto err2; /* already set? */
 		}
+		if (!is_client_node())
+		    goto t_3_14;
 
+		t = 14; /* Clear map on Client node */
+		it = f_map_new_iter(map, F_NO_CONDITION, 0);
+		it = f_map_next_bosl(it);
+		for_each_bosl(it)
+		    if ((rc = f_map_delete_bosl(map, it->bosl))) goto err3;
+		if (map->nr_bosl) goto err1;
+		f_map_free_iter(it); it = NULL;
+
+		goto t_3_before_del;
+t_3_14:
 		t = 14; /* Check my entries in loaded map */
 		e = ul = 0;
 		it = f_map_get_iter(map, se_or_ee_not_zero, ext);
@@ -903,14 +1075,41 @@ int main (int argc, char *argv[]) {
 		    f_map_mark_dirty(map, it->entry);
 		}
 		f_map_free_iter(it); it = NULL;
-		/* delete empty PU in DB */
+
+t_3_before_del:
+		BARRIER_MDHIM;
+
+		if (!is_client_node())
+		    goto t_3_del;
+
+		t = 19; /* Read the whole map */
+		rc = f_map_init_prt(map, map_parts, 0, 0, 1);
+		if (rc != 0) goto err1;
+		rc = f_map_load(map);
+		if (rc != 0) goto err1;
+		it = f_map_new_iter(map, se_or_ee_not_zero, ext);
+		it = f_map_seek_iter(it, 0);
+		rc = (int)f_map_weight(it, F_MAP_WHOLE);
+		/* check the total number of map entries */
+		v = RND_REPS*map_parts;
+		if (rc != v) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+t_3_del:
+		BARRIER_MDHIM;
+
+		t = 20; /* Delete empty PU in DB */
 		rc = f_map_flush(map);
 		if (rc != 0) goto err2;
 
-		t = 19; /* Delete all BoS entries */
+		t = 21; /* Delete all BoS entries */
 		it = f_map_get_iter(map, F_NO_CONDITION, 0);
 		ui = map->nr_bosl;
-		if (!global && (ui > RND_REPS+1)) goto err1; /* +1 for BoS #0 */
+		if (!is_client_node()) {
+		    /* maximum expected number of BoSses; +1 for BoS #0 */
+		    ul = RND_REPS*(global? map_parts:1) + 1;
+		    if (ui > ul) goto err1;
+		}
 		ul = 0;
 		for_each_iter(it) {
 		    unsigned long bit;
@@ -919,7 +1118,7 @@ int main (int argc, char *argv[]) {
 		    /* check dirty bits cleared for map partition */
 		    v = bitmap_weight(bosl->dirty, dirty_sz);
 		    for_each_set_bit(bit, bosl->dirty, dirty_sz) {
-			printf("%d: dirty bit:%lu/%lu%s\n", my_node,
+			printf("p%d dirty bit:%lu/%lu%s\n", map_part,
 			    bosl->entry0/bosl->map->bosl_entries, bit,
 			    (global&&!bosl_pu_in_my_part(bosl, bit))?" F":"");
 		    }
@@ -931,7 +1130,7 @@ int main (int argc, char *argv[]) {
 		    it->bosl = NULL; /* make for_each_iter() go next BoS */
 		    ul++;
 		}
-		t = 20; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 22; /* Extra check: map BoS accounting (nr_bosl) */
 		if (ul != ui) goto err1;
 		v = f_map_max_bosl(map);
 		if (map->nr_bosl) {
@@ -943,11 +1142,11 @@ int main (int argc, char *argv[]) {
 		f_map_free_iter(it); it = NULL;
 		bosl = NULL; p = NULL;
 
-		MPI_BARRIER;
+		BARRIER_MDHIM;
 
-		t = 21; /* Count foreign entries in loaded map */
+		t = 23; /* Count entries in loaded map */
 		/* load all map partitions */
-		rc = f_map_init_prt(map, node_size, my_node, 0, 1);
+		rc = f_map_init_prt(map, map_parts, map_part, 0, 1);
 		if (rc != 0) goto err1;
 		rc = f_map_load(map);
 		if (rc != 0) goto err1;
@@ -956,12 +1155,12 @@ int main (int argc, char *argv[]) {
 		for_each_iter(it) {
 		    e = it->entry;
 		    ul++;
-		    printf("%lu e:%lu buf:%016lX\n", ul, e, *it->word_p);
+		    msg("%lu e:%lu buf:%016lX", ul, e, *it->word_p);
 		}
 		if (ul) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 22; /* Delete all map BoSses */
+		t = 24; /* Delete all map BoSses */
 		it = f_map_new_iter(map, F_NO_CONDITION, 0);
 		it = f_map_next_bosl(it);
 		for_each_bosl(it)
@@ -969,7 +1168,7 @@ int main (int argc, char *argv[]) {
 		if (map->nr_bosl) goto err1;
 		f_map_free_iter(it); it = NULL;
 
-		t = 23; /* Delete all log entries */
+		t = 25; /* Delete all log entries */
 		m = mlog; /* for error print */
 		ul = mlog->nr_bosl;
 		it = f_map_new_iter(mlog, F_BIT_CONDITION, 0);
@@ -980,18 +1179,18 @@ int main (int argc, char *argv[]) {
 		    if (v != 2) goto err3;
 		    if ((rc = f_map_delete_bosl(mlog, bosl))) goto err3;
 		}
-		t = 24; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 26; /* Extra check: map BoS accounting (nr_bosl) */
 		if ((ul = mlog->nr_bosl)) goto err1;
 		if ((v = f_map_max_bosl(mlog))) goto err2;
 		f_map_free_iter(it); it = NULL;
 		bosl = NULL; p = NULL;
-		// printf(" - %d Ok\n", t);
+		// msg(" - %d Ok", t);
 
 		rcu_quiescent_state();
 
-		MPI_BARRIER;
+		BARRIER_MDHIM;
 	    }
-	    t = 25; /* map exit: must survive */
+	    t = 27; /* map exit: must survive */
 	    f_map_exit(map);
 	    f_map_exit(mlog);
 	    m = mlog = map = NULL;
@@ -999,65 +1198,64 @@ int main (int argc, char *argv[]) {
     }
     rcu_unregister_thread();
 
-    t = 26;
+    t = 28;
     rc = meta_sanitize();
     if (rc) goto err1;
     f_free_layout_info();
     unifycr_config_free(&md_cfg);
 
-    MPI_BARRIER;
+    BARRIER_WORLD;
     MPI_Finalize();
 
-    if (my_node == 0)
-	printf("SUCCESS\n");
+    msg0("SUCCESS");
     return 0;
 
 err3:
     if (it) {
-	printf("  Iterator @%s%lu PU:%lu p:%p -> %016lx\n",
+	msg("  Iterator @%s%lu PU:%lu p:%p -> %016lx",
 	    f_map_iter_depleted(it)?"END ":"", it->entry,
 	    (it->entry % it->map->bosl_entries)/(1U << it->map->geometry.pu_factor),
 	    it->word_p, *it->word_p);
 	if (f_map_entry_in_bosl(it->bosl, it->entry))
-	    printf("    entry @%lu in BoS:%lu\n",
-		   it->entry - it->bosl->entry0,
-		   it->bosl->entry0/it->map->bosl_entries);
+	    msg("    entry @%lu in BoS:%lu",
+		it->entry - it->bosl->entry0,
+		it->bosl->entry0/it->map->bosl_entries);
     }
 err2:
     if (bosl) {
-	printf("  BoS #%lu starts @%lu page:%p\n",
+	msg("  BoS #%lu starts @%lu page:%p",
 	    bosl->entry0/bosl->map->bosl_entries, bosl->entry0,
 	    bosl->page);
     }
 err1:
     if (m) {
-	printf("  Map BoS sz:%lu (%u entries), %u per PU, %u PU(s) per BoS\n"
-		"  map BoS count:%lu, max:%lu\n",
+	msg("  Map BoS sz:%lu (%u entries), %u per PU, %u PU(s) per BoS",
 	    m->bosl_sz, m->bosl_entries,
 	    1U << m->geometry.pu_factor,
-	    m->geometry.bosl_pu_count,
+	    m->geometry.bosl_pu_count);
+	msg("  map BoS count:%lu, max:%lu",
 	    m->nr_bosl, f_map_max_bosl(m)-1);
-	printf("  Part %u of %u in %spartitioned %s map; "
-		"interleave:%u entries, %u PUs\n",
+	msg("  Part %u of %u in %spartitioned %s map; "
+		"interleave:%u entries, %u PUs",
 	    m->part, m->parts, (m->parts<=1)?"non-":"",
 	    f_map_has_globals(m)?"global":"local",
 	    1U<<m->geometry.intl_factor,
 	    1U<<(m->geometry.intl_factor-m->geometry.pu_factor));
-	printf("    entry:%lu @%lu PU:%lu\n",
+	msg("    entry:%lu @%lu PU:%lu",
 	    e, (e % m->bosl_entries),
 	    (e % m->bosl_entries)/(1U << m->geometry.pu_factor));
     }
     if (p != NULL)
-	printf("  p:%p -> %016lX\n", p, *p);
+	msg("  p:%p -> %016lX", p, *p);
 err0:
-    printf("  Test parameters: entry_size:%u, %u pages per BoS\n",
-	e_sz, pages);
+    msg("Test parameters: entry_size:%u, %u pages per BoS, global:%d",
+	e_sz, pages, global);
     if (ext)
-	printf("  slab map has %d extent(s)\n", ext);
-    printf("  Test variables: rc=%d var=%d ul=%lu ui=%u\n",
+	msg("  slab map has %d extent(s)", ext);
+    msg("Test variables: rc=%d var=%d ul=%lu ui=%u",
 	rc, v, ul, ui);
 err:
-    printf("%d - Test %d.%d (pass %d) FAILED\n", my_node, tg, t, pass);
+    err("%d - Test %d.%d (pass %d) FAILED", rank, tg, t, pass);
     MPI_Abort(MPI_COMM_WORLD, 1);
     return 1;
 }

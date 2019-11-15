@@ -45,6 +45,7 @@ static void bosl_free(F_BOSL_t *bosl)
 	/* BoS claimed accounting */
 	int c = atomic_dec_return(&bosl->claimed);
 
+	/* DEBUG */
 	if (c != 0) {
 		printf(" bosl_free map:%p count:%d e0:%lu\n",
 			bosl->map, c, bosl->entry0);
@@ -381,6 +382,7 @@ void f_map_exit(F_MAP_t *map)
  */
 int f_map_register(F_MAP_t *m, int layout_id)
 {
+	F_MAP_INFO_t info;
 	uint64_t recs_per_slice;
 	int rc;
 
@@ -392,10 +394,16 @@ int f_map_register(F_MAP_t *m, int layout_id)
 	/* Attach map to KV store global index */
 	if (f_map_is_structured(m)) {
 		/* Create global index for Slab Map */
-		rc = f_create_persistent_sm(layout_id, recs_per_slice, &m->id);
+		rc = f_create_persistent_sm(layout_id, recs_per_slice, &info);
 	} else {
 		/* Create global index index for Claim vector */
-		rc = f_create_persistent_cv(layout_id, recs_per_slice, &m->id);
+		rc = f_create_persistent_cv(layout_id, recs_per_slice, &info);
+	}
+
+	/* On success, set map id (table index #) and RO flag */
+	if (rc == 0) {
+		m->id = info.map_id;
+		f_map_set_ro(m, info.ro);
 	}
 	return rc;
 }
@@ -449,7 +457,7 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 				*off = part * intl; /* global ID of local PU#0 */
 			else if (*off == ~(0UL))
 				continue; /* the partition end reached */
-			//printf(" load map id:%d part:%u @%lu\n", map_id, part, *off);
+			// printf(" load map id:%d part:%u @%lu\n", map_id, part, *off);
 
 			/* BGET pu_per_bos entries */
 			size = pu_per_bos;
@@ -465,6 +473,11 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 			if (size == 0) {
 				*off = ~(0UL); /* special mark: at partition end */
 				count--;
+			} else {
+				/* Round key up to next slice if out of partition */
+				f_map_pu_round_up(*off, map->geometry.intl_factor,
+						  parts, part);
+				// *off += intl*parts;
 			}
 			total += size; /* stats */
 
@@ -502,7 +515,10 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 	map->loaded = 1;
 	ret = 0;
 _exit:
-	//printf(" Load map:%d read %zu, got %zu PUs rc:%d\n", map_id, total, pu_cnt, ret);
+	/* DEBUG */
+	if (total != pu_cnt || ret != 0)
+		printf("p%d: Load map:%d read %zu, got %zu PUs rc:%d\n",
+			map->part, map_id, total, pu_cnt, ret);
 	f_map_free_iter(it);
 	free(bos_buf);
 	free(offsets);
@@ -588,14 +604,6 @@ static F_BOSL_t *iter_get_bosl(F_ITER_t *it) {
 	return bosl;
 }
 
-/* Round up continuous PU number to this partition (only for globals!) */
-#define pu_round_up_to_part(cpu, factor, parts, partition)	\
-	({ unsigned int il = (cpu >> (factor)) % (parts);	\
-	   cpu += (((il>partition)?(parts):0U)+(partition)-il)	\
-		   << (factor);					\
-	   cpu; })
-
-
 /* Iterate over dirty PUs on global maps.
  * It's aware of partition on local (own_part:1) maps.
  * This call takes and hold BoS R/W lock(s) - until freed.
@@ -635,9 +643,9 @@ static F_ITER_t *iter_next_dirty_pu(F_ITER_t *iter)
 	    cpu = (iter->entry >> pu_factor) + 1;
 	}
 
-	/* Round up to this partition's next PU if map is global */
+	/* Round PU up to next slice if out of partition in global map */
 	if (global)
-		pu_round_up_to_part(cpu, factor, map->parts, partition);
+	    f_map_pu_round_up(cpu, factor, map->parts, partition);
 
 	entry = cpu << pu_factor;
 	node_idx = entry / map->bosl_entries;
@@ -666,8 +674,8 @@ static F_ITER_t *iter_next_dirty_pu(F_ITER_t *iter)
 	    } while (pu < pu_per_bos &&
 		/* ignore other partitions if map is global */
 		global && !f_map_prt_has_global(map, entry, partition) &&
-		/* advance pu to the next PU in 'partition' */
-		pu_round_up_to_part(cpu, factor, map->parts, partition));
+		/* ensure PU belongs to 'partition' */
+		f_map_pu_round_up(cpu, factor, map->parts, partition));
 
 	    /* Is there next dirty PU in BoS? */
 	    if (pu < pu_per_bos) {
@@ -699,8 +707,9 @@ _find_bos:
 	    acquire_bosl(bosl);
 	    node_idx = idx;
 	    cpu = bosl_pu0 = node_idx * pu_per_bos;
+	    /* Round PU up to next slice if out of partition in global map */
 	    if (global)
-		pu_round_up_to_part(cpu, factor, map->parts, partition);
+		f_map_pu_round_up(cpu, factor, map->parts, partition);
 	}
 
 	/* TODO: Use per-thread lock count */
@@ -708,7 +717,6 @@ _find_bos:
 	free(dirty);
 	return iter;
 }
-#undef pu_round_up_to_part
 
 /*
  * f_map_flush
@@ -728,8 +736,12 @@ int f_map_flush(F_MAP_t *map)
 
 	if (map == NULL)
 	    return -1;
+
 	if (map->id == -1)
 	    return 0; /* no DB backend for in-memory map */
+
+	if (f_map_is_ro(map))
+	    return 0; /* read-only: running on client node */
 
 	pu_per_bos = map->geometry.bosl_pu_count;
 	assert(pu_per_bos <= F_MAP_MAX_BOS_PUS);
@@ -764,7 +776,7 @@ int f_map_flush(F_MAP_t *map)
 	    iter_reset(iter);
 	    iter->cond.partition = part;
 	    size = 0;
-	    //printf(" flush map id:%d part:%u\n", map_id, part);
+	    // printf(" flush map id:%d part:%u\n", map_id, part);
 
 	    /* For each dirty PU (in this partition if map is global)... */
 	    do {
@@ -775,7 +787,6 @@ int f_map_flush(F_MAP_t *map)
 		    e = it->entry;
 		    if (!f_map_has_globals(map))
 			e = f_map_prt_to_global(map, e);
-		    //printf("   key[%zu]=%lu\n", size, e);
 		    keys[size] = e;
 		    keysp[size] = &keys[size];
 
@@ -785,10 +796,8 @@ int f_map_flush(F_MAP_t *map)
 				      it->bosl, pu);
 
 		    /* Flush should not put/delete PUs in foreign partitions */
-		    if (0 && f_map_has_globals(map) &&
-			((pu >> (map->geometry.intl_factor-pu_factor))%map->parts != map->part))
-		    {
-			printf(" ge:%lu BoS:%lu PU:%lu",
+		    if (!f_map_prt_my_global(map, e)) {
+			printf(" e:%lu BoS:%lu PU:%lu",
 				e, it->bosl->entry0/map->bosl_entries, pu);
 			assert (0); /* ...assert if it does */
 		    }
@@ -800,13 +809,12 @@ int f_map_flush(F_MAP_t *map)
 		    bool clean;
 
 		    clean = bosl_is_pu_clean(bos_buf, 0);
-		    //printf("    number of keys:%zu clean:%d\n", size, (int)clean);
+		    // printf("    number of keys:%zu clean:%d\n", size, (int)clean);
 		    do {
 			unsigned int i, bunch;
 			unsigned long *buf;
 
 			/* Scan buffer for bunch of empty or non-empty PUs */
-			//printf("    scan @%u\n", st);
 			for (i = st + 1; i < size; i++)
 			    if (bosl_is_pu_clean(bos_buf, i) != clean)
 				break;
@@ -815,7 +823,8 @@ int f_map_flush(F_MAP_t *map)
 			if (clean) {
 			    /* Bulk DEL bunch of empty PUs */
 			    ret = f_db_bdel(map_id, &keysp[st], bunch);
-			    if (0 && f_map_has_globals(map)) {
+			    /* DEBUG */
+			    if (0) {
 				printf(" D%d", map->part);
 				for (unsigned int j=st; j<bunch; j++) {
 				    uint64_t ke = *((uint64_t *)keysp[j]);
@@ -824,13 +833,11 @@ int f_map_flush(F_MAP_t *map)
 				}
 				printf("\n");
 			    }
-			    //printf("   bdel bunch of %u @%u map_id:%u ret:%d\n", bunch, st, map_id, ret);
 			} else {
 			    /* Bulk PUT bunch of PUs from buffer @st */
 			    buf = bos_buf->page + f_map_pu_p_sz(map, st, buf);
 			    ret = f_db_bput(buf, map_id, &keysp[st],
 					    bunch, value_len);
-			    //printf("   bput bunch of %u @%u map_id:%u ret:%d\n", bunch, st, map_id, ret);
 			}
 			if (ret)
 			    goto _err;
