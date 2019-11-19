@@ -367,12 +367,12 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry);
 #define for_each_iter(iter)					\
 	for (; !f_map_iter_depleted(iter); (void)f_map_next(iter))
 
-/* for_each_iter_from() - loop over at most 'count' entries from 'start' */
-#define for_each_iter_from(iter, start, count, tmp_count)	\
-	for (iter = f_map_seek_iter(iter, (uint64_t)start),	\
-	     (void)f_map_next(iter), tmp_count = 0;		\
-	     !f_map_iter_depleted(iter) && tmp_count < count;	\
-	     (void)f_map_next(iter), tmp_count++)
+/* for_each_iter_from() - loop over matching map entries starting at 'start' */
+#define for_each_iter_from(iter, start)				\
+	for (iter = f_map_seek_iter(iter, (uint64_t)start);	\
+	     !f_map_iter_depleted(iter) &&			\
+		(f_map_check_iter(iter) || f_map_next(iter));	\
+	     (void)f_map_next(iter))
 
 /* Return the number of entries which matches the iterator's condition
  within given size; pass F_MAP_WHOLE for weighting the whole map. */

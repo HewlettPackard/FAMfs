@@ -610,8 +610,7 @@ int main (int argc, char *argv[]) {
 
 		    t = 12; /* Count map entries */
 		    v = 0;
-		    f_map_next(it);
-		    for_each_iter(it)
+		    for_each_iter_from(it, 0)
 			v++;
 		    if (v != actual) goto err3;
 		    f_map_free_iter(it); it = NULL;
@@ -983,8 +982,7 @@ t_2_del:
 
 		    t = 12; /* Count man entries */
 		    v = 0;
-		    f_map_next(it);
-		    for_each_iter(it)
+		    for_each_iter_from(it, 0)
 			v++;
 		    if (v != actual) goto err3;
 		    f_map_free_iter(it); it = NULL;
