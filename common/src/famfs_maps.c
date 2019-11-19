@@ -36,12 +36,13 @@ void f_set_meta_iface(F_META_IFACE_t *iface)
 		meta_iface = iface;
 }
 
-static int create_persistent_map(F_MAP_INFO_t *info_p, int intl, char *db_name)
+static int create_persistent_map(F_MAP_INFO_t *mapinfo, int intl, char *db_name)
 {
 	if (!meta_iface || !meta_iface->create_map_fn)
 		return -1;
 
-	return meta_iface->create_map_fn(info_p, intl, db_name);
+	mapinfo->ro = 0U; /* create_map_fn() could set map read-only flag */
+	return meta_iface->create_map_fn(mapinfo, intl, db_name);
 }
 
 int f_create_persistent_sm(int layout_id, int intl, F_MAP_INFO_t *mapinfo)
