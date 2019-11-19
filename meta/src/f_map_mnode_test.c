@@ -19,6 +19,7 @@
 /* TEST options */
 #define TEST_MDHIM_DBG	0	/* 1: MDHIM debug enabled */
 #define RND_REPS	1000	/* number of passes for random test */
+#define SQ_REPS		1000	/* number of passes for sequential test */
 #define BOS_PAGE_MAX	4	/* max BoS page size, in kernel pages */
 #define layout_id	0	/* use Layout 0 default configuration */
 #define MEM_KEY_BITS	64	/* in-memory maps: max global entry bits */
@@ -287,15 +288,17 @@ int main (int argc, char *argv[]) {
     unsigned int iext, ext;
     unsigned int dirty_sz, pu_factor;
     int pass, tg, t;
-    int global, v, rc, i;
+    int global, reversed;
+    int v, rc, i;
 
     srand((unsigned int)time(NULL));
     page = getpagesize();
-    global = 1;
+    global = reversed = 0;
     pass = rc = v = 0;
     e = ul = 0;
     ui = ext = 0;
     p = NULL; it = NULL;
+
 
     /*
      * Test group one: Init KV store
@@ -339,13 +342,13 @@ int main (int argc, char *argv[]) {
     if (node_size <= 0) goto err0; /* check meta_init_store() */
 
     t = 5; /* Set map partition to part my_node of [0..node_size-1] */
-    global = 0;
     rc = f_map_init_prt(m, node_size, my_node, 0, global);
     if (rc) goto err1;
 
     t = 6; /* Register map with Layout0 */
     rc = f_map_register(m, layout_id);
     if (rc) goto err1;
+    if (f_map_is_ro(m)) goto err1;
 
     t = 7; /* free map */
     f_map_exit(map); m = map = NULL;
@@ -357,11 +360,12 @@ int main (int argc, char *argv[]) {
     f_free_layout_info();
     unifycr_config_free(&md_cfg);
 
+
     /*
-     * Test group two: Bitmaps with KV store backend
+     * Test group two: Bitmaps with KV store backend, random keys
      */
     tg = 2;
-    printf("Running group %d tests: bitmaps with KV store backend\n", tg);
+    printf("Running group %d tests: bitmaps with KV store backend, random keys\n", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
@@ -411,6 +415,7 @@ int main (int argc, char *argv[]) {
 		t = 4; /* Register map with Layout0 */
 		rc = f_map_register(m, layout_id);
 		if (rc != 0) goto err1;
+		if (f_map_is_ro(m)) goto err1;
 
 		/* Test iterations */
 		for (pass = 0; pass < RND_REPS; pass++) {
@@ -495,8 +500,7 @@ int main (int argc, char *argv[]) {
 
 		    t = 12; /* Count map entries */
 		    v = 0;
-		    f_map_next(it);
-		    for_each_iter(it)
+		    for_each_iter_from(it, 0)
 			v++;
 		    if (v != (actual + 1)) goto err3;
 		    f_map_free_iter(it); it = NULL;
@@ -673,11 +677,291 @@ int main (int argc, char *argv[]) {
     f_free_layout_info();
     unifycr_config_free(&md_cfg);
 
+
     /*
-     * Test group three: Structured map with KV store backend
+     * Test group three: Bitmaps with KV store backend, sequential keys
      */
     tg = 3;
-    printf("Running group %d tests: structured map with KV store backend\n", tg);
+    printf("Running group %d tests: bitmaps with KV store backend, sequential keys\n", tg);
+    global = 0;
+
+    t = 0;
+    /* Read default metadata (db_opts, layouts) config */
+    rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
+    if (rc != 0) goto err;
+    /* Load and parse layout0 configuration */
+    rc = f_set_layout_info(&md_cfg);
+    if (rc != 0) goto err;
+    /* Bring up DB thread */
+    meta_init_store(db_opts);
+    if (md == NULL) goto err;
+
+    rcu_register_thread();
+
+    /* For different BoS page size */
+    for (pages = 1; pages < BOS_PAGE_MAX; pages++) {
+	page_sz = pages*page;
+
+	/* One and two-bits bitmaps */
+	for (e_sz = 1; e_sz <= 2; e_sz++) {
+	    pass = rc = v = 0;
+	    p = NULL; it = NULL;
+
+	    t = 1; /* Create one-bit (e_sz:1) or bifold (e_sz:2) map */
+	    map = f_map_init(F_MAPTYPE_BITMAP, e_sz, (pages==1)?0:page_sz,
+			   F_MAPLOCKING_DEFAULT);
+	    if (!map) goto err0;
+	    dirty_sz = map->geometry.bosl_pu_count;
+	    pu_factor = map->geometry.pu_factor;
+
+	    t = 2; /* Create bitmap for tracking writes to KV store */
+	    mlog = f_map_init(F_MAPTYPE_BITMAP, 1, 0, 0);
+	    if (!mlog) goto err0;
+
+	    /* Test partitioned map with sequential keys going up or down */
+	    for (reversed = 0; reversed <= 1; reversed++) {
+		printf("%d: with BoS pages:%u, %sbitmap, %screasing keys\n",
+		       my_node, pages, (e_sz==2)?"b":"", reversed?"de":"in");
+
+		t = 3; /* Set map partition */
+		m = map;
+		/* partition:my_node of [0..node_size-1] */
+		rc = f_map_init_prt(m, node_size, my_node, 0, global);
+		if (rc || (m->own_part != 1U)) goto err1;
+
+		t = 4; /* Register map with Layout0 */
+		rc = f_map_register(m, layout_id);
+		if (rc != 0) goto err1;
+		if (f_map_is_ro(m)) goto err1;
+
+		/* Test iterations */
+		for (pass = 0; pass < SQ_REPS; pass++) {
+		    /* Keys runs up [0..SQ_REPS[ or down [SQ_REPS-1..0] */
+		    e = reversed? SQ_REPS-1-pass : pass;
+
+		    t = 5; /* Load the map */
+		    rc = f_map_load(m);
+		    if (rc != 0) goto err1;
+
+		    t = 6; /* Count entries in loaded map */
+		    it = bitmap_new_iter(m,(e_sz==1)?laminated:cv_laminated);
+		    it = f_map_seek_iter(it, 0); /* create BoS zero */
+		    if (!it) goto err2;
+		    v = (int)f_map_weight(it, F_MAP_WHOLE);
+		    if (v != pass) goto err3;
+
+		    t = 7; /* Sequentially add an unique map entry */
+		    assert((f_map_prt_to_global(m, e) >> DB_KEY_BITS) == 0);
+		    bosl = f_map_new_bosl(m, e); /* create BoS on demand */
+		    if (bosl == NULL) goto err1;
+		    /* check the entry is not set in memory */
+		    if (f_map_probe_iter_at(it, e, NULL)) goto err3;
+
+		    t = 8; /* Set entry to one (or BBIT_11) */
+		    ul = e - bosl->entry0;
+		    if (e_sz == 1)
+			v = test_and_set_bit(ul, bosl->page);
+		    else
+			v = test_and_set_bbit(ul, BBIT_11, bosl->page);
+		    if (v) goto err2;
+		    /* printf(" Add e:%lu BoS/PU:%lu/%lu\n",
+			e, e/m->bosl_entries, ul >> m->geometry.pu_factor); */
+
+		    t = 9; /* Check the entry is set in memory */
+		    if (!f_map_probe_iter_at(it, e, NULL)) goto err3;
+
+		    t = 10; /* Mark PU durty */
+		    f_map_mark_dirty_bosl(bosl, e);
+		    v = bitmap_weight(bosl->dirty, dirty_sz);
+		    if (v != 1) goto err2;
+		    ui = ul >> m->geometry.pu_factor;
+		    ul = find_first_bit(bosl->dirty, dirty_sz);
+		    if (ul != ui) goto err2;
+
+		    t = 11; /* flush map */
+		    v = 0;
+		    rc = f_map_flush(m);
+		    if (rc != 0) goto err2;
+		    /* check dirty bit cleared */
+		    v = bitmap_weight(bosl->dirty, dirty_sz);
+		    if (v) goto err2;
+
+		    t = 12; /* Count map entries */
+		    v = 0;
+		    for_each_iter_from(it, 0)
+			v++;
+		    if (v != (pass + 1)) goto err3;
+		    f_map_free_iter(it); it = NULL;
+
+		    t = 13; /* Add 'e' to bitmap 'mlog' */
+		    p = f_map_new_p(mlog, e);
+		    if (!p) goto err2;
+		    i = BIT_NR_IN_LONG(e);
+		    if (test_and_set_bit(i, p)) goto err2; /* already set? */
+		}
+
+		t = 14; /* Check my entries in loaded map */
+		e = 0;
+		ul = 0;
+		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		for_each_iter(it) {
+		    e = it->entry;
+		    /* present in log? */
+		    if (!(p = f_map_get_p(mlog, e)))
+			goto err3; /* No BoS in mlog for 'e' */
+		    v = BIT_NR_IN_LONG(e);
+		    if (!test_bit(v, p))
+			goto err3; /* Not set in mlog bitmap */
+		    /* check value */
+		    if (!f_map_probe_iter_at(it, e, (void*)&v))
+			goto err3;
+		    if (v != ((1 << e_sz) - 1))
+			goto err3;
+		    ul++;
+		}
+		t = 15; /* Check number of entries in my partition */
+		if (ul != SQ_REPS) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+		t = 16; /* Check all log entries are in loaded map */
+		ul = 0;
+		v = 0;
+		it = f_map_get_iter(mlog, F_BIT_CONDITION, 0);
+		for_each_iter(it) {
+		    e = it->entry;
+		    if (!(p = f_map_get_p(map, e))) {
+			bosl = it->bosl;
+			goto err3;
+		    }
+		    if (e_sz == 1) {
+			v = BIT_NR_IN_LONG(e);
+			if (!test_bit(v, p)) goto err3;
+		    } else {
+			v = BBIT_NR_IN_LONG(e);
+			if (!test_bbit(v, BBIT_11, p)) goto err3;
+		    }
+		    ul++;
+		}
+		t = 17; /* Check number of entries in log */
+		if (ul != SQ_REPS) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+		t = 18; /* Clear all PUs in DB */
+		pu_sz = f_map_pu_size(map);
+		/* Note: For bitmap (e_sz:1) the condition evaluated
+		  as a boolean, cv_laminated is 'true' so that is the same
+		  as F_BIT_CONDITION, i.e. iterate over set bits */
+		it = f_map_get_iter(map, cv_laminated, 0);
+		for_each_iter(it) {
+		    e = it->entry;
+		    /* clear PU of 'it->entry' in map */
+		    bosl = it->bosl;
+		    ui = it_to_pu(it);
+		    p = bosl->page + f_map_pu_p_sz(map, ui, p);
+		    memset(p, 0, pu_sz);
+		    /* mark PU dirty */
+		    f_map_mark_dirty(map, it->entry);
+		}
+		f_map_free_iter(it); it = NULL;
+		/* delete empty PU in DB */
+		rc = f_map_flush(map);
+		if (rc != 0) goto err2;
+
+		t = 19; /* Delete all BoS entries */
+		it = f_map_get_iter(map, F_NO_CONDITION, 0);
+		ui = map->nr_bosl;
+		if (ui > SQ_REPS) goto err1;
+		ul = 0;
+		for_each_iter(it) {
+		    unsigned long bit;
+
+		    bosl = it->bosl;
+		    /* check dirty bits cleared for map partition */
+		    v = bitmap_weight(bosl->dirty, dirty_sz);
+		    for_each_set_bit(bit, bosl->dirty, dirty_sz) {
+			printf("%d: dirty bit:%lu/%lu\n", my_node,
+			    bosl->entry0/bosl->map->bosl_entries, bit);
+		    }
+		    if (v) goto err3;
+		    if (atomic_read(&bosl->claimed) != 1) goto err3;
+		    if ((rc = f_map_delete_bosl(map, bosl))) goto err2;
+		    it->bosl = NULL; /* make for_each_iter() go next BoS */
+		    ul++;
+		}
+		t = 20; /* Extra check: map BoS accounting (nr_bosl) */
+		v = f_map_max_bosl(map);
+		if (ul != ui) goto err1;
+		if (map->nr_bosl) goto err2;
+		if (v) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+		MPI_BARRIER;
+
+		t = 21; /* Count foreign entries in loaded map */
+		rc = f_map_init_prt(map, node_size, my_node, 0, 1);
+		if (rc != 0) goto err1;
+		rc = f_map_load(map);
+		if (rc != 0) goto err1;
+		ul = 0;
+		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		for_each_iter(it) {
+		    e = it->entry;
+		    ul++;
+		    printf("%lu e:%lu buf:%016lX\n", ul, e, *it->word_p);
+		}
+		if (ul) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+		t = 22; /* Delete all map BoSses */
+		it = f_map_new_iter(map, F_NO_CONDITION, 0);
+		it = f_map_next_bosl(it);
+		for_each_bosl(it)
+		    if ((rc = f_map_delete_bosl(map, it->bosl))) goto err3;
+		if (map->nr_bosl) goto err1;
+		f_map_free_iter(it); it = NULL;
+
+		t = 23; /* Delete all bitmap entries */
+		m = mlog; /* for error print */
+		ul = mlog->nr_bosl;
+		it = f_map_new_iter(mlog, F_BIT_CONDITION, 0);
+		it = f_map_next_bosl(it);
+		for_each_bosl(it) {
+		    bosl = it->bosl;
+		    v = atomic_read(&bosl->claimed);
+		    if (v != 2) goto err3;
+		    if ((rc = f_map_delete_bosl(mlog, bosl))) goto err3;
+		}
+		t = 24; /* Extra check: map BoS accounting (nr_bosl) */
+		if ((ul = mlog->nr_bosl)) goto err1;
+		if ((v = f_map_max_bosl(mlog))) goto err2;
+		f_map_free_iter(it); it = NULL;
+		bosl = NULL; p = NULL;
+		// printf(" - %d Ok\n", t);
+
+		rcu_quiescent_state();
+
+		MPI_BARRIER;
+	    }
+	    t = 25; /* map exit: must survive */
+	    f_map_exit(map);
+	    f_map_exit(mlog);
+	    m = mlog = map = NULL;
+	}
+    }
+    rcu_unregister_thread();
+
+    t = 26;
+    rc = meta_sanitize();
+    if (rc) goto err;
+    f_free_layout_info();
+    unifycr_config_free(&md_cfg);
+
+
+    /*
+     * Test group four: Structured map with KV store backend, random keys
+     */
+    tg = 4;
+    printf("Running group %d tests: structured map with KV store backend, random keys\n", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
@@ -731,6 +1015,7 @@ int main (int argc, char *argv[]) {
 		t = 4; /* Register map with Layout0 */
 		rc = f_map_register(m, layout_id);
 		if (rc != 0) goto err1;
+		if (f_map_is_ro(m)) goto err1;
 
 		/* Test iterations */
 		for (pass = 0; pass < RND_REPS; pass++) {
@@ -823,8 +1108,7 @@ int main (int argc, char *argv[]) {
 
 		    t = 12; /* Count man entries */
 		    v = 0;
-		    f_map_next(it);
-		    for_each_iter(it)
+		    for_each_iter_from(it, 0)
 			v++;
 		    if (v != (actual + 1)) goto err3;
 		    f_map_free_iter(it); it = NULL;
@@ -1005,6 +1289,305 @@ int main (int argc, char *argv[]) {
     f_free_layout_info();
     unifycr_config_free(&md_cfg);
 
+
+    /*
+     * Test group five: Structured map with KV store backend, sequential keys
+     */
+    tg = 5;
+    printf("Running group %d tests: structured map with KV store backend, sequential keys\n", tg);
+    global = 0;
+
+    t = 0;
+    /* Read default metadata (db_opts, layouts) config */
+    rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
+    if (rc != 0) goto err;
+    /* Load and parse layout0 configuration */
+    rc = f_set_layout_info(&md_cfg);
+    if (rc != 0) goto err;
+    /* Bring up DB thread */
+    meta_init_store(db_opts);
+    if (md == NULL) goto err;
+
+    rcu_register_thread();
+
+    /* For different BoS page size */
+    for (pages = 1; pages < BOS_PAGE_MAX; pages++) {
+	page_sz = pages*page;
+
+	/* Number of extents in slab entry */
+	for (ext = 1; ext <= SM_EXT_MAX; ext++) {
+	    iext = ext - 1; /* extent index in Slab map: at top extent entry */
+	    pass = rc = v = 0;
+	    e = 0;
+	    p = NULL; it = NULL;
+
+	    t = 1; /* Create structured map */
+	    e_sz = sizeof(F_SLAB_ENTRY_t) + ext*sizeof(F_EXTENT_ENTRY_t);
+	    assert(!map);
+	    map = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, (pages==1)?0:page_sz,
+			   F_MAPLOCKING_DEFAULT);
+	    if (!map) goto err0;
+	    dirty_sz = map->geometry.bosl_pu_count;
+	    pu_factor = map->geometry.pu_factor;
+
+	    t = 2; /* Create local bitmap for tracking writes to KV store */
+	    assert(!mlog);
+	    mlog = f_map_init(F_MAPTYPE_BITMAP, 1, 0, 0);
+	    if (!mlog) goto err0;
+
+	    /* Test partitioned map with sequential keys going up or down */
+	    for (reversed = 0; reversed <= 1; reversed++) {
+		printf("%d: with BoS pages:%u, structured map, %d extent%s, %screasing keys\n",
+		       my_node, pages, ext, (ext==1)?"":"s", reversed?"de":"in");
+
+		t = 3; /* Set map partition */
+		m = map;
+		/* partition:my_node of [0..node_size-1] */
+		rc = f_map_init_prt(m, node_size, my_node, 0, global);
+		if (rc || (m->own_part != 1U)) goto err1;
+
+		t = 4; /* Register map with Layout0 */
+		rc = f_map_register(m, layout_id);
+		if (rc != 0) goto err1;
+		if (f_map_is_ro(m)) goto err1;
+
+		/* Test iterations */
+		for (pass = 0; pass < SQ_REPS; pass++) {
+		    /* Keys runs up [0..SQ_REPS[ or down [SQ_REPS-1..0] */
+		    e = reversed? SQ_REPS-1-pass : pass;
+
+		    t = 5; /* Load empty map */
+		    rc = f_map_load(m);
+		    if (rc != 0) goto err1;
+
+		    t = 6; /* Count entries in loaded map */
+		    it = f_map_new_iter(m, sm_extent_failed, iext);
+		    it = f_map_seek_iter(it, 0); /* create BoS zero */
+		    if (!it) goto err2;
+		    v = (int)f_map_weight(it, F_MAP_WHOLE);
+		    if (v != pass) goto err3;
+
+		    t = 7; /* Sequentially add an unique map entry */
+		    assert((f_map_prt_to_global(m, e) >> DB_KEY_BITS) == 0);
+		    bosl = f_map_new_bosl(m, e); /* create BoS on demand */
+		    if (bosl == NULL) goto err1;
+		    ul = e - bosl->entry0;
+		    /* check the entry is not set in memory */
+		    if (!(p = f_map_get_p(m, e))) goto err2;
+		    /* printf(" Add e:%lu BoS/PU:%lu/%lu p:%p\n",
+			e, e/m->bosl_entries, ul >> pu_factor, p); */
+		    pu = (F_PU_VAL_t *)p;
+		    se = &pu->se;
+		    v = __builtin_popcountll(se->_v128);
+		    if (v) goto err2;
+		    ee = &pu->ee;
+		    for (ui = 0; ui < ext; ui++, ee++) {
+			v = __builtin_popcountl(ee->_v64);
+			if (v) goto err2;
+		    }
+
+		    t = 8; /* Set slab map entry @e */
+		    /* set SM entry to 'mapped' and count 'mapped' entries */
+		    se->mapped = 1;
+		    ee = &pu->ee + iext; /* index of top extent */
+		    ee->failed = 1;
+
+		    t = 9; /* Check the entry is set in memory */
+		    if (!f_map_probe_iter_at(it, e, NULL)) goto err3;
+
+		    t = 10; /* Mark PU durty */
+		    ui = ul >> pu_factor;
+		    f_map_mark_dirty_bosl(bosl, e);
+		    v = bitmap_weight(bosl->dirty, dirty_sz);
+		    if (v != 1) goto err2;
+		    ul = find_first_bit(bosl->dirty, dirty_sz);
+		    if (ul != ui) goto err2;
+
+		    t = 11; /* flush map */
+		    rc = f_map_flush(m);
+		    if (rc != 0) goto err2;
+		    /* check dirty bit cleared */
+		    v = bitmap_weight(bosl->dirty, dirty_sz);
+		    if (v) goto err2;
+
+		    t = 12; /* Count man entries */
+		    v = 0;
+		    for_each_iter_from(it, 0)
+			v++;
+		    if (v != (pass + 1)) goto err3;
+		    f_map_free_iter(it); it = NULL;
+
+		    t = 13; /* Add to 'mlog' the new map entry 'e' */
+		    p = f_map_new_p(mlog, e);
+		    if (!p) goto err2;
+		    i = BIT_NR_IN_LONG(e);
+		    if (test_and_set_bit(i, p)) goto err2; /* already set? */
+		}
+
+		t = 14; /* Check my entries in loaded map */
+		e = ul = 0;
+		it = f_map_get_iter(map, se_or_ee_not_zero, ext);
+		for_each_iter(it) {
+		    e = it->entry;
+		    /* present in log? */
+		    ui = 0;
+		    bosl = it->bosl;
+		    if (!(p = f_map_get_p(mlog, e)))
+			goto err3; /* No BoS in mlog for 'e' */
+		    ui = 1;
+		    v = BIT_NR_IN_LONG(e);
+		    if (!(rc = test_bit(v, p)))
+			goto err3; /* Not in mlog: extra map entry? */
+		    /* check value */
+		    ui = 2;
+		    if (!f_map_probe_iter_at(it, e, (void*)&pu))
+			goto err3;
+		    ui = 3;
+		    if (!pu || !(pu->se.mapped))
+			goto err3;
+		    ui = 4;
+		    ee = &pu->ee;
+		    ee += iext; /* index of top extent */
+		    if (!ee->failed) goto err3;
+		    ul++;
+		}
+		t = 15; /* Check number of entries in my partition */
+		if (ul != SQ_REPS) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+		t = 16; /* Check all log entries are in loaded map */
+		ul = 0;
+		it = f_map_get_iter(mlog, F_BIT_CONDITION, 0);
+		for_each_iter(it) {
+		    v = 0;
+		    e = it->entry;
+		    bosl = it->bosl;
+		    if (!(p = f_map_get_p(map, e)))
+			goto err3;
+		    for (ui = 0; ui < e_sz/sizeof(*p); ui++)
+			v += __builtin_popcountl(*p++);
+		    if (v != 2) goto err3;
+		    ul++;
+		}
+		t = 17; /* Check number of entries in log */
+		if (ul != SQ_REPS) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+		t = 18; /* Clear all PUs in DB */
+		pu_sz = f_map_pu_size(map);
+		it = f_map_get_iter(map, sm_extent_failed, iext);
+		for_each_iter(it) {
+		    e = it->entry;
+		    /* clear PU of 'it->entry' in map */
+		    bosl = it->bosl;
+		    ui = it_to_pu(it);
+		    p = bosl->page + f_map_pu_p_sz(map, ui, p);
+		    memset(p, 0, pu_sz);
+		    /* mark PU dirty */
+		    f_map_mark_dirty(map, it->entry);
+		}
+		f_map_free_iter(it); it = NULL;
+		/* delete empty PU in DB */
+		rc = f_map_flush(map);
+		if (rc != 0) goto err2;
+
+		t = 19; /* Delete all BoS entries */
+		it = f_map_get_iter(map, F_NO_CONDITION, 0);
+		ui = map->nr_bosl;
+		if (ui > SQ_REPS) goto err1; /* +1 for BoS #0 */
+		ul = 0;
+		for_each_iter(it) {
+		    unsigned long bit;
+
+		    bosl = it->bosl;
+		    /* check dirty bits cleared for map partition */
+		    v = bitmap_weight(bosl->dirty, dirty_sz);
+		    for_each_set_bit(bit, bosl->dirty, dirty_sz) {
+			printf("%d: dirty bit:%lu/%lu\n", my_node,
+			    bosl->entry0/bosl->map->bosl_entries, bit);
+		    }
+		    if (v) goto err3;
+		    /* BoS used counter? */
+		    if (atomic_read(&bosl->claimed) != 1) goto err3;
+		    /* delete BoS */
+		    if ((rc = f_map_delete_bosl(map, bosl))) goto err2;
+		    it->bosl = NULL; /* make for_each_iter() go next BoS */
+		    ul++;
+		}
+		t = 20; /* Extra check: map BoS accounting (nr_bosl) */
+		if (ul != ui) goto err1;
+		v = f_map_max_bosl(map);
+		if (map->nr_bosl) {
+		    ul = ((unsigned long)v) * map->bosl_entries;
+		    bosl = f_map_get_bosl(map, ul);
+		    goto err2;
+		}
+		if (v) goto err3;
+		f_map_free_iter(it); it = NULL;
+		bosl = NULL; p = NULL;
+
+		MPI_BARRIER;
+
+		t = 21; /* Count foreign entries in loaded map */
+		/* load all map partitions */
+		rc = f_map_init_prt(map, node_size, my_node, 0, 1);
+		if (rc != 0) goto err1;
+		rc = f_map_load(map);
+		if (rc != 0) goto err1;
+		ul = 0;
+		it = f_map_get_iter(map, se_or_ee_not_zero, ext);
+		for_each_iter(it) {
+		    e = it->entry;
+		    ul++;
+		    printf("%lu e:%lu buf:%016lX\n", ul, e, *it->word_p);
+		}
+		if (ul) goto err3;
+		f_map_free_iter(it); it = NULL;
+
+		t = 22; /* Delete all map BoSses */
+		it = f_map_new_iter(map, F_NO_CONDITION, 0);
+		it = f_map_next_bosl(it);
+		for_each_bosl(it)
+		    if ((rc = f_map_delete_bosl(map, it->bosl))) goto err3;
+		if (map->nr_bosl) goto err1;
+		f_map_free_iter(it); it = NULL;
+
+		t = 23; /* Delete all log entries */
+		m = mlog; /* for error print */
+		ul = mlog->nr_bosl;
+		it = f_map_new_iter(mlog, F_BIT_CONDITION, 0);
+		it = f_map_next_bosl(it);
+		for_each_bosl(it) {
+		    bosl = it->bosl;
+		    v = atomic_read(&bosl->claimed);
+		    if (v != 2) goto err3;
+		    if ((rc = f_map_delete_bosl(mlog, bosl))) goto err3;
+		}
+		t = 24; /* Extra check: map BoS accounting (nr_bosl) */
+		if ((ul = mlog->nr_bosl)) goto err1;
+		if ((v = f_map_max_bosl(mlog))) goto err2;
+		f_map_free_iter(it); it = NULL;
+		bosl = NULL; p = NULL;
+		// printf(" - %d Ok\n", t);
+
+		rcu_quiescent_state();
+
+		MPI_BARRIER;
+	    }
+	    t = 25; /* map exit: must survive */
+	    f_map_exit(map);
+	    f_map_exit(mlog);
+	    m = mlog = map = NULL;
+	}
+    }
+    rcu_unregister_thread();
+
+    t = 26;
+    rc = meta_sanitize();
+    if (rc) goto err1;
+    f_free_layout_info();
+    unifycr_config_free(&md_cfg);
+
     MPI_BARRIER;
     MPI_Finalize();
 
@@ -1031,16 +1614,21 @@ err2:
     }
 err1:
     if (m) {
-	printf("  Map BoS sz:%lu (%u entries), %u per PU, %u PU(s) per BoS\n"
-		"  map BoS count:%lu, max:%lu\n",
+	uint64_t max_bosl = f_map_max_bosl(m);
+
+	printf("  Map BoS sz:%lu (%u entries), %u per PU, %u PU(s) per BoS\n",
 	    m->bosl_sz, m->bosl_entries,
 	    1U << m->geometry.pu_factor,
-	    m->geometry.bosl_pu_count,
-	    m->nr_bosl, f_map_max_bosl(m)-1);
-	printf("  Part %u of %u in %spartitioned %s map; "
+	    m->geometry.bosl_pu_count);
+	if (max_bosl || m->nr_bosl)
+	    printf("  map BoS count:%lu, max:%lu\n", m->nr_bosl, max_bosl-1);
+	else
+	    printf("  map BoS count:0\n");
+	printf("  Part %u of %u in %spartitioned %s R%c map; "
 		"interleave:%u entries, %u PUs\n",
 	    m->part, m->parts, (m->parts<=1)?"non-":"",
 	    f_map_has_globals(m)?"global":"local",
+	    f_map_is_ro(m)?'O':'W',
 	    1U<<m->geometry.intl_factor,
 	    1U<<(m->geometry.intl_factor-m->geometry.pu_factor));
 	printf("    entry:%lu @%lu PU:%lu\n",
@@ -1052,6 +1640,8 @@ err1:
 err0:
     printf("  Test parameters: entry_size:%u, %u pages per BoS\n",
 	e_sz, pages);
+    if (tg==3 || tg==5)
+	printf("  sequential keys go %s\n", reversed?"down":"up");
     if (ext)
 	printf("  slab map has %d extent(s)\n", ext);
     printf("  Test variables: rc=%d var=%d ul=%lu ui=%u\n",
