@@ -415,6 +415,8 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     if (!md_cfg.layout0_name || !db_opts) goto err;
+    if (rank == 0)
+	unifycr_config_print(&md_cfg, NULL);
 
     t = 2; /* Load and parse layout0 configuration */
     rc = f_set_layout_info(&md_cfg);

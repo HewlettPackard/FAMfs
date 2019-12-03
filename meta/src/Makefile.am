@@ -51,7 +51,6 @@ f_map_mnode_test_LDADD = $(mpitests_LDADD)
 f_map_cnode_test_LDADD = $(mpitests_LDADD)
 
 unit_tests = f_map_test f_map_mnode_test f_map_cnode_test
-unit_tests_run = f_map_test f_map_mnode_test
 check_tests = f_map_test
 checks: ${check_tests}
 check_PROGRAMS = ${check_tests}
@@ -61,7 +60,7 @@ EXTRA_DIST = ${check_tests}
 EXTRA_PROGRAMS = ${unit_tests}
 
 tests: ${unit_tests}
-test: $(addsuffix .run,$(unit_tests_run))
+test: $(addsuffix .run,$(unit_tests))
 
 # Build rule to run tests
 %.run: %
