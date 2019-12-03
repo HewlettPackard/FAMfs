@@ -186,7 +186,14 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     /* per worker --> */
     tx_epp = (struct fid_ep **) malloc(thread_cnt * sizeof(void*));
     ASSERT(tx_epp);
-
+    if (params->use_cq) {
+        tx_cqq = (struct fid_cq **) malloc(thread_cnt  * sizeof(void*));
+        ASSERT(tx_cqq);
+    } else {
+        rcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
+        wcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
+        ASSERT(rcnts && wcnts);
+    }
     local_desc = (void **) calloc(thread_cnt, sizeof(void*));
 
     /* Register the local buffers */
@@ -225,6 +232,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	}
     }
 
+    /* for each worker thread */
     for (i = 0; i < thread_cnt; i++) {
 	if (params->lf_srv_rx_ctx) {
 	    /* scalable endpoint */
@@ -248,9 +256,6 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
                 cq_attr.flags = FI_AFFINITY;
             }
 
-            tx_cqq = (struct fid_cq **) malloc(thread_cnt  * sizeof(void*));
-            ASSERT(tx_cqq);
-
             cq_attr.format = FI_CQ_FORMAT_CONTEXT;
             cq_attr.wait_obj = FI_WAIT_NONE;
             cq_attr.size = fi->tx_attr->size;
@@ -265,10 +270,6 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 
         } else {
             // Create counters
-
-            rcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
-            wcnts = (struct fid_cntr **) malloc(thread_cnt * sizeof(void*));
-            ASSERT(rcnts && wcnts);
 
             ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &rcnts[i], NULL), "fi_cntr_open r failed");
             ON_FI_ERROR(fi_cntr_open(domain, &cntr_attr, &wcnts[i], NULL), "fi_cntr_open w failed");
