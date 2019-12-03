@@ -47,6 +47,9 @@
 #define LOGDIR TMPDIR
 #endif
 
+#define F_CFG_MSEC_MAX	10	/* max number of multi-section repeatition */
+#define F_CFG_MSKEY_MAX	64	/* max number of key instances in multi-section */
+
 // NOTE: NULLSTRING is a sentinel token meaning "no default string value"
 
 /* UNIFYCR_CONFIGS is the list of configuration settings, and should contain
@@ -73,15 +76,21 @@
     UNIFYCR_CFG(spillover, data_dir, STRING, NULLSTRING, "spillover data directory", configurator_directory_check) \
     UNIFYCR_CFG(spillover, meta_dir, STRING, NULLSTRING, "spillover metadata directory", configurator_directory_check) \
     UNIFYCR_CFG(spillover, size, INT, UNIFYCR_SPILLOVER_SIZE, "spillover max data size in bytes", NULL) \
+    UNIFYCR_CFG(client, max_files, INT, UNIFYCR_MAX_FILES, "client max file count", NULL) \
     UNIFYCR_CFG(unifycr, extent_size, INT, UNIFYCR_EXTENT_SIZE, "pool extent size in bytes", NULL) \
     UNIFYCR_CFG(unifycr, extent0_offset, INT, UNIFYCR_EXTENT0_OFFSET, "extent zero starts with offset in bytes", NULL) \
     UNIFYCR_CFG(unifycr, ioncount, INT, UNIFYCR_ION_COUNT, "IO node (device) count", NULL) \
     UNIFYCR_CFG(unifycr, layouts_count, INT, UNIFYCR_LAYOUTS_COUNT, "number of layouts", NULL) \
-    UNIFYCR_CFG(layout0, name, STRING, LAYOUT0_NAME, "Name (moniker) of the first layout", configurator_moniker_check) \
-    UNIFYCR_CFG(layout0, devnum, INT, 1, "total number of devices in Layout 0", NULL) \
-    UNIFYCR_CFG(layout1, name, STRING, NULLSTRING, "Name (moniker) of the first layout", configurator_moniker_check) \
-    UNIFYCR_CFG(layout1, devnum, INT, 1, "total number of devices in Layout 1", NULL) \
-    UNIFYCR_CFG(client, max_files, INT, UNIFYCR_MAX_FILES, "client max file count", NULL) \
+    UNIFYCR_CFG_MULTI(device, famid, INT, NULLSTRING, "device reference", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "memory module URL", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, pk, INT, 1, "device reference", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, size, INT, 0, "device size (bytes)", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ag, famid, INT, NULLSTRING, "allocation group", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ag, devices, INT, 0, "devices in AG", NULL, 0) \
+    UNIFYCR_CFG_MULTI(ag, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
+    UNIFYCR_CFG_MULTI(layout, famid, INT, NULLSTRING, "device ID in layout", NULL, 1) \
+    UNIFYCR_CFG_MULTI(layout, devices, INT, 0, "device ID in layout", NULL, 0) \
+    UNIFYCR_CFG_MULTI(layout, name, STRING, NULLSTRING, "layout name (moniker)", configurator_moniker_check, 1) \
 
 #ifdef __cplusplus
 extern "C" {
@@ -95,9 +104,10 @@ typedef struct {
 #define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use) \
     char *sec##_##key;
 
-#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me) \
-    char *sec##_##key[me]; \
-    unsigned n_##sec##_##key;
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
+    char *sec##_##key[F_CFG_MSEC_MAX][(me>0?me:F_CFG_MSKEY_MAX)];	\
+    unsigned n_##sec##_##key; /* second index: key instance */		\
+    unsigned n_##sec##__i; /* first index: section instance */
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, dv, desc, vfn, me, opt, use) \
     char *sec##_##key[me]; \
