@@ -76,7 +76,7 @@ int ini_parse_string(const char *string, ini_handler handler, void *user);
 /* Nonzero to allow a UTF-8 BOM sequence (0xEF 0xBB 0xBF) at the start of
    the file. See http://code.google.com/p/inih/issues/detail?id=21 */
 #ifndef INI_ALLOW_BOM
-#define INI_ALLOW_BOM 1
+#define INI_ALLOW_BOM 0
 #endif
 
 /* Chars that begin a start-of-line comment. Per Python configparser, allow
@@ -97,7 +97,7 @@ int ini_parse_string(const char *string, ini_handler handler, void *user);
 
 /* Nonzero to use stack for line buffer, zero to use heap (malloc/free). */
 #ifndef INI_USE_STACK
-#define INI_USE_STACK 1
+#define INI_USE_STACK 0
 #endif
 
 /* Maximum line length for any line in INI file (stack or heap). Note that
@@ -110,7 +110,7 @@ int ini_parse_string(const char *string, ini_handler handler, void *user);
    fixed-size buffer of INI_MAX_LINE bytes. Only applies if INI_USE_STACK is
    zero. */
 #ifndef INI_ALLOW_REALLOC
-#define INI_ALLOW_REALLOC 0
+#define INI_ALLOW_REALLOC 1
 #endif
 
 /* Initial size in bytes for heap line buffer. Only applies if INI_USE_STACK
@@ -121,7 +121,7 @@ int ini_parse_string(const char *string, ini_handler handler, void *user);
 
 /* Stop parsing on first error (default is to keep parsing). */
 #ifndef INI_STOP_ON_FIRST_ERROR
-#define INI_STOP_ON_FIRST_ERROR 0
+#define INI_STOP_ON_FIRST_ERROR 1
 #endif
 
 #ifdef __cplusplus

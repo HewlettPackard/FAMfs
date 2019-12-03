@@ -171,6 +171,12 @@ int ini_parse_stream(ini_reader reader, void *stream, ini_handler handler,
             end = find_chars_or_comment(start + 1, "]");
             if (*end == ']') {
                 *end = '\0';
+
+		/* next section instance */
+		if (!strncmp(section, start + 1, sizeof(section)) &&
+		    !HANDLER(user, section, NULL, start) && !error)
+			error = lineno;
+
                 strncpy0(section, start + 1, sizeof(section));
                 *prev_name = '\0';
             } else if (!error) {
@@ -193,11 +199,30 @@ int ini_parse_stream(ini_reader reader, void *stream, ini_handler handler,
                 value = lskip(value);
                 rstrip(value);
 
-                /* Valid name[=:]value pair found, call handler */
-                strncpy0(prev_name, name, sizeof(prev_name));
-                if (!HANDLER(user, section, name, value) && !error) {
-                    error = lineno;
-                }
+		/* Multi-value as a list: [v0,v1,...] */
+		end = value + strlen(value) - 1;
+		if (*value == '[' &&  *end == ']') {
+		    char *p = value;
+
+		    *end = '\0';
+		    do {
+			value = ++p;
+			p = strchr(p, ',');
+			if (p)
+			    *p = '\0';
+			/* Valid name[=:]value pair found, call handler */
+			if (!HANDLER(user, section, name, value) && !error) {
+			    error = lineno;
+			}
+		    } while (p);
+		} else {
+		    /* Valid name[=:]value pair found, call handler */
+		    //strncpy0(prev_name, name, sizeof(prev_name));
+		    if (!HANDLER(user, section, name, value) && !error) {
+			error = lineno;
+		    }
+		}
+		strncpy0(prev_name, name, sizeof(prev_name));
             } else if (!error) {
                 /* No '=' or ':' found on name[=:]value line */
                 error = lineno;

@@ -7,7 +7,7 @@ test_gotcha_ldadd = ../src/libfamfs_gotcha.la -lmpi
 test_static_ldadd = ../src/libfamfs.la -lmpi
 test_static_ldflags = -static $(CP_WRAPPERS) $(AM_LDFLAGS)
 test_cppflags = $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) -I$(top_srcdir)/client/src -I$(top_srcdir)/common/src
-# fabtest_cppflags = $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) $(LIBFABRIC_CFLAGS) -I$(top_srcdir)/client/src -I$(top_srcdir)/common/src 
+# fabtest_cppflags = $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) $(LIBFABRIC_CFLAGS) -I$(top_srcdir)/client/src -I$(top_srcdir)/common/src
 
 
 test_write_gotcha_SOURCES = test_write.c
