@@ -124,8 +124,7 @@ void unifycr_config_free(unifycr_cfg_t *cfg)
 	    }							\
 	}							\
     }								\
-    cfg->n_##sec##_##key = 0;					\
-    cfg->n_##sec##__i = 0;
+    cfg->n_##sec##_##key = 0;
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)   \
     for (u = 0; u < me; u++) {                                          \
@@ -282,7 +281,6 @@ int unifycr_config_set_defaults(unifycr_cfg_t *cfg)
         cfg->sec##_##key = strdup(val);
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
-    cfg->n_##sec##__i = 0;						\
     cfg->n_##sec##_##key = 0;						\
     val = stringify(dv);						\
     if (0 != strcmp(val, "NULLSTRING")) {				\
@@ -573,6 +571,12 @@ int inih_config_handler(void *user,
     unifycr_cfg_t *cfg = (unifycr_cfg_t *) user;
     assert(cfg != NULL);
 
+    /* Set current section index */
+    if (kee)
+	cfg->sec_i = 0;
+    else
+	cfg->sec_i++;
+
     // if not already set by CLI args, set cfg cfgs
     if (0)
         ;
@@ -604,10 +608,9 @@ int inih_config_handler(void *user,
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)			\
     else if (strcmp(section, #sec) == 0) {					\
 	if (kee == NULL) {							\
-	    cfg->n_##sec##__i++; /* next section instance */			\
 	    cfg->n_##sec##_##key = 0;						\
 	} else if (strcmp(kee, #key) == 0) {					\
-	    char **v = &cfg->sec##_##key[cfg->n_##sec##__i][cfg->n_##sec##_##key];\
+	    char **v = &cfg->sec##_##key[cfg->sec_i][cfg->n_##sec##_##key];\
 	    curval = *v;							\
 	    defval = stringify(dv);						\
 	    if (curval == NULL) {						\

@@ -94,9 +94,16 @@ static int set_layouts_cfg(unifycr_cfg_t *c)
     int i, count;
     long l;
 
+/*
     if (configurator_int_val(c->unifycr_layouts_count, &l))
 	return -1;
     count = (int)l;
+*/
+    count = 0;
+    for (; count < F_CFG_MSEC_MAX; count++) {
+	if (configurator_int_val(c->layout_id[count][0], &l))
+	    break;
+    }
     if (count > F_LAYOUTS_MAX)
 	count = F_LAYOUTS_MAX;
 
@@ -112,35 +119,16 @@ static int set_layouts_cfg(unifycr_cfg_t *c)
     if (configurator_int_val(c->unifycr_extent0_offset, &l)) return -1;
     pool_info->extent0_start = (unsigned long)l;
 
-#define _get_layout_devnum(id, def)					\
-    ({ unsigned int r;							\
-    if (c->layout##id##_devnum == NULL) {				\
-	r = def;							\
-    } else {								\
-	if (configurator_int_val(c->layout##id##_devnum, &l)) return -1;\
-	r = (unsigned int)l;						\
-    };									\
-    r; })
-#define _get_layout_name(id)	strdup(c->layout##id##_name)
     /* Layouts */
     for (i = 0; i < count; i++) {
 	layouts_info[i].conf_id = i;
 	layouts_info[i].pool_info = pool_info;
-	switch (i) {
-	case 0:
-	    layouts_info[i].name = _get_layout_name(0);
-	    layouts_info[i].devnum = _get_layout_devnum(0, pool_info->dev_count);
-	    break;
-	case 1:
-	    layouts_info[i].name = _get_layout_name(1);
-	    layouts_info[i].devnum = _get_layout_devnum(1, pool_info->dev_count);
-	    break;
-	default:;
-	}
+
+	layouts_info[i].name = strdup(c->layout_name[i][0]);
+	/* FIXME */
+	layouts_info[i].devnum = pool_info->dev_count;
 	if (f_layout_parse_name(&layouts_info[i])) return -1;
     }
-#undef _get_layout_devnum
-#undef _get_layout_name
 
     return 0;
 }

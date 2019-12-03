@@ -475,13 +475,13 @@ int main (int argc, char *argv[]) {
     t = 1; /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    if (!md_cfg.layout0_name || !db_opts) goto err;
+    if (!md_cfg.layout_name || !db_opts) goto err;
 
-    t = 2; /* Load and parse layout0 configuration */
+    t = 2; /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     if ((lo_info = f_get_layout_info(layout_id)) == NULL) goto err;
-    printf(" Layout%d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
+    printf(" Layout %d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
 	lo_info->conf_id, lo_info->name, lo_info->data_chunks,
 	(lo_info->chunks - lo_info->data_chunks), lo_info->chunk_sz,
 	lo_info->slab_stripes, lo_info->devnum);
@@ -506,7 +506,7 @@ int main (int argc, char *argv[]) {
     rc = f_map_init_prt(m, node_size, my_node, 0, global);
     if (rc) goto err1;
 
-    t = 6; /* Register map with Layout0 */
+    t = 6; /* Register map with layout */
     rc = f_map_register(m, layout_id);
     if (rc) goto err1;
 
@@ -514,7 +514,7 @@ int main (int argc, char *argv[]) {
     f_map_exit(m); m = NULL;
     rcu_unregister_thread();
 
-    t = 8; /* Remove old DB files for Layout0 */
+    t = 8; /* Remove old DB files for layout */
     rc = meta_sanitize(); db_opts = NULL;
     if (rc) goto err1;
     f_free_layout_info();
@@ -530,7 +530,7 @@ int main (int argc, char *argv[]) {
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    /* Load and parse layout0 configuration */
+    /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
@@ -567,7 +567,7 @@ int main (int argc, char *argv[]) {
 		/* Test iterations */
 		for (pass = 0; pass < RND_REPS; pass++) {
 
-		    t = 3; /* Register map with Layout0 */
+		    t = 3; /* Register map with layout */
 		    e = 0;
 		    rc = f_map_register(m, layout_id);
 		    if (rc != 0) goto err1;
@@ -718,7 +718,7 @@ int main (int argc, char *argv[]) {
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    /* Load and parse layout0 configuration */
+    /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
@@ -757,7 +757,7 @@ int main (int argc, char *argv[]) {
 		/* Test iterations */
 		for (pass = 0; pass < RND_REPS; pass++) {
 
-		    t = 3; /* Register map with Layout0 */
+		    t = 3; /* Register map with layout */
 		    e = 0;
 		    rc = f_map_register(m, layout_id);
 		    if (rc != 0) goto err1;

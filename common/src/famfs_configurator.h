@@ -81,16 +81,16 @@
     UNIFYCR_CFG(unifycr, extent0_offset, INT, UNIFYCR_EXTENT0_OFFSET, "extent zero starts with offset in bytes", NULL) \
     UNIFYCR_CFG(unifycr, ioncount, INT, UNIFYCR_ION_COUNT, "IO node (device) count", NULL) \
     UNIFYCR_CFG(unifycr, layouts_count, INT, UNIFYCR_LAYOUTS_COUNT, "number of layouts", NULL) \
-    UNIFYCR_CFG_MULTI(device, famid, INT, NULLSTRING, "device reference", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, id, INT, NULLSTRING, "device reference", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "memory module URL", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, pk, INT, 1, "device reference", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, size, INT, 0, "device size (bytes)", NULL, 1) \
-    UNIFYCR_CFG_MULTI(ag, famid, INT, NULLSTRING, "allocation group", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ag, id, INT, NULLSTRING, "allocation group", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, devices, INT, 0, "devices in AG", NULL, 0) \
     UNIFYCR_CFG_MULTI(ag, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
-    UNIFYCR_CFG_MULTI(layout, famid, INT, NULLSTRING, "device ID in layout", NULL, 1) \
+    UNIFYCR_CFG_MULTI(layout, id, INT, 0, "device ID in layout", NULL, 1) \
     UNIFYCR_CFG_MULTI(layout, devices, INT, 0, "device ID in layout", NULL, 0) \
-    UNIFYCR_CFG_MULTI(layout, name, STRING, NULLSTRING, "layout name (moniker)", configurator_moniker_check, 1) \
+    UNIFYCR_CFG_MULTI(layout, name, STRING, LAYOUT0_NAME, "layout name (moniker)", configurator_moniker_check, 1) \
 
 #ifdef __cplusplus
 extern "C" {
@@ -98,6 +98,8 @@ extern "C" {
 
 /* unifycr_cfg_t struct */
 typedef struct {
+    int sec_i; /* for parser use only: current section number */
+
 #define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn) \
     char *sec##_##key;
 
@@ -106,8 +108,7 @@ typedef struct {
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
     char *sec##_##key[F_CFG_MSEC_MAX][(me>0?me:F_CFG_MSKEY_MAX)];	\
-    unsigned n_##sec##_##key; /* second index: key instance */		\
-    unsigned n_##sec##__i; /* first index: section instance */
+    unsigned n_##sec##_##key; /* second index: key instance */
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, dv, desc, vfn, me, opt, use) \
     char *sec##_##key[me]; \

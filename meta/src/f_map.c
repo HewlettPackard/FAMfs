@@ -430,6 +430,7 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 	pu_per_bos = map->geometry.bosl_pu_count;
 	offsets = (uint64_t *) calloc(sizeof(uint64_t), parts);
 	keys = (uint64_t *) calloc(sizeof(uint64_t), pu_per_bos);
+	map_id = map->id;
 	/* Allocate I/O buffer */
 	bos_buf = bosl_page_alloc(map->bosl_sz);
 	if (!offsets || !keys || !bos_buf)
@@ -437,7 +438,6 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 
 	intl = 1U << map->geometry.intl_factor;
 	pu_factor = map->geometry.pu_factor;
-	map_id = map->id;
 
 	/* New unconditional map iterator */
 	it = f_map_new_iter_all(map);

@@ -312,9 +312,9 @@ int main (int argc, char *argv[]) {
     t = 1; /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    if (!md_cfg.layout0_name || !db_opts) goto err;
+    if (!md_cfg.layout_name || !db_opts) goto err;
 
-    t = 2; /* Load and parse layout0 configuration */
+    t = 2; /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     if ((lo_info = f_get_layout_info(layout_id)) == NULL) goto err;
@@ -327,7 +327,7 @@ int main (int argc, char *argv[]) {
     if (my_node == 0)
 	unifycr_config_print(&md_cfg, NULL);
 
-    printf("%d: Layout%d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
+    printf("%d: Layout %d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
 	my_node,
 	lo_info->conf_id, lo_info->name, lo_info->data_chunks,
 	(lo_info->chunks - lo_info->data_chunks), lo_info->chunk_sz,
@@ -374,7 +374,7 @@ int main (int argc, char *argv[]) {
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    /* Load and parse layout0 configuration */
+    /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
@@ -692,7 +692,7 @@ int main (int argc, char *argv[]) {
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    /* Load and parse layout0 configuration */
+    /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
@@ -970,7 +970,7 @@ int main (int argc, char *argv[]) {
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    /* Load and parse layout0 configuration */
+    /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
@@ -1304,7 +1304,7 @@ int main (int argc, char *argv[]) {
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
-    /* Load and parse layout0 configuration */
+    /* Load and parse layout configuration */
     rc = f_set_layout_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
