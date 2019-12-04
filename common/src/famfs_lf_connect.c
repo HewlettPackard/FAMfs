@@ -300,13 +300,13 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	ON_FI_ERROR( fi_open_ops(&fabric->fid, FI_ZHPE_OPS_V1, 0, (void **)&ext_ops, NULL),
 		"srv open_ops failed");
 	// FAM lookup
-	sprintf(url, "zhpe:///fam%4Lu", fam_id);
-	ON_FI_ERROR( ext_ops->lookup(url, &fi_dest_addr, &sa_len), "fam:%4Lu lookup failed", fam_id);
+	sprintf(url, ZHPE_URL_TLT "%Lu", fam_id);
+	ON_FI_ERROR( ext_ops->lookup(url, &fi_dest_addr, &sa_len), "fam:%Lu lookup failed", fam_id);
 
 
 	if (params->verbose)
-	    printf("CL attached to FAM node %d(p%d) ID:fam%4Lu from %s\n",
-		   node, partition_id, fam_id, pname);
+	    printf("CL attached to FAM node %d(p%d) id:%Lu %s on %s\n",
+		   node, partition_id, fam_id, url, pname);
     } else {
 	/* TODO: Call fi_av_insertsvc instead of fi_getinfo if lf_node->free_domain_fl is zero */
 	if (params->verbose)

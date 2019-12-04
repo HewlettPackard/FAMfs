@@ -226,6 +226,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 
 #define ZHPE_MODULE_NAME "zhpe"	/* libfabric provider's backend driver name */
 #define UMMUNOTIFY_MODULE_NAME "ummunotify"
+#define ZHPE_URL_TLT	"zhpe:///ion" /* zhpe url template */
 
 /* default configuration command line */
 #define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -M 16M -E 8M -P0 --memreg scalable --provider sockets ENCODE"
