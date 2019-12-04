@@ -1183,6 +1183,7 @@ int f_parse_moniker(const char *moniker, int *data, int *parity,
 	    break;
 
 	default:
+	    err("extra char>%s", --t);
 	    goto _syntax;
 	}
 

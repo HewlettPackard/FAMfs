@@ -166,18 +166,21 @@ int ini_parse_stream(ini_reader reader, void *stream, ini_handler handler,
             }
         }
 #endif
-        else if (*start == '[') {
-            /* A "[section]" line */
-            end = find_chars_or_comment(start + 1, "]");
-            if (*end == ']') {
-                *end = '\0';
+	else if (*start == '[') {
+	    /* A "[section]" line */
+	    end = find_chars_or_comment(start + 1, "]");
+	    if (*end == ']') {
+		char *sec_start = start + 1;
 
-		/* next section instance */
-		if (!strncmp(section, start + 1, sizeof(section)) &&
-		    !HANDLER(user, section, NULL, start) && !error)
+		/* new/next section instance */
+                *end = '\0';
+		if (strncmp(section, sec_start, sizeof(section)))
+		    strncpy0(section, sec_start, sizeof(section));
+		else
+		    sec_start = NULL; /* next */
+		if (!HANDLER(user, section, NULL, sec_start) && !error)
 			error = lineno;
 
-                strncpy0(section, start + 1, sizeof(section));
                 *prev_name = '\0';
             } else if (!error) {
                 /* No ']' found on section line */

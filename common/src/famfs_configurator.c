@@ -572,55 +572,68 @@ int inih_config_handler(void *user,
     assert(cfg != NULL);
 
     /* Set current section index */
-    if (kee)
-	cfg->sec_i = 0;
-    else
-	cfg->sec_i++;
+    if (kee == NULL) {
+	if (val)
+	    cfg->sec_i = 0;
+	else
+	    cfg->sec_i++;
+
+#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)
+#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)	\
+	    cfg->n_##sec##_##key = 0;
+#define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)
+	UNIFYCR_CONFIGS;
+#undef UNIFYCR_CFG
+#undef UNIFYCR_CFG_CLI
+#undef UNIFYCR_CFG_MULTI
+#undef UNIFYCR_CFG_MULTI_CLI
+	return 1;
+    }
 
     // if not already set by CLI args, set cfg cfgs
     if (0)
-        ;
+	;
 
-#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)                       \
-    else if ((strcmp(section, #sec) == 0) && (strcmp(kee, #key) == 0)) { \
-        curval = cfg->sec##_##key;                                      \
-        defval = stringify(dv);                                         \
-        if (curval == NULL)                                             \
-            cfg->sec##_##key = strdup(val);                             \
-        else if (strcmp(defval, curval) == 0) {                         \
-            free(cfg->sec##_##key);                                     \
-            cfg->sec##_##key = strdup(val);                             \
-        }                                                               \
+#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)		\
+    else if ((strcmp(section, #sec) == 0) &&			\
+	     (strcmp(kee, #key) == 0)) {			\
+	curval = cfg->sec##_##key;				\
+	defval = stringify(dv);					\
+	if (curval == NULL)					\
+	    cfg->sec##_##key = strdup(val);			\
+	else if (strcmp(defval, curval) == 0) {			\
+	    free(cfg->sec##_##key);				\
+	    cfg->sec##_##key = strdup(val);			\
+	}							\
     }
 
-#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)         \
-    else if ((strcmp(section, #sec) == 0) && (strcmp(kee, #key) == 0)) { \
-        curval = cfg->sec##_##key;                                      \
-        defval = stringify(dv);                                         \
-        if (curval == NULL)                                             \
-            cfg->sec##_##key = strdup(val);                             \
-        else if (strcmp(defval, curval) == 0) {                         \
-            free(cfg->sec##_##key);                                     \
-            cfg->sec##_##key = strdup(val);                             \
-        }                                                               \
+#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)	\
+    else if ((strcmp(section, #sec) == 0) &&			\
+	     (strcmp(kee, #key) == 0)) {			\
+	curval = cfg->sec##_##key;				\
+	defval = stringify(dv);					\
+	if (curval == NULL)					\
+	    cfg->sec##_##key = strdup(val);			\
+	else if (strcmp(defval, curval) == 0) {			\
+	    free(cfg->sec##_##key);				\
+	    cfg->sec##_##key = strdup(val);			\
+	}							\
     }
 
-#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)			\
-    else if (strcmp(section, #sec) == 0) {					\
-	if (kee == NULL) {							\
-	    cfg->n_##sec##_##key = 0;						\
-	} else if (strcmp(kee, #key) == 0) {					\
-	    char **v = &cfg->sec##_##key[cfg->sec_i][cfg->n_##sec##_##key];\
-	    curval = *v;							\
-	    defval = stringify(dv);						\
-	    if (curval == NULL) {						\
-		*v = strdup(val);						\
-	    } else if (strcmp(defval, curval) == 0) {				\
-		free(*v);							\
-		*v = strdup(val);						\
-	    }									\
-	    cfg->n_##sec##_##key++;						\
-	}									\
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
+    else if ((strcmp(section, #sec) == 0) &&				\
+	     (strcmp(kee, #key) == 0)) {				\
+	char **v =							\
+	    &cfg->sec##_##key[cfg->sec_i][cfg->n_##sec##_##key];	\
+	curval = *v;							\
+	defval = stringify(dv);						\
+	if (curval && strcmp(defval, curval) == 0) {			\
+	    free(*v);							\
+	}								\
+	*v = (!strcmp(#typ,"STRING") && val[0]=='\"' && strlen(val)>1)?	\
+	     strndup(val+1, strlen(val)-2) : strdup(val);		\
+	cfg->n_##sec##_##key++;						\
     }
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)   \
