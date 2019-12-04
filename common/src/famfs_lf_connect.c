@@ -40,6 +40,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     struct fi_tx_attr	tx_attr;
     static struct fi_cntr_attr cntr_attr = {
 	.events = FI_CNTR_EVENTS_COMP,
+	.wait_obj = FI_WAIT_FD,
 	.flags = 0
     };
     struct fid_ep	**tx_epp;
