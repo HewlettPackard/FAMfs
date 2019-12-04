@@ -11,7 +11,13 @@ SUGGEST="Please install them and try again."
 # Check for aclocal
 env aclocal --version > /dev/null 2>&1
 if [ $? -eq 0 ]; then
+  loc_acl=$(env aclocal --print-ac-dir)
+  gl_acl=$(env - aclocal --print-ac-dir)
   ACLOCAL=aclocal
+  if [[ "$loc_acl" != "$gl_acl" ]]; then
+    echo "Will run aclocal with third-party M4 files in $loc_acl"
+    ACLOCAL="aclocal -I $loc_acl -I $gl_acl"
+  fi
 else
   MISSING="$MISSING aclocal"
 fi
