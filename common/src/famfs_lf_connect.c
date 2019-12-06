@@ -57,7 +57,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     const char		*pname;
     int			i, rc;
 
-    node = (params->fam_map)? (int)lf_node->fam_id : lf_node->node_id;
+    node = lf_node->node_id;
     if (params->lf_fabric) {
 	pname = params->lf_fabric;
     } else {
@@ -67,6 +67,8 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     thread_cnt = params->w_thread_cnt;
     service = node2service(params->lf_port, node, partition_id);
     sprintf(port, "%5d", service);
+    if (params->fam_map)
+	node = (int)lf_node->fam_id;
 
     // Provider discovery
     hints = fi_allocinfo();
