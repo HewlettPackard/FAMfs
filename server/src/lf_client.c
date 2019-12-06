@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2018-2019, HPE
+ *
+ * Written by: Dmitry Ivanov
+ */
+
+#include <assert.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -234,24 +241,44 @@ int meta_register_fam(LFS_CTX_t *lfs_ctx)
     N_PARAMS_t *params = lfs_ctx->lf_params;
     fam_attr_val_t *fam_attr;
     LFS_EXCG_t *rmk, *attr;
+    FAM_MAP_t *fam_map;
     unsigned int fam_id, part_cnt, i;
-    int rc;
+    int node_id, rc;
 
     /* Do nothing on LF client */
+    node_id = params->node_id;
     if (params->node_id < 0)
-        return 0;
+	return 0;
 
-    /* NOTE: FAM emulation only; limited to 31 bits */
-    fam_id = (unsigned int) params->node_id;
     part_cnt = params->node_servers;
     fam_attr = (fam_attr_val_t *)malloc(fam_attr_val_sz(part_cnt));
     fam_attr->part_cnt = part_cnt;
     attr = fam_attr->part_attr;
-    rmk = lfs_ctx->lfs_shm->rmk;
-    for (i = 0; i < part_cnt; i++, rmk++, attr++)
-        memcpy(attr, rmk, sizeof(LFS_EXCG_t));
 
-    rc = meta_famattr_put(fam_id, fam_attr);
+    /* Having the real FAM? */
+    fam_map = params->fam_map;
+    if (fam_map) {
+	unsigned long long *ids;
+
+	assert(node_id>=0);
+	assert(part_cnt==1); /* TODO: Support FAM partitioning */
+	ids = fam_map->fam_ids[node_id];
+	rc = 0;
+	for (i = 0; i < fam_map->node_fams[node_id]; i++) {
+	    fam_id = (unsigned int) ids[i];
+	    /* TODO: Read device pk&offset from configuration */
+	    attr->prov_key = 0;
+	    attr->virt_addr = 0;
+	    rc |= meta_famattr_put(fam_id, fam_attr);
+	}
+    } else {
+	/* NOTE: FAM emulation only; limited to 31 bits */
+	fam_id = (unsigned int) params->node_id;
+	rmk = lfs_ctx->lfs_shm->rmk;
+	for (i = 0; i < part_cnt; i++, rmk++, attr++)
+	    memcpy(attr, rmk, sizeof(LFS_EXCG_t));
+	rc = meta_famattr_put(fam_id, fam_attr);
+    }
     free(fam_attr);
     return rc;
 }
