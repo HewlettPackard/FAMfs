@@ -995,7 +995,7 @@ int configurator_int_check(const char *s __attribute__ ((unused)),
 }
 
 int configurator_file_check(const char *s __attribute__ ((unused)),
-                            const char *k __attribute__ ((unused)),
+                            const char *k,
                             const char *val,
                             char **o)
 {
@@ -1018,14 +1018,22 @@ int configurator_file_check(const char *s __attribute__ ((unused)),
     p = val;
     p = strrchr(p, '/');
     if (p == NULL)
-	return ENOENT;
+	goto _no_file;
     rc = stat(++p, &st);
-    if (rc != 0)
+    if (rc != 0) {
+	rc = errno;
+	if (rc == EPERM || rc == ENOENT)
+	    goto _no_file;
 	return errno; // invalid
+    }
     if (!(st.st_mode & S_IFREG))
-	return ENOENT;
+	goto _no_file;
     *o = strdup(p);
     return 0;
+
+_no_file:
+    /* Return error to ini file parser otherwise Ok */
+    return (k == NULL)? ENOENT : 0;
 }
 
 int configurator_directory_check(const char *s __attribute__ ((unused)),
