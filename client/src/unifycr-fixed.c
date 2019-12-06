@@ -579,7 +579,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     //}
 
     if (!lfs_params->use_cq) {
-        rc = fi_cntr_wait(cntr, chunk->w_event, lfs_params->io_timeout_ms);
+        rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
             err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%016lx",
                 lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
@@ -591,7 +591,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
                     fi_cntr_readerr(cntr), rc,
                     fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
                     dst_node, node->partition,
-                    fi_cntr_read(cntr), chunk->w_event);
+                    fi_cntr_read(cntr), *event);
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
     } else {
@@ -648,7 +648,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     } else {
         cntr = node->rcnts[0];
         chunk->r_event = fi_cntr_read(cntr);
-        event = &chunk->w_event;
+        event = &chunk->r_event;
     }
     //transfer_sz = params->transfer_sz;
     //int blocks = len / transfer_sz;
@@ -695,7 +695,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
                     lfs_params->node_id, src_node, fam_stripe->partition);
 
     if (!lfs_params->use_cq) {
-        rc = fi_cntr_wait(cntr, chunk->r_event, lfs_params->io_timeout_ms);
+        rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
             err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
                 lfs_params->node_id, cid,
@@ -707,7 +707,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
                     fi_cntr_readerr(cntr), rc,
                     fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
                     src_node, node->partition,
-                    fi_cntr_read(cntr), chunk->r_event);
+                    fi_cntr_read(cntr), *event);
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
     } else {
