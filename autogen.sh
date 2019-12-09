@@ -60,6 +60,17 @@ else
     MISSING="$MISSING libtoolize/glibtoolize"
   fi
 fi
+if [[ ! -z "$TOOL" ]]; then
+  loc_lt=$(env libtool --config|grep 'macro_version=')
+  gl_lt=$(env - libtool --config|grep 'macro_version=')
+  if [[ "$loc_lt" != "$gl_lt" ]]; then
+    if [[ "$loc_acl" == "$gl_acl" ]]; then
+      echo "Please re-install aclocal (automake) for third-party M4 files of $loc_lt"
+      # libtool is not usable
+      MISSING="$MISSING libtool"
+    fi
+  fi
+fi
 
 # Check for tar
 env tar -cf /dev/null /dev/null > /dev/null 2>&1
@@ -91,7 +102,7 @@ fi
 if [ "x$MISSING" != "x" ]; then
   echo "Aborting."
   echo
-  echo "The following build tools are missing:"
+  echo "The following build tools are missing or not usable:"
   echo
   for pkg in $MISSING; do
     echo "  * $pkg"
