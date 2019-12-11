@@ -34,7 +34,7 @@ libfamfs_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(LIBFABRIC_LIBS) $
 
 libfamfs_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
 
-libfamfs_gotcha_HEADERS = unifycr.h
+# libfamfs_gotcha_HEADERS = unifycr.h
 libfamfs_gotcha_la_SOURCES = \
   unifycr-fixed.c \
   unifycr-fixed.h \
