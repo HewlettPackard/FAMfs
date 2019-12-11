@@ -81,14 +81,15 @@
     UNIFYCR_CFG(unifycr, extent0_offset, INT, UNIFYCR_EXTENT0_OFFSET, "extent zero starts with offset in bytes", NULL) \
     UNIFYCR_CFG(unifycr, ioncount, INT, UNIFYCR_ION_COUNT, "IO node (device) count", NULL) \
     UNIFYCR_CFG(unifycr, layouts_count, INT, UNIFYCR_LAYOUTS_COUNT, "number of layouts", NULL) \
+    /* Each multi-section should have 'id' field defined as INT, NULLSTRING, of size 1 */ \
     UNIFYCR_CFG_MULTI(device, id, INT, NULLSTRING, "device reference", NULL, 1) \
-    UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "memory module URL", NULL, 1) \
-    UNIFYCR_CFG_MULTI(device, pk, INT, 1, "device reference", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "FAM URL", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, pk, INT, 1, "FAM protection key", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, size, INT, 0, "device size (bytes)", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, id, INT, NULLSTRING, "allocation group", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, devices, INT, 0, "devices in AG", NULL, 0) \
     UNIFYCR_CFG_MULTI(ag, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
-    UNIFYCR_CFG_MULTI(layout, id, INT, 0, "device ID in layout", NULL, 1) \
+    UNIFYCR_CFG_MULTI(layout, id, INT, NULLSTRING, "device ID in layout", NULL, 1) \
     UNIFYCR_CFG_MULTI(layout, devices, INT, 0, "device ID in layout", NULL, 0) \
     UNIFYCR_CFG_MULTI(layout, name, STRING, LAYOUT0_NAME, "layout name (moniker)", configurator_moniker_check, 1) \
 
@@ -155,8 +156,9 @@ int unifycr_config_process_environ(unifycr_cfg_t *cfg);
 int unifycr_config_process_ini_file(unifycr_cfg_t *cfg,
                                     const char *file);
 
-
 int unifycr_config_validate(unifycr_cfg_t *cfg);
+
+int famfs_config_check_multisec(unifycr_cfg_t *cfg);
 
 /* validate function prototype
    -  Returns: 0 for valid input, non-zero otherwise.

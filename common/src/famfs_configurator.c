@@ -94,7 +94,9 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
     if (rc)
         return rc;
 
-    return 0;
+    // check and set multi-section ids
+    rc = famfs_config_check_multisec(cfg);
+    return rc;
 }
 
 // cleanup allocated state
@@ -169,9 +171,14 @@ void unifycr_config_print(unifycr_cfg_t *cfg,
     for (unsigned uu=0; uu < F_CFG_MSEC_MAX; uu++) {			\
 	for (unsigned u=0; u < (me>0?me:F_CFG_MSKEY_MAX); u++) {	\
 	    if (cfg->sec##_##key[uu][u] != NULL) {			\
-		snprintf(msg, sizeof(msg),				\
-			"FAMFS CONFIG: %s[%u].%s[%u] = %s",		\
-		     #sec, uu, #key, u, cfg->sec##_##key[uu][u]);	\
+		if (me == 1)						\
+		    snprintf(msg, sizeof(msg),				\
+			    "FAMFS CONFIG: %s[%u].%s = %s",		\
+			    #sec, uu, #key, cfg->sec##_##key[uu][u]);	\
+		else							\
+		    snprintf(msg, sizeof(msg),				\
+			    "FAMFS CONFIG: %s[%u].%s[%u] = %s",		\
+			    #sec, uu, #key, u, cfg->sec##_##key[uu][u]);\
 		fprintf(fp, "%s\n", msg);				\
 	    }								\
 	}								\
@@ -1079,5 +1086,99 @@ int configurator_moniker_check(const char *s __attribute__ ((unused)),
 		return -1;
     }
     return 0; /* pass null strings */
+}
+
+int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
+{
+    //char *sec##_##key[F_CFG_MSEC_MAX][1]
+    unsigned int i, ids, n;
+    int rc = 0;
+
+    ids = n = 0; /* ids starts with zero by default */
+
+#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)
+#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
+    if (!strcmp(cursec, #sec)) {					\
+	if (!strcmp("id", #key)) {					\
+	    n = 0; /* "id" key should go the first in the section */	\
+	    for (i = 0; i < F_CFG_MSEC_MAX; i++) {			\
+		char *v = cfg->sec##_##key[i][0];			\
+		if (strcmp("INT", #typ)) {				\
+		    rc = 1;						\
+		    fprintf(stderr, "FAMFS CONFIG ERROR: "		\
+			    "value for %s.%s has INVALID type:%s\n",	\
+			    #sec, #key, #typ);				\
+		} else if (i == 0) {					\
+		    n = ids = v? strtoul(v, NULL, 10) : 0;		\
+		} else if (v && strtoul(v,NULL,10) != (n = (i+ids))) {	\
+		    rc = 2;						\
+		    fprintf(stderr, "FAMFS CONFIG ERROR: "		\
+			    "value '%s' for %s[%u].%s is INVALID %s\n",	\
+			    v, #sec, i, #key, #typ);			\
+		}							\
+	    }								\
+	} else {							\
+	    for (i = 0; i < F_CFG_MSEC_MAX; i++) {			\
+		if (cfg->sec##_##key[i][0] && (i + ids > n))		\
+		    n = i + ids;					\
+	    }								\
+	}								\
+    }
+#define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)
+    UNIFYCR_CONFIGS;
+#undef UNIFYCR_CFG_MULTI
+    if (rc)
+	return rc;
+
+    /* Set ids */
+    n -= ids;
+    assert (n < F_CFG_MSEC_MAX);
+    _Static_assert (F_CFG_MSEC_MAX < 1000U, "F_CFG_MSEC_MAX too big");
+
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
+    if (!strcmp(cursec, #sec) && !strcmp("id", #key)) {			\
+	for (i = 0; i <= n; i++) {					\
+	    char **vp = &cfg->sec##_##key[i][0];			\
+	    if (*vp && strtoul(*vp, NULL, 10) != (n = (i + ids))) {	\
+		free(*vp); *vp = NULL;					\
+	    }								\
+	    if (*vp == NULL) {						\
+		*vp = malloc(4);					\
+		snprintf(*vp, 4, "%u", i+ids);				\
+	    }								\
+	}								\
+    }
+    UNIFYCR_CONFIGS;
+#undef UNIFYCR_CFG
+#undef UNIFYCR_CFG_CLI
+#undef UNIFYCR_CFG_MULTI
+#undef UNIFYCR_CFG_MULTI_CLI
+    return 0;
+}
+
+int famfs_config_check_multisec(unifycr_cfg_t *cfg)
+{
+    char *cursec = NULL;
+    int src, rc = 0;
+
+#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)
+#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)	\
+    if (!cursec || strcmp(cursec, #sec)) {			\
+	free(cursec);						\
+	cursec = strdup( #sec );				\
+	src = check_multisec(cfg, cursec);			\
+	if (src && !rc)						\
+	    rc = src; /* report the first error */		\
+    }
+#define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)
+
+    UNIFYCR_CONFIGS;
+#undef UNIFYCR_CFG
+#undef UNIFYCR_CFG_CLI
+#undef UNIFYCR_CFG_MULTI
+#undef UNIFYCR_CFG_MULTI_CLI
+    return rc;
 }
 
