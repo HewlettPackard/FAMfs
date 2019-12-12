@@ -1140,7 +1140,7 @@ int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
     if (!strcmp(cursec, #sec) && !strcmp("id", #key)) {			\
 	for (i = 0; i <= n; i++) {					\
 	    char **vp = &cfg->sec##_##key[i][0];			\
-	    if (*vp && strtoul(*vp, NULL, 10) != (n = (i + ids))) {	\
+	    if (*vp && strtoul(*vp, NULL, 10) != (i + ids)) {		\
 		free(*vp); *vp = NULL;					\
 	    }								\
 	    if (*vp == NULL) {						\
@@ -1173,12 +1173,63 @@ int famfs_config_check_multisec(unifycr_cfg_t *cfg)
 	    rc = src; /* report the first error */		\
     }
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)
-
     UNIFYCR_CONFIGS;
 #undef UNIFYCR_CFG
 #undef UNIFYCR_CFG_CLI
 #undef UNIFYCR_CFG_MULTI
 #undef UNIFYCR_CFG_MULTI_CLI
     return rc;
+}
+
+/* Return actual section size; set *keylist_size to key list size */
+int configurator_get_sizes(unifycr_cfg_t *cfg,
+			   const char *section,
+			   const char *kee,
+			   int *keylist_size)
+{
+    int i, j, m, s;
+    int size=0, kl_size=0;
+
+    /* section index for keylist size if any */
+    s = (keylist_size)? *keylist_size : -1;
+
+#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)
+#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)	\
+    if (!strcmp(section, #sec)) {				\
+	if (!strcmp("id", #key)) {				\
+	    size = F_CFG_MSEC_MAX;				\
+	    for (i = m = 0; i < size; i++) {			\
+		if (cfg->sec##_##key[i][0])			\
+		    m = i + 1;					\
+	    }							\
+	    size = m;						\
+	    kl_size = me>0? me:F_CFG_MSKEY_MAX;			\
+	}							\
+	if (kee && !strcmp(kee, #key)) {			\
+	    kl_size = me>0? me:F_CFG_MSKEY_MAX;			\
+	    for (i = m = 0; i < size; i++) {			\
+		if (s >= 0 && s != i)				\
+		    continue;					\
+		for (j = 0; j < kl_size; j++) {			\
+		    if (cfg->sec##_##key[i][j])			\
+			    m = j + 1;				\
+		}						\
+	    }							\
+	    kl_size = m;					\
+	}							\
+    }
+#define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)
+    UNIFYCR_CONFIGS;
+#undef UNIFYCR_CFG
+#undef UNIFYCR_CFG_CLI
+#undef UNIFYCR_CFG_MULTI
+#undef UNIFYCR_CFG_MULTI_CLI
+
+    if (keylist_size)
+	*keylist_size = kl_size;
+ printf (" conf sec:%s key:%s[%d] size:%d kl_sz:%d\n",
+ section, kee, s, size, kl_size);
+    return size;
 }
 

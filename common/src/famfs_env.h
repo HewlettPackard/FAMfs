@@ -165,12 +165,12 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define UNIFYCR_LAYOUTS_COUNT	1
 #define LAYOUT0_NAME		"1D:1M"
 
-/* Slabs, stripes and layout */
+/* Limits: slab, stripe, device and layout */
 #define FVAR_MONIKER_MAX	14	/* Max moniker string lemgth */
 #define F_CHUNK_SIZE_MIN	(4*KIB)	/* Minimum chunk size - 4K */
 #define F_CHUNK_SIZE_MAX	(16*MIB)
-#define F_LAYOUTS_MAX		2	/* Maximum number of layouts, for config & maps */
-
+#define F_LAYOUTS_MAX		9	/* Maximum number of layouts, for config & maps */
+#define F_DEVICES_MAX		1024	/* Maximum number of FAMs */
 
 /* Client */
 #define UNIFYCR_INDEX_BUF_SIZE (20 * MIB)

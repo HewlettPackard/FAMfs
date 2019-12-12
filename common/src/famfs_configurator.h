@@ -77,15 +77,20 @@
     UNIFYCR_CFG(spillover, meta_dir, STRING, NULLSTRING, "spillover metadata directory", configurator_directory_check) \
     UNIFYCR_CFG(spillover, size, INT, UNIFYCR_SPILLOVER_SIZE, "spillover max data size in bytes", NULL) \
     UNIFYCR_CFG(client, max_files, INT, UNIFYCR_MAX_FILES, "client max file count", NULL) \
-    UNIFYCR_CFG(unifycr, extent_size, INT, UNIFYCR_EXTENT_SIZE, "pool extent size in bytes", NULL) \
-    UNIFYCR_CFG(unifycr, extent0_offset, INT, UNIFYCR_EXTENT0_OFFSET, "extent zero starts with offset in bytes", NULL) \
-    UNIFYCR_CFG(unifycr, ioncount, INT, UNIFYCR_ION_COUNT, "IO node (device) count", NULL) \
-    UNIFYCR_CFG(unifycr, layouts_count, INT, UNIFYCR_LAYOUTS_COUNT, "number of layouts", NULL) \
+    UNIFYCR_CFG(mddevice, pk, INT, 0, "MD region protection key", NULL) \
+    UNIFYCR_CFG(mddevice, size, INT, 1M, "MD size (bytes)", NULL) \
+    UNIFYCR_CFG(mddevice, offset, INT, 0, "MD offset (bytes)", NULL) \
+    UNIFYCR_CFG(devices, extent_size, INT, UNIFYCR_EXTENT_SIZE, "pool extent size in bytes", NULL) \
+    UNIFYCR_CFG(devices, emulated, BOOL, off, "FAMs are emulated", NULL) \
+    UNIFYCR_CFG(devices, pk, INT, 0, "default FAM protection key", NULL) \
+    UNIFYCR_CFG(devices, size, INT, UNIFYCR_EXTENT_SIZE, "default device size in bytes", NULL) \
+    UNIFYCR_CFG(devices, offset, INT, UNIFYCR_EXTENT0_OFFSET, "default device extent zero offset in bytes", NULL) \
     /* Each multi-section should have 'id' field defined as INT, NULLSTRING, of size 1 */ \
     UNIFYCR_CFG_MULTI(device, id, INT, NULLSTRING, "device reference", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "FAM URL", NULL, 1) \
-    UNIFYCR_CFG_MULTI(device, pk, INT, 1, "FAM protection key", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, pk, INT, 0, "FAM protection key", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, size, INT, 0, "device size (bytes)", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, failed, BOOL, off, "device is failed", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, id, INT, NULLSTRING, "allocation group", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, devices, INT, 0, "devices in AG", NULL, 0) \
     UNIFYCR_CFG_MULTI(ag, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
@@ -204,6 +209,11 @@ int configurator_moniker_check(const char *section,
                                  const char *key,
                                  const char *val,
                                  char **oval);
+
+int configurator_get_sizes(unifycr_cfg_t *cfg,
+			   const char *section,
+			   const char *key,
+			   int *keylist_size);
 
 #ifdef __cplusplus
 } /* extern C */

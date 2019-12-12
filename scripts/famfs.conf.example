@@ -3,10 +3,6 @@ chunk_bits = 20
 chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
-extent_size = 1G
-extent0_offset = 0
-ioncount = 1
-layouts_count = 1
 
 [meta]
 server_ratio = 1
@@ -15,6 +11,51 @@ range_size = 1048576
 [spillover]
 size = 2G
 
-[layout0]
+[mddevice]
+pk = 1
+size = 1M
+offset = 1023M
+
+[devices]
+extent_size = 1G
+emulated = true ; force FAM module emulation
+pk = 0 ; default
+size = 16G ; default device size
+offset = 0 ; default
+
+[device] # FAM module or emulated FAM
+id = 1 ; device id for layout/ag reference
+failed = false ; default
+url = "zhpe:///ion1" ; default
+pk = 0 ; libfabric persistent key
+size = 130064M ; overrides the default
+
+[device] # FAM module or emulated FAM
+id = 2
+url = "zhpe:///ion" ; default
+
+[device]
+id = 3
+url = "zhpe:///ion"
+
+[device]
+failed = true
+id = 4
+url = "zhpe:///ion"
+
+[ag] # Allocation group
+devices = [1,2] ; List of famid
+geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
+
+[ag]
+devices = [3,4]
+
+[layout]
+id = 1 ; optional: layout ids starts with one
 name = "1D:1M"
+devices = [1,2,3,4] ; optional list of device IDs
+
+[layout]
+name = "2D:1M"
+devices = [1,3,4]
 

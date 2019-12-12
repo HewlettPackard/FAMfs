@@ -26,6 +26,9 @@ int f_layout_parse_name(struct f_layout_info_ *info)
 		info->chunks = data + parity;
 		info->chunk_sz = chunk_size;
 		info->slab_stripes = info->pool_info->extent_sz / chunk_size;
+
+		if (!IN_RANGE(info->chunks, 1, info->devnum))
+			ret = -1;
 	}
 	return ret;
 }
@@ -91,45 +94,48 @@ int f_db_bdel(int map_id, void **keys, size_t size)
 static int set_layouts_cfg(unifycr_cfg_t *c)
 {
     F_POOL_INFO_t *pool_info;
-    int i, count;
+    int count;
+    unsigned int u;
     long l;
 
-/*
-    if (configurator_int_val(c->unifycr_layouts_count, &l))
+    count = configurator_get_sizes(c, "layout", NULL, NULL);
+    if (!IN_RANGE(count, 1, F_LAYOUTS_MAX))
 	return -1;
-    count = (int)l;
-*/
-    count = 0;
-    for (; count < F_CFG_MSEC_MAX; count++) {
-	if (configurator_int_val(c->layout_id[count][0], &l))
-	    break;
-    }
-    if (count > F_LAYOUTS_MAX)
-	count = F_LAYOUTS_MAX;
 
     layouts_info = (F_LAYOUT_INFO_t *) calloc(sizeof(F_LAYOUT_INFO_t), count);
     if (!layouts_info)
 	return -ENOMEM;
     pool_info = (F_POOL_INFO_t *) calloc(sizeof(F_POOL_INFO_t), 1);
     pool_info->layouts_count = count;
-    if (configurator_int_val(c->unifycr_ioncount, &l)) return -1;
-    pool_info->dev_count = (unsigned int)l;
-    if (configurator_int_val(c->unifycr_extent_size, &l)) return -1;
+
+    count = configurator_get_sizes(c, "device", NULL, NULL);
+    if (!IN_RANGE(count, 1, F_DEVICES_MAX))
+	return -1;
+    pool_info->dev_count = (unsigned int)count;
+
+    if (configurator_int_val(c->devices_extent_size, &l)) return -1;
     pool_info->extent_sz = (unsigned long)l;
-    if (configurator_int_val(c->unifycr_extent0_offset, &l)) return -1;
+    if (configurator_int_val(c->devices_offset, &l)) return -1;
     pool_info->extent0_start = (unsigned long)l;
 
     /* Layouts */
-    for (i = 0; i < count; i++) {
-	layouts_info[i].conf_id = i;
-	layouts_info[i].pool_info = pool_info;
+    for (u = 0; u < pool_info->layouts_count; u++) {
+	if (configurator_int_val(c->layout_id[u][0], &l))
+	    return -1;
+	layouts_info[u].conf_id = (unsigned int)l;
+	layouts_info[u].pool_info = pool_info;
+	layouts_info[u].name = strdup(c->layout_name[u][0]);
 
-	layouts_info[i].name = strdup(c->layout_name[i][0]);
-	/* FIXME */
-	layouts_info[i].devnum = pool_info->dev_count;
-	if (f_layout_parse_name(&layouts_info[i])) return -1;
+	count = u;
+	if (configurator_get_sizes(c, "layout", "devices", &count) < 0)
+	    return -1;
+	if (!IN_RANGE((unsigned)count, 1, pool_info->dev_count))
+	    return -1;
+	layouts_info[u].devnum = (unsigned)count;
+
+	if (f_layout_parse_name(&layouts_info[u]))
+	    return -1;
     }
-
     return 0;
 }
 
