@@ -1228,8 +1228,6 @@ int configurator_get_sizes(unifycr_cfg_t *cfg,
 
     if (keylist_size)
 	*keylist_size = kl_size;
- printf (" conf sec:%s key:%s[%d] size:%d kl_sz:%d\n",
- section, kee, s, size, kl_size);
     return size;
 }
 
