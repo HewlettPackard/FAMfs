@@ -654,4 +654,18 @@ static __always_inline int atomic_test_and_clear_bit(int nr, volatile unsigned l
 }
 
 
+/* Macros to define access the flags access inline functions. */
+#define BITOPS(name, what, var, flag) \
+static inline int TestClear ## name ## what(struct var *v) \
+{ return test_and_clear_bit(flag, &v->io.flags); } \
+static inline int TestSet ## name ## what(struct var *v) \
+{ return test_and_set_bit(flag, &v->io.flags); } \
+static inline void Clear ## name ## what(struct var *v) \
+{ clear_bit(flag, &v->io.flags); } \
+static inline void Set ## name ## what(struct var *v) \
+{ set_bit(flag, &v->io.flags); } \
+static inline int name ## what(struct var *v) \
+{ return test_bit(flag, &v->io.flags); }
+
+
 #endif /* FAMFS_BITOPS_H_ */
