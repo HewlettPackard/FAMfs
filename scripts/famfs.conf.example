@@ -25,6 +25,7 @@ offset = 0 ; default
 
 [device] # FAM module or emulated FAM
 id = 1 ; device id for layout/ag reference
+uuid = {bcc3b223-75d5-47e7-8788-a7afdbd95e63} ; version 4 UUID
 failed = false ; default
 url = "zhpe:///ion1" ; default
 pk = 0 ; libfabric persistent key

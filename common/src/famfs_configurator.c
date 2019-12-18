@@ -1088,6 +1088,46 @@ int configurator_moniker_check(const char *s __attribute__ ((unused)),
     return 0; /* pass null strings */
 }
 
+int configurator_uuid_check(const char *s __attribute__ ((unused)),
+                               const char *k __attribute__ ((unused)),
+                               const char *val,
+                               char **o __attribute__ ((unused)))
+{
+    if (val)
+	return f_parse_uuid(val, NULL);
+    return 0; /* pass null strings */
+}
+
+int f_parse_uuid(const char *s, uuid_t *uuid_p) {
+    union {
+	uint128_t uuid;
+	struct {
+	    uint32_t	d1;
+	    uint16_t	d2;
+	    uint16_t	d3;
+	    uint8_t	d4[8];
+	} __attribute__((packed));
+    } u;
+    int rc;
+
+    if (*s == '{')
+	s++;
+    rc = sscanf(s, "%08X-%04hX-%04hX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
+	&u.d1, &u.d2, &u.d3, &u.d4[0], &u.d4[1],
+	&u.d4[2], &u.d4[3], &u.d4[4], &u.d4[5], &u.d4[6], &u.d4[7]);
+    if (rc == 0)
+	return -1;
+    if (rc == 11) {
+	if ((u.d3 & 0xf000) == 0x4000 && (u.d4[0] & 0xc0) == 0x80) {
+	    if (uuid_p)
+		*(uint128_t *)uuid_p = u.uuid;
+	    return 0;
+	}
+	return -2; /* Not an UUID version 4 */
+    }
+    return rc;
+}
+
 int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
 {
     //char *sec##_##key[F_CFG_MSEC_MAX][1]

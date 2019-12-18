@@ -30,6 +30,7 @@
 #endif
 
 #include "famfs_env.h"
+#include "famfs_ktypes.h"
 
 #ifndef TMPDIR
 #define TMPDIR /tmp
@@ -87,6 +88,7 @@
     UNIFYCR_CFG(devices, offset, INT, UNIFYCR_EXTENT0_OFFSET, "default device extent zero offset in bytes", NULL) \
     /* Each multi-section should have 'id' field defined as INT, NULLSTRING, of size 1 */ \
     UNIFYCR_CFG_MULTI(device, id, INT, NULLSTRING, "device reference", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, uuid, STRING, NULLSTRING, "device UUID", configurator_uuid_check, 1) \
     UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "FAM URL", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, pk, INT, 0, "FAM protection key", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, size, INT, 0, "device size (bytes)", NULL, 1) \
@@ -210,10 +212,18 @@ int configurator_moniker_check(const char *section,
                                  const char *val,
                                  char **oval);
 
+int configurator_uuid_check(const char *section,
+                               const char *key,
+                               const char *val,
+                               char **oval);
+
 int configurator_get_sizes(unifycr_cfg_t *cfg,
 			   const char *section,
 			   const char *key,
 			   int *keylist_size);
+
+/* validate version 4 UUID */
+int f_parse_uuid(const char *s, uuid_t *uuid_p);
 
 #ifdef __cplusplus
 } /* extern C */
