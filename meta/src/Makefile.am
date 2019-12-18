@@ -44,7 +44,7 @@ LDADD = $(top_builddir)/common/src/libfamfs_common.la \
         $(top_builddir)/userspace-rcu/src/liburcu.la
 
 libmdhim_la_LIBADD = $(LDADD) -lleveldb -lurcu-qsbr -lurcu-cds
-libfpool_la_LIBADD = $(LDADD) libmdhim.la
+libfamfs_meta_la_LIBADD = $(LDADD) libmdhim.la
 
 # For tests
 tests_LDADD = $(LDADD) libmdhim.la libfamfs_meta.la -lurcu-qsbr -lurcu-cds
