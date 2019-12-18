@@ -35,6 +35,7 @@
 #define	DIV_CEIL(x, y)		(((x)+(y)-1)/(y))	/* divide and round up */
 #define	ROUND_UP(x, y)		((((x)+(y)-1)/(y))*(y))	/* round up */
 #define	ROUND_DOWN(n, sz)	(((n)/(sz)) * (sz))	/* floor */
+#define TYPE_ALINGMENT(t)	offsetof(struct { unsigned char x; t test; }, test)
 
 #ifndef container_of	/* defined in rdma/fabric.h */
 #define container_of(ptr, type, member)	({					\
@@ -166,11 +167,13 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define LAYOUT0_NAME		"1D:1M"
 
 /* Limits: slab, stripe, device and layout */
+#define F_DEVICES_MAX		4096	/* Maximum number of FAMs, divisible by 8 */
+#define F_STRIPE_DISK_COUNT	F_DEVICES_MAX /* Max number of disks per stripe */
 #define FVAR_MONIKER_MAX	14	/* Max moniker string lemgth */
 #define F_CHUNK_SIZE_MIN	(4*KIB)	/* Minimum chunk size - 4K */
 #define F_CHUNK_SIZE_MAX	(16*MIB)
-#define F_LAYOUTS_MAX		9	/* Maximum number of layouts, for config & maps */
-#define F_DEVICES_MAX		1024	/* Maximum number of FAMs */
+#define F_LAYOUTS_MAX		1024	/* Maximum number of layouts, for config & maps */
+
 
 /* Client */
 #define UNIFYCR_INDEX_BUF_SIZE (20 * MIB)

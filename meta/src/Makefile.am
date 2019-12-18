@@ -8,7 +8,7 @@ AM_CPPFLAGS += -funroll-loops --param max-completely-peel-times=64
 AM_CFLAGS = -DLEVELDB_SUPPORT -D_GNU_SOURCE=1 $(LEVELDB_CFLAGS) $(MPI_CFLAGS)
 AM_CFLAGS += -std=gnu99 -Wall -Wextra
 
-noinst_LTLIBRARIES = libmdhim.la
+noinst_LTLIBRARIES = libmdhim.la libfamfs_meta.la
 
 libmdhim_la_SOURCES = Mlog2/mlog2.c \
                      Mlog2/mlog2.h \
@@ -35,16 +35,19 @@ libmdhim_la_SOURCES = Mlog2/mlog2.c \
                      indexes.h \
                      mdhim.c \
                      mdhim.h \
-                     uthash/uthash.h \
+                     uthash/uthash.h
+
+libfamfs_meta_la_SOURCES = f_pool.h f_layout.h \
                      f_map.h f_map.c
 
 LDADD = $(top_builddir)/common/src/libfamfs_common.la \
         $(top_builddir)/userspace-rcu/src/liburcu.la
 
 libmdhim_la_LIBADD = $(LDADD) -lleveldb -lurcu-qsbr -lurcu-cds
+libfpool_la_LIBADD = $(LDADD) libmdhim.la
 
 # For tests
-tests_LDADD = $(LDADD) libmdhim.la -lurcu-qsbr -lurcu-cds
+tests_LDADD = $(LDADD) libmdhim.la libfamfs_meta.la -lurcu-qsbr -lurcu-cds
 f_map_test_LDADD = $(tests_LDADD)
 mpitests_LDADD = $(tests_LDADD) -lmpi
 f_map_mnode_test_LDADD = $(mpitests_LDADD)

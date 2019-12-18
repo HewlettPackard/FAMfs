@@ -20,6 +20,8 @@
 #include <mpi.h>
 
 #include "famfs_env.h"
+#include "famfs_ktypes.h"
+
 
 #define to_lf_client_id(node, part_count, part) (node*part_count + part)
 /* TODO: Remove me */
@@ -33,6 +35,35 @@ typedef struct fam_map_ {
 	int	*node_fams;		/* [node]: <number of FAMs> */
 	unsigned long long **fam_ids;	/* [node]->[fam] = <FAM Id> */
 } FAM_MAP_t;
+
+typedef struct fam_dev_ {
+	uuid_t		uuid;
+	size_t		size;		/* remote memory size, bytes */
+	uint64_t	offset;		/* remote memory offset, bytes */
+	char		*url;		/* GenZ device URL */
+	uint64_t	pkey;		/* protection key associated with the remote memory */
+	void		*usr_buf;	/* optional user buffer */
+	/* unsigned long */
+	fi_addr_t	fi_addr;	/* array index of fabric address returned by av_insert */
+	uint64_t	virt_addr;	/* address of remote memory to access or NULL */
+	struct fid_ep	*ep;		/* connected fabric endpoint */
+	struct fid_cntr *rcnt;		/* completion and event counter for reads */
+	struct fid_cntr	*wcnt;		/* completion and event counter for writes */
+	struct fid_cq	*tx_cq;		/* comlition queue bound to this endpoint or NULL */
+} FAM_DEV_t;
+
+typedef struct fam_bdev_ {
+	dev_t		dev_mm;
+	char		*path;
+	int		fd;
+} FAM_BDEV_t;
+
+typedef struct f_dev_t {
+    union {
+	struct fam_dev_		f;
+	struct fam_bdev_	b;
+    };
+} F_DEV_t;
 
 typedef struct lf_mr_mode_ {
 	unsigned int scalable:1;
