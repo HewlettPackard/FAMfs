@@ -28,10 +28,19 @@ typedef int8_t s8;
 typedef int16_t s16;
 typedef int32_t s32;
 typedef int64_t s64;
-typedef uint64_t dma_addr_t;
 typedef unsigned uint128_t __attribute__ ((mode (TI)));
 
+#ifndef dev_t
+  typedef uint64_t dev_t;
+#endif
+_Static_assert( __builtin_types_compatible_p(typeof(dev_t), unsigned long), \
+		"dev_t");
+
+/* 16-byte, random (version 4) UUID */
+typedef unsigned char	uuid_t[16];
+
 #if 0
+typedef uint64_t dma_addr_t;
 #define be16_to_cpup(X) __be16_to_cpup(X)
 #define be32_to_cpup(X) __be32_to_cpup(X)
 #define be64_to_cpup(X) __be64_to_cpup(X)
@@ -56,7 +65,6 @@ typedef unsigned uint128_t __attribute__ ((mode (TI)));
 #define swab32(X) __builtin_bswap32(X)
 #define swab64(X) __builtin_bswap64(X)
 
-typedef unsigned gfp_t;
 typedef unsigned fmode_t;
 typedef unsigned oom_flags_t;
 
@@ -141,7 +149,7 @@ static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return va
 #define udelay(X) rte_delay_us(X)
 #define msleep(X) rte_delay_ms(X)
 
-#endif //-------------------------------------------
+typedef unsigned gfp_t;
 
 /* Plain integer GFP bitmasks. Do not use this directly. */
 #define ___GFP_DMA              0x01u
@@ -256,10 +264,6 @@ static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return va
 
 ////#include "list.h"
 
-typedef struct { int32_t counter; } atomic_t;
-
-#if 0  //-------------------------------------------
-
 typedef rte_spinlock_t mutex_t;
 typedef rte_spinlock_t spinlock_t;
 typedef rte_spinlock_t rwlock_t;
@@ -352,6 +356,8 @@ typedef rte_spinlock_t rwlock_t;
 #define cache_line_size(X) RTE_CACHE_LINE_SIZE
 
 #endif //-------------------------------------------
+
+typedef struct { int32_t counter; } atomic_t;
 
 #define atomic_read(a) ((a)->counter)
 #define atomic_set(a,b) ((a)->counter = (b))
