@@ -93,6 +93,8 @@ typedef int64_t off64_t;
 #include "famfs_env.h"
 #include "famfs_stats.h"
 #include "lf_client.h"
+#include "famfs_global.h"
+#include "famfs_rbq.h"
 
 
 static int unifycr_fpos_enabled   = 1;  /* whether we can use fgetpos/fsetpos */
@@ -2242,6 +2244,7 @@ static int unifycr_sync_to_del()
     int rc = -1;
 
     int cmd = COMM_MOUNT;
+    f_dcmd_t    c;
 
     if (fs_type == FAMFS)
         cmd |= COMM_OPT_FAMFS;
@@ -2277,33 +2280,50 @@ static int unifycr_sync_to_del()
      * will attach to the client-side shared memory, and open
      * the spill log file based on these information*/
     memcpy(cmd_buf, &cmd, sizeof(int));
+    c.opcode = cmd;
+
     memcpy(cmd_buf + sizeof(int), &app_id, sizeof(int));
-    memcpy(cmd_buf + 2 * sizeof(int),
-           &local_rank_idx, sizeof(int));
-    memcpy(cmd_buf + 3 * sizeof(int),
-           &dbg_rank, sizeof(int)); /*add debug info*/
+    c.app_id = app_id;
+
+    memcpy(cmd_buf + 2 * sizeof(int), &local_rank_idx, sizeof(int));
+    c.lcl_rix = local_rank_idx;
+
+    memcpy(cmd_buf + 3 * sizeof(int), &dbg_rank, sizeof(int)); /*add debug info*/
+    c.dbg_rnk = dbg_rank;
+
     memcpy(cmd_buf + 4 * sizeof(int), &num_procs_per_node, sizeof(int));
+    c.num_prc = num_procs_per_node;
+
     memcpy(cmd_buf + 5 * sizeof(int), &req_buf_sz, sizeof(int));
+    c.rqbf_sz = req_buf_sz;
+
     memcpy(cmd_buf + 6 * sizeof(int), &recv_buf_sz, sizeof(int));
+    c.rcbf_sz = recv_buf_sz;
 
     memcpy(cmd_buf + 7 * sizeof(int), &superblock_sz, sizeof(long));
-    memcpy(cmd_buf + 7 * sizeof(int) + sizeof(long),
-           &meta_offset, sizeof(long));
-    memcpy(cmd_buf + 7 * sizeof(int) + 2 * sizeof(long),
-           &meta_size, sizeof(long));
+    c.sblk_sz = superblock_sz;
 
-    memcpy(cmd_buf + 7 * sizeof(int) + 3 * sizeof(long),
-           &fmeta_offset, sizeof(long));
-    memcpy(cmd_buf + 7 * sizeof(int) + 4 * sizeof(long),
-           &fmeta_size, sizeof(long));
+    memcpy(cmd_buf + 7 * sizeof(int) + sizeof(long), &meta_offset, sizeof(long));
+    c.meta_of = meta_offset;
 
-    memcpy(cmd_buf + 7 * sizeof(int) + 5 * sizeof(long),
-           &data_offset, sizeof(long));
-    memcpy(cmd_buf + 7 * sizeof(int) + 6 * sizeof(long),
-           &data_size, sizeof(long));
+    memcpy(cmd_buf + 7 * sizeof(int) + 2 * sizeof(long), &meta_size, sizeof(long));
+    c.meta_sz = meta_size;
+
+    memcpy(cmd_buf + 7 * sizeof(int) + 3 * sizeof(long), &fmeta_offset, sizeof(long));
+    c.fmet_of = fmeta_offset;
+
+    memcpy(cmd_buf + 7 * sizeof(int) + 4 * sizeof(long), &fmeta_size, sizeof(long));
+    c.fmet_sz = fmeta_size;
+
+    memcpy(cmd_buf + 7 * sizeof(int) + 5 * sizeof(long), &data_offset, sizeof(long));
+    c.data_of = data_offset;
+
+    memcpy(cmd_buf + 7 * sizeof(int) + 6 * sizeof(long), &data_size, sizeof(long));
+    c.data_sz = data_size;
 
     memcpy(cmd_buf + 7 * sizeof(int) + 7 * sizeof(long),
            external_spill_dir, UNIFYCR_MAX_FILENAME); /*adjust to add debug info*/
+    strncpy(c.ext_dir, external_spill_dir, F_MAX_FNM);
 
     int res = __real_write(client_sockfd,
                            cmd_buf, sizeof(cmd_buf));

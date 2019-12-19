@@ -21,6 +21,34 @@ typedef enum {
     COMM_OPT_FAMFS = 0x0100,
 } cmd_lst_t;
 
+#define F_MAX_FNM     ( 128 )
+
+typedef struct {
+    cmd_lst_t           opcode;
+    union {
+        struct {
+            int         app_id;
+            int         lcl_rix;
+            int         dbg_rnk;
+            int         num_prc;
+            int         rqbf_sz;
+            int         rcbf_sz;
+            long        sblk_sz;
+            long        meta_of;
+            long        meta_sz;
+            long        fmet_of;
+            long        fmet_sz;
+            long        data_of;
+            long        data_sz;
+            char        ext_dir[F_MAX_FNM];
+        };
+    };
+} f_dcmd_t;
+
+#define F_MAX_CMDQ     64
+#define F_CMDQ_NAME    "f_cmdq"
+
+
 typedef struct {
     off_t   file_pos;
     off_t   mem_pos;

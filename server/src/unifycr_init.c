@@ -56,6 +56,7 @@
 #include "famfs_error.h"
 #include "famfs_maps.h"
 #include "lf_client.h"
+#include "famfs_rbq.h"
 
 
 int *local_rank_lst;
@@ -139,6 +140,9 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
     return n;
 }
 
+volatile int sm_ready = 0;
+extern int num_fds;
+
 int main(int argc, char *argv[])
 {
     mdhim_options_t *db_opts = NULL;
@@ -147,6 +151,8 @@ int main(int argc, char *argv[])
     int rc;
     bool daemon;
     long l;
+    f_rbq_t *cmdq;
+    char qname[MAX_RBQ_NAME];
 
     rc = unifycr_config_init(&server_cfg, argc, argv);
     if (rc != 0)
@@ -183,6 +189,12 @@ int main(int argc, char *argv[])
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst,
                                    local_rank_cnt);
 
+    sprintf(qname, "%s-%02d", F_CMDQ_NAME, local_rank_idx);
+    if ((rc = f_rbq_create(qname, sizeof(f_dcmd_t), F_MAX_CMDQ, &cmdq, 1))) {
+        LOG(LOG_ERR, "rbq create: %s", strerror(rc = errno));
+        exit(rc);
+    }
+
     /* UNIFYCR_DEFAULT_LOG_FILE */
     if (server_cfg.log_file == NULL)
         exit(1);
@@ -195,24 +207,28 @@ int main(int argc, char *argv[])
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
+printf("1 %s", ULFS_str_errno(ULFS_ERROR_MDINIT));
         exit(1);
     }
 
     app_config_list = arraylist_create();
     if (app_config_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
+printf("2 %s", ULFS_str_errno(ULFS_ERROR_NOMEM));
         exit(1);
     }
 
     thrd_list = arraylist_create();
     if (thrd_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
+printf("3 %s", ULFS_str_errno(ULFS_ERROR_NOMEM));
         exit(1);
     }
 
     rc = sock_init_server(local_rank_idx);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_SOCKET));
+printf("4 %s", ULFS_str_errno(ULFS_ERROR_SOCKET));
         exit(1);
     }
 
@@ -228,6 +244,7 @@ int main(int argc, char *argv[])
     rc = f_set_layout_info(&server_cfg);
     if (rc != 0) {
 	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_CFG));
+printf("5 %s", ULFS_str_errno(ULFS_ERROR_CFG));
 	exit(1);
     }
 
@@ -238,6 +255,7 @@ int main(int argc, char *argv[])
 	if (rc) {
 	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
 		glb_rank, glb_size, rc);
+printf("6 %d/%d: Failed to start FAM emulation: %d", glb_rank, glb_size, rc);
 		exit(1);
 	}
     }
@@ -246,6 +264,7 @@ int main(int argc, char *argv[])
     rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
+printf("7 %s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
         exit(1);
     }
 
@@ -256,13 +275,14 @@ int main(int argc, char *argv[])
         printf("unifycrd is running\n");
     }
 
-
+/* f_rbq */
     rc = sock_wait_cli_cmd();
     if (rc != ULFS_SUCCESS) {
         int ret = sock_handle_error(rc);
         if (ret != 0) {
             LOG(LOG_ERR, "%s",
                 ULFS_str_errno(ret));
+printf("8 %s", ULFS_str_errno(ret));
             exit(1);
         }
     } else {
@@ -271,6 +291,10 @@ int main(int argc, char *argv[])
             exit(1);
         }
     }
+/* */
+    while (!sm_ready)
+        usleep(10);
+printf("SM up\n");
 
     rc = meta_init_store(db_opts);
     if (rc != 0) {
@@ -328,6 +352,8 @@ int main(int argc, char *argv[])
         }
 
     }
+
+    f_rbq_destroy(cmdq);
 
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();

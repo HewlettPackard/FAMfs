@@ -66,6 +66,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_sl
     switch (cmd & ~COMM_OPT_MASK) {
     case COMM_SYNC_DEL:
         (void)0;
+printf("cmd COMM_SYNC_DEL\n");
         ptr_ack = sock_get_ack_buf(sock_id);
         ret_sz = pack_ack_msg(ptr_ack, cmd, ACK_SUCCESS,
                               &local_rank_cnt, sizeof(int));
@@ -84,6 +85,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_sl
                 rc = -1;
             }
         }
+printf("cmd COMM_MOUNT %d\n", fam_fs);
         rc = sync_with_client(ptr_cmd, sock_id);
 
         ptr_ack = sock_get_ack_buf(sock_id);
@@ -102,6 +104,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_sl
     case COMM_META:
         (void)0;
         int type = *((int *)ptr_cmd + 1);
+printf("cmd COMM_META %d\n", type);
         if (type == 1) {
             /*get file attribute*/
             unifycr_file_attr_t attr_val;
@@ -151,6 +154,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_sl
         break;
 
     case COMM_READ:
+printf("cmd COMM_READ\n");
         num = *(((int *)ptr_cmd) + 1);
         /* result is handled by the individual thread in
          * the request manager*/
@@ -158,6 +162,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_sl
         break;
 
     case COMM_MDGET:
+printf("cmd COMM_MDGET\n");
         num = *(((int *)ptr_cmd) + 1);
         rc = rm_fetch_md(sock_id, num);
         if (rc) {
@@ -171,6 +176,7 @@ int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_sl
         break;
 
     case COMM_UNMOUNT:
+printf("cmd COMM_UNMOUNT\n");
         unifycr_broadcast_exit(sock_id);
         rc = ULFS_SUCCESS;
         break;
