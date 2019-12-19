@@ -18,6 +18,7 @@ BASE_SRCS = famfs_env.h famfs_error.h famfs_stats.h \
 	famfs_stats.c \
 	famfs_ktypes.h famfs_bitops.h famfs_bitmap.h famfs_bitmap.c \
 	famfs_bbitops.h famfs_bbitmap.h famfs_bbitmap.c \
+	f_pool.h f_layout.h \
 	famfs_maps.h famfs_maps.c util.c
 
 libfamfs_common_la_SOURCES = $(BASE_SRCS)

@@ -42,7 +42,7 @@ typedef struct fam_dev_ {
 	uint64_t	offset;		/* remote memory offset, bytes */
 	char		*url;		/* GenZ device URL */
 	uint64_t	pkey;		/* protection key associated with the remote memory */
-	void		*usr_buf;	/* optional user buffer */
+	void		*usr_desc;	/* optional user buffer descriptor */
 	/* unsigned long */
 	fi_addr_t	fi_addr;	/* array index of fabric address returned by av_insert */
 	uint64_t	virt_addr;	/* address of remote memory to access or NULL */
@@ -52,16 +52,16 @@ typedef struct fam_dev_ {
 	struct fid_cq	*tx_cq;		/* comlition queue bound to this endpoint or NULL */
 } FAM_DEV_t;
 
-typedef struct fam_bdev_ {
+typedef struct f_bdev_ {
 	dev_t		dev_mm;
 	char		*path;
 	int		fd;
-} FAM_BDEV_t;
+} F_BDEV_t;
 
 typedef struct f_dev_t {
     union {
 	struct fam_dev_		f;
-	struct fam_bdev_	b;
+	struct f_bdev_		b;
     };
 } F_DEV_t;
 
