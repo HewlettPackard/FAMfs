@@ -1,7 +1,7 @@
 libexec_PROGRAMS = test_write_gotcha test_read_gotcha test_write_static test_read_static
 libexec_PROGRAMS += test_prw_gotcha test_prw_static
 
-AM_CFLAGS = -Wall
+AM_CFLAGS = -Wall $(MPI_CFLAGS)
 
 test_gotcha_ldadd = ../src/libfamfs_gotcha.la -lmpi
 test_static_ldadd = ../src/libfamfs.la -lmpi
