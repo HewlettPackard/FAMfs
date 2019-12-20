@@ -411,10 +411,6 @@ int main(int argc, char *argv[]) {
     else
             read_buf = malloc(blk_sz);
 
-    if (to_unmount) {
-            unifycr_mount("/tmp/mnt", rank, rank_num,\
-                    0, 3);
-    }
     */
 
     if (pat == 1) {
@@ -552,9 +548,13 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
     }
 
-    // *** this will only free libfabric context and WILL NOT shut down servers
-    if (to_unmount)
-        unifycr_unmount();
+    if (rank == 0) {
+	if (to_unmount)
+	    unifycr_shutdown();
+	else
+	    // this will only free libfabric context and WILL NOT shut down servers
+	    unifycr_unmount();
+    }
 
     famsim_stats_free(famsim_ctx);
 
