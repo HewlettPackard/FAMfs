@@ -1388,15 +1388,15 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
      * */
 
     /*convert local fid to global fid*/
-    unifycr_fattr_t tmp_meta_entry;
-    unifycr_fattr_t *ptr_meta_entry;
+    f_fattr_t tmp_meta_entry;
+    f_fattr_t *ptr_meta_entry;
     for (i = 0; i < count; i++) {
         read_req[i].fid -= unifycr_fd_limit;
         tmp_meta_entry.fid = read_req[i].fid;
 
-        ptr_meta_entry = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
+        ptr_meta_entry = (f_fattr_t *)bsearch(&tmp_meta_entry,
                          unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                         sizeof(unifycr_fattr_t), compare_fattr);
+                         sizeof(f_fattr_t), compare_fattr);
         if (ptr_meta_entry != NULL) {
             read_req[i].fid = ptr_meta_entry->gfid;
         }
@@ -1577,16 +1577,16 @@ int famfs_read(read_req_t *read_req, int count)
     int *rc_ptr = (int *)shm_recvbuf;
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
 
-    unifycr_fattr_t tmp_meta_entry;
-    unifycr_fattr_t *ptr_meta_entry;
+    f_fattr_t tmp_meta_entry;
+    f_fattr_t *ptr_meta_entry;
 
     for (i = 0; i < count; i++) {
         read_req[i].fid -= unifycr_fd_limit;
         tmp_meta_entry.fid = read_req[i].fid;
 
-        ptr_meta_entry = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
+        ptr_meta_entry = (f_fattr_t *)bsearch(&tmp_meta_entry,
                          unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                         sizeof(unifycr_fattr_t), compare_fattr);
+                         sizeof(f_fattr_t), compare_fattr);
         if (ptr_meta_entry != NULL) {
             read_req[i].fid = ptr_meta_entry->gfid;
         } else {

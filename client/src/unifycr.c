@@ -1017,14 +1017,15 @@ static int unifycr_get_global_fid(const char *path, int *gfid)
  * @param gfid: global file id
  * @return: error code
  * */
-static int set_global_file_meta(unifycr_fattr_t *f_meta)
+static int set_global_file_meta(f_fattr_t *f_meta)
 {
     int cmd = COMM_META;
     int flag = 2;
+    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .fm_cmd = 2, .fm_data = *f_meta};
+
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
-    memcpy(cmd_buf + sizeof(int) + sizeof(int),
-           f_meta, sizeof(unifycr_fattr_t));
+    memcpy(cmd_buf + sizeof(int) + sizeof(int), f_meta, sizeof(f_fattr_t));
 
     int rc = __real_write(client_sockfd, cmd_buf, sizeof(cmd_buf));
     if (rc != 0) {
@@ -1084,16 +1085,17 @@ static int set_global_file_meta(unifycr_fattr_t *f_meta)
  * @return: file_meta that point to the structure of
  * the retrieved metadata
  * */
-static int get_global_file_meta(int gfid, unifycr_fattr_t **file_meta)
+static int get_global_file_meta(int gfid, f_fattr_t **file_meta)
 {
     /* format value length, payload 1, payload 2*/
     int cmd = COMM_META;
-
     int flag = 1;
+
+    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .fm_cmd = 1, .fm_gfid = gfid};
+
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
-    memcpy(cmd_buf + sizeof(int) + sizeof(int),
-           &gfid, sizeof(int));
+    memcpy(cmd_buf + sizeof(int) + sizeof(int), &gfid, sizeof(int));
 
     int rc = __real_write(client_sockfd, cmd_buf, sizeof(cmd_buf));
     if (rc != 0) {
@@ -1143,8 +1145,8 @@ static int get_global_file_meta(int gfid, unifycr_fattr_t **file_meta)
         return -1;
     }
 
-    *file_meta = (unifycr_fattr_t *)malloc(sizeof(unifycr_fattr_t));
-    memcpy(*file_meta, cmd_buf + 2 * sizeof(int), sizeof(unifycr_fattr_t));
+    *file_meta = (f_fattr_t *)malloc(sizeof(f_fattr_t));
+    memcpy(*file_meta, cmd_buf + 2 * sizeof(int), sizeof(f_fattr_t));
     return UNIFYCR_SUCCESS;
 }
 
@@ -1154,11 +1156,11 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
     size_t size;
     int cmd = COMM_META;
     int flag = 4;
+    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .fm_cmd = 4, .fam_id = fam_id};
 
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
-    memcpy(cmd_buf + sizeof(int) + sizeof(int),
-           &fam_id, sizeof(int));
+    memcpy(cmd_buf + sizeof(int) + sizeof(int), &fam_id, sizeof(int));
 
     int rc = __real_write(client_sockfd, cmd_buf, sizeof(cmd_buf));
     if (rc != 0) {
@@ -1220,10 +1222,10 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
  * */
 
 static int ins_file_meta(unifycr_fattr_buf_t *ptr_f_meta_log,
-                         unifycr_fattr_t *ins_fattr)
+                         f_fattr_t *ins_fattr)
 {
     int meta_cnt = *(ptr_f_meta_log->ptr_num_entries), i;
-    unifycr_fattr_t *meta_entry = ptr_f_meta_log->meta_entry;
+    f_fattr_t *meta_entry = ptr_f_meta_log->meta_entry;
 
     /* TODO: Improve the search time */
     for (i = meta_cnt - 1; i >= 0; i--) {
@@ -1286,7 +1288,7 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
 
             gfid = abs(gfid);
 
-            unifycr_fattr_t *ptr_meta = NULL;
+            f_fattr_t *ptr_meta = NULL;
             rc = get_global_file_meta(gfid, &ptr_meta);
             if (ptr_meta == NULL) {
                 fid = -1;
@@ -1352,8 +1354,8 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
 
             if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
                 /*create a file and send its attribute to key-value store*/
-                unifycr_fattr_t *new_fmeta =
-                    (unifycr_fattr_t *)malloc(sizeof(unifycr_fattr_t));
+                f_fattr_t *new_fmeta =
+                    (f_fattr_t *)malloc(sizeof(f_fattr_t));
                 strcpy(new_fmeta->filename, norm_path);
                 new_fmeta->fid = fid;
                 new_fmeta->gfid = gfid;
@@ -1507,7 +1509,7 @@ static void *unifycr_init_pointers(void *superblock)
         ptr += unifycr_max_index_entries * sizeof(md_index_t);
         unifycr_fattrs.ptr_num_entries = (long *)ptr;
         ptr += unifycr_page_size;
-        unifycr_fattrs.meta_entry = (unifycr_fattr_t *)ptr;
+        unifycr_fattrs.meta_entry = (f_fattr_t *)ptr;
     }
     return ptr;
 }
@@ -1950,7 +1952,7 @@ static int unifycr_init(int rank)
             if (!configurator_int_val(client_cfg.unifycr_fattr_buf_size, &l))
                     unifycr_fattr_buf_size = (size_t)l;
             unifycr_max_fattr_entries =
-                unifycr_fattr_buf_size / sizeof(unifycr_fattr_t);
+                unifycr_fattr_buf_size / sizeof(f_fattr_t);
 
         }
 
@@ -2032,7 +2034,7 @@ static int unifycr_init(int rank)
             superblock_size += unifycr_max_index_entries
                                * sizeof(md_index_t) + unifycr_page_size;
             superblock_size += unifycr_max_fattr_entries
-                               * sizeof(unifycr_fattr_t) + unifycr_page_size;
+                               * sizeof(f_fattr_t) + unifycr_page_size;
             glb_superblock_size = superblock_size;
         }
 
@@ -2266,7 +2268,7 @@ static int unifycr_sync_to_del()
         - unifycr_superblock;
 
     long fmeta_size = unifycr_max_fattr_entries *
-                      sizeof(unifycr_fattr_t);
+                      sizeof(f_fattr_t);
 
     long data_offset =
         (void *)unifycr_chunks - unifycr_superblock;
@@ -2286,7 +2288,7 @@ static int unifycr_sync_to_del()
     c.app_id = app_id;
 
     memcpy(cmd_buf + 2 * sizeof(int), &local_rank_idx, sizeof(int));
-    c.lcl_rix = local_rank_idx;
+    c.cid = local_rank_idx;
 
     memcpy(cmd_buf + 3 * sizeof(int), &dbg_rank, sizeof(int)); /*add debug info*/
     c.dbg_rnk = dbg_rank;
@@ -2590,8 +2592,8 @@ static int unifycr_init_socket(int proc_id, int l_num_procs_per_node,
 
 int compare_fattr(const void *a, const void *b)
 {
-    const unifycr_fattr_t *ptr_a = a;
-    const unifycr_fattr_t *ptr_b = b;
+    const f_fattr_t *ptr_a = a;
+    const f_fattr_t *ptr_b = b;
 
     if (ptr_a->fid > ptr_b->fid)
         return 1;

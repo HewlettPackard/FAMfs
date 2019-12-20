@@ -761,13 +761,13 @@ static int unifycr_logio_chunk_write(
         cur_idx.length = count;
 
         /* find the corresponding file attr entry and update attr*/
-        unifycr_fattr_t tmp_meta_entry;
+        f_fattr_t tmp_meta_entry;
         tmp_meta_entry.fid = fid;
-        unifycr_fattr_t *ptr_meta_entry
-            = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
+        f_fattr_t *ptr_meta_entry
+            = (f_fattr_t *)bsearch(&tmp_meta_entry,
                                          unifycr_fattrs.meta_entry,
                                          *unifycr_fattrs.ptr_num_entries,
-                                         sizeof(unifycr_fattr_t), compare_fattr);
+                                         sizeof(f_fattr_t), compare_fattr);
         if (ptr_meta_entry !=  NULL) {
             ptr_meta_entry->file_attr.st_size = pos + count;
         }
@@ -858,12 +858,12 @@ static int unifycr_logio_chunk_write(
 
         /* find the corresponding file attr entry and update attr*/
         md_index_t cur_idx;
-        unifycr_fattr_t tmp_meta_entry;
+        f_fattr_t tmp_meta_entry;
         tmp_meta_entry.fid = fid;
-        unifycr_fattr_t *ptr_meta_entry
-            = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
+        f_fattr_t *ptr_meta_entry
+            = (f_fattr_t *)bsearch(&tmp_meta_entry,
                                          unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                                         sizeof(unifycr_fattr_t), compare_fattr);
+                                         sizeof(f_fattr_t), compare_fattr);
         if (ptr_meta_entry !=  NULL) {
             ptr_meta_entry->file_attr.st_size = pos + count;
         }

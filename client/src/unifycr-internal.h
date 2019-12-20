@@ -81,7 +81,6 @@
  */
 #define UNIFYCR_MAX_FILEDESCS    ( UNIFYCR_MAX_FILES )
 
-#define UNIFYCR_MAX_FILENAME     ( 128 )
 
 #define UNIFYCR_STREAM_BUFSIZE   ( 1 * 1024 * 1024 )
 
@@ -317,16 +316,10 @@ typedef struct {
     md_index_t *index_entry;
 } unifycr_index_buf_t;
 
-typedef struct {
-    int fid;
-    int gfid;
-    char filename[UNIFYCR_MAX_FILENAME];
-    struct stat file_attr;
-} unifycr_fattr_t;
 
 typedef struct {
     off_t *ptr_num_entries;
-    unifycr_fattr_t *meta_entry;
+    f_fattr_t *meta_entry;
 } unifycr_fattr_buf_t;
 
 typedef struct {

@@ -2,10 +2,20 @@
 #define FAMFS_GLOBAL_H_
 
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <inttypes.h>
 
 
 #define GEN_STR_LEN 1024
+#define UNIFYCR_MAX_FILENAME     ( 128 )
+
+
+typedef struct {
+    int fid;
+    int gfid;
+    char filename[UNIFYCR_MAX_FILENAME];
+    struct stat file_attr;
+} f_fattr_t;
 
 
 typedef enum {
@@ -25,10 +35,10 @@ typedef enum {
 
 typedef struct {
     cmd_lst_t           opcode;
+    int                 cid;
     union {
         struct {
             int         app_id;
-            int         lcl_rix;
             int         dbg_rnk;
             int         num_prc;
             int         rqbf_sz;
@@ -40,10 +50,26 @@ typedef struct {
             long        fmet_sz;
             long        data_of;
             long        data_sz;
-            char        ext_dir[F_MAX_FNM];
+            char        ext_dir[UNIFYCR_MAX_FILENAME];
+        };
+        struct {
+            int         fm_cmd;
+            union {
+                f_fattr_t   fm_data;
+                int         fm_gfid;
+                int         fam_id;
+            };
         };
     };
 } f_dcmd_t;
+
+typedef struct {
+    cmd_lst_t           ackcode;
+    int                 cid;
+    union {
+        
+    };
+} f_dack_t;
 
 #define F_MAX_CMDQ     64
 #define F_CMDQ_NAME    "f_cmdq"
