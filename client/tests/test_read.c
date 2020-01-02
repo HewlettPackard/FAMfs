@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
 	}
 	if (blk_sz == 0)
 		blk_sz = tran_sz;
-	if (pat != 0 || pat != 1) {
+	if (pat != 0 && pat != 1) {
 		printf("Option 'p' must be one of 0: N-1 segment/strided, 1: N-N\n");
 		exit(1);
 	}
