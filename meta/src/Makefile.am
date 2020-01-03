@@ -37,8 +37,7 @@ libmdhim_la_SOURCES = Mlog2/mlog2.c \
                      mdhim.h \
                      uthash/uthash.h
 
-libfamfs_meta_la_SOURCES = f_pool.h f_layout.h \
-                     f_map.h f_map.c
+libfamfs_meta_la_SOURCES = f_map.h f_map.c
 
 LDADD = $(top_builddir)/common/src/libfamfs_common.la \
         $(top_builddir)/userspace-rcu/src/liburcu.la

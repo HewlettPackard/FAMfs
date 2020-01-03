@@ -81,6 +81,7 @@
     UNIFYCR_CFG(mddevice, pk, INT, 0, "MD region protection key", NULL) \
     UNIFYCR_CFG(mddevice, size, INT, 1M, "MD size (bytes)", NULL) \
     UNIFYCR_CFG(mddevice, offset, INT, 0, "MD offset (bytes)", NULL) \
+    UNIFYCR_CFG(devices, uuid, STRING, NULLSTRING, "device UUID", configurator_uuid_check) \
     UNIFYCR_CFG(devices, extent_size, INT, UNIFYCR_EXTENT_SIZE, "pool extent size in bytes", NULL) \
     UNIFYCR_CFG(devices, emulated, BOOL, off, "FAMs are emulated", NULL) \
     UNIFYCR_CFG(devices, pk, INT, 0, "default FAM protection key", NULL) \
@@ -221,6 +222,12 @@ int configurator_get_sizes(unifycr_cfg_t *cfg,
 			   const char *section,
 			   const char *key,
 			   int *keylist_size);
+
+static inline int configurator_get_sec_size(unifycr_cfg_t *cfg,
+					    const char *section)
+{
+	return configurator_get_sizes(cfg, section, NULL, NULL);
+}
 
 /* validate version 4 UUID */
 int f_parse_uuid(const char *s, uuid_t *uuid_p);

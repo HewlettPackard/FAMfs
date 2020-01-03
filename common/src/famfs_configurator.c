@@ -291,9 +291,11 @@ int unifycr_config_set_defaults(unifycr_cfg_t *cfg)
     cfg->n_##sec##_##key = 0;						\
     val = stringify(dv);						\
     if (0 != strcmp(val, "NULLSTRING")) {				\
-	cfg->sec##_##key[0][0] =					\
+	for (unsigned u=0; u < F_CFG_MSEC_MAX; u++) {			\
+	    cfg->sec##_##key[u][0] =					\
 	     (!strcmp(#typ,"STRING") && val[0]=='\"' && strlen(val)>1)?	\
-		strndup(val+1, strlen(val)-2) : strdup(val);		\
+			strndup(val+1, strlen(val)-2) : strdup(val);	\
+	}								\
     }
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)   \
@@ -1093,11 +1095,11 @@ int configurator_uuid_check(const char *s __attribute__ ((unused)),
                                const char *val,
                                char **o __attribute__ ((unused)))
 {
-    if (val)
-	return f_parse_uuid(val, NULL);
-    return 0; /* pass null strings */
+    /* null string is Ok */
+    return f_parse_uuid(val, NULL);
 }
 
+/* Parse UUID version 4 string to 128-bit value */
 int f_parse_uuid(const char *s, uuid_t *uuid_p) {
     union {
 	uint128_t uuid;
@@ -1110,6 +1112,8 @@ int f_parse_uuid(const char *s, uuid_t *uuid_p) {
     } u;
     int rc;
 
+    if (s == NULL)
+	return 0; /* null string is Ok */
     if (*s == '{')
 	s++;
     rc = sscanf(s, "%08X-%04hX-%04hX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
@@ -1121,7 +1125,7 @@ int f_parse_uuid(const char *s, uuid_t *uuid_p) {
 	if ((u.d3 & 0xf000) == 0x4000 && (u.d4[0] & 0xc0) == 0x80) {
 	    if (uuid_p)
 		*(uint128_t *)uuid_p = u.uuid;
-	    return 0;
+	    return 0; /* Valid UUID */
 	}
 	return -2; /* Not an UUID version 4 */
     }
@@ -1221,7 +1225,10 @@ int famfs_config_check_multisec(unifycr_cfg_t *cfg)
     return rc;
 }
 
-/* Return actual section size; set *keylist_size to key list size */
+/* Return actual section size and key list size under section
+ * at given index in *keylist_size,
+ * given section name 'section', key 'kee' and the index.
+ */
 int configurator_get_sizes(unifycr_cfg_t *cfg,
 			   const char *section,
 			   const char *kee,

@@ -160,6 +160,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define META_DEFAULT_RANGE_SZ MIB
 
 /* Pool and layout defaults */
+#define FAMFS_PDEVS_UUID_DEF	"00000000-0000-4000-8000-000000000000"
 #define UNIFYCR_EXTENT_SIZE	(1 * GIB)
 #define UNIFYCR_EXTENT0_OFFSET	0
 #define UNIFYCR_ION_COUNT	1

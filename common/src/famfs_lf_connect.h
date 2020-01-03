@@ -37,9 +37,8 @@ typedef struct fam_map_ {
 } FAM_MAP_t;
 
 typedef struct fam_dev_ {
-	uuid_t		uuid;
-	size_t		size;		/* remote memory size, bytes */
-	uint64_t	offset;		/* remote memory offset, bytes */
+//	size_t		size;		/* remote memory size, bytes */
+//	uint64_t	offset;		/* remote memory offset, bytes */
 	char		*url;		/* GenZ device URL */
 	uint64_t	pkey;		/* protection key associated with the remote memory */
 	void		*usr_buf;	/* optional user buffer */
@@ -58,7 +57,7 @@ typedef struct fam_bdev_ {
 	int		fd;
 } FAM_BDEV_t;
 
-typedef struct f_dev_t {
+typedef struct f_dev_ {
     union {
 	struct fam_dev_		f;
 	struct fam_bdev_	b;
