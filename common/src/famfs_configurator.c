@@ -705,7 +705,8 @@ int unifycr_config_process_ini_file(unifycr_cfg_t *cfg,
 
     if (file == NULL)
         return EINVAL;
- printf(" process_ini_file:'%s'\n", file);
+
+    //printf(" process_ini_file:'%s'\n", file);
     inih_rc = ini_parse(file, inih_config_handler, cfg);
     switch (inih_rc) {
     case 0:
