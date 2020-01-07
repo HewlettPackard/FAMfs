@@ -107,7 +107,8 @@ extern "C" {
 
 /* unifycr_cfg_t struct */
 typedef struct {
-    int sec_i; /* for parser use only: current section number */
+    unsigned int sec_i; /* for parser use only: current section number */
+    char *cur_key;	/* for ini parser */
 
 #define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn) \
     char *sec##_##key;
@@ -117,7 +118,7 @@ typedef struct {
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
     char *sec##_##key[F_CFG_MSEC_MAX][(me>0?me:F_CFG_MSKEY_MAX)];	\
-    unsigned n_##sec##_##key; /* second index: key instance */
+    unsigned n_##sec##_##key[F_CFG_MSEC_MAX]; /* second index: key instance */
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, dv, desc, vfn, me, opt, use) \
     char *sec##_##key[me]; \
@@ -166,7 +167,7 @@ int unifycr_config_process_ini_file(unifycr_cfg_t *cfg,
 
 int unifycr_config_validate(unifycr_cfg_t *cfg);
 
-int famfs_config_check_multisec(unifycr_cfg_t *cfg);
+int famfs_config_setdef_multisec(unifycr_cfg_t *cfg);
 
 /* validate function prototype
    -  Returns: 0 for valid input, non-zero otherwise.

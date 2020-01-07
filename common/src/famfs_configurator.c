@@ -36,6 +36,12 @@
 #define stringify_indirect(x) #x
 #define stringify(x) stringify_indirect(x)
 
+static int validate_value(const char *section,
+			  const char *key,
+			  const char *val,
+			  const char *typ,
+			  configurator_validate_fn vfn,
+			  char **new_val);
 
 // initialize configuration using all available methods
 int unifycr_config_init(unifycr_cfg_t *cfg,
@@ -43,7 +49,8 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
                         char **argv)
 {
     int rc;
-    char *syscfg = NULL;
+    char *syscfg;
+    char *new_val = NULL;
 
     if (cfg == NULL)
         return -1;
@@ -55,21 +62,22 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
     if (rc)
         return rc;
 
-    // validate default settings
-    rc = unifycr_config_validate(cfg);
-    if (rc)
-        return rc;
-
     // process system config file (if available)
+    rc = validate_value("unifycr", "configfile", cfg->unifycr_configfile,
+	"STRING", &configurator_file_check, &new_val);
+    if (rc) {
+	free(cfg->unifycr_configfile);
+	cfg->unifycr_configfile = NULL;
+    } else if (new_val != NULL) {
+	free(cfg->unifycr_configfile);
+	cfg->unifycr_configfile = new_val;
+    }
     syscfg = cfg->unifycr_configfile;
-    rc = configurator_file_check(NULL, NULL, syscfg, NULL);
-    if (rc == 0) {
+    if (syscfg) {
         rc = unifycr_config_process_ini_file(cfg, syscfg);
         if (rc)
             return rc;
     }
-    if (syscfg != NULL)
-        free(syscfg);
     cfg->unifycr_configfile = NULL;
 
     // process environment (overrides defaults and system config)
@@ -84,19 +92,32 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
 
     // read config file passed on command-line (does not override cli args)
     if (cfg->unifycr_configfile != NULL) {
-        rc = unifycr_config_process_ini_file(cfg, cfg->unifycr_configfile);
-        if (rc)
-            return rc;
+	if (syscfg == NULL) {
+	    rc = unifycr_config_process_ini_file(cfg, cfg->unifycr_configfile);
+	    if (rc)
+		return rc;
+	} else {
+	    free(cfg->unifycr_configfile);
+	    cfg->unifycr_configfile = syscfg;
+	}
+    } else {
+	/* actual config file */
+	cfg->unifycr_configfile = syscfg;
     }
 
-    // validate settings
+    // validate config file settings
     rc = unifycr_config_validate(cfg);
     if (rc)
         return rc;
 
-    // check and set multi-section ids
-    rc = famfs_config_check_multisec(cfg);
+    // set multi-section ids and defaults
+    rc = famfs_config_setdef_multisec(cfg);
     return rc;
+
+    // validate multi-section settings
+    rc = unifycr_config_validate(cfg);
+    if (rc)
+        return rc;
 }
 
 // cleanup allocated state
@@ -125,8 +146,8 @@ void unifycr_config_free(unifycr_cfg_t *cfg)
 		cfg->sec##_##key[uu][u] = NULL;			\
 	    }							\
 	}							\
-    }								\
-    cfg->n_##sec##_##key = 0;
+	cfg->n_##sec##_##key[uu] = 0;				\
+    }
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)   \
     for (u = 0; u < me; u++) {                                          \
@@ -142,6 +163,7 @@ void unifycr_config_free(unifycr_cfg_t *cfg)
 #undef UNIFYCR_CFG_CLI
 #undef UNIFYCR_CFG_MULTI
 #undef UNIFYCR_CFG_MULTI_CLI
+    free(cfg->cur_key);
 }
 
 // print configuration to specified file (or stderr)
@@ -268,6 +290,7 @@ void unifycr_config_print_ini(unifycr_cfg_t *cfg,
 int unifycr_config_set_defaults(unifycr_cfg_t *cfg)
 {
     char *val;
+    int rc = 0;
 
     if (cfg == NULL)
         return -1;
@@ -288,14 +311,19 @@ int unifycr_config_set_defaults(unifycr_cfg_t *cfg)
         cfg->sec##_##key = strdup(val);
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
-    cfg->n_##sec##_##key = 0;						\
+    /* cfg->n_##sec##_##key[i] = 0; */					\
     val = stringify(dv);						\
     if (0 != strcmp(val, "NULLSTRING")) {				\
-	for (unsigned u=0; u < F_CFG_MSEC_MAX; u++) {			\
-	    cfg->sec##_##key[u][0] =					\
-	     (!strcmp(#typ,"STRING") && val[0]=='\"' && strlen(val)>1)?	\
-			strndup(val+1, strlen(val)-2) : strdup(val);	\
+	if (cfg->n_##sec##_##key[0]) {					\
+	    fprintf(stderr, "FAMFS CONFIG ERROR: "			\
+		    "CFG_MULTI entry %s_%s is INVALID duplicate\n",	\
+		    #sec, #key);					\
+	    rc = 1; /* Error */						\
 	}								\
+	cfg->sec##_##key[0][0] =					\
+	    (!strcmp(#typ,"STRING") && val[0]=='\"' && strlen(val)>1)?	\
+			  strndup(val+1, strlen(val)-2) : strdup(val);	\
+	cfg->n_##sec##_##key[0] = 1;					\
     }
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)   \
@@ -308,7 +336,7 @@ int unifycr_config_set_defaults(unifycr_cfg_t *cfg)
 #undef UNIFYCR_CFG_MULTI
 #undef UNIFYCR_CFG_MULTI_CLI
 
-    return 0;
+    return rc;
 }
 
 
@@ -577,6 +605,9 @@ int inih_config_handler(void *user,
 {
     char *curval;
     char *defval;
+    unsigned int key_i; /* key instance, i.e. the second index in multi-section */
+    bool new_key;
+    int rc = 1;
     unifycr_cfg_t *cfg = (unifycr_cfg_t *) user;
     assert(cfg != NULL);
 
@@ -586,18 +617,14 @@ int inih_config_handler(void *user,
 	    cfg->sec_i = 0;
 	else
 	    cfg->sec_i++;
-
-#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)
-#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)
-#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)	\
-	    cfg->n_##sec##_##key = 0;
-#define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)
-	UNIFYCR_CONFIGS;
-#undef UNIFYCR_CFG
-#undef UNIFYCR_CFG_CLI
-#undef UNIFYCR_CFG_MULTI
-#undef UNIFYCR_CFG_MULTI_CLI
 	return 1;
+    }
+
+    /* new key? */
+    new_key = !cfg->cur_key || strcmp(cfg->cur_key, kee);
+    if (new_key) {
+	free(cfg->cur_key);
+	cfg->cur_key = strdup(kee);
     }
 
     // if not already set by CLI args, set cfg cfgs
@@ -631,18 +658,25 @@ int inih_config_handler(void *user,
     }
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
-    else if ((strcmp(section, #sec) == 0) &&				\
-	     (strcmp(kee, #key) == 0)) {				\
-	char **v =							\
-	    &cfg->sec##_##key[cfg->sec_i][cfg->n_##sec##_##key];	\
-	curval = *v;							\
-	defval = stringify(dv);						\
-	if (curval && strcmp(defval, curval) == 0) {			\
-	    free(*v);							\
+    else if ((strcmp(section, #sec)==0) && (strcmp(kee, #key)==0)) {	\
+	key_i = new_key? 0 : cfg->n_##sec##_##key[cfg->sec_i];		\
+	if (key_i >= (me? me : F_CFG_MSKEY_MAX)) {			\
+	    fprintf(stderr, "FAMFS CONFIG ERROR: "			\
+		    "EXTRA key %s[%u].%s[%u]\n",			\
+		    #sec, cfg->sec_i, #key, key_i);			\
+	    rc = 0; /* Error */						\
+	} else {							\
+	    char **v = &cfg->sec##_##key[cfg->sec_i][key_i++];		\
+	    curval = *v;						\
+	    defval = stringify(dv);					\
+	    if (curval && strcmp(defval, curval) == 0)			\
+		free(*v);						\
+	    *v = (!strcmp(#typ,"STRING") &&				\
+		  val[0]=='\"' && strlen(val)>1)?			\
+			strndup(val+1, strlen(val)-2) : strdup(val);	\
+	    if (cfg->n_##sec##_##key[cfg->sec_i] < key_i)		\
+		cfg->n_##sec##_##key[cfg->sec_i] = key_i;		\
 	}								\
-	*v = (!strcmp(#typ,"STRING") && val[0]=='\"' && strlen(val)>1)?	\
-	     strndup(val+1, strlen(val)-2) : strdup(val);		\
-	cfg->n_##sec##_##key++;						\
     }
 
 #define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)   \
@@ -656,7 +690,7 @@ int inih_config_handler(void *user,
 #undef UNIFYCR_CFG_MULTI
 #undef UNIFYCR_CFG_MULTI_CLI
 
-    return 1;
+    return rc;
 }
 
 // update config struct based on config file, using inih
@@ -671,7 +705,7 @@ int unifycr_config_process_ini_file(unifycr_cfg_t *cfg,
 
     if (file == NULL)
         return EINVAL;
-
+ printf(" process_ini_file:'%s'\n", file);
     inih_rc = ini_parse(file, inih_config_handler, cfg);
     switch (inih_rc) {
     case 0:
@@ -713,12 +747,12 @@ int unifycr_config_process_ini_file(unifycr_cfg_t *cfg,
 /* predefined validation functions */
 
 // utility routine to validate a single value given function
-int validate_value(const char *section,
-                   const char *key,
-                   const char *val,
-                   const char *typ,
-                   configurator_validate_fn vfn,
-                   char **new_val)
+static int validate_value(const char *section,
+			  const char *key,
+			  const char *val,
+			  const char *typ,
+			  configurator_validate_fn vfn,
+			  char **new_val)
 {
     if (vfn != NULL)
         return vfn(section, key, val, new_val);
@@ -1132,14 +1166,14 @@ int f_parse_uuid(const char *s, uuid_t *uuid_p) {
     return rc;
 }
 
-int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
+static int setdef_multisec(unifycr_cfg_t *cfg, const char *cursec)
 {
-    //char *sec##_##key[F_CFG_MSEC_MAX][1]
+    char *val;
     unsigned int i, ids, n;
     int rc = 0;
 
+    /* Get section count */
     ids = n = 0; /* ids starts with zero by default */
-
 #define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)
 #define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
@@ -1154,8 +1188,8 @@ int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
 			    "value for %s.%s has INVALID type:%s\n",	\
 			    #sec, #key, #typ);				\
 		} else if (i == 0) {					\
-		    n = ids = v? strtoul(v, NULL, 10) : 0;		\
-		} else if (v && strtoul(v,NULL,10) != (n = (i+ids))) {	\
+		    ids = v? strtoul(v, NULL, 10) : 0;			\
+		} else if (v && strtoul(v, NULL, 10) != (n = i)+ids) {	\
 		    rc = 2;						\
 		    fprintf(stderr, "FAMFS CONFIG ERROR: "		\
 			    "value '%s' for %s[%u].%s is INVALID %s\n",	\
@@ -1164,8 +1198,8 @@ int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
 	    }								\
 	} else {							\
 	    for (i = 0; i < F_CFG_MSEC_MAX; i++) {			\
-		if (cfg->sec##_##key[i][0] && (i + ids > n))		\
-		    n = i + ids;					\
+		if (cfg->sec##_##key[i][0] && (i > n))			\
+		    n = i; /* maximum second index */			\
 	    }								\
 	}								\
     }
@@ -1175,21 +1209,33 @@ int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
     if (rc)
 	return rc;
 
-    /* Set ids */
-    n -= ids;
+    /* n: section count, i.e. max first index */
     assert (n < F_CFG_MSEC_MAX);
     _Static_assert (F_CFG_MSEC_MAX < 1000U, "F_CFG_MSEC_MAX too big");
+    /* n_##sec##_##key[]: key count per section, i.e. max second index */
 
+    /* Set ids and apply the defaults */
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
-    if (!strcmp(cursec, #sec) && !strcmp("id", #key)) {			\
+    if (!strcmp(cursec, #sec) ) {					\
+	val = stringify(dv);						\
 	for (i = 0; i <= n; i++) {					\
-	    char **vp = &cfg->sec##_##key[i][0];			\
-	    if (*vp && strtoul(*vp, NULL, 10) != (i + ids)) {		\
-		free(*vp); *vp = NULL;					\
-	    }								\
-	    if (*vp == NULL) {						\
-		*vp = malloc(4);					\
-		snprintf(*vp, 4, "%u", i+ids);				\
+	    if (!strcmp("id", #key)) {					\
+		char **vp = &cfg->sec##_##key[i][0];			\
+		if (*vp && strtoul(*vp, NULL, 10) != (i + ids)) {	\
+		    free(*vp); *vp = NULL;				\
+		}							\
+		if (*vp == NULL) {					\
+		    *vp = malloc(4);					\
+		    snprintf(*vp, 4, "%u", i+ids);			\
+		}							\
+	    } else if (0 != strcmp(val, "NULLSTRING") &&		\
+		       cfg->n_##sec##_##key[i] == 0) {			\
+		assert (cfg->sec##_##key[i][0] == NULL);		\
+		cfg->sec##_##key[i][0] =				\
+			(!strcmp(#typ,"STRING") &&			\
+				val[0]=='\"' && strlen(val)>1)?		\
+			 strndup(val+1, strlen(val)-2) : strdup(val);	\
+		cfg->n_##sec##_##key[i] = 1;				\
 	    }								\
 	}								\
     }
@@ -1201,7 +1247,8 @@ int check_multisec(unifycr_cfg_t *cfg, const char *cursec)
     return 0;
 }
 
-int famfs_config_check_multisec(unifycr_cfg_t *cfg)
+/* Call setdef_multisec for every new multi-section */
+int famfs_config_setdef_multisec(unifycr_cfg_t *cfg)
 {
     char *cursec = NULL;
     int src, rc = 0;
@@ -1212,7 +1259,7 @@ int famfs_config_check_multisec(unifycr_cfg_t *cfg)
     if (!cursec || strcmp(cursec, #sec)) {			\
 	free(cursec);						\
 	cursec = strdup( #sec );				\
-	src = check_multisec(cfg, cursec);			\
+	src = setdef_multisec(cfg, cursec);			\
 	if (src && !rc)						\
 	    rc = src; /* report the first error */		\
     }

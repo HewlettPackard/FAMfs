@@ -41,8 +41,8 @@ url = "zhpe:///ion"
 
 [device]
 failed = true
-id = 4
-url = "zhpe:///ion"
+# id = 4
+# url = "zhpe:///ion"
 
 [ag] # Allocation group
 devices = [1,2] ; List of famid
