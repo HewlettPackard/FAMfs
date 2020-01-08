@@ -296,12 +296,15 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 }
 
 /* Layout configutation functions; defined in famfs_maps.c */
+struct f_layout_;
 struct f_layout_info_;
 struct unifycr_cfg_t_;
 int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
-int f_set_layout_info(struct unifycr_cfg_t_ *cfg);
+int f_set_layouts_info(struct unifycr_cfg_t_ *cfg);
+struct f_layout_ *f_get_layout(int layout_id);
+struct f_layout_ *f_get_layout_by_name(const char *moniker);
 struct f_layout_info_ *f_get_layout_info(int layout_id);
-void f_free_layout_info(void);
+void f_free_layouts_info(void);
 
 /*
  * DB-independent persistent KV store interface

@@ -52,7 +52,8 @@ geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
 devices = [3,4]
 
 [layout]
-id = 1 ; optional: layout ids starts with one
+# Default layout
+id = 0 ; optional: layout ids starts with zero
 name = "1D:1M"
 devices = [1,2,3,4] ; optional list of device IDs
 

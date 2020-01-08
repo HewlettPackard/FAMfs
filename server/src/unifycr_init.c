@@ -241,7 +241,7 @@ printf("4 %s", ULFS_str_errno(ULFS_ERROR_SOCKET));
         num_mds = 0;
     }
 
-    rc = f_set_layout_info(&server_cfg);
+    rc = f_set_layouts_info(&server_cfg);
     if (rc != 0) {
 	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_CFG));
 printf("5 %s", ULFS_str_errno(ULFS_ERROR_CFG));
@@ -661,7 +661,7 @@ static int unifycr_exit()
     free_lfs_ctx(&lfs_ctx_p);
 
     /* Allocated at common lib: free F_LAYOUT_INFO_t */
-    f_free_layout_info();
+    f_free_layouts_info();
 
     /* Allocated at main(): free unifycr_cfg_t */
     unifycr_config_free(&server_cfg);

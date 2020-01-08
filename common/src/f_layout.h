@@ -32,11 +32,8 @@ typedef struct f_pooldev_index_ {
     F_PDI_SHA_t		*sha;
 } F_POOLDEV_INDEX_t;
 
+/* Partition info */
 typedef struct f_layout_partition_ {
-    pthread_rwlock_t	lock;		/* partition lock */
-    struct f_layout_	*layout;	/* layout reference */
-
-    /* Partition info */
     uint32_t		part_num;	/* partition number */
     pthread_t		*thread;	/* partition (allocation) daemon thread struct */
 
@@ -107,7 +104,7 @@ typedef struct f_layout_ {
     long		thread_run_intl; /* layout allocator thread run interval */
     atomic_t		active_thread_count; /* layout active allocator threads count */
     uint32_t		thread_count;	/* layout allocator threads count */
-    struct f_layout_partition_	**lps;	/* layout partition structures pointers array */
+    struct f_layout_partition_	*lp;	/* layout partition structure or NULL */
 
     struct f_map_	*slabmap;	/* slab map */
     struct f_map_	*claimvec;	/* claim vector map */

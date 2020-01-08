@@ -317,7 +317,7 @@ int main (int argc, char *argv[]) {
     if (!md_cfg.layout_name || !db_opts) goto err;
 
     t = 2; /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     if ((lo_info = f_get_layout_info(layout_id)) == NULL) goto err;
 
@@ -362,7 +362,7 @@ int main (int argc, char *argv[]) {
     t = 8; /* Remove old DB files for Layout0 */
     rc = meta_sanitize(); db_opts = NULL;
     if (rc) goto err;
-    f_free_layout_info();
+    f_free_layouts_info();
     unifycr_config_free(&md_cfg);
 
 
@@ -377,7 +377,7 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -679,7 +679,7 @@ int main (int argc, char *argv[]) {
     t = 26;
     rc = meta_sanitize();
     if (rc) goto err;
-    f_free_layout_info();
+    f_free_layouts_info();
     unifycr_config_free(&md_cfg);
 
 
@@ -695,7 +695,7 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -958,7 +958,7 @@ int main (int argc, char *argv[]) {
     t = 26;
     rc = meta_sanitize();
     if (rc) goto err;
-    f_free_layout_info();
+    f_free_layouts_info();
     unifycr_config_free(&md_cfg);
 
 
@@ -973,7 +973,7 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -1291,7 +1291,7 @@ int main (int argc, char *argv[]) {
     t = 26;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layout_info();
+    f_free_layouts_info();
     unifycr_config_free(&md_cfg);
 
 
@@ -1307,7 +1307,7 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -1590,7 +1590,7 @@ int main (int argc, char *argv[]) {
     t = 26;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layout_info();
+    f_free_layouts_info();
     unifycr_config_free(&md_cfg);
 
     MPI_BARRIER;
