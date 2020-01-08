@@ -1,7 +1,7 @@
 AM_CPPFLAGS = -funroll-loops --param max-completely-peel-times=64
 AM_CFLAGS = -std=gnu99 -Wall -Wextra
 
-noinst_LTLIBRARIES = libfamfs_common.la
+noinst_LTLIBRARIES = libfamfs_common.la libfamfs_meta.la
 
 include_HEADERS = err_enumerator.h
 
@@ -28,6 +28,14 @@ libfamfs_common_la_CPPFLAGS = -D_GNU_SOURCE=1 $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) 
 libfamfs_common_la_CFLAGS = $(AM_CFLAGS)
 libfamfs_common_la_LDFLAGS = $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 libfamfs_common_la_LIBADD = -lm -lnuma -lrt -lpthread
+
+libfamfs_meta_la_SOURCES = f_map.h f_map.c
+libfamfs_meta_la_CPPFLAGS = -D_GNU_SOURCE=1 $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) \
+			-I$(top_srcdir)/userspace-rcu/include \
+			-I$(top_srcdir)/userspace-rcu/src
+libfamfs_meta_la_CFLAGS = $(AM_CFLAGS)
+libfamfs_meta_la_LIBADD = $(top_builddir)/userspace-rcu/src/liburcu.la \
+			libfamfs_common.la -lurcu-qsbr -lurcu-cds
 
 # For tests
 LDADD = libfamfs_common.la

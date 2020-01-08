@@ -1,4 +1,4 @@
-SUBDIRS = common userspace-rcu meta node server client t util
+SUBDIRS = userspace-rcu common meta node server client t util
 
 CONFIG = ordered
 
