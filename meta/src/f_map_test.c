@@ -16,6 +16,8 @@
 //#include "famfs_configurator.h"
 //#include "mdhim_options.h"
 #include "mdhim.h"
+#include "f_pool.h"
+#include "f_layout.h"
 
 
 /* TEST options */

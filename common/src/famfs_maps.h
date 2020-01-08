@@ -14,13 +14,8 @@
 #include "famfs_env.h"
 #include "famfs_ktypes.h"
 #include "famfs_bbitmap.h"
-#include "famfs_configurator.h"
 #include "f_dict.h"
 
-
-/* libfabric atomic types */
-typedef uint32_t	FI_UINT32_t;
-typedef uint64_t	FI_UINT64_t;
 
 /*
  * Slab Map (SM)
@@ -230,52 +225,6 @@ typedef struct f_pool_label_ {
     } __attribute__ ((packed));
 } F_POOL_LABEL_t;
 
-/* Pool device shareable atomics (blob) */
-typedef struct f_pdev_sha_ {
-    FI_UINT64_t __attribute__ ((aligned(8))) \
-			read_errors;
-    FI_UINT64_t		write_errors;
-    FI_UINT64_t		extents_used;
-    FI_UINT64_t		failed_extents;
-    struct {				/* Using struct to be able to BITOPS() */
-	FI_UINT64_t	flags;		/* pool device flags, */
-    } io;
-    FI_UINT64_t		bmap_size;	/* extent_bmap size, bytes, multiple of 8 */
-    FI_UINT64_t		extent_bmap[];
-} F_PDEV_SHA_t;
-/* struct f_pdev_sha_ actual size */
-#define F_PDEV_SZ(bmap_size) (sizeof(F_PDEV_SHA_t) + bmap_size*sizeof(FI_UINT64_t))
-/* extent_bmap size (bytes) required for the given extent count */
-#define F_EXT_BM_SIZE(ext) DIV_UP(ext, 8*sizeof(FI_UINT64_t))
-
-/* Flag specs for f_pdev_sha_ */
-enum pool_dev_flags {
-    _DEV_FAILED,	/* device failed */
-    _DEV_DISABLED,	/* device disabled (for example, being replaced) */
-    _DEV_MISSING,	/* device is missing from the pool */
-};
-
-BITOPS(Dev, Failed,     f_pdev_sha_, _DEV_FAILED)
-BITOPS(Dev, Disabled,   f_pdev_sha_, _DEV_DISABLED)
-BITOPS(Dev, Missing,    f_pdev_sha_, _DEV_MISSING)
-
-struct f_pool_;
-
-/* Layout info structure: the minimalictic data about the layout and the pool
- * that is read from the configuration file.
- */
-typedef struct f_layout_info_ {
-	struct f_pool_	*pool;		/* reference to parent pool structure */
-	/* About this layout */
-	char		*name;		/* layout moniker */
-	uint32_t	conf_id;	/* Layout ID in configuration file */
-	uint32_t	chunk_sz;	/* chunk size in bytes */
-	uint32_t	devnum;		/* total number of devices */
-	uint32_t	slab_stripes;	/* number of stripes in one slab */
-	uint16_t	chunks;		/* number of chunks constituting a stripe */
-	uint16_t	data_chunks;	/* number of data chunks in stripe */
-} F_LAYOUT_INFO_t;
-
 /* Map info */
 typedef struct f_map_info_ {
 	union {
@@ -347,9 +296,11 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 }
 
 /* Layout configutation functions; defined in famfs_maps.c */
+struct f_layout_info_;
+struct unifycr_cfg_t_;
 int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
-int f_set_layout_info(unifycr_cfg_t *cfg);
-F_LAYOUT_INFO_t *f_get_layout_info(int layout_id);
+int f_set_layout_info(struct unifycr_cfg_t_ *cfg);
+struct f_layout_info_ *f_get_layout_info(int layout_id);
 void f_free_layout_info(void);
 
 /*
@@ -388,7 +339,5 @@ int f_db_bdel(int map_id, void **keys, size_t size);
     _Static_assert( sizeof(F_SLAB_ENTRY_t) == 16,	"F_SLAB_ENTRY_t");
     _Static_assert( sizeof(F_EXTENT_ENTRY_t) == 8,	"F_EXTENT_ENTRY_t");
     _Static_assert( sizeof(FVAR_KVPAIR_t) == 24,	"FVAR_KVPAIR_t");
-    _Static_assert( sizeof(F_DICT_t) == 24*3,		"F_DICT_t");
-    _Static_assert( TYPE_ALINGMENT(F_DICT_t) == 8,	"F_DICT_t alignment");
 
 #endif /* FAMFS_MAPS_H_ */

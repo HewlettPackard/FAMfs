@@ -15,6 +15,8 @@
 
 #include "famfs_bitmap.h"
 #include "f_map.h"
+#include "f_pool.h"
+#include "f_layout.h"
 #include "mdhim.h"
 
 

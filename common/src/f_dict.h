@@ -134,5 +134,9 @@ typedef struct f_dict_ {
 
 void f_dict_free(F_DICT_t *d);
 
+/* Validate structure's size and/or alignment */
+    _Static_assert( sizeof(F_DICT_t) == 24*3,		"F_DICT_t");
+    _Static_assert( TYPE_ALINGMENT(F_DICT_t) == 8,	"F_DICT_t alignment");
+
 #endif /* F_DICT_H_ */
 

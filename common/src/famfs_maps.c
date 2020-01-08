@@ -5,8 +5,10 @@
  */
 
 #include "f_pool.h"
+#include "f_layout.h"
 #include "famfs_maps.h"
 #include "famfs_lf_connect.h"
+#include "famfs_configurator.h"
 
 
 F_POOL_t *pool = NULL;
@@ -28,7 +30,7 @@ int f_layout_parse_name(struct f_layout_info_ *info)
 		info->data_chunks = data;
 		info->chunks = data + parity;
 		info->chunk_sz = chunk_size;
-		info->slab_stripes = info->pool->info.extent_sz / chunk_size;
+		info->slab_stripes = pool->info.extent_sz / chunk_size;
 
 		if (!IN_RANGE(info->chunks, 1, info->devnum))
 			ret = -1;
@@ -215,7 +217,7 @@ static int set_layouts_cfg(unifycr_cfg_t *c)
     for (u = 0; u < pool_info->layouts_count; u++) {
 	if (configurator_int_val(c->layout_id[u][0], &l)) return -1;
 	layouts_info[u].conf_id = (unsigned int)l;
-	layouts_info[u].pool = pool;
+ //	layouts_info[u].pool = pool;
 	layouts_info[u].name = strdup(c->layout_name[u][0]);
 
 	count = u;
@@ -242,7 +244,7 @@ int f_set_layout_info(unifycr_cfg_t *cfg)
 /* Get layout 'layout_id' info */
 F_LAYOUT_INFO_t *f_get_layout_info(int layout_id) {
     if (layouts_info) {
-	int count = layouts_info->pool->info.layouts_count;
+	int count = pool->info.layouts_count;
 
 	if (IN_RANGE(layout_id, 0, count-1))
 	    return (void*)&layouts_info[layout_id];

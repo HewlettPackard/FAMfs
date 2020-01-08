@@ -14,10 +14,42 @@
 
 #include "famfs_env.h"
 #include "famfs_bitops.h"
-#include "famfs_maps.h"
+#include "f_dict.h"
+#include "list.h"
 
-struct f_dev_; /* defined in common/src/famfs_lf_connect.h */
-struct f_pool_;
+
+/* libfabric atomic types */
+typedef uint32_t	FI_UINT32_t;
+typedef uint64_t	FI_UINT64_t;
+
+/* Pool device shareable atomics (blob) */
+typedef struct f_pdev_sha_ {
+    FI_UINT64_t __attribute__ ((aligned(8))) \
+			read_errors;
+    FI_UINT64_t		write_errors;
+    FI_UINT64_t		extents_used;
+    FI_UINT64_t		failed_extents;
+    struct {				/* Using struct to be able to BITOPS() */
+	FI_UINT64_t	flags;		/* pool device flags, */
+    } io;
+    FI_UINT64_t		bmap_size;	/* extent_bmap size, bytes, multiple of 8 */
+    FI_UINT64_t		extent_bmap[];
+} F_PDEV_SHA_t;
+/* struct f_pdev_sha_ actual size */
+#define F_PDEV_SZ(bmap_size) (sizeof(F_PDEV_SHA_t) + bmap_size*sizeof(FI_UINT64_t))
+/* extent_bmap size (bytes) required for the given extent count */
+#define F_EXT_BM_SIZE(ext) DIV_UP(ext, 8*sizeof(FI_UINT64_t))
+
+/* Flag specs for f_pdev_sha_ */
+enum pool_dev_flags {
+    _DEV_FAILED,	/* device failed */
+    _DEV_DISABLED,	/* device disabled (for example, being replaced) */
+    _DEV_MISSING,	/* device is missing from the pool */
+};
+
+BITOPS(Dev, Failed,     f_pdev_sha_, _DEV_FAILED)
+BITOPS(Dev, Disabled,   f_pdev_sha_, _DEV_DISABLED)
+BITOPS(Dev, Missing,    f_pdev_sha_, _DEV_MISSING)
 
 /* Allocation group of devices */
 typedef struct f_ag_ {
@@ -63,6 +95,7 @@ typedef struct f_pool_ {
     F_DICT_t		*dict;		/* pool dictionary */
     pthread_spinlock_t	dict_lock;	/* dictionary lock */
     F_POOL_INFO_t	info;		/* front-most pool attributes */
+    struct list_head	layouts;	/* pool layouts list */
     uint32_t		pool_ags;	/* allocation group array size */
     uint32_t		pool_devs;	/* size of the pool device array, 2nd dimension */
     F_AG_t		*ags;		/* allocation group array */

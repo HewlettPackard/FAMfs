@@ -106,7 +106,7 @@ extern "C" {
 #endif
 
 /* unifycr_cfg_t struct */
-typedef struct {
+typedef struct unifycr_cfg_t_ {
     unsigned int sec_i; /* for parser use only: current section number */
     char *cur_key;	/* for ini parser */
 
