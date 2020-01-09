@@ -19,6 +19,46 @@
 
 #define DRIVE_MAP_SIZE  BITS_TO_LONGS(F_STRIPE_DISK_COUNT)
 
+
+typedef uint64_t	f_stripe_t;
+typedef uint32_t	f_sheet_t;
+
+#define R_STRIPE_SET_MAX	(64*KiB)
+struct f_stripe_set {
+    uint32_t		count;
+    f_stripe_t		*stripes;
+};
+
+struct f_sheet_usage {
+    uint32_t		used;		/* # stripes used (allocated) in sheet*/
+#if 0
+    uint32_t		claimed;	/* # stripes claimed (by r-volume) in sheet */
+    uint32_t		committed;	/* # stripes committed in sheet */
+    uint32_t		next;		/* next stripe to allocate in sheet */
+#endif
+};
+
+/* devel stats counters. */
+enum fl_stats_types {
+    FL_STRIPE_GET_REQ,
+    FL_STRIPE_GET,
+    FL_STRIPE_GET_W0,
+    FL_STRIPE_GET_W25,
+    FL_STRIPE_GET_W50,
+    FL_STRIPE_GET_W75,
+    FL_STRIPE_GET_W100,
+    FL_STRIPE_GET_ERR,
+    FL_STRIPE_GET_NOSPC_ERR,
+    FL_STRIPE_RELEASE_REQ,
+    FL_STRIPE_RELEASE_ERR,
+    FL_STRIPE_RELEASE_CLAIMDEC,
+    FL_SE_ALLOC,
+    FL_SE_FREE,
+    FL_SB_ALLOC,
+    FL_SB_FREE,
+    FL_NR_STATS,	/* # of stats counters. Must be last! */
+};
+
 /* Pool device index shareable atomics (blob) */
 typedef struct f_pdi_sha_ {
     FI_UINT32_t __attribute__ ((aligned(4))) \
@@ -42,7 +82,36 @@ typedef struct f_layout_partition_ {
     uint64_t		stripe0;	/* first stripe in this partition */
     uint64_t		stripe_count;	/* total number of stripes in this partition */
 
+    /* Sheet usage maps */
+    struct f_sheet_usage *sheet_usage;	/* stripe usage in each sheet */
+    unsigned long	*sheet_bmap;	/* Allocated sheets bitmap */
+    unsigned long	*sync_bmap;	/* Sync-ed sheets bitmap */
+    unsigned long	*recovering_bmap; /* Recovering sheets bitmap */
+    unsigned long	*error_logged_bmap; /* Sheet error logging bitmap */
+//    unsigned long	*ctv_bmap;	/* Allocated stripes bitmap (CTV only) */
+    uint32_t		bmap_size;	/* Bitmap size */
+    f_sheet_t		sync_count;
+//    uint32_t		sync_search;
+
+     /* Stripe allocation */
+    struct list_head	alloc_buckets;	/* pre-allocation buckets list */
+    atomic_t		bucket_count;	/* number of allocation buckets */
+    atomic_t		bucket_count_max; /* max number of allocation buckets - stats */
+    atomic_t		prealloced_stripes; /* number of stripes on the prealloc list */
+    uint64_t		lwm_stripes;	/* stripe preallocation list low water mark */
+    uint64_t		hwm_stripes;	/* stripe preallocation list high water mark */
+    uint64_t		max_alloc_stripes; /* preallocated stripes limit */
+    uint16_t		min_alloc_sheets; /* min # of sheets to pre-allocate stripes across */
+    int			increase_prealloc; /* flag to increase stripe allocation limits */
+
+    /* Stripe release/claim decrement */
+    struct list_head	claimdecq;	/* claim decrement queue */
+    pthread_rwlock_t	claimdec_lock;	/* claim decrement queue lock */
+    pthread_spinlock_t	alloc_lock;	/* stripe allocation lock */
 #if 0
+    struct list_head	releaseq;	/* stripe release queue */
+    pthread_spinlock_t	releaseq_lock;	/* stripe release queue lock */
+
     atomic_t	allocated_sheets;	/* partition allocated slabs counter */
     atomic_t	degraded_sheets;	/* partition degraded slabs counter */
     atomic_t	missing_dev_sheets;	/* slabs with missing devices counter */
@@ -51,6 +120,9 @@ typedef struct f_layout_partition_ {
     atomic_t	mapped_stripes;		/* partition mapped stripes counter */
 #endif
     int			alloc_error;	/* last allocation error */
+
+    /* REMOVEME: devel stats counters. */
+    atomic_t		stats[FL_NR_STATS];
 
     struct {
 	unsigned long	    flags;	/* layout flags: f_layout_flags */
