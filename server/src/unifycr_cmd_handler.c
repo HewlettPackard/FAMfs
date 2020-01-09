@@ -107,13 +107,13 @@ printf("cmd COMM_MOUNT %d\n", fam_fs);
 printf("cmd COMM_META %d\n", type);
         if (type == 1) {
             /*get file attribute*/
-            unifycr_file_attr_t attr_val;
+            f_fattr_t attr_val;
             rc = meta_process_attr_get(ptr_cmd,
                                        sock_id, &attr_val);
 
             ptr_ack = sock_get_ack_buf(sock_id);
             ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
-                                  &attr_val, sizeof(unifycr_file_attr_t));
+                                  &attr_val, sizeof(f_fattr_t));
             rc = sock_ack_cli(sock_id, ret_sz);
 
         }
@@ -176,7 +176,7 @@ printf("cmd COMM_MDGET\n");
         break;
 
     case COMM_UNMOUNT:
-printf("cmd COMM_UNMOUNT\n");
+printf("cmd COMM_UNMOUNT %d\n", sock_id);
         unifycr_broadcast_exit(sock_id);
         rc = ULFS_SUCCESS;
         break;

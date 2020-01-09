@@ -34,6 +34,7 @@
 #include "unifycr_metadata.h"
 #include "arraylist.h"
 #include "unifycr_const.h"
+#include "famfs_global.h"
 
 
 fsmd_key_t **fsmd_keys;
@@ -211,8 +212,8 @@ int meta_process_attr_set(char *buf, int sock_id)
 {
     int rc = ULFS_SUCCESS;
 
-    unifycr_file_attr_t *ptr_fattr =
-        (unifycr_file_attr_t *)(buf + 2 * sizeof(int));
+    f_fattr_t *ptr_fattr =
+        (f_fattr_t *)(buf + 2 * sizeof(int));
 
     *fattr_keys[0] = ptr_fattr->gfid;
     fattr_vals[0]->file_attr = ptr_fattr->file_attr;
@@ -242,8 +243,7 @@ int meta_process_attr_set(char *buf, int sock_id)
 * @return success/error code
 */
 
-int meta_process_attr_get(char *buf, int sock_id,
-                          unifycr_file_attr_t *ptr_attr_val)
+int meta_process_attr_get(char *buf, int sock_id, f_fattr_t *ptr_attr_val)
 {
     *fattr_keys[0] = *((int *)(buf + 2 * sizeof(int)));
     fattr_val_t *tmp_ptr_attr;
@@ -444,9 +444,9 @@ _process_fattr:
 
     /* file attributes are stored in the superblock shared memory
      * created by the client*/
-    unifycr_file_attr_t *attr_payload =
-        (unifycr_file_attr_t *)(app_config->shm_superblocks[client_side_id]
-                                + app_config->fmeta_offset + page_sz);
+    f_fattr_t *attr_payload =
+        (f_fattr_t *)(app_config->shm_superblocks[client_side_id]
+                + app_config->fmeta_offset + page_sz);
 
 
     for (i = 0; i < num_entries; i++) {

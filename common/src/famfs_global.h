@@ -13,6 +13,7 @@
 typedef struct {
     int fid;
     int gfid;
+    int loid;           /* famfs layout id (from config file) */
     char filename[UNIFYCR_MAX_FILENAME];
     struct stat file_attr;
 } f_fattr_t;
