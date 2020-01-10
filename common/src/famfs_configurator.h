@@ -95,6 +95,7 @@
     UNIFYCR_CFG_MULTI(device, size, INT, 0, "device size (bytes)", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, failed, BOOL, off, "device is failed", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, id, INT, NULLSTRING, "allocation group", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ag, uuid, STRING, NULLSTRING, "AG UUID", configurator_uuid_check, 1) \
     UNIFYCR_CFG_MULTI(ag, devices, INT, 0, "devices in AG", NULL, 0) \
     UNIFYCR_CFG_MULTI(ag, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
     UNIFYCR_CFG_MULTI(layout, id, INT, NULLSTRING, "device ID in layout", NULL, 1) \

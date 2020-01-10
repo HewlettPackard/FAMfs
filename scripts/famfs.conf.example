@@ -24,7 +24,7 @@ size = 16G ; default device size
 offset = 0 ; default
 
 [device] # FAM module or emulated FAM
-id = 1 ; device id for layout/ag reference
+id = 1 ; Unique device id
 uuid = {bcc3b223-75d5-47e7-8788-a7afdbd95e63} ; version 4 UUID
 failed = false ; default
 url = "zhpe:///ion1" ; default
@@ -36,20 +36,26 @@ id = 2
 url = "zhpe:///ion" ; default
 
 [device]
-id = 3
+# id = 3 ; Next device ID default
 url = "zhpe:///ion"
 
 [device]
+id = 4
+
+[device]
+# id = 5 ; Next device ID default
+
+[device]
+id = 6
 failed = true
-# id = 4
 # url = "zhpe:///ion"
 
 [ag] # Allocation group
-devices = [1,2] ; List of famid
+devices = [3,2] ; List of famid
 geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
 
 [ag]
-devices = [3,4]
+devices = [4,1,6,5]
 
 [layout]
 # Default layout

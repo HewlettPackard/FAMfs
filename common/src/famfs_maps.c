@@ -95,11 +95,46 @@ int f_db_bdel(int map_id, void **keys, size_t size)
 	return meta_iface->bdel_fn(map_id, size, keys);
 }
 
+static F_POOL_DEV_t * find_pdev_in_ag(F_AG_t *ags, uint32_t pool_ags,
+    uint32_t ag_devs, uint16_t index, F_POOL_DEV_t *devlist)
+{
+    F_AG_t *ag = ags;
+    F_POOL_DEV_t *pdev = NULL;
+    F_POOL_DEV_t (*ag_devlist)[ag_devs] = (F_POOL_DEV_t(*)[ag_devs])devlist;
+    unsigned int u;
+
+    for (u = 0; u < pool_ags; u++, ag++) {
+	uint16_t *gpdi = ag->gpdi;
+	unsigned int uu;
+
+	assert( ag->pdis <= ag_devs );
+	for (uu = 0; uu < ag->pdis; uu++, gpdi++) {
+	    if (*gpdi == index) {
+		pdev = &ag_devlist[u][uu];
+		pdev->idx_ag = u;
+		pdev->pool_index = index;
+		break;
+	    }
+	}
+    }
+    return pdev;
+}
+
+static int cmp_pdev_by_index(const void *a, const void *b)
+{
+    uint16_t ia = ((F_POOL_DEV_t *)a)->pool_index;
+    uint16_t ib = ((F_POOL_DEV_t *)b)->pool_index;
+
+    return (ia - ib);
+}
+
 static void free_pdev(F_POOL_DEV_t *pdev)
 {
-    pthread_rwlock_destroy(&pdev->rwlock);
-    free(pdev->dev->f.url);
-    free(pdev->dev);
+    if (pdev->dev) {
+	pthread_rwlock_destroy(&pdev->rwlock);
+	free(pdev->dev->f.url);
+	free(pdev->dev);
+    }
 }
 
 static void free_pool(F_POOL_t *p)
@@ -116,8 +151,10 @@ static void free_pool(F_POOL_t *p)
 	}
 
 	if (p->ags) {
-	    for (i = 0; i < p->pool_ags; i++)
+	    for (i = 0; i < p->pool_ags; i++) {
+		free(p->ags[i].geo);
 		free(p->ags[i].gpdi);
+	    }
 	    free(p->ags);
 	}
 
@@ -133,8 +170,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     F_POOL_t *p;
     F_POOL_INFO_t *pool_info;
     F_AG_t *ag;
+    F_POOL_DEV_t *pdev;
     int rc, count;
-    unsigned int u;
+    unsigned int u, uu, ag_maxlen;
     long l;
     bool b;
 
@@ -172,8 +210,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     /* Devices */
     count = configurator_get_sec_size(c, "device");
     if (!IN_RANGE(count, 1, F_DEVICES_MAX)) goto _noarg;
-    p->pool_devs = (unsigned int)count;
-    pool_info->dev_count = p->pool_devs;
+    pool_info->dev_count = (unsigned int)count;
 
     /* Allocation groups */
     count = configurator_get_sec_size(c, "ag");
@@ -182,13 +219,14 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (!IN_RANGE(count, 1, F_DEVICES_MAX)) goto _noarg;
     p->pool_ags = (uint32_t)count;
     ag = p->ags;
+    ag_maxlen = 0;
     for (u = 0; u < p->pool_ags; u++, ag++) {
-	unsigned int uu;
-
-	if (configurator_int_val(c->ag_id[u][0], &l)) goto _noarg;
+	/* AG id */
+	if (configurator_int_val(c->ag_id[u][0], &l)) goto _syntax;
 	ag->gid = (uint32_t)l;
-	//f_parse_uuid(c->ag_uuid[u][0], &ag->uuid);
-	ag->geo = c->ag_geo[u][0];
+	f_parse_uuid(c->ag_uuid[u][0], &ag->uuid);
+	if (c->ag_geo[u][0])
+	    ag->geo = strdup(c->ag_geo[u][0]);
 	/* List of devices in the group */
 	count = u;
 	if (configurator_get_sizes(c, "ag", "devices", &count) < 0)
@@ -196,6 +234,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	if (!IN_RANGE((unsigned)count, 1, pool_info->dev_count))
 	    goto _noarg;
 	ag->pdis = (uint32_t)count;
+	if (ag->pdis > ag_maxlen)
+	    ag_maxlen = ag->pdis; /* maximum number of group devices */
 	ag->gpdi = (uint16_t *) calloc(sizeof(uint16_t), ag->pdis);
 	for (uu = 0; uu < ag->pdis; uu++) {
 	    if (configurator_int_val(c->ag_devices[u][uu], &l))
@@ -204,22 +244,30 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 		ag->gpdi[uu] = (uint16_t)l;
 	}
     }
+    p->ag_devs = ag_maxlen;
 
     /* Devices */
+    p->pool_devs = ag_maxlen * p->pool_ags;
     p->devlist = (F_POOL_DEV_t*)calloc(sizeof(F_POOL_DEV_t), p->pool_devs);
     if (!p->devlist) goto _nomem;
-    for (u = 0; u < p->pool_devs; u++) {
+    pdev = p->devlist;
+    for (u = 0; u < p->pool_devs; u++, pdev++)
+	pdev->pool_index = F_PDI_NONE;
+    for (u = 0; u < pool_info->dev_count; u++) {
 	FAM_DEV_t *fam;
-	F_POOL_DEV_t *pdev = &p->devlist[u];
+	uint16_t pool_index;
 
-	pdev->pool_index = u;
 	if (configurator_int_val(c->device_id[u][0], &l)) goto _noarg;
-	pdev->conf_id = (uint32_t)l;
+	pool_index = (uint32_t)l;
+	/* find device in AG by pool_index */
+	pdev = find_pdev_in_ag(p->ags, p->pool_ags, p->ag_devs,
+			       pool_index, p->devlist);
+	if (!pdev) goto _syntax;
 	f_parse_uuid(c->device_uuid[u][0], &pdev->uuid);
-	if (configurator_int_val(c->device_size[u][0], &l))
+	if (configurator_int_val(c->device_size[u][0], &l)) goto _syntax;
+	pdev->size = (size_t)l;
+	if (pdev->size == 0)
 	    pdev->size = p->info.size_def;
-	else
-	    pdev->size = (size_t)l;
 	/* TODO: Parse extent_sz, extent_start */
 	pdev->extent_start = p->info.extent_start;
 	pdev->extent_sz = p->info.extent_sz;
@@ -227,6 +275,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	if (configurator_bool_val(c->device_failed[u][0], &b)) goto _noarg;
 	if (b)
 	    SetDevFailed(&pdev->sha);
+	/* Allocate FAMFS device */
 	pdev->dev = (F_DEV_t *) calloc(sizeof(F_DEV_t), 1);
 	if (!pdev->dev) goto _nomem;
 	fam = &pdev->dev->f;
@@ -242,6 +291,36 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 
 	/* TODO: probe devices, sha.extent_bmap */
     }
+    /* Sort pool devices array by pool_index for every AG */
+    for (u = 0; u < p->pool_ags; u++) {
+	pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
+	qsort(pdev, p->ag_devs, sizeof(F_POOL_DEV_t), cmp_pdev_by_index);
+	/* check the presence and enumerate devices in AG */
+	for (uu = 0; uu < p->ags[u].pdis; uu++, pdev++) {
+	    if (pdev->pool_index == F_PDI_NONE) {
+		/* non-existing device in AG */
+		fprintf (stderr, " AG id:%u - device not in configuration!\n",
+		    pdev->idx_ag);
+		goto _syntax;
+	    }
+	    /* set device 2nd index */
+	    pdev->idx_dev = uu;
+	}
+    }
+
+    printf("Pool has %u devices in %u AGs, %u each\n",
+	pool_info->dev_count, p->pool_ags, p->ag_devs);
+    ag = p->ags;
+    for (u = 0; u < p->pool_ags; u++, ag++) {
+	pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
+	printf("  AG#%u id:%u has %u devices:\n",
+		u, ag->gid, ag->pdis);
+	for (uu = 0; uu < ag->pdis; uu++, pdev++) {
+	    assert( pdev->pool_index != F_PDI_NONE );
+	    printf ("    [%u,%u] id:%u size:%zu\n",
+		pdev->idx_ag, pdev->idx_dev, pdev->pool_index, pdev->size);
+	}
+    }
 
     /* Layout count */
     count = configurator_get_sec_size(c, "layout");
@@ -253,6 +332,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 
 _nomem:
     rc = -ENOMEM;
+    goto _err;
+_syntax:
+    rc = -2; /* semantic error in configuration */
     goto _err;
 _noarg:
     rc = -1; /* no mandatory parameter specified */
@@ -276,7 +358,8 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 {
     F_LAYOUT_t *lo;
     F_LAYOUT_INFO_t *info;
-    F_POOLDEV_INDEX_t *pdi;
+    //F_LO_PART_t *lp;
+    //F_POOLDEV_INDEX_t *pdi;
     unsigned int u, uu, conf_id;
     uint16_t pool_index;
     int rc, count;
@@ -309,8 +392,9 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     lo->devlist = (F_POOLDEV_INDEX_t *) calloc(sizeof(F_POOLDEV_INDEX_t),
 	lo->devlist_sz);
     if (!lo->devlist) goto _nomem;
-    pdi = lo->devlist;
-    for (u = 0; u < info->devnum; u++, pdi++) {
+    for (u = 0; u < info->devnum; u++) {
+	//unsigned int pd_index;
+
 	if (configurator_int_val(c->layout_devices[idx][u], &l)) goto _noarg;
 	conf_id = (unsigned int)l;
 	if (all_pdevs) {
@@ -319,7 +403,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    /* find pool device index */
 	    pool_index = F_PDI_NONE;
 	    for (uu = 0; uu < pool->pool_devs; uu++)
-		if (pool->devlist[uu].conf_id == conf_id)
+		if (pool->devlist[uu].pool_index == conf_id)
 		    break;
 	    if (uu <= pool->pool_devs)
 		pool_index = uu;
