@@ -615,6 +615,8 @@ struct hlist_node {
 	struct hlist_node *next, **pprev;
 };
 
+#if 0
+
 /**
  * struct callback_head - callback structure for use with RCU and task_work
  * @next: next update requests in a list
@@ -625,6 +627,8 @@ struct callback_head {
 	void (*func)(struct callback_head *head);
 };
 #define rcu_head callback_head
+
+#endif
 
 #define HLIST_HEAD_INIT { .first = NULL }
 #define INIT_HLIST_HEAD(ptr) ((ptr)->first = NULL)

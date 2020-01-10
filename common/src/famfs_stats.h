@@ -12,6 +12,7 @@
 #include <sys/time.h>
 
 #include "famfs_env.h"
+#include "list.h"		/* Doubly linked list */
 
 
 #define KiB (1024L)
@@ -154,19 +155,12 @@ extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
 #if (HAVE_FAM_SIM == 1)
 
 #include <stddef.h>		/* offsetof(type,member) */
-#include "list.h"		/* Doubly linked list */
 
 enum {
         FAMSIM_STATS_TEST,
         FAMSIM_STATS_SEND,
         FAMSIM_STATS_RECV,
         FAMSIM_STATS_FI_WR,
-};
-
-#else
-
-struct list_head {
-        struct list_head *next, *prev;
 };
 
 #endif /* HAVE_FAM_SIM == 1 */

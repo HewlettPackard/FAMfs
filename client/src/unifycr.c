@@ -95,7 +95,10 @@ typedef int64_t off64_t;
 #include "lf_client.h"
 #include "famfs_global.h"
 #include "famfs_rbq.h"
-
+#include "famfs_bitmap.h"
+#include "f_map.h"
+#include "f_pool.h"
+#include "f_layout.h"
 
 static int unifycr_fpos_enabled   = 1;  /* whether we can use fgetpos/fsetpos */
 /*
@@ -2164,6 +2167,12 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 
     if (subtype == FAMFS) {
         char *cmdline = getstr(LFS_COMMAND);
+
+        if ((rc = f_set_layouts_info(&client_cfg))) {
+            printf("failed to get layout info: %d\n", rc);
+            return rc;
+        }
+        
         if ((rc = lfs_connect(cmdline, rank, size, &lfs_ctx))) {
             printf("lf-connect failed on mount: %d\n", rc);
             return rc;

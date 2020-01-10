@@ -186,6 +186,11 @@ int main(int argc, char *argv[])
     if (rc < 0)
         exit(1);
 
+    if ((rc = f_set_layouts_info(&server_cfg))) {
+        printf("srv failed to get layout info: %d\n", rc);
+        return rc;
+    }
+
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst,
                                    local_rank_cnt);
 
@@ -241,12 +246,6 @@ printf("4 %s", ULFS_str_errno(ULFS_ERROR_SOCKET));
         num_mds = 0;
     }
 
-    rc = f_set_layouts_info(&server_cfg);
-    if (rc != 0) {
-	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_CFG));
-printf("5 %s", ULFS_str_errno(ULFS_ERROR_CFG));
-	exit(1);
-    }
 
     /* Fork LF server process if FAM emulation is required */
     char *lfs_cmd = getstr(LFS_COMMAND);

@@ -377,6 +377,7 @@ static int cfg_load(unifycr_cfg_t *c)
 /* Set layout info from configurator once */
 int f_set_layouts_info(unifycr_cfg_t *cfg)
 {
+printf("pool=%p\n", pool);
     if (cfg && pool == NULL)
 	return cfg_load(cfg);
     return -1;
