@@ -263,11 +263,6 @@ _err:
 
 static void free_layout(F_LAYOUT_t *lo)
 {
-    if (lo->lp) {
-	pthread_spin_destroy(&lo->lp->alloc_lock);
-	pthread_rwlock_destroy(&lo->lp->claimdec_lock);
-	free(lo->lp);
-    }
     free(lo->info.name);
     free(lo->devlist);
     f_dict_free(lo->dict);
@@ -281,7 +276,6 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 {
     F_LAYOUT_t *lo;
     F_LAYOUT_INFO_t *info;
-    F_LO_PART_t *lp;
     F_POOLDEV_INDEX_t *pdi;
     unsigned int u, uu, conf_id;
     uint16_t pool_index;
@@ -335,15 +329,6 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    ;
     }
 
-    /* Layout partition */
-    lp = (F_LO_PART_t *) calloc(sizeof(F_LO_PART_t), 1);
-    if (!lp) goto _nomem;
-    if (pthread_rwlock_init(&lp->claimdec_lock, NULL)) goto _nomem;
-    if (pthread_spin_init(&lp->alloc_lock, PTHREAD_PROCESS_PRIVATE)) goto _nomem;
-    INIT_LIST_HEAD(&lp->alloc_buckets);
-    INIT_LIST_HEAD(&lp->claimdecq);
-    lo->lp = lp;
-
     lo->pool = pool;
     /* Add to layouts list */
     list_add(&lo->list, &pool->layouts);
@@ -377,7 +362,6 @@ static int cfg_load(unifycr_cfg_t *c)
 /* Set layout info from configurator once */
 int f_set_layouts_info(unifycr_cfg_t *cfg)
 {
-printf("pool=%p\n", pool);
     if (cfg && pool == NULL)
 	return cfg_load(cfg);
     return -1;

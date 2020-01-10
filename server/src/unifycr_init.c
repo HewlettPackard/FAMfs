@@ -57,7 +57,9 @@
 #include "famfs_maps.h"
 #include "lf_client.h"
 #include "famfs_rbq.h"
-
+#include "f_pool.h"
+#include "f_layout.h"
+#include "famfs_maps.h"
 
 int *local_rank_lst;
 int local_rank_cnt;
@@ -77,6 +79,7 @@ static LFS_CTX_t *lfs_ctx_p = NULL;
 
 extern char *mds_vec;
 extern int  num_mds;
+extern F_POOL_t *pool;
 
 int mds_by_name() {
     static char **nlist = NULL;
@@ -191,15 +194,22 @@ int main(int argc, char *argv[])
         return rc;
     }
 
-    local_rank_idx = find_rank_idx(glb_rank, local_rank_lst,
-                                   local_rank_cnt);
+    local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
-    sprintf(qname, "%s-%02d", F_CMDQ_NAME, local_rank_idx);
-    if ((rc = f_rbq_create(qname, sizeof(f_dcmd_t), F_MAX_CMDQ, &cmdq, 1))) {
-        LOG(LOG_ERR, "rbq create: %s", strerror(rc = errno));
-        exit(rc);
+    for (int i = 0; i < pool->info.layouts_count; i++) {
+        F_LAYOUT_t *lo = f_get_layout(i);
+        if (lo == NULL) {
+            LOG(LOG_ERR, "get layout [%d] info\n", i);
+            exit(1);
+        }
+        sprintf(qname, "%s-%s-%02d", F_CMDQ_NAME, lo->info.name, local_rank_idx);
+        if ((rc = f_rbq_create(qname, sizeof(f_dcmd_t), F_MAX_CMDQ, &cmdq, 1))) {
+            LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
+            exit(rc);
+        }
+printf("layout %d:%s queue %s created\n", i, lo->info.name, qname);
     }
-
+    
     /* UNIFYCR_DEFAULT_LOG_FILE */
     if (server_cfg.log_file == NULL)
         exit(1);
