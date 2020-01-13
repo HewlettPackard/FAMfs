@@ -478,16 +478,15 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     if (!md_cfg.layout_name || !db_opts) goto err;
-    //unifycr_config_print(&md_cfg, NULL);
+    unifycr_config_print(&md_cfg, NULL);
 
     t = 2; /* Load and parse layout configuration */
     rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     if ((lo_info = f_get_layout_info(layout_id)) == NULL) goto err;
-    printf(" Layout %d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
-	lo_info->conf_id, lo_info->name, lo_info->data_chunks,
-	(lo_info->chunks - lo_info->data_chunks), lo_info->chunk_sz,
-	lo_info->slab_stripes, lo_info->devnum);
+    printf("\n");
+    f_print_layouts();
+    printf("\n");
 
     t = 3; /* Bring up DB thread */
     meta_init_store(db_opts);

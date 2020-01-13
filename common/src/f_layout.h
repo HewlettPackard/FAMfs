@@ -68,6 +68,11 @@ typedef struct f_pdi_sha_ {
 
 typedef struct f_pooldev_index_ {
     uint32_t		pool_index;
+
+    /* The device index in two-dimentional array of pool devices */
+    uint16_t		idx_ag;		/* 1st index: AG */
+    uint16_t		idx_dev;	/* 2nd index: pool device */
+
     uint32_t		pl_extents_used;
     F_PDI_SHA_t		*sha;
 } F_POOLDEV_INDEX_t;

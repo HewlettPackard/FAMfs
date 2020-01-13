@@ -120,6 +120,12 @@ static F_POOL_DEV_t * find_pdev_in_ag(F_AG_t *ags, uint32_t pool_ags,
     return pdev;
 }
 
+struct f_pool_dev_ *f_find_pdev(unsigned int index) {
+    struct f_pool_ *p = pool;
+    return find_pdev_in_ag(p->ags, p->pool_ags, p->ag_devs,
+			   (uint16_t)index, p->devlist);
+}
+
 static int cmp_pdev_by_index(const void *a, const void *b)
 {
     uint16_t ia = ((F_POOL_DEV_t *)a)->pool_index;
@@ -308,20 +314,6 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	}
     }
 
-    printf("Pool has %u devices in %u AGs, %u each\n",
-	pool_info->dev_count, p->pool_ags, p->ag_devs);
-    ag = p->ags;
-    for (u = 0; u < p->pool_ags; u++, ag++) {
-	pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
-	printf("  AG#%u id:%u has %u devices:\n",
-		u, ag->gid, ag->pdis);
-	for (uu = 0; uu < ag->pdis; uu++, pdev++) {
-	    assert( pdev->pool_index != F_PDI_NONE );
-	    printf ("    [%u,%u] id:%u size:%zu\n",
-		pdev->idx_ag, pdev->idx_dev, pdev->pool_index, pdev->size);
-	}
-    }
-
     /* Layout count */
     count = configurator_get_sec_size(c, "layout");
     if (!IN_RANGE(count, 1, F_LAYOUTS_MAX)) goto _noarg;
@@ -346,7 +338,21 @@ _err:
 static void free_layout(F_LAYOUT_t *lo)
 {
     free(lo->info.name);
-    free(lo->devlist);
+    if (lo->devlist) {
+	F_POOLDEV_INDEX_t *pdi = lo->devlist;
+	unsigned int u;
+
+	for (u = 0; u < lo->devlist_sz; u++, pdi++)
+	    free(pdi->sha);
+	free(lo->devlist);
+    }
+
+    if (lo->lp) {
+	pthread_spin_destroy(&lo->lp->alloc_lock);
+	pthread_rwlock_destroy(&lo->lp->claimdec_lock);
+	free(lo->lp);
+    }
+
     f_dict_free(lo->dict);
     pthread_spin_destroy(&lo->dict_lock);
     pthread_rwlock_destroy(&lo->lock);
@@ -358,15 +364,16 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 {
     F_LAYOUT_t *lo;
     F_LAYOUT_INFO_t *info;
-    //F_LO_PART_t *lp;
-    //F_POOLDEV_INDEX_t *pdi;
+    F_LO_PART_t *lp;
+    F_POOL_t *p = pool;
+    F_POOL_DEV_t *pdev;
+    F_POOLDEV_INDEX_t *pdi;
     unsigned int u, uu, conf_id;
-    uint16_t pool_index;
     int rc, count;
     long l;
     bool all_pdevs;
 
-    assert( pool && IN_RANGE(idx, 0, (int)pool->info.layouts_count-1) );
+    assert( p && IN_RANGE(idx, 0, (int)p->info.layouts_count-1) );
     lo = (F_LAYOUT_t *) calloc(sizeof(F_LAYOUT_t), 1);
     if (!lo) return -ENOMEM;
     if (pthread_rwlock_init(&lo->lock, NULL)) goto _nomem;
@@ -376,14 +383,25 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     info = &lo->info;
     if (configurator_int_val(c->layout_id[idx][0], &l)) goto _noarg;
     info->conf_id = (unsigned int)l;
+
+    /* Partition */
+    lo->lp = (F_LO_PART_t *) calloc(sizeof(F_LO_PART_t), 1);
+    if (!lo->lp) goto _nomem;
+    lp = lo->lp;
+    if (pthread_rwlock_init(&lp->claimdec_lock, NULL)) goto _nomem;
+    if (pthread_spin_init(&lp->alloc_lock, PTHREAD_PROCESS_PRIVATE))
+	goto _nomem;
+    INIT_LIST_HEAD(&lp->alloc_buckets);
+    INIT_LIST_HEAD(&lp->claimdecq);
+
     /* Devices */
     count = idx; /* layout section index */
     all_pdevs = (configurator_get_sizes(c, "layout", "devices", &count) < 0);
     if (all_pdevs) {
 	/* no layout devices list given - default to pool devices */
-	count = pool->info.dev_count;
+	count = p->info.dev_count;
     } else {
-	if (!IN_RANGE((unsigned)count, 1, pool->info.dev_count))
+	if (!IN_RANGE((unsigned)count, 1, p->info.dev_count))
 	    goto _noarg;
     }
     lo->devlist_sz = info->devnum = (unsigned)count;
@@ -392,30 +410,37 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     lo->devlist = (F_POOLDEV_INDEX_t *) calloc(sizeof(F_POOLDEV_INDEX_t),
 	lo->devlist_sz);
     if (!lo->devlist) goto _nomem;
-    for (u = 0; u < info->devnum; u++) {
-	//unsigned int pd_index;
-
-	if (configurator_int_val(c->layout_devices[idx][u], &l)) goto _noarg;
-	conf_id = (unsigned int)l;
+    pdi = lo->devlist;
+    for (u = uu = 0; u < info->devnum; u++, pdi++) {
 	if (all_pdevs) {
-	    pool_index = u;
+	    pdev = &pool->devlist[uu];
+	    while ((pdev++)->pool_index != F_PDI_NONE &&
+		   uu < p->pool_devs) uu++;
 	} else {
-	    /* find pool device index */
-	    pool_index = F_PDI_NONE;
-	    for (uu = 0; uu < pool->pool_devs; uu++)
-		if (pool->devlist[uu].pool_index == conf_id)
-		    break;
-	    if (uu <= pool->pool_devs)
-		pool_index = uu;
+	    if (configurator_int_val(c->layout_devices[idx][u], &l)) {
+		pdev = NULL;
+	    } else {
+		conf_id = (unsigned int)l;
+		/* find pool device index */
+		pdev = f_find_pdev(conf_id);
+	    }
 	}
-	/* copy pdi */
-	if (pool_index != F_PDI_NONE)
-	    ;
+	/* copy pdev */
+	if (pdev == NULL) {
+	    pdi->pool_index = F_PDI_NONE;
+	} else {
+	    pdi->pool_index = pdev->pool_index;
+	    pdi->idx_ag = pdev->idx_ag;
+	    pdi->idx_dev = pdev->idx_dev;
+	    /* Allocate the device index shareable atomics */
+	    pdi->sha = (F_PDI_SHA_t *) calloc(sizeof(F_PDI_SHA_t), 1);
+	    if (!pdi->sha) goto _nomem;
+	}
     }
 
-    lo->pool = pool;
+    lo->pool = p;
     /* Add to layouts list */
-    list_add(&lo->list, &pool->layouts);
+    list_add(&lo->list, &p->layouts);
     return 0;
 
 _nomem:
@@ -493,7 +518,7 @@ void f_free_layouts_info(void)
     struct list_head *l, *tmp;
 
     if (pool) {
-	list_for_each_prev_safe(l, tmp, &pool->layouts) {
+	list_for_each_safe(l, tmp, &pool->layouts) {
 	    lo = container_of(l, struct f_layout_, list);
 	    list_del(l);
 	    free_layout(lo);
@@ -503,4 +528,57 @@ void f_free_layouts_info(void)
     }
 }
 
+void f_print_layouts(void) {
+    F_POOL_t *p = pool;
+    F_POOL_INFO_t *pool_info;
+    F_AG_t *ag;
+    F_POOL_DEV_t *pdev;
+    F_LAYOUT_t *lo;
+    struct list_head *l, *tmp;
+    unsigned int u, uu;
+
+    if (p == NULL)
+	return;
+    /* Pool */
+    pool_info = &p->info;
+    printf("Pool has %u devices in %u AGs, %u each\n",
+	pool_info->dev_count, p->pool_ags, p->ag_devs);
+    ag = p->ags;
+    for (u = 0; u < p->pool_ags; u++, ag++) {
+	pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
+	printf("  AG#%u id:%u has %u devices:\n",
+		u, ag->gid, ag->pdis);
+	for (uu = 0; uu < ag->pdis; uu++, pdev++) {
+	    assert( pdev->pool_index != F_PDI_NONE );
+	    printf ("    [%u,%u] id:%u size:%zu\n",
+		pdev->idx_ag, pdev->idx_dev, pdev->pool_index, pdev->size);
+	}
+    }
+
+    /* Layouts */
+    printf("\nPool has %u layout(s).\n", pool_info->layouts_count);
+    list_for_each_prev_safe(l, tmp, &p->layouts) {
+	F_LAYOUT_INFO_t *info;
+	F_POOLDEV_INDEX_t *pdi;
+
+	lo = container_of(l, struct f_layout_, list);
+	info = &lo->info;
+	printf("\nLayout id:%u moniker %s\n",
+	    info->conf_id, info->name);
+        printf("  %uD+%uP chunk:%u, stripes:%u per slab, total %u slab(s)\n",
+	    info->data_chunks, (info->chunks - info->data_chunks),
+	    info->chunk_sz, info->slab_stripes, info->slab_count);
+	printf("  This layout has %u device(s), including %u missing.\n",
+	    info->devnum, info->misdevnum);
+	pdi = lo->devlist;
+	for (u = 0; u < lo->devlist_sz; u++, pdi++) {
+	    if (pdi->pool_index == F_PDI_NONE)
+		continue;
+	    printf("  dev#%u pool index:%u [%u,%u] ext used/failed:%u/%u\n",
+		u, pdi->pool_index, pdi->idx_ag, pdi->idx_dev,
+		pdi->sha->extents_used, pdi->sha->failed_extents);
+	}
+	printf("  Layout partition:%u\n", lo->lp->part_num);
+    }
+}
 

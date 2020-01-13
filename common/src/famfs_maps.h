@@ -301,10 +301,12 @@ struct f_layout_info_;
 struct unifycr_cfg_t_;
 int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
 int f_set_layouts_info(struct unifycr_cfg_t_ *cfg);
+void f_free_layouts_info(void);
+struct f_pool_dev_ *f_find_pdev(unsigned int index);
 struct f_layout_ *f_get_layout(int layout_id);
 struct f_layout_ *f_get_layout_by_name(const char *moniker);
 struct f_layout_info_ *f_get_layout_info(int layout_id);
-void f_free_layouts_info(void);
+void f_print_layouts(void);
 
 /*
  * DB-independent persistent KV store interface
