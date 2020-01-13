@@ -582,3 +582,13 @@ void f_print_layouts(void) {
     }
 }
 
+int f_host_is_ionode(const char *hostname)
+{
+    return true;
+}
+
+int f_host_is_mds(const char *hostname)
+{
+    return true;
+}
+

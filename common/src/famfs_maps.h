@@ -295,7 +295,7 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 	}
 }
 
-/* Layout configutation functions; defined in famfs_maps.c */
+/* FAMFS configutation access; defined in famfs_maps.c */
 struct f_layout_;
 struct f_layout_info_;
 struct unifycr_cfg_t_;
@@ -306,6 +306,8 @@ struct f_pool_dev_ *f_find_pdev(unsigned int index);
 struct f_layout_ *f_get_layout(int layout_id);
 struct f_layout_ *f_get_layout_by_name(const char *moniker);
 struct f_layout_info_ *f_get_layout_info(int layout_id);
+int f_host_is_ionode(const char *hostname);
+int f_host_is_mds(const char *hostname);
 void f_print_layouts(void);
 
 /*
