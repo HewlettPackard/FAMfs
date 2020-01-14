@@ -169,7 +169,7 @@ static void print_fam_map(FAM_MAP_t *m)
     printf(" (total:%d)\n", m->total_fam_cnt);
 }
 
-static char *get_myhostname(void) {
+char *f_get_myhostname(void) {
     char  *p, *hostname;
 
     hostname =(char*) malloc(HOST_NAME_MAX);
@@ -184,12 +184,14 @@ static char *get_myhostname(void) {
     return hostname;
 }
 
-int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
-	char *hostname;
+int f_find_node(char* const* nodelist, int node_cnt, const char *hostname)
+{
+	char *myhostname = NULL;
 	size_t len;
 	int i, idx = -1;
 
-	hostname = get_myhostname();
+	if (!hostname)
+		hostname = myhostname = f_get_myhostname();
 	if (hostname) {
 		len = strlen(hostname);
 		for (i = 0; i < node_cnt; i++) {
@@ -199,8 +201,14 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 			}
 		}
 	}
-	free(hostname);
+	free(myhostname);
+	return idx;
+}
 
+int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
+	int i, idx;
+
+	idx = f_find_node(nodelist, node_cnt, NULL);
 	if (idx < 0) {
 		struct ifaddrs *ifa;
 
@@ -208,7 +216,6 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 		while (ifa) {
 			if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
 				struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
-				//printf("%s: %s\n", ifa->ifa_name, inet_ntoa(sa->sin_addr));
 				char *ina = inet_ntoa(sa->sin_addr);
 
 				for (i = 0; i < node_cnt; i++) {
@@ -225,6 +232,7 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 	}
 
 	if (hostname_p) {
+		free(*hostname_p);
 		if (idx >= 0)
 			*hostname_p = strdup(nodelist[idx]);
 		else

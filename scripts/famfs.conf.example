@@ -11,6 +11,12 @@ range_size = 1048576
 [spillover]
 size = 2G
 
+[ionode]
+# id = 0 ; this is a default
+# uuid
+# host = "node01" ; node's hostname or IP
+# mds = 1 ; run one MD server on this ionode
+
 [mddevice]
 pk = 1
 size = 1M

@@ -55,6 +55,8 @@ typedef enum w_type_ {
 
 /* defined in util.c */
 char** getstrlist(const char *buf, int *count);
+char *f_get_myhostname(void);
+int f_find_node(char* const* nodelist, int node_cnt, const char *hostname);
 int find_my_node(char* const* nodelist, int node_cnt, char **hostname);
 void nodelist_free(char **nodelist, int size);
 //int is_module_loaded(const char *name);
@@ -174,6 +176,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define F_CHUNK_SIZE_MIN	(4*KIB)	/* Minimum chunk size - 4K */
 #define F_CHUNK_SIZE_MAX	(16*MIB)
 #define F_LAYOUTS_MAX		1024	/* Maximum number of layouts, for config & maps */
+#define F_IONODES_MAX		1024	/* Maximum number of IO nodes */
 
 
 /* Client */

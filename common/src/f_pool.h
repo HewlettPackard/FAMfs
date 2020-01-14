@@ -18,9 +18,19 @@
 #include "list.h"
 
 
+struct fam_map_; /* defined in famfs_lf_connect.h */
+
 /* libfabric atomic types */
 typedef uint32_t	FI_UINT32_t;
 typedef uint64_t	FI_UINT64_t;
+
+/* IO node info */
+typedef struct f_ionode_info_ {
+    uuid_t	uuid;		/* IO node UUID */
+    char	*hostname;	/* IO node hostname */
+    uint32_t	conf_id;	/* ID in configuration file */
+    uint32_t	mds;		/* number of MD servers running on this node */
+} F_IONODE_INFO_t;
 
 /* Pool device shareable atomics (blob) */
 typedef struct f_pdev_sha_ {
@@ -101,13 +111,18 @@ typedef struct f_pool_ {
     pthread_spinlock_t	dict_lock;	/* dictionary lock */
     F_POOL_INFO_t	info;		/* front-most pool attributes */
     struct list_head	layouts;	/* pool layouts list */
+    char		*hostname;	/* this node's hostname */
 //    uint32_t	nparts;		/* layout partition number estimate */
     uint32_t		pool_ags;	/* allocation group array size; also this is
 					a size of 1st dimention of pool devices array */
     uint32_t		ag_devs;	/* size of the pool device array, 2nd dimension */
     uint32_t		pool_devs;	/* size of the pool device array, total */
+    uint32_t		ionode_count;	/* number of IO nodes */
+    uint32_t		ionode_id;	/* for IO node ONLY: index in ionodes array */
     F_AG_t		*ags;		/* allocation group array */
     struct f_pool_dev_	*devlist;	/* two-dimentional array of pool devices */
+    F_IONODE_INFO_t	*ionodes;	/* array of IO node info of .ionode_count size */
+    struct fam_map_	*ionode_fams;	/* FAM map: IO nodes to FAMs */
     struct {
 	unsigned long	    flags;	/* f_pool_flags */
     }			io;
@@ -119,9 +134,13 @@ typedef struct f_pool_ {
 enum f_pool_flags {
     _POOL_BG_ACTIVE,	/* Background task is active. */
     _POOL_FAM_EMUL,	/* FAM device emulation with fabric attached memory on IO nodes */
+    _POOL_IS_IONODE,	/* This is IO node */
+    _POOL_MDS,		/* MD server is running on this IO node */
 };
-BITOPS(Pool, BGActive,  f_pool_, _POOL_BG_ACTIVE)
-BITOPS(Pool, FAMEmul,  f_pool_, _POOL_FAM_EMUL)
+BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
+BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
+BITOPS(Pool, IsIOnode,	f_pool_, _POOL_IS_IONODE)
+BITOPS(Pool, HasMDS,	f_pool_, _POOL_MDS)
 
 #endif /* F_POOL_H_ */
 

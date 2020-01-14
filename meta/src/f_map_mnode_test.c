@@ -320,14 +320,13 @@ int main (int argc, char *argv[]) {
     rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     if ((lo_info = f_get_layout_info(layout_id)) == NULL) goto err;
+    if (my_node == 0)
+	printf("\n"); f_print_layouts(); printf("\n");
 
     t = 3; /* Bring up DB thread */
     meta_init_store(db_opts);
     if (md == NULL || unifycr_indexes[0] == NULL) goto err;
     if (node_size <= 0) goto err;
-
-    if (my_node == 0)
-	unifycr_config_print(&md_cfg, NULL);
 
     printf("%d: Layout %d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
 	my_node,

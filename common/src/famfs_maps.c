@@ -95,6 +95,55 @@ int f_db_bdel(int map_id, void **keys, size_t size)
 	return meta_iface->bdel_fn(map_id, size, keys);
 }
 
+static F_IONODE_INFO_t *get_ionode_info(F_POOL_t *p, const char *hostname)
+{
+    F_IONODE_INFO_t *info;
+    unsigned int count, u;
+    int idx;
+    char **nodelist;
+
+    if (p == NULL)
+	return NULL;
+
+    /* List of IO nodes */
+    count = p->ionode_count;
+    nodelist = (char**) calloc(sizeof(char*), count);
+    info = p->ionodes;
+    for (u = 0; u < count; u++, info++)
+	nodelist[u] = info->hostname;
+
+    /* Find foreign hostname if given, otherwise local hostname or IP */
+    if (hostname)
+	idx = f_find_node(nodelist, (int)count, hostname);
+    else
+	idx = find_my_node(nodelist, (int)count, NULL);
+    free(nodelist);
+
+    if (idx < 0)
+	return NULL;
+    return &p->ionodes[idx];
+}
+
+/* Set ionode_id and HasMDS, IsIOnode flags in pool struct */
+static void set_my_ionode_info(F_POOL_t *p)
+{
+    F_IONODE_INFO_t *info;
+
+    assert (p && p->ionodes);
+    info = get_ionode_info(p, NULL);
+    if (info) {
+	SetPoolIsIOnode(p);
+	if (info->mds)
+	    SetPoolHasMDS(p);
+	else
+	    ClearPoolHasMDS(p);
+	p->ionode_id = (uint32_t)(info - p->ionodes);
+    } else {
+	ClearPoolIsIOnode(p);
+	ClearPoolHasMDS(p);
+    }
+}
+
 static F_POOL_DEV_t * find_pdev_in_ag(F_AG_t *ags, uint32_t pool_ags,
     uint32_t ag_devs, uint16_t index, F_POOL_DEV_t *devlist)
 {
@@ -164,9 +213,17 @@ static void free_pool(F_POOL_t *p)
 	    free(p->ags);
 	}
 
+	if (p->ionodes) {
+	    for (i = 0; i < p->ionode_count; i++)
+		free(p->ionodes[i].hostname);
+	    free(p->ionodes);
+	}
+	free(p->ionode_fams);
+
 	f_dict_free(p->dict);
 	pthread_spin_destroy(&p->dict_lock);
 	pthread_rwlock_destroy(&p->lock);
+	free(p->hostname);
 	free(p);
     }
 }
@@ -201,6 +258,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (f_parse_uuid(c->devices_uuid, &p->uuid)) {
 	assert( f_parse_uuid(FAMFS_PDEVS_UUID_DEF, &p->uuid) == 0);
     }
+    /* my node name */
+    p->hostname = f_get_myhostname();
+    if (!p->hostname) goto _nomem;
     if (configurator_int_val(c->devices_extent_size, &l)) goto _noarg;
     pool_info->extent_sz = (unsigned long)l;
     if (configurator_int_val(c->devices_offset, &l)) goto _noarg;
@@ -212,6 +272,33 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info->size_def = (size_t)l;
     if (configurator_int_val(c->devices_pk, &l)) goto _noarg;
     pool_info->pkey_def = (uint64_t)l;
+
+    /* IO nodes */
+    count = configurator_get_sec_size(c, "ionode");
+    if (!IN_RANGE(count, 1, F_IONODES_MAX)) goto _noarg;
+    p->ionode_count = (uint32_t)count;
+    p->ionode_fams = (FAM_MAP_t *) calloc(sizeof(FAM_MAP_t), 1);
+    p->ionode_fams->ionode_cnt = p->ionode_count;
+    if (!p->ionode_fams) goto _nomem;
+    p->ionodes = (F_IONODE_INFO_t*) calloc(sizeof(F_IONODE_INFO_t),
+					   p->ionode_count);
+    if (!p->ionodes) goto _nomem;
+    for (u = 0; u < p->ionode_count; u++) {
+	F_IONODE_INFO_t *ion = &p->ionodes[u];
+
+	if (configurator_int_val(c->ionode_id[u][0], &l)) goto _syntax;
+	ion->conf_id = (uint32_t)l;
+	f_parse_uuid(c->ionode_uuid[u][0], &ion->uuid);
+	if (configurator_int_val(c->ionode_mds[u][0], &l)) goto _syntax;
+	ion->mds = (uint32_t)l;
+	if (c->ionode_host[u][0])
+	    ion->hostname = strdup(c->ionode_host[u][0]);
+	else if (u == 0)
+	    ion->hostname = strdup(p->hostname);
+	else
+	    goto _noarg;
+    }
+    set_my_ionode_info(p);
 
     /* Devices */
     count = configurator_get_sec_size(c, "device");
@@ -580,15 +667,35 @@ void f_print_layouts(void) {
 	}
 	printf("  Layout partition:%u\n", lo->lp->part_num);
     }
+
+    /* IO nodes */
+    printf("\nConfiguration has %u IO nodes:\n", p->ionode_count);
+    for (u = 0; u < p->ionode_count; u++) {
+	F_IONODE_INFO_t *info = &p->ionodes[u];
+
+	printf("  #%u%s id:%u %s MDS:%u\n",
+	    u, (u == p->ionode_id && PoolIsIOnode(p))?"*":"",
+	    info->conf_id, info->hostname, info->mds);
+    }
 }
 
+/* Is 'hostname' in IO nodes list? If NULL, check my node name */
 int f_host_is_ionode(const char *hostname)
 {
-    return true;
+    if (hostname)
+	return !!get_ionode_info(pool, hostname);
+
+    return pool && PoolIsIOnode(pool);
 }
 
+/* Is 'hostname' a MD server? If NULL, check my node name */
 int f_host_is_mds(const char *hostname)
 {
-    return true;
+    if (hostname) {
+	F_IONODE_INFO_t *info = get_ionode_info(pool, hostname);
+
+	return info && info->mds;
+    }
+    return pool && PoolHasMDS(pool);
 }
 
