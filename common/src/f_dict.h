@@ -10,9 +10,9 @@
 #include <sys/types.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <uuid/uuid.h>
 
 #include "famfs_env.h"
-#include "famfs_ktypes.h"
 
 
 /*

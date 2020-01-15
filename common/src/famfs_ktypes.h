@@ -36,9 +36,6 @@ typedef unsigned uint128_t __attribute__ ((mode (TI)));
 _Static_assert( __builtin_types_compatible_p(typeof(dev_t), unsigned long), \
 		"dev_t");
 
-/* 16-byte, random (version 4) UUID */
-typedef unsigned char	uuid_t[16];
-
 #if 0
 typedef uint64_t dma_addr_t;
 #define be16_to_cpup(X) __be16_to_cpup(X)

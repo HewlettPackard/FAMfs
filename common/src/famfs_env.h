@@ -178,6 +178,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define F_LAYOUTS_MAX		1024	/* Maximum number of layouts, for config & maps */
 #define F_IONODES_MAX		1024	/* Maximum number of IO nodes */
 
+#define F_UUID_BUF_SIZE		(37)	/* Print buffer size for UUID */
 
 /* Client */
 #define UNIFYCR_INDEX_BUF_SIZE (20 * MIB)

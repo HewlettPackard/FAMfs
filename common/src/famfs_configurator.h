@@ -4,7 +4,7 @@
  *
  * Copyright 2017, UT-Battelle, LLC.
  * Copyright (c) 2018 - Michael J. Brim
- * Copyright (c) 2017-2018, HPE - Oleg Neverovitch, Dmitry Ivanov
+ * Copyright (c) 2017-2019, HPE - Oleg Neverovitch, Dmitry Ivanov
  */
 
 #ifndef FAMFS_CONFIGURATOR_H
@@ -18,19 +18,14 @@
  */
 
 // need bool, NULL, FILE*
-#ifdef __cplusplus
-# include <climits>
-# include <cstddef>
-# include <cstdio>
-#else
-# include <limits.h>
-# include <stdbool.h>
-# include <stddef.h>
-# include <stdio.h>
-#endif
+#include <limits.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <uuid/uuid.h>
 
 #include "famfs_env.h"
-#include "famfs_ktypes.h"
+
 
 #ifndef TMPDIR
 #define TMPDIR /tmp
@@ -106,9 +101,6 @@
     UNIFYCR_CFG_MULTI(layout, devices, INT, 0, "device ID in layout", NULL, 0) \
     UNIFYCR_CFG_MULTI(layout, name, STRING, LAYOUT0_NAME, "layout name (moniker)", configurator_moniker_check, 1) \
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /* unifycr_cfg_t struct */
 typedef struct unifycr_cfg_t_ {
@@ -229,17 +221,16 @@ int configurator_get_sizes(unifycr_cfg_t *cfg,
 			   const char *key,
 			   int *keylist_size);
 
+int f_uuid_parse(const char *in, uuid_t uu);
+
 static inline int configurator_get_sec_size(unifycr_cfg_t *cfg,
 					    const char *section)
 {
 	return configurator_get_sizes(cfg, section, NULL, NULL);
 }
 
-/* validate version 4 UUID */
-int f_parse_uuid(const char *s, uuid_t *uuid_p);
-
-#ifdef __cplusplus
-} /* extern C */
-#endif
+/* Validate structure's size and/or alignment */
+    _Static_assert( sizeof(uuid_t) == 16,	"uuid_t");
+    _Static_assert( sizeof(uuid_t)*2+4+1 == F_UUID_BUF_SIZE, "uuid_t BUF_SIZE");
 
 #endif /* FAMFS_CONFIGURATOR_H */

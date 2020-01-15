@@ -4,6 +4,8 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
+#include <uuid/uuid.h>
+
 #include "f_pool.h"
 #include "f_layout.h"
 #include "famfs_maps.h"
@@ -144,11 +146,10 @@ static void set_my_ionode_info(F_POOL_t *p)
     }
 }
 
-static F_POOL_DEV_t * find_pdev_in_ag(F_AG_t *ags, uint32_t pool_ags,
+static int find_pd_index_in_ag(F_AG_t *ags, uint32_t pool_ags,
     uint32_t ag_devs, uint16_t index, F_POOL_DEV_t *devlist)
 {
     F_AG_t *ag = ags;
-    F_POOL_DEV_t *pdev = NULL;
     F_POOL_DEV_t (*ag_devlist)[ag_devs] = (F_POOL_DEV_t(*)[ag_devs])devlist;
     unsigned int u;
 
@@ -157,22 +158,32 @@ static F_POOL_DEV_t * find_pdev_in_ag(F_AG_t *ags, uint32_t pool_ags,
 	unsigned int uu;
 
 	assert( ag->pdis <= ag_devs );
-	for (uu = 0; uu < ag->pdis; uu++, gpdi++) {
-	    if (*gpdi == index) {
-		pdev = &ag_devlist[u][uu];
-		pdev->idx_ag = u;
-		pdev->pool_index = index;
-		break;
-	    }
-	}
+	/* TODO: Check for duplicates in AG */
+	for (uu = 0; uu < ag->pdis; uu++, gpdi++)
+	    if (*gpdi == index)
+		return (int)(&ag_devlist[u][uu] - devlist);
     }
-    return pdev;
+    return -1;
 }
 
 struct f_pool_dev_ *f_find_pdev(unsigned int index) {
     struct f_pool_ *p = pool;
-    return find_pdev_in_ag(p->ags, p->pool_ags, p->ag_devs,
-			   (uint16_t)index, p->devlist);
+    F_AG_t *ag;
+    unsigned int u;
+
+    if (p == NULL)
+	return NULL;
+
+    ag = p->ags;
+    for (u = 0; u < p->pool_ags; u++, ag++) {
+	F_POOL_DEV_t *pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
+	unsigned int uu;
+
+	for (uu = 0; uu < ag->pdis; uu++, pdev++)
+	    if (pdev->pool_index == index)
+		return pdev;
+    }
+    return NULL;
 }
 
 static int cmp_pdev_by_index(const void *a, const void *b)
@@ -180,7 +191,21 @@ static int cmp_pdev_by_index(const void *a, const void *b)
     uint16_t ia = ((F_POOL_DEV_t *)a)->pool_index;
     uint16_t ib = ((F_POOL_DEV_t *)b)->pool_index;
 
-    return (ia - ib);
+    return ((int)ia - (int)ib); /* ascending order */
+}
+
+/* Sort layout devices in ascending order: AG first, then pool index */
+static int cmp_pdi(const void *a, const void *b)
+{
+    F_POOLDEV_INDEX_t *pdia = (F_POOLDEV_INDEX_t *)a;
+    F_POOLDEV_INDEX_t *pdib = (F_POOLDEV_INDEX_t *)b;
+    unsigned int ia = pdia->idx_ag * (F_PDI_NONE+1) + pdia->idx_dev;
+    unsigned int ib = pdib->idx_ag * (F_PDI_NONE+1) + pdib->idx_dev;
+    if (ia > ib)
+	return 1;
+    else if (ia == ib)
+	return 0;
+    return -1;
 }
 
 static void free_pdev(F_POOL_DEV_t *pdev)
@@ -255,8 +280,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info = &p->info;
 
     /* Pool */
-    if (f_parse_uuid(c->devices_uuid, &p->uuid)) {
-	assert( f_parse_uuid(FAMFS_PDEVS_UUID_DEF, &p->uuid) == 0);
+    if (f_uuid_parse(c->devices_uuid, p->uuid)) {
+	assert( uuid_parse(FAMFS_PDEVS_UUID_DEF, p->uuid) == 0);
     }
     /* my node name */
     p->hostname = f_get_myhostname();
@@ -288,7 +313,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 
 	if (configurator_int_val(c->ionode_id[u][0], &l)) goto _syntax;
 	ion->conf_id = (uint32_t)l;
-	f_parse_uuid(c->ionode_uuid[u][0], &ion->uuid);
+	f_uuid_parse(c->ionode_uuid[u][0], ion->uuid);
 	if (configurator_int_val(c->ionode_mds[u][0], &l)) goto _syntax;
 	ion->mds = (uint32_t)l;
 	if (c->ionode_host[u][0])
@@ -300,7 +325,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     }
     set_my_ionode_info(p);
 
-    /* Devices */
+    /* Device count */
     count = configurator_get_sec_size(c, "device");
     if (!IN_RANGE(count, 1, F_DEVICES_MAX)) goto _noarg;
     pool_info->dev_count = (unsigned int)count;
@@ -317,7 +342,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	/* AG id */
 	if (configurator_int_val(c->ag_id[u][0], &l)) goto _syntax;
 	ag->gid = (uint32_t)l;
-	f_parse_uuid(c->ag_uuid[u][0], &ag->uuid);
+	f_uuid_parse(c->ag_uuid[u][0], ag->uuid);
 	if (c->ag_geo[u][0])
 	    ag->geo = strdup(c->ag_geo[u][0]);
 	/* List of devices in the group */
@@ -348,15 +373,20 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	pdev->pool_index = F_PDI_NONE;
     for (u = 0; u < pool_info->dev_count; u++) {
 	FAM_DEV_t *fam;
+	int pd_index;
 	uint16_t pool_index;
 
 	if (configurator_int_val(c->device_id[u][0], &l)) goto _noarg;
 	pool_index = (uint32_t)l;
-	/* find device in AG by pool_index */
-	pdev = find_pdev_in_ag(p->ags, p->pool_ags, p->ag_devs,
-			       pool_index, p->devlist);
-	if (!pdev) goto _syntax;
-	f_parse_uuid(c->device_uuid[u][0], &pdev->uuid);
+
+	/* Find device in AG by pool_index and map it to devlist */
+	pd_index = find_pd_index_in_ag(p->ags, p->pool_ags, p->ag_devs,
+				       pool_index, p->devlist);
+	if (!IN_RANGE(pd_index, 0, (int)p->pool_devs-1)) goto _syntax;
+	pdev = &p->devlist[pd_index];
+	pdev->pool_index = pool_index;
+
+	f_uuid_parse(c->device_uuid[u][0], pdev->uuid);
 	if (configurator_int_val(c->device_size[u][0], &l)) goto _syntax;
 	pdev->size = (size_t)l;
 	if (pdev->size == 0)
@@ -396,8 +426,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 		    pdev->idx_ag);
 		goto _syntax;
 	    }
-	    /* set device 2nd index */
-	    pdev->idx_dev = uu;
+	    /* set pool device indexes in array for back-reference */
+	    pdev->idx_ag = u;	/* 1st index */
+	    pdev->idx_dev = uu;	/* 2nd index */
 	}
     }
 
@@ -455,7 +486,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     F_POOL_t *p = pool;
     F_POOL_DEV_t *pdev;
     F_POOLDEV_INDEX_t *pdi;
-    unsigned int u, uu, conf_id;
+    unsigned int u, uu;
     int rc, count;
     long l;
     bool all_pdevs;
@@ -499,18 +530,17 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     if (!lo->devlist) goto _nomem;
     pdi = lo->devlist;
     for (u = uu = 0; u < info->devnum; u++, pdi++) {
+	/* find pool device by id */
 	if (all_pdevs) {
 	    pdev = &pool->devlist[uu];
-	    while ((pdev++)->pool_index != F_PDI_NONE &&
-		   uu < p->pool_devs) uu++;
+	    while (pdev->pool_index == F_PDI_NONE &&
+		   ++uu < p->pool_devs) pdev++;
+	    assert( uu < p->pool_devs ); /* less than devnum */
 	} else {
-	    if (configurator_int_val(c->layout_devices[idx][u], &l)) {
+	    if (configurator_int_val(c->layout_devices[idx][u], &l))
 		pdev = NULL;
-	    } else {
-		conf_id = (unsigned int)l;
-		/* find pool device index */
-		pdev = f_find_pdev(conf_id);
-	    }
+	    else
+		pdev = f_find_pdev((unsigned int)l);
 	}
 	/* copy pdev */
 	if (pdev == NULL) {
@@ -524,6 +554,8 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    if (!pdi->sha) goto _nomem;
 	}
     }
+    /* Sort by AG first, then by pool index */
+    qsort(lo->devlist, lo->devlist_sz, sizeof(F_POOLDEV_INDEX_t), cmp_pdi);
 
     lo->pool = p;
     /* Add to layouts list */
@@ -621,6 +653,7 @@ void f_print_layouts(void) {
     F_AG_t *ag;
     F_POOL_DEV_t *pdev;
     F_LAYOUT_t *lo;
+    char pr_uuid[F_UUID_BUF_SIZE];
     struct list_head *l, *tmp;
     unsigned int u, uu;
 
@@ -637,8 +670,10 @@ void f_print_layouts(void) {
 		u, ag->gid, ag->pdis);
 	for (uu = 0; uu < ag->pdis; uu++, pdev++) {
 	    assert( pdev->pool_index != F_PDI_NONE );
-	    printf ("    [%u,%u] id:%u size:%zu\n",
-		pdev->idx_ag, pdev->idx_dev, pdev->pool_index, pdev->size);
+	    uuid_unparse(pdev->uuid, pr_uuid);
+	    printf ("    [%u,%u] id:%u uuid:%s size:%zu\n",
+		pdev->idx_ag, pdev->idx_dev, pdev->pool_index,
+		pr_uuid, pdev->size);
 	}
     }
 

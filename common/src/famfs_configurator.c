@@ -6,30 +6,23 @@
  * Copyright (c) 2018 - Michael J. Brim
  * Copyright (c) 2017-2018, HPE - Oleg Neverovitch, Dmitry Ivanov
  */
-
-#ifdef __cplusplus
-# include <cassert>
-# include <cctype>
-# include <cerrno>
-# include <cstddef>
-# include <cstdlib>
-# include <cstring>
-#else
 # include <assert.h>
 # include <ctype.h>
 # include <errno.h>
 # include <stddef.h>
 # include <stdlib.h>
 # include <string.h>
-#endif
+# include <stdint.h>
 
 #include <getopt.h>   // getopt_long()
 #include <sys/stat.h> // stat()
 #include <unistd.h>
+#include <uuid/uuid.h>
 
 #include "ini.h"
 #include "tinyexpr.h"
 #include "famfs_configurator.h"
+
 
 #define UNIFYCR_CFG_MAX_MSG 1024
 
@@ -1125,23 +1118,20 @@ int configurator_moniker_check(const char *s __attribute__ ((unused)),
     return 0; /* pass null strings */
 }
 
-int configurator_uuid_check(const char *s __attribute__ ((unused)),
-                               const char *k __attribute__ ((unused)),
-                               const char *val,
-                               char **o __attribute__ ((unused)))
+int f_uuid_parse(const char *s, uuid_t uu)
 {
-    /* null string is Ok */
-    return f_parse_uuid(val, NULL);
-}
-
-/* Parse UUID version 4 string to 128-bit value */
-int f_parse_uuid(const char *s, uuid_t *uuid_p) {
     union {
-	uint128_t uuid;
+	uuid_t uuid;
 	struct {
+	/*
 	    uint32_t	d1;
 	    uint16_t	d2;
 	    uint16_t	d3;
+	*/
+	    uint8_t	d1[4];
+	    uint8_t	d2[2];
+	    uint8_t	d3[2];
+	/* RPC IDL Representation: opaque values */
 	    uint8_t	d4[8];
 	} __attribute__((packed));
     } u;
@@ -1151,20 +1141,41 @@ int f_parse_uuid(const char *s, uuid_t *uuid_p) {
 	return 0; /* null string is Ok */
     if (*s == '{')
 	s++;
+    /*
     rc = sscanf(s, "%08X-%04hX-%04hX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
 	&u.d1, &u.d2, &u.d3, &u.d4[0], &u.d4[1],
 	&u.d4[2], &u.d4[3], &u.d4[4], &u.d4[5], &u.d4[6], &u.d4[7]);
+    */
+    rc = sscanf(s, "%02hhX%02hhX%02hhX%02hhX-%02hhX%02hhX-%02hhX%02hhX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
+	&u.d1[0], &u.d1[1], &u.d1[2], &u.d1[3],
+	&u.d2[0], &u.d2[1], &u.d3[0], &u.d3[1],
+	&u.d4[0], &u.d4[1],
+	&u.d4[2], &u.d4[3], &u.d4[4], &u.d4[5], &u.d4[6], &u.d4[7]);
     if (rc == 0)
 	return -1;
+    /*
     if (rc == 11) {
-	if ((u.d3 & 0xf000) == 0x4000 && (u.d4[0] & 0xc0) == 0x80) {
-	    if (uuid_p)
-		*(uint128_t *)uuid_p = u.uuid;
+	if ((u.d3 & 0xf000) == 0x4000 && (u.d4[0] & 0xc0) == 0x80)
+    */
+    if (rc == 16) {
+	if ((u.d3[0] & 0xf0) == 0x40 && (u.d4[0] & 0xc0) == 0x80)
+	{
+	    if (uu)
+		uuid_copy(uu, u.uuid);
 	    return 0; /* Valid UUID */
 	}
 	return -2; /* Not an UUID version 4 */
     }
     return rc;
+}
+
+int configurator_uuid_check(const char *s __attribute__ ((unused)),
+                               const char *k __attribute__ ((unused)),
+                               const char *val,
+                               char **o __attribute__ ((unused)))
+{
+    /* null string is Ok */
+    return f_uuid_parse(val, NULL);
 }
 
 static int setdef_multisec(unifycr_cfg_t *cfg, const char *cursec)
