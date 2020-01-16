@@ -430,6 +430,10 @@ int main (int argc, char *argv[]) {
     if (md == NULL || unifycr_indexes[0] == NULL) goto err;
     if (md->mdhim_comm_size == 0) goto err;
 
+    printf("%d is %s node\n",
+	rank,
+	md->primary_index->myinfo.rangesrv_num?"RS":"Client");
+
     msg("Layout %d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u",
 	lo_info->conf_id, lo_info->name, lo_info->data_chunks,
 	(lo_info->chunks - lo_info->data_chunks), lo_info->chunk_sz,
@@ -470,7 +474,7 @@ int main (int argc, char *argv[]) {
      * Test group two: Bitmaps with KV store backend
      */
     tg = 2;
-    msg0("Running group %d tests: bitmaps with KV store backend", tg);
+    msg0("Running group %d tests: bitmaps", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
@@ -836,7 +840,7 @@ t_2_del:
      * Test group three: Structured map with KV store backend
      */
     tg = 3;
-    msg0("Running group %d tests: structured map with KV store backend", tg);
+    msg0("Running group %d tests: structured map", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */

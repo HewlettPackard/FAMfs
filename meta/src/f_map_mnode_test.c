@@ -369,7 +369,7 @@ int main (int argc, char *argv[]) {
      * Test group two: Bitmaps with KV store backend, random keys
      */
     tg = 2;
-    printf("Running group %d tests: bitmaps with KV store backend, random keys\n", tg);
+    printf("Running group %d tests: bitmaps, random keys\n", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
@@ -686,7 +686,7 @@ int main (int argc, char *argv[]) {
      * Test group three: Bitmaps with KV store backend, sequential keys
      */
     tg = 3;
-    printf("Running group %d tests: bitmaps with KV store backend, sequential keys\n", tg);
+    printf("Running group %d tests: bitmaps, sequential keys\n", tg);
     global = 0;
 
     t = 0;
@@ -965,7 +965,7 @@ int main (int argc, char *argv[]) {
      * Test group four: Structured map with KV store backend, random keys
      */
     tg = 4;
-    printf("Running group %d tests: structured map with KV store backend, random keys\n", tg);
+    printf("Running group %d tests: structured map, random keys\n", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
@@ -1298,7 +1298,7 @@ int main (int argc, char *argv[]) {
      * Test group five: Structured map with KV store backend, sequential keys
      */
     tg = 5;
-    printf("Running group %d tests: structured map with KV store backend, sequential keys\n", tg);
+    printf("Running group %d tests: structured map with KV, sequential keys\n", tg);
     global = 0;
 
     t = 0;
