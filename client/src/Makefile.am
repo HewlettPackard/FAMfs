@@ -1,9 +1,16 @@
+AM_CPPFLAGS =	-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE \
+		-I$(top_builddir)/common/src \
+		-I$(top_builddir)/client \
+		-I$(top_srcdir)/userspace-rcu/include \
+		-I$(top_srcdir)/userspace-rcu/src
+
+AM_CFLAGS =	-Wall -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable
+
 lib_LTLIBRARIES = libfamfs.la libfamfs_gotcha.la
 
 libfamfsdir = $(includedir)
-libfamfs_gotchadir = $(includedir)
-
 libfamfs_HEADERS = unifycr.h
+
 libfamfs_la_SOURCES = \
   unifycr-fixed.c \
   unifycr-fixed.h \
@@ -26,15 +33,16 @@ libfamfs_la_SOURCES = \
   fam_stripe.h
 
 libfamfs_la_CPPFLAGS = \
-  -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE \
-  -I$(top_builddir)/common/src \
-  -I$(top_builddir)/client \
+  $(AM_CPPFLAGS) \
+  -funroll-loops --param max-completely-peel-times=64 \
   $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
-libfamfs_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) -lcrypto -lrt -lpthread
+libfamfs_la_LDFLAGS = \
+  -static -version-info $(LIBUNIFYCR_LT_VERSION) \
+  $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
+  -lcrypto -lrt -lpthread
+libfamfs_la_LIBADD =	$(top_builddir)/common/src/libfamfs_common.la \
+		$(top_builddir)/common/src/libfamfs_meta.la
 
-libfamfs_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
-
-# libfamfs_gotcha_HEADERS = unifycr.h
 libfamfs_gotcha_la_SOURCES = \
   unifycr-fixed.c \
   unifycr-fixed.h \
@@ -59,12 +67,12 @@ libfamfs_gotcha_la_SOURCES = \
 
 libfamfs_gotcha_la_CPPFLAGS = \
   -DUNIFYCR_GOTCHA \
-  -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE \
-  -I$(top_builddir)/common/src \
-  -I$(top_builddir)/client \
-  $(GOTCHA_CFLAGS) $(LIBFABRIC_CFLAGS) $(MPI_CLDFLAGS)
-libfamfs_gotcha_la_LDFLAGS = -version-info $(LIBUNIFYCR_LT_VERSION) $(GOTCHA_LDFLAGS) \
-                             $(LIBFABRIC_LIBS) $(MPI_CFLAGS) -lgotcha -lcrypto -lrt -lpthread
+  $(AM_CPPFLAGS) \
+  $(GOTCHA_CFLAGS) $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+libfamfs_gotcha_la_LDFLAGS = \
+  -shared -version-info $(LIBUNIFYCR_LT_VERSION) \
+  $(GOTCHA_LDFLAGS) $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
+  -lgotcha -lcrypto -lrt -lpthread
 libfamfs_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
-AM_CFLAGS = -Wall -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+#		$(top_builddir)/common/src/libfamfs_meta.la
 
