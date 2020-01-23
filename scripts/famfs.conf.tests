@@ -28,15 +28,6 @@ emulated = true ; force FAM module emulation
 pk = 0 ; default
 size = 16G ; default device size
 offset = 0 ; default
-### libfabric ###
-# fabric =
-# domain =
-# port =
-provider = sockets ; default:zhpe
-memreg = "basic,local" ; basic|local|basic,local|scalable, default:basic
-progress = manual ; auto|manual|default, default:auto
-use_cq = true ; use completion queue instead of counters
-# timeout =
 
 [device] # FAM module or emulated FAM
 id = 1 ; Unique device id
