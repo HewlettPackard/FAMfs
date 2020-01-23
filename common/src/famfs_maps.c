@@ -17,6 +17,10 @@ F_POOL_t *pool = NULL;
 static F_META_IFACE_t *meta_iface = NULL;
 
 
+F_POOL_t *f_get_pool(void) {
+    return pool;
+}
+
 /* Layout name (moniker) parser */
 int f_layout_parse_name(struct f_layout_info_ *info)
 {
@@ -99,8 +103,7 @@ int f_db_bdel(int map_id, void **keys, size_t size)
 
 static F_IONODE_INFO_t *get_ionode_info(F_POOL_t *p, const char *hostname)
 {
-    F_IONODE_INFO_t *info;
-    unsigned int count, u;
+    unsigned int count;
     int idx;
     char **nodelist;
 
@@ -109,17 +112,14 @@ static F_IONODE_INFO_t *get_ionode_info(F_POOL_t *p, const char *hostname)
 
     /* List of IO nodes */
     count = p->ionode_count;
-    nodelist = (char**) calloc(sizeof(char*), count);
-    info = p->ionodes;
-    for (u = 0; u < count; u++, info++)
-	nodelist[u] = info->hostname;
+    nodelist = p->ionodelist;
+    assert( nodelist );
 
     /* Find foreign hostname if given, otherwise local hostname or IP */
     if (hostname)
 	idx = f_find_node(nodelist, (int)count, hostname);
     else
 	idx = find_my_node(nodelist, (int)count, NULL);
-    free(nodelist);
 
     if (idx < 0)
 	return NULL;
@@ -245,6 +245,18 @@ static void free_pool(F_POOL_t *p)
 	}
 	free(p->ionode_fams);
 
+	if (p->lf_info) {
+	    LF_INFO_t *lf_info = p->lf_info;
+
+	    free(lf_info->fabric);
+	    free(lf_info->domain);
+	    free(lf_info->service);
+	    free(lf_info->provider);
+	    free(lf_info);
+	}
+
+	free_lf_params(&p->lfs_params);
+
 	f_dict_free(p->dict);
 	pthread_spin_destroy(&p->dict_lock);
 	pthread_rwlock_destroy(&p->lock);
@@ -259,6 +271,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     F_POOL_INFO_t *pool_info;
     F_AG_t *ag;
     F_POOL_DEV_t *pdev;
+    LF_INFO_t *lf_info;
+    const char *s;
     int rc, count;
     unsigned int u, uu, ag_maxlen;
     long l;
@@ -280,12 +294,18 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info = &p->info;
 
     /* Pool */
+    if (configurator_int_val(c->log_verbosity, &l)) goto _noarg;
+    p->verbose = (int)l;
     if (f_uuid_parse(c->devices_uuid, p->uuid)) {
 	assert( uuid_parse(FAMFS_PDEVS_UUID_DEF, p->uuid) == 0);
     }
     /* my node name */
     p->hostname = f_get_myhostname();
     if (!p->hostname) goto _nomem;
+
+    /* Generic device section: 'devices' */
+    lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
+    if (!lf_info) goto _nomem;
     if (configurator_int_val(c->devices_extent_size, &l)) goto _noarg;
     pool_info->extent_sz = (unsigned long)l;
     if (configurator_int_val(c->devices_offset, &l)) goto _noarg;
@@ -293,10 +313,54 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (configurator_bool_val(c->devices_emulated, &b)) goto _noarg;
     if (b)
 	SetPoolFAMEmul(p);
+    else
+	lf_info->mrreg.true_fam = 1;
     if (configurator_int_val(c->devices_size, &l)) goto _noarg;
     pool_info->size_def = (size_t)l;
     if (configurator_int_val(c->devices_pk, &l)) goto _noarg;
     pool_info->pkey_def = (uint64_t)l;
+    if (c->devices_fabric)
+	lf_info->fabric = strdup(c->devices_fabric);
+    if (c->devices_domain)
+	lf_info->domain = strdup(c->devices_domain);
+    lf_info->service = strdup(c->devices_port);
+    lf_info->provider = strdup(c->devices_provider);
+    if (!strcmp(lf_info->provider, "zhpe"))
+	lf_info->mrreg.zhpe_support = 1;
+    if (configurator_bool_val(c->devices_use_cq, &b)) goto _noarg;
+    if (b)
+	lf_info->use_cq = 1;
+    if (configurator_int_val(c->devices_timeout, &l)) goto _noarg;
+    lf_info->io_timeout_ms = (uint64_t)l;
+    s = c->devices_memreg;
+    lf_info->mrreg.scalable = strcasecmp(s, LF_MR_MODEL_SCALABLE)? 0:1;
+    lf_info->mrreg.basic = strncasecmp(s, LF_MR_MODEL_BASIC,
+				       strlen(LF_MR_MODEL_BASIC))? 0:1;
+    lf_info->mrreg.local = strcasecmp(s + lf_info->mrreg.basic*(strlen(LF_MR_MODEL_BASIC)+1),
+				LF_MR_MODEL_LOCAL)? 0:1;
+    if (!lf_info->mrreg.scalable && !lf_info->mrreg.basic && !lf_info->mrreg.local)
+	goto _badstr;
+    if (lf_info->mrreg.basic) {
+	/* basic registration is equivalent to FI_MR_VIRT_ADDR|FI_MR_ALLOCATED|FI_MR_PROV_KEY */
+	lf_info->mrreg.basic = 0;
+	lf_info->mrreg.allocated = 1;
+	if (!strcmp(lf_info->provider, "verbs")) {
+	    lf_info->mrreg.prov_key = 1;
+	    lf_info->mrreg.virt_addr = 1;
+	} else {
+	    /* "zhpe" or "sockets" */
+	    lf_info->mrreg.prov_key = 0;
+	    lf_info->mrreg.virt_addr = 0;
+	}
+    }
+    s = c->devices_progress;
+    lf_info->progress.progress_manual = strncasecmp(s, "manual", 3)? 0:1;
+    if (!lf_info->progress.progress_manual) {
+	lf_info->progress.progress_auto = strcasecmp(s, "auto")? 0:1;
+	if (!lf_info->progress.progress_auto && strcasecmp(s, "default"))
+	    goto _badstr;
+    }
+    p->lf_info = lf_info;
 
     /* IO nodes */
     count = configurator_get_sec_size(c, "ionode");
@@ -308,20 +372,23 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     p->ionodes = (F_IONODE_INFO_t*) calloc(sizeof(F_IONODE_INFO_t),
 					   p->ionode_count);
     if (!p->ionodes) goto _nomem;
+    p->ionodelist = (char**) calloc(sizeof(char*), p->ionode_count);
+    if (!p->ionodelist) goto _nomem;
     for (u = 0; u < p->ionode_count; u++) {
-	F_IONODE_INFO_t *ion = &p->ionodes[u];
+	F_IONODE_INFO_t *ioi = &p->ionodes[u];
 
 	if (configurator_int_val(c->ionode_id[u][0], &l)) goto _syntax;
-	ion->conf_id = (uint32_t)l;
-	f_uuid_parse(c->ionode_uuid[u][0], ion->uuid);
+	ioi->conf_id = (uint32_t)l;
+	f_uuid_parse(c->ionode_uuid[u][0], ioi->uuid);
 	if (configurator_int_val(c->ionode_mds[u][0], &l)) goto _syntax;
-	ion->mds = (uint32_t)l;
+	ioi->mds = (uint32_t)l;
 	if (c->ionode_host[u][0])
-	    ion->hostname = strdup(c->ionode_host[u][0]);
+	    ioi->hostname = strdup(c->ionode_host[u][0]);
 	else if (u == 0)
-	    ion->hostname = strdup(p->hostname);
+	    ioi->hostname = strdup(p->hostname);
 	else
 	    goto _noarg;
+	p->ionodelist[u] = strdup(ioi->hostname);
     }
     set_my_ionode_info(p);
 
@@ -442,6 +509,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 
 _nomem:
     rc = -ENOMEM;
+    goto _err;
+_badstr:
+    rc = -3; /* invalid string value */
     goto _err;
 _syntax:
     rc = -2; /* semantic error in configuration */
@@ -572,6 +642,108 @@ _err:
     return rc;
 }
 
+/* Linaer map: devices to ionodes */
+static FAM_MAP_t *map_fams_to_ionodes(F_POOL_t *p, int count)
+{
+    FAM_MAP_t *m;
+    F_POOL_DEV_t *pdev;
+    unsigned long long *ids;
+    unsigned int pd;
+    int i, j, k, d, n, nn;
+
+    m = (FAM_MAP_t *) calloc(1, sizeof(FAM_MAP_t));
+    if (!m) goto _free;
+    m->ionode_cnt = p->ionode_count;
+    m->total_fam_cnt = count;
+    m->node_fams = (int *) calloc(m->ionode_cnt, sizeof(int));
+    m->fam_ids = (unsigned long long**) calloc(m->ionode_cnt, sizeof(*m->fam_ids));
+    if (!m->node_fams || !m->fam_ids) goto _free;
+
+    nn = m->total_fam_cnt / m->ionode_cnt;
+    k = m->total_fam_cnt % m->ionode_cnt;
+    pd = 0;
+    pdev = p->devlist;
+    for (i = d = 0; i < m->ionode_cnt; i++) {
+	n = (i < k)? (nn+1):nn; /* number of FAMs on ionode i */
+	m->node_fams[i] = n;
+	ids = (unsigned long long*) calloc(n, sizeof(unsigned long long));
+	for (j = 0; j < n; j++, d++, pd++, pdev++) {
+	    while (pd < p->pool_devs && pdev->pool_index == F_PDI_NONE) {
+		pdev++;
+		pd++;
+	    }
+	    assert( pd < p->pool_devs );
+	    ids[j] = pdev->pool_index;
+	}
+	m->fam_ids[i] = ids;
+    }
+    return m;
+
+_free:
+    free_fam_map(&m);
+    return NULL;
+}
+
+static int cfg_alloc_params(F_POOL_t *p, N_PARAMS_t **params_p)
+{
+    N_PARAMS_t *params;
+    F_LAYOUT_INFO_t *lo_info;
+    F_POOL_INFO_t *info = &p->info;
+    LF_INFO_t *lf_info = p->lf_info;
+    int rc;
+    bool fam_emul = PoolFAMEmul(p);
+
+    params = (N_PARAMS_t *) calloc(sizeof(N_PARAMS_t), 1);
+    if (!params) goto _nomem;
+
+    /* default layout */
+    lo_info = f_get_layout_info(0);
+    params->nchunks = lo_info->chunks;
+    params->parities = lo_info->chunks - lo_info->data_chunks;
+    params->chunk_sz = lo_info->chunk_sz;
+    params->extent_sz = info->extent_sz;
+    params->srv_extents = info->size_def / info->extent_sz;
+    params->node_servers = 1;
+    params->part_mreg = (fam_emul)?1:0;
+    params->use_cq = lf_info->use_cq;
+    params->io_timeout_ms = lf_info->io_timeout_ms;
+    params->multi_domains = 0;
+    memcpy(&params->lf_mr_flags, &lf_info->mrreg, sizeof(LF_MR_MODE_t));
+    memcpy(&params->lf_progress_flags, &lf_info->progress, sizeof(LF_PRG_MODE_t));
+    if (lf_info->fabric)
+	params->lf_fabric = strdup(lf_info->fabric);
+    if (lf_info->domain)
+	params->lf_domain = strdup(lf_info->domain);
+    params->prov_name = strdup(lf_info->provider);
+    if (sscanf(lf_info->service, "%5d", &params->lf_port) != 1)
+	goto _badval;
+    params->nodelist = p->ionodelist;
+    params->node_id = p->ionode_id;
+    params->fam_cnt = (fam_emul)?info->dev_count:p->ionode_count;
+    params->fam_map = map_fams_to_ionodes(p, params->fam_cnt);
+
+    params->verbose = p->verbose;
+    params->mpi_comm = MPI_COMM_NULL;
+    params->w_thread_cnt = 1;
+    if (!params->lf_mr_flags.scalable) {
+        size_t len = params->fam_cnt * params->node_servers * sizeof(uint64_t);
+        params->mr_prov_keys = (uint64_t *)malloc(len);
+        params->mr_virt_addrs = (uint64_t *)malloc(len);
+    }
+
+    *params_p = params;
+    return 0;
+
+_nomem:
+    rc = -ENOMEM;
+    goto _err;
+_badval:
+    rc = -4; /* invalid value */
+_err:
+    free_lf_params(&params);
+    return rc;
+}
+
 static int cfg_load(unifycr_cfg_t *c)
 {
     int rc;
@@ -584,7 +756,9 @@ static int cfg_load(unifycr_cfg_t *c)
 	if ((rc = cfg_load_layout(c, i)))
 	    return rc;
 
-    return 0;
+    /* Allocate legacy N_PARAMS_t */
+    rc = cfg_alloc_params(pool, &pool->lfs_params);
+    return rc;
 }
 
 /* Set layout info from configurator once */

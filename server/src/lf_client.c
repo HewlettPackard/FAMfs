@@ -16,6 +16,7 @@
 #include <sys/mman.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <limits.h>
 
 #include "famfs_error.h"
@@ -23,39 +24,34 @@
 #include "log.h"
 #include "lf_client.h"
 #include "unifycr_metadata.h"
+#include "famfs_maps.h"
+#include "f_pool.h"
 
 
-/* Parse LFS_COMMAND and start FAM emulation servers on nodes in hostlist */
-int lfs_emulate_fams(char * const cmdline, int rank, int size,
-    LFS_CTX_t **lfs_ctx_pp)
+/* Start FAM emulation servers on nodes in hostlist */
+int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
 {
     LFS_CTX_t *lfs_ctx_p = NULL;
+    F_POOL_t *pool;
     N_PARAMS_t *params;
     LFS_SHM_t *lfs_shm;
     pthread_mutexattr_t pattr;
     pthread_condattr_t cattr;
     pid_t cpid;
     size_t shm_size, len;
-    char *argv[LFS_MAXARGS];
-    int argc, verbose, srv_cnt, is_srv, zero_srv_rank, cnt;
-    int rc = -1; /* OOM error */
+    int srv_cnt, is_srv, zero_srv_rank, cnt;
+    int rc = 0;
 
     lfs_ctx_p = (LFS_CTX_t *) calloc(1, sizeof(LFS_CTX_t));
     if (lfs_ctx_p == NULL)
-	return rc;
+	return -1; /* OOM error */
 
-    argc = str2argv(cmdline, argv, LFS_MAXARGS);
-    verbose = (rank == 0);
-    if ((rc = arg_parser(argc, argv, verbose, -1, &params))) {
-        err("Error parsing command arguments");
-        if (verbose)
-            ion_usage(argv[0]);
-        goto _exit;
-    }
-    lfs_ctx_p->lf_params = params;
+    pool = f_get_pool();
+    assert( pool ); /* f_set_layouts_info must fail if no pool */
+    params = pool->lfs_params;
 
     /* Having the real FAM? */
-    if (params->fam_map)
+    if (!PoolFAMEmul(pool))
         goto _exit;
 
     /*
@@ -83,6 +79,7 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
     pthread_cond_init(&lfs_shm->cond_ready, &cattr);
     pthread_cond_init(&lfs_shm->cond_quit, &cattr);
     lfs_ctx_p->lfs_shm = lfs_shm;
+    lfs_ctx_p->lf_params = params;
 
     /* On each node: fork FAM emulation server */
     cpid = fork();
@@ -136,8 +133,11 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
         for (i = 0; i < srv_cnt; i++)
             lf_srv_free(lf_servers[i]);
         free(lf_servers);
-        free_lf_params(&params);
+        //free_lf_params(&params);
         free(lfs_ctx_p);
+
+	/* Free pool and all layout structures */
+	f_free_layouts_info();
 
         exit(0);
     }
@@ -146,7 +146,10 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
     pthread_mutex_lock(&lfs_shm->lock_ready);
     while (lfs_shm->lfs_ready == 0)
             pthread_cond_wait(&lfs_shm->cond_ready, &lfs_shm->lock_ready);
+    if (lfs_shm->lfs_ready == 1)
+	lfs_ctx_p->child_pid = cpid;
     pthread_mutex_unlock(&lfs_shm->lock_ready);
+
     if (lfs_shm->lfs_ready != 1) {
         LOG(LOG_ERR, "Failed to start FAM emulator process!");
         rc = -1;
@@ -159,7 +162,6 @@ int lfs_emulate_fams(char * const cmdline, int rank, int size,
         LOG(LOG_INFO, "FAM module emulator is ready");
 
     pthread_cond_destroy(&lfs_shm->cond_ready);
-    lfs_ctx_p->child_pid = cpid;
     if (rc || !(params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr))
         goto _exit;
 
@@ -209,6 +211,8 @@ _close_comm:
 _exit:
     if (rc) {
         free_lfs_ctx(&lfs_ctx_p);
+	/* Free pool and all layout structures */
+	f_free_layouts_info();
     } else
         *lfs_ctx_pp = lfs_ctx_p;
     return rc;
@@ -217,7 +221,7 @@ _exit:
 void free_lfs_ctx(LFS_CTX_t **lfs_ctx_pp) {
     LFS_CTX_t *lfs_ctx_p = *lfs_ctx_pp;
     LFS_SHM_t *lfs_shm = lfs_ctx_p->lfs_shm;
-    N_PARAMS_t *params = lfs_ctx_p->lf_params;
+    //N_PARAMS_t *params = lfs_ctx_p->lf_params;
 
     if (lfs_shm) {
         /* Signal FAM emulator to quit */
@@ -227,11 +231,14 @@ void free_lfs_ctx(LFS_CTX_t **lfs_ctx_pp) {
             pthread_mutex_unlock(&lfs_shm->lock_quit);
             pthread_cond_signal(&lfs_shm->cond_quit);
         }
+	/* Wait for all children exit */
+	while (!(wait(0) == -1 && errno == ECHILD)) ;
+
         munmap(lfs_ctx_p->lfs_shm,
                sizeof(LFS_SHM_t) + lfs_shm->node_servers*sizeof(LFS_EXCG_t));
     }
 
-    free_lf_params(&params);
+    //free_lf_params(&params);
     free(lfs_ctx_p);
     *lfs_ctx_pp = NULL;
 }
@@ -242,8 +249,9 @@ int meta_register_fam(LFS_CTX_t *lfs_ctx)
     fam_attr_val_t *fam_attr;
     LFS_EXCG_t *rmk, *attr;
     FAM_MAP_t *fam_map;
-    unsigned int fam_id, part_cnt, i;
-    int node_id, rc;
+    unsigned int fam_id, part_cnt, i, node_fams;
+    unsigned long long *ids;
+    int node_id, rc = 0;
 
     /* Do nothing on LF client */
     node_id = params->node_id;
@@ -257,14 +265,12 @@ int meta_register_fam(LFS_CTX_t *lfs_ctx)
 
     /* Having the real FAM? */
     fam_map = params->fam_map;
-    if (fam_map) {
-	unsigned long long *ids;
+    ids = fam_map->fam_ids[node_id];
+    node_fams = fam_map->node_fams[node_id];
+    if (!PoolFAMEmul(f_get_pool())) {
 
-	assert(node_id>=0);
 	assert(part_cnt==1); /* TODO: Support FAM partitioning */
-	ids = fam_map->fam_ids[node_id];
-	rc = 0;
-	for (i = 0; i < fam_map->node_fams[node_id]; i++) {
+	for (i = 0; i < node_fams; i++) {
 	    fam_id = (unsigned int) ids[i];
 	    /* TODO: Read device pk&offset from configuration */
 	    attr->prov_key = 0;
@@ -273,11 +279,17 @@ int meta_register_fam(LFS_CTX_t *lfs_ctx)
 	}
     } else {
 	/* NOTE: FAM emulation only; limited to 31 bits */
-	fam_id = (unsigned int) params->node_id;
+	//fam_id = (unsigned int) params->node_id;
+	assert( node_fams == 1 ); /* TODO: Support FAM emulation mapping */
 	rmk = lfs_ctx->lfs_shm->rmk;
-	for (i = 0; i < part_cnt; i++, rmk++, attr++)
-	    memcpy(attr, rmk, sizeof(LFS_EXCG_t));
-	rc = meta_famattr_put(fam_id, fam_attr);
+	for (i = 0; i < node_fams; i++) {
+	    unsigned int ii;
+
+	    fam_id = (unsigned int) ids[i];
+	    for (ii = 0; ii < part_cnt; ii++, rmk++, attr++)
+		memcpy(attr, rmk, sizeof(LFS_EXCG_t));
+	    rc |= meta_famattr_put(fam_id, fam_attr);
+	}
     }
     free(fam_attr);
     return rc;

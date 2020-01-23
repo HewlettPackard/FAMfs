@@ -2166,19 +2166,42 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     }
 
     if (subtype == FAMFS) {
-        char *cmdline = getstr(LFS_COMMAND);
+	F_POOL_t *pool;
 
         if ((rc = f_set_layouts_info(&client_cfg))) {
             printf("failed to get layout info: %d\n", rc);
             return rc;
         }
-        
-        if ((rc = lfs_connect(cmdline, rank, size, &lfs_ctx))) {
+	pool = f_get_pool();
+	assert( pool ); /* f_set_layouts_info must fail if no pool */
+
+	/* DEBUG */
+	if (pool->verbose) {
+	    unifycr_config_print(&client_cfg, NULL);
+	    printf("\n"); f_print_layouts(); printf("\n");
+	}
+
+        if ((rc = lfs_connect(rank, size, &lfs_ctx))) {
             printf("lf-connect failed on mount: %d\n", rc);
+	    f_free_layouts_info();
             return rc;
         }
     }
     return 0;
+}
+
+static void famfs_client_exit(unifycr_cfg_t *cfg, LFS_CTX_t **lfs_ctx_p)
+{
+    if (fs_type == FAMFS) {
+	/* close libfabric devices */
+	free_lfc_ctx(lfs_ctx_p);
+
+	/* close the pool */
+	f_free_layouts_info();
+    }
+
+    /* free configurator structure */
+    unifycr_config_free(cfg);
 }
 
 /**
@@ -2228,8 +2251,7 @@ int unifycr_shutdown()
         }
     }
 
-    if (fs_type == FAMFS)
-        free_lfc_ctx(&lfs_ctx);
+    famfs_client_exit(&client_cfg, &lfs_ctx);
 
     return UNIFYCR_SUCCESS;
 }
@@ -2239,8 +2261,8 @@ int unifycr_unmount() {
         DEBUG("wrong FS type %d\n", fs_type);
         return UNIFYCR_FAILURE;
     }
-    if (fs_type == FAMFS)
-        free_lfc_ctx(&lfs_ctx);
+
+    famfs_client_exit(&client_cfg, &lfs_ctx);
 
     return UNIFYCR_SUCCESS;
 }

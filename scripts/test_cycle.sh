@@ -5,9 +5,6 @@ echo "Starting unifycrd with $MEM of memory"
 mpirun --hosts $AllNodes -ppn 1 $MPIchEnv /bin/bash -c 'ulimit -s 1024; unifycrd' 2>>$MPI_LOG 1>>$SRV_LOG &
 pid=$!
 
-#echo LFS_COMMAND=$LFS_COMMAND
-#echo FAMFS_MDS_LIST=$FAMFS_MDS_LIST
-
 ((waiting=0))
 ((_dt=2)) # Check every 2 sec
 echo -n "Waiting for the servers to come up"

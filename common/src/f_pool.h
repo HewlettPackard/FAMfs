@@ -18,7 +18,11 @@
 #include "list.h"
 
 
-struct fam_map_; /* defined in famfs_lf_connect.h */
+/* defined in famfs_lf_connect.h */
+struct fam_map_;
+struct lf_info_;
+struct n_params_;
+
 
 /* libfabric atomic types */
 typedef uint32_t	FI_UINT32_t;
@@ -112,6 +116,9 @@ typedef struct f_pool_ {
     F_POOL_INFO_t	info;		/* front-most pool attributes */
     struct list_head	layouts;	/* pool layouts list */
     char		*hostname;	/* this node's hostname */
+    struct lf_info_	*lf_info;	/* libfabric info */
+    struct n_params_	*lfs_params;	/* legacy N_PARAMS_t */
+    int			verbose;	/* debug flag */
 //    uint32_t	nparts;		/* layout partition number estimate */
     uint32_t		pool_ags;	/* allocation group array size; also this is
 					a size of 1st dimention of pool devices array */
@@ -123,6 +130,7 @@ typedef struct f_pool_ {
     struct f_pool_dev_	*devlist;	/* two-dimentional array of pool devices */
     F_IONODE_INFO_t	*ionodes;	/* array of IO node info of .ionode_count size */
     struct fam_map_	*ionode_fams;	/* FAM map: IO nodes to FAMs */
+    char		**ionodelist;	/* reference to ionode hostnames */
     struct {
 	unsigned long	    flags;	/* f_pool_flags */
     }			io;

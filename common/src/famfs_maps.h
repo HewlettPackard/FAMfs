@@ -296,13 +296,16 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 }
 
 /* FAMFS configutation access; defined in famfs_maps.c */
+struct f_pool_;
 struct f_layout_;
 struct f_layout_info_;
 struct unifycr_cfg_t_;
+
 int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
 int f_set_layouts_info(struct unifycr_cfg_t_ *cfg);
 void f_free_layouts_info(void);
 struct f_pool_dev_ *f_find_pdev(unsigned int index);
+struct f_pool_ *f_get_pool(void);
 struct f_layout_ *f_get_layout(int layout_id);
 struct f_layout_ *f_get_layout_by_name(const char *moniker);
 struct f_layout_info_ *f_get_layout_info(int layout_id);

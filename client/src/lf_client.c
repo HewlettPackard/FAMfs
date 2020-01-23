@@ -15,6 +15,8 @@
 #include "lf_client.h"
 #include "fam_stripe.h"
 #include "unifycr-internal.h" /* DEBUG() macro */
+#include "famfs_maps.h"
+#include "f_pool.h"
 
 
 static int get_lf_meta(N_PARAMS_t *params)
@@ -50,20 +52,24 @@ static int get_lf_meta(N_PARAMS_t *params)
     return rc;
 }
 
-static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params_p)
+int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
 {
+    F_POOL_t *pool;
     N_PARAMS_t *params;
-    int nchunks, verbose, rc;
+    N_STRIPE_t *stripe = NULL;
+    LFS_CTX_t *lfs_ctx_p;
+    N_CHUNK_t *chunk, *chunks = NULL;
+    struct famsim_stats *stats_fi_wr;
+    int i, nchunks;
+    int rc = 1; /* OOM error */
 
-    verbose = (rank == 0);
-    if ((rc = arg_parser(argc, argv, verbose, 1, params_p))) {
-	if (verbose)
-	    ion_usage(argv[0]);
+    lfs_ctx_p = (LFS_CTX_t *)malloc(sizeof(LFS_CTX_t));
+    if (lfs_ctx_p == NULL)
 	return rc;
-    }
-    params = *params_p;
-    ASSERT(params);
-    params->w_thread_cnt = 1;
+
+    pool = f_get_pool();
+    assert( pool );
+    params = pool->lfs_params;
 
     if ((rc = get_lf_meta(params))) {
 	DEBUG("rank:%d failed to get LF metadata from the delegator on mount, error:%d",
@@ -71,45 +77,25 @@ static int alloc_lf_clients(int argc, char **argv, int rank, N_PARAMS_t **params
 	return rc;
     }
 
-    rc = lf_clients_init(params);
-    if (rc == 0)
-	*params_p = params;
-    return rc;
-}
-
-int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
-{
-    N_PARAMS_t *lfs_params;
-    N_STRIPE_t *stripe = NULL;
-    LFS_CTX_t *lfs_ctx_p;
-    N_CHUNK_t *chunk, *chunks = NULL;
-    struct famsim_stats *stats_fi_wr;
-    char *argv[LFS_MAXARGS];
-    int i, nchunks, argc;
-    int rc = 1; /* OOM error */
-
-    lfs_ctx_p = (LFS_CTX_t *)malloc(sizeof(LFS_CTX_t));
-    if (lfs_ctx_p == NULL)
+    if ((rc = lf_clients_init(params))) {
+	DEBUG("rank:%d failed to initialize libfabric device(s) on mount, error:%d",
+	      dbg_rank, rc);
 	return rc;
-
-    argc = str2argv(param_str, argv, LFS_MAXARGS);
-    if ((rc = alloc_lf_clients(argc, argv, rank, &lfs_params)))
-	return rc;
+    }
 
     stripe = (N_STRIPE_t *)malloc(sizeof(N_STRIPE_t));
     if (stripe == NULL)
 	goto _free;
 
-    nchunks = lfs_params->nchunks;
-
     stats_fi_wr = famsim_stats_create(famsim_ctx, FAMSIM_STATS_FI_WR);
     if (stats_fi_wr)
-	famsim_ctx->fam_cnt = lfs_params->fam_cnt;
+	famsim_ctx->fam_cnt = params->fam_cnt;
 
+    nchunks = params->nchunks;
 #if 0
     /* stripe buffer for libfabric I/O */
     posix_memalign((void **)&stripe->lf_buffer, getpagesize(),
-		   lfs_params->chunk_sz * nchunks);
+		   params->chunk_sz * nchunks);
     if (stripe->lf_buffer == NULL)
 	goto _free;
 #endif
@@ -123,12 +109,12 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
 	chunk->r_event = 0;
 	chunk->w_event = 0;
     }
-    stripe->p	= lfs_params->parities;
-    stripe->d	= lfs_params->nchunks - lfs_params->parities;
-    stripe->extent_stipes	= lfs_params->extent_sz / lfs_params->chunk_sz;
-    stripe->srv_extents		= lfs_params->srv_extents;
-    stripe->part_count		= lfs_params->node_servers;
-    stripe->part_mreg		= lfs_params->part_mreg;
+    stripe->p	= params->parities;
+    stripe->d	= params->nchunks - params->parities;
+    stripe->extent_stipes	= params->extent_sz / params->chunk_sz;
+    stripe->srv_extents		= params->srv_extents;
+    stripe->part_count		= params->node_servers;
+    stripe->part_mreg		= params->part_mreg;
     /* TODO: Allocate stripes to clients. Now the clients must me evenly distributed. */
     //stripe->node_id		= my_srv_rank * local_rank_cnt + local_rank_idx;
     //stripe->node_size		= my_srv_size * local_rank_cnt;
@@ -139,7 +125,7 @@ int lfs_connect(char *param_str, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx
     /* initial mapping */
     get_fam_chunk(0, stripe, NULL);
 
-    lfs_ctx_p->lfs_params = lfs_params;
+    lfs_ctx_p->lfs_params = params;
     lfs_ctx_p->fam_stripe = stripe;
     lfs_ctx_p->famsim_stats_fi_wr = stats_fi_wr;
     *lfs_ctx_pp = lfs_ctx_p;
@@ -149,7 +135,7 @@ _free:
     free(chunks);
     //free(stripe->lf_buffer);
     free(stripe);
-    free_lf_params(&lfs_params);
+    //free_lf_params(&params);
     free(lfs_ctx_p);
     return rc;
 }
@@ -160,7 +146,7 @@ void free_lfc_ctx(LFS_CTX_t **lfs_ctx_pp) {
     famsim_stats_stop(lfs_ctx_p->famsim_stats_fi_wr, 1);
 
     free_fam_stripe(lfs_ctx_p->fam_stripe);
-    free_lf_params(&lfs_ctx_p->lfs_params);
+    //free_lf_params(&lfs_ctx_p->lfs_params);
     free(lfs_ctx_p);
     *lfs_ctx_pp = NULL;
 }

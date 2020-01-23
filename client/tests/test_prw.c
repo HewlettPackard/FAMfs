@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
         printf("MPI_Comm_rank failed\n");
         exit(1);
     }
-    print0("startng test_pwr\n");
+    print0("startng test_prw\n");
 
 #define ULFS_MAX_FILENAME 128
     char hostname[ULFS_MAX_FILENAME] = {0};

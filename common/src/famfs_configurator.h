@@ -82,6 +82,14 @@
     UNIFYCR_CFG(devices, pk, INT, 0, "default FAM protection key", NULL) \
     UNIFYCR_CFG(devices, size, INT, UNIFYCR_EXTENT_SIZE, "default device size in bytes", NULL) \
     UNIFYCR_CFG(devices, offset, INT, UNIFYCR_EXTENT0_OFFSET, "default device extent zero offset in bytes", NULL) \
+    UNIFYCR_CFG(devices, fabric, STRING, NULLSTRING, "libfabric network", NULL) \
+    UNIFYCR_CFG(devices, domain, STRING, NULLSTRING, "libfabric interface", NULL) \
+    UNIFYCR_CFG(devices, port, STRING, LFSRV_PORT, "libfabric service or port number", NULL) \
+    UNIFYCR_CFG(devices, provider, STRING, LF_PROV_NAME, "libfabric provider", NULL) \
+    UNIFYCR_CFG(devices, memreg, STRING, LF_MR_MODEL, "memory registration mode", NULL) \
+    UNIFYCR_CFG(devices, progress, STRING, FAMFS_PROGRESS_AUTO, "data and control progress", NULL) \
+    UNIFYCR_CFG(devices, use_cq, BOOL, off, "use completion queue instead of counters", NULL) \
+    UNIFYCR_CFG(devices, timeout, INT, IO_TIMEOUT_MS, "libfabric timeout", NULL) \
     /* Each multi-section should have 'id' field defined as INT, NULLSTRING, of size 1 */ \
     UNIFYCR_CFG_MULTI(ionode, id, INT, NULLSTRING, "IO node unique ID", NULL, 1) \
     UNIFYCR_CFG_MULTI(ionode, uuid, STRING, NULLSTRING, "IO node UUID", configurator_uuid_check, 1) \

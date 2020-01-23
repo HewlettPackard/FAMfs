@@ -72,7 +72,8 @@ typedef struct lf_mr_mode_ {
 	unsigned int virt_addr:1;
 	unsigned int allocated:1;
 	unsigned int zhpe_support:1;
-	unsigned int _f:25;
+	unsigned int true_fam:1;
+	unsigned int _f:24;
 } __attribute__((packed)) LF_MR_MODE_t;
 
 typedef struct lf_prg_mode_ {
@@ -80,6 +81,17 @@ typedef struct lf_prg_mode_ {
 	unsigned int progress_auto:1;
 	unsigned int _f:30;
 } __attribute__((packed)) LF_PRG_MODE_t;
+
+typedef struct lf_info_ {
+	char		*fabric;
+	char		*domain;
+	char		*service;
+	char		*provider;
+	LF_MR_MODE_t	mrreg;
+	LF_PRG_MODE_t	progress;
+	int		use_cq;
+	uint64_t	io_timeout_ms;
+} LF_INFO_t;
 
 /* libfabric client data */
 typedef struct lf_cl_ {
@@ -155,7 +167,7 @@ typedef struct n_params_ {
 	MPI_Comm	mpi_comm;	/* MPI communicator for this node in servers/clients */
 	//int		client_only;	/* Run only LF client(s) */
 
-	W_TYPE_t	cmdv[ION_CMD_MAX]; /* parsed commands */
+	int		cmdv[ION_CMD_MAX]; /* parsed commands */
 	int		cmdc;		/* parsed command count */
 
 	FAM_MAP_t	*fam_map;	/* Node FAM IDs */

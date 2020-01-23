@@ -67,7 +67,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     thread_cnt = params->w_thread_cnt;
     service = node2service(params->lf_port, node, partition_id);
     sprintf(port, "%5d", service);
-    if (params->fam_map)
+    if (params->lf_mr_flags.true_fam)
 	node = (int)lf_node->fam_id;
 
     // Provider discovery
@@ -292,7 +292,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
 
     // zhpe support
-    if (params->fam_map) {
+    if (params->lf_mr_flags.true_fam) {
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	char url[16];
@@ -510,7 +510,7 @@ int lf_clients_init(N_PARAMS_t *params)
 
 	    lf_all_clients[lf_client_idx] = cl;
 	    if (verbose) {
-		if (params->fam_map)
+		if (params->lf_mr_flags.true_fam)
 		    printf("%d CL attached to FAM module %d(p%d) mr_key:%lu\n",
 			   my_node_id, i, part, cl->mr_key);
 		else
@@ -756,7 +756,7 @@ int lf_srv_init(LF_SRV_t *priv)
 	unsigned int page_size = getpagesize();
 	size_t part_length = params->vmem_sz / params->node_servers;
 
-	len = params->fam_map? page_size : part_length;
+	len = (params->lf_mr_flags.true_fam)? page_size : part_length;
 	bufp = &buf;
 #if 0 /* posix_memalign or mmap */
 	ON_ERROR(posix_memalign(bufp, page_size, len), "srv memory alloc failed");

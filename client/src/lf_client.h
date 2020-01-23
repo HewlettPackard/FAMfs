@@ -21,7 +21,7 @@ typedef struct lfs_ctx_ {
 } LFS_CTX_t;
 
 
-int lfs_connect(char *cmd, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_p);
+int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp);
 void free_lfc_ctx(LFS_CTX_t **lfs_ctx_p);
 
 #endif /* LF_CLIENT_H */

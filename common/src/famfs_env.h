@@ -43,23 +43,16 @@
 		(type *)( (char *)__mptr - offsetof(type,member) );})
 #endif /* container_of */
 
-typedef enum w_type_ {
-	W_T_LOAD = 0,
-	W_T_ENCODE,
-	W_T_DECODE,
-	W_T_VERIFY,
-	W_T_EXIT,
-	W_T_NONE,
-} W_TYPE_t;
-
+struct fam_map_;
 
 /* defined in util.c */
 char** getstrlist(const char *buf, int *count);
+char** getstrlist_allow_empty(const char *buf, int *count);
 char *f_get_myhostname(void);
 int f_find_node(char* const* nodelist, int node_cnt, const char *hostname);
 int find_my_node(char* const* nodelist, int node_cnt, char **hostname);
 void nodelist_free(char **nodelist, int size);
-//int is_module_loaded(const char *name);
+void free_fam_map(struct fam_map_ **mp);
 void alloc_affinity(int **affp, int size, int pos);
 void ion_usage(const char *name);
 void daemonize(void);
@@ -137,17 +130,6 @@ static inline int str2argv(char *str, char **argv, int argmax) {
     return argc;
 }
 
-static inline const char *cmd2str(W_TYPE_t type)
-{
-        switch(type) {
-        case W_T_LOAD:  return "LOAD";
-        case W_T_ENCODE:return "ENCODE";
-        case W_T_DECODE:return "DECODE";
-        case W_T_VERIFY:return "VERIFY";
-        default:        return "Unknown";
-        }
-}
-
 /*
  * Configurator: Default Values
  */
@@ -219,7 +201,6 @@ static inline const char *cmd2str(W_TYPE_t type)
 #endif
 
 #define N_XFER_SZ	1*1024*1024L
-#define LFCLN_ITER	1
 #define LFSRV_PORT	50666
 #define LF_PROV_NAME	"sockets"
 #define LFSRV_BUF_SZ	32*1024*1024*1024L
@@ -237,7 +218,7 @@ static inline const char *cmd2str(W_TYPE_t type)
 #define ZHPE_URL_TLT	"zhpe:///ion" /* zhpe url template */
 
 /* default configuration command line */
-#define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -M 16M -E 8M -P0 --memreg scalable --provider sockets ENCODE"
+//#define LFS_COMMAND     "x -H 127.0.0.1 -c 127.0.0.1 -M 16M -E 8M -P0 --memreg scalable --provider sockets ENCODE"
 #define LFS_MAXARGS     64
 #define LFS_MAXCLIENTS	128	/* Max number of LF clients */
 

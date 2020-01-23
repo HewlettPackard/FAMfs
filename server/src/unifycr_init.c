@@ -79,37 +79,8 @@ static LFS_CTX_t *lfs_ctx_p = NULL;
 
 extern char *mds_vec;
 extern int  num_mds;
-extern F_POOL_t *pool;
 
-int mds_by_name() {
-    static char **nlist = NULL;
-    static int ncnt = 0;
-    char *ev;
-
-    if (ncnt < 0)
-        return -1;
-
-    if (!(ev = getenv("FAMFS_MDS_LIST")))
-        return  ncnt = -1;
-
-    if (!ncnt) {
-        int m = 64;
-        char *tok, *p = ev;
-        nlist = (char **)malloc(m*sizeof(char *));
-
-        while ((tok = strsep(&p, ", "))) {
-            nlist[ncnt++] = tok;
-            if (ncnt == m) {
-                m += 64;
-                nlist = (char **)realloc(nlist, m*sizeof(char *));
-            }
-        }
-    }
-
-    return find_my_node(nlist, ncnt, NULL) >= 0;
-}
-
-int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
+static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
     int i, n = 0;
     char *vec;
 
@@ -119,7 +90,7 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
     }
     memset(vec, 0, wsize);
     MPI_Barrier(MPI_COMM_WORLD);
-    vec[rank] = (char) is_member();
+    vec[rank] = (char) is_member;
     ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
              vec, 1, MPI_BYTE, MPI_COMM_WORLD),
             "MPI_Allgather");
@@ -148,6 +119,7 @@ extern int num_fds;
 
 int main(int argc, char *argv[])
 {
+    F_POOL_t *pool;
     mdhim_options_t *db_opts = NULL;
     char dbg_fname[GEN_STR_LEN] = {0};
     int provided;
@@ -193,6 +165,8 @@ int main(int argc, char *argv[])
         printf("srv failed to get layout info: %d\n", rc);
         return rc;
     }
+    pool = f_get_pool();
+    assert( pool ); /* should be set by f_set_layouts_info() */
 
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
@@ -219,6 +193,7 @@ printf("layout %d:%s queue %s created\n", i, lo->info.name, qname);
     if (rc != ULFS_SUCCESS)
         LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
 
+ unifycr_config_print(&server_cfg, NULL);
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
@@ -247,7 +222,7 @@ printf("4 %s", ULFS_str_errno(ULFS_ERROR_SOCKET));
         exit(1);
     }
 
-    if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank, mds_by_name)) > 0) {
+    if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank, PoolHasMDS(pool))) > 0) {
         LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
         num_mds = rc;
     } else if (rc < 0) {
@@ -258,9 +233,8 @@ printf("4 %s", ULFS_str_errno(ULFS_ERROR_SOCKET));
 
 
     /* Fork LF server process if FAM emulation is required */
-    char *lfs_cmd = getstr(LFS_COMMAND);
-    if (lfs_cmd) {
-	rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size, &lfs_ctx_p);
+    if (PoolFAMEmul(pool)) {
+	rc = lfs_emulate_fams(glb_rank, glb_size, &lfs_ctx_p);
 	if (rc) {
 	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
 		glb_rank, glb_size, rc);
@@ -669,7 +643,7 @@ static int unifycr_exit()
     /* Close FAM emulation fabric */
     free_lfs_ctx(&lfs_ctx_p);
 
-    /* Allocated at common lib: free F_LAYOUT_INFO_t */
+    /* Free pool and all layout structures */
     f_free_layouts_info();
 
     /* Allocated at main(): free unifycr_cfg_t */

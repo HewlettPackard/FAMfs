@@ -29,6 +29,7 @@
 #include "famfs_lf_connect.h"
 #include "lf_test.h"
 #include "ec_perf.h"
+#include "w_pool.h"
 
 
 /* If defined: limit send queue depth when CQ is used */

@@ -34,8 +34,7 @@ typedef struct lfs_ctx_ {
 } LFS_CTX_t;
 
 
-int lfs_emulate_fams(char * const cmdline, int rank, int size,
-    LFS_CTX_t **lfs_ctx_pp);
+int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp);
 int meta_register_fam(LFS_CTX_t *lfs_ctx);
 void free_lfs_ctx(LFS_CTX_t **lfs_ctx_p);
 

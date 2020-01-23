@@ -62,7 +62,12 @@ Run the regression and unit tests:
 ```
 
 ## Run Server
-mpirun -hosts 127.0.0.1 -np 1 -env LFS_COMMAND "x -H 172.24.186.96 -P0 --memreg scalable --provider sockets ENCODE" /bin/bash -c 'unifycrd'
+Copy FAMFS configuration file (scripts/famfs.conf.example) to /etc or the current directory: famfs.conf
+Edit ionodes, devices, device sections in the configuration file upon your needs.
+Run FAMS server daemon:
+```
+   mpirun -hosts 127.0.0.1 -np 1 /bin/bash -c 'unifycrd'
+```
 
 ## Documentation
 Full UnifyCR documentation is contained [here](http://unifycr.readthedocs.io).
