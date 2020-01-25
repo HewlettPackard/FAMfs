@@ -167,6 +167,13 @@ int main(int argc, char *argv[])
     }
     pool = f_get_pool();
     assert( pool ); /* should be set by f_set_layouts_info() */
+    /* DEBUG */
+    if (log_print_level > 0 && glb_rank == 0) {
+	unifycr_config_print(&server_cfg, NULL);
+	printf("%s\n", pool->hostname);
+	f_print_layouts();
+	printf("\n");
+    }
 
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
@@ -193,7 +200,6 @@ printf("layout %d:%s queue %s created\n", i, lo->info.name, qname);
     if (rc != ULFS_SUCCESS)
         LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
 
- unifycr_config_print(&server_cfg, NULL);
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));

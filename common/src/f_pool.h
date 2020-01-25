@@ -106,6 +106,7 @@ typedef struct f_pool_info_ {
     uint32_t		dev_count;	/* number of active pool devices */
     uint32_t		missing_count;	/* number of missing pool devices */
     uint32_t		pdev_max_idx;	/* the attribute array size: max used device index */
+    uint16_t		*pdev_indexes;	/* array of active pool devices, index in devlist */
 } F_POOL_INFO_t;
 
 typedef struct f_pool_ {

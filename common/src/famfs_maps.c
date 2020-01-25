@@ -140,6 +140,7 @@ static void set_my_ionode_info(F_POOL_t *p)
 	else
 	    ClearPoolHasMDS(p);
 	p->ionode_id = (uint32_t)(info - p->ionodes);
+	assert( p->ionode_id < p->ionode_count );
     } else {
 	ClearPoolIsIOnode(p);
 	ClearPoolHasMDS(p);
@@ -229,6 +230,7 @@ static void free_pool(F_POOL_t *p)
 		free_pdev(pdev);
 	    free(p->devlist);
 	}
+	free(p->info.pdev_indexes);
 
 	if (p->ags) {
 	    for (i = 0; i < p->pool_ags; i++) {
@@ -414,8 +416,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    ag->geo = strdup(c->ag_geo[u][0]);
 	/* List of devices in the group */
 	count = u;
-	if (configurator_get_sizes(c, "ag", "devices", &count) < 0)
-	    goto _noarg;
+	assert( configurator_get_sizes(c, "ag", "devices", &count) );
 	if (!IN_RANGE((unsigned)count, 1, pool_info->dev_count))
 	    goto _noarg;
 	ag->pdis = (uint32_t)count;
@@ -497,6 +498,19 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    pdev->idx_ag = u;	/* 1st index */
 	    pdev->idx_dev = uu;	/* 2nd index */
 	}
+    }
+    /* Array of active pool devices: indexes in devlist */
+    pool_info->pdev_indexes = (uint16_t *) calloc(pool_info->dev_count,
+						  sizeof(uint16_t));
+    if (!pool_info->pdev_indexes) goto _nomem;
+    pdev = p->devlist;
+    for (u = uu = 0; u < pool_info->dev_count; u++, uu++, pdev++) {
+	    while (uu < p->pool_devs && pdev->pool_index == F_PDI_NONE) {
+		pdev++;
+		uu++;
+	    }
+	    assert( uu < p->pool_devs );
+	    pool_info->pdev_indexes[u] = uu;
     }
 
     /* Layout count */
@@ -584,7 +598,8 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 
     /* Devices */
     count = idx; /* layout section index */
-    all_pdevs = (configurator_get_sizes(c, "layout", "devices", &count) < 0);
+    assert( configurator_get_sizes(c, "layout", "devices", &count) );
+    all_pdevs = (count <= 0);
     if (all_pdevs) {
 	/* no layout devices list given - default to pool devices */
 	count = p->info.dev_count;
@@ -703,7 +718,9 @@ static int cfg_alloc_params(F_POOL_t *p, N_PARAMS_t **params_p)
     params->chunk_sz = lo_info->chunk_sz;
     params->extent_sz = info->extent_sz;
     params->srv_extents = info->size_def / info->extent_sz;
+    params->vmem_sz = info->extent_sz * params->srv_extents;
     params->node_servers = 1;
+    /* part_mreg:1 - emulate multiple FAMs on each node as separate "partitions" */
     params->part_mreg = (fam_emul)?1:0;
     params->use_cq = lf_info->use_cq;
     params->io_timeout_ms = lf_info->io_timeout_ms;

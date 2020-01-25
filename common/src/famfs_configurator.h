@@ -103,10 +103,10 @@
     UNIFYCR_CFG_MULTI(device, failed, BOOL, off, "device is failed", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, id, INT, NULLSTRING, "allocation group", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, uuid, STRING, NULLSTRING, "AG UUID", configurator_uuid_check, 1) \
-    UNIFYCR_CFG_MULTI(ag, devices, INT, 0, "devices in AG", NULL, 0) \
+    UNIFYCR_CFG_MULTI(ag, devices, INT, NULLSTRING, "devices in AG", NULL, 0) \
     UNIFYCR_CFG_MULTI(ag, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
     UNIFYCR_CFG_MULTI(layout, id, INT, NULLSTRING, "device ID in layout", NULL, 1) \
-    UNIFYCR_CFG_MULTI(layout, devices, INT, 0, "device ID in layout", NULL, 0) \
+    UNIFYCR_CFG_MULTI(layout, devices, INT, NULLSTRING, "device ID in layout", NULL, 0) \
     UNIFYCR_CFG_MULTI(layout, name, STRING, LAYOUT0_NAME, "layout name (moniker)", configurator_moniker_check, 1) \
 
 

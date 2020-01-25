@@ -91,15 +91,14 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
         LF_SRV_t   **lf_servers;
         int i, part;
 
-        /* On each node in nodelist */
-        i = find_my_node(params->nodelist, params->node_cnt, NULL);
-        if (i >= 0) {
-
+        /* On each ionode */
+        if (PoolIsIOnode(pool)) {
+	    i = pool->ionode_id;
             /* Initialize libfabric target on node 'i' */
             rc = lf_servers_init(&lf_servers, params, i, 0);
             if (rc) {
-                err("Can't start FAM emulation target on %s rc:%d",
-                    params->nodelist[params->node_id], rc);
+                err("Can't start FAM emulation target on [%d]:%s rc:%d",
+                    i, params->nodelist[params->node_id], rc);
             } else if (!params->lf_mr_flags.scalable) {
                 /* For each partition */
                 for (part = 0; part < srv_cnt; part++) {
@@ -170,7 +169,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
      */
 
     /* Create MPI communicator for LF servers */
-    is_srv = (params->node_id < 0)? 0 : 1;
+    is_srv = PoolIsIOnode(pool);
     zero_srv_rank = mpi_split_world(&params->mpi_comm, is_srv, 1, rank, size);
     if (!is_srv || zero_srv_rank < 0 ||
         !(params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr))
@@ -245,42 +244,58 @@ void free_lfs_ctx(LFS_CTX_t **lfs_ctx_pp) {
 
 int meta_register_fam(LFS_CTX_t *lfs_ctx)
 {
-    N_PARAMS_t *params = lfs_ctx->lf_params;
-    fam_attr_val_t *fam_attr;
+    F_POOL_t *pool;
+    fam_attr_val_t *fam_attr = NULL;
     LFS_EXCG_t *rmk, *attr;
     FAM_MAP_t *fam_map;
     unsigned int fam_id, part_cnt, i, node_fams;
     unsigned long long *ids;
     int node_id, rc = 0;
 
-    /* Do nothing on LF client */
-    node_id = params->node_id;
-    if (params->node_id < 0)
+    pool = f_get_pool();
+    assert( pool );
+    /* Do nothing on client */
+    if (!PoolIsIOnode(pool))
 	return 0;
 
-    part_cnt = params->node_servers;
-    fam_attr = (fam_attr_val_t *)malloc(fam_attr_val_sz(part_cnt));
-    fam_attr->part_cnt = part_cnt;
-    attr = fam_attr->part_attr;
-
     /* Having the real FAM? */
-    fam_map = params->fam_map;
-    ids = fam_map->fam_ids[node_id];
-    node_fams = fam_map->node_fams[node_id];
-    if (!PoolFAMEmul(f_get_pool())) {
+    if (!PoolFAMEmul(pool)) {
 
-	assert(part_cnt==1); /* TODO: Support FAM partitioning */
-	for (i = 0; i < node_fams; i++) {
-	    fam_id = (unsigned int) ids[i];
-	    /* TODO: Read device pk&offset from configuration */
-	    attr->prov_key = 0;
-	    attr->virt_addr = 0;
-	    rc |= meta_famattr_put(fam_id, fam_attr);
+	/* Register all FAMs on ionode zero */
+	if (pool->ionode_id == 0) {
+	    F_POOL_DEV_t *pdev;
+
+	    part_cnt = 1; /* TODO: Support FAM partitioning */
+	    fam_attr = (fam_attr_val_t *)malloc(fam_attr_val_sz(part_cnt));
+	    fam_attr->part_cnt = part_cnt;
+	    attr = fam_attr->part_attr;
+
+	    node_fams = pool->info.dev_count;
+	    for (i = 0; i < node_fams; i++) {
+		pdev = pool->devlist + pool->info.pdev_indexes[i];
+		fam_id = (unsigned int) pdev->pool_index;
+		/* TODO: Read device pk&offset from configuration */
+		attr->prov_key = 0;
+		attr->virt_addr = 0;
+		rc |= meta_famattr_put(fam_id, fam_attr);
+	    }
 	}
     } else {
+	N_PARAMS_t *params;
+
 	/* NOTE: FAM emulation only; limited to 31 bits */
-	//fam_id = (unsigned int) params->node_id;
-	assert( node_fams == 1 ); /* TODO: Support FAM emulation mapping */
+	assert( lfs_ctx );
+	params = lfs_ctx->lf_params;
+	part_cnt = params->node_servers;
+	fam_attr = (fam_attr_val_t *)malloc(fam_attr_val_sz(part_cnt));
+	fam_attr->part_cnt = part_cnt;
+	attr = fam_attr->part_attr;
+
+	fam_map = params->fam_map;
+	node_id = pool->ionode_id;
+	assert( IN_RANGE(node_id, 0, pool->ionode_count-1) );
+	ids = fam_map->fam_ids[node_id];
+	node_fams = fam_map->node_fams[node_id];
 	rmk = lfs_ctx->lfs_shm->rmk;
 	for (i = 0; i < node_fams; i++) {
 	    unsigned int ii;
