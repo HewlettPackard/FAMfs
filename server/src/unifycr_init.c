@@ -175,6 +175,12 @@ int main(int argc, char *argv[])
 	printf("\n");
     }
 
+    /* Create MPI communicator for IO nodes */
+    pool->zero_ion_rank = mpi_split_world(&pool->ionode_comm,
+				PoolIsIOnode(pool), 1,
+				glb_rank, glb_size);
+    assert( pool->zero_ion_rank >= 0 );
+
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
     for (int i = 0; i < pool->info.layouts_count; i++) {

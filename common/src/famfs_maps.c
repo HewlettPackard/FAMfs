@@ -226,6 +226,10 @@ static void free_pool(F_POOL_t *p)
 	F_POOL_DEV_t *pdev;
 	unsigned int i;
 
+	if (p->ionode_comm)
+	    MPI_Comm_free(&p->ionode_comm);
+	free_lf_params(&p->lfs_params);
+
 	pdev = p->devlist;
 	if (pdev) {
 	    for (i = 0; i < p->pool_devs; i++, pdev++)
@@ -258,8 +262,6 @@ static void free_pool(F_POOL_t *p)
 	    free(lf_info->provider);
 	    free(lf_info);
 	}
-
-	free_lf_params(&p->lfs_params);
 
 	f_dict_free(p->dict);
 	pthread_spin_destroy(&p->dict_lock);

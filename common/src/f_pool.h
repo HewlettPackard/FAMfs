@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <mpi.h>
 
 #include "famfs_env.h"
 #include "famfs_bitops.h"
@@ -127,6 +128,9 @@ typedef struct f_pool_ {
     struct list_head	layouts;	/* pool layouts list */
     char		*hostname;	/* this node's hostname */
     struct lf_info_	*lf_info;	/* libfabric info */
+    MPI_Comm		ionode_comm;	/* MPI communicator for IO nodes */
+//    MPI_Comm		helper_comm;	/* MPI communicator for Helpers */
+    int			zero_ion_rank;	/* rank in COMM_WORLD of zero rank in ionode_comm */
     struct n_params_	*lfs_params;	/* legacy N_PARAMS_t */
     int			verbose;	/* debug flag */
 //    uint32_t	nparts;		/* layout partition number estimate */

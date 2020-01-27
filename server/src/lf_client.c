@@ -39,7 +39,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
     pthread_condattr_t cattr;
     pid_t cpid;
     size_t shm_size, len;
-    int srv_cnt, is_srv, zero_srv_rank, cnt;
+    int srv_cnt, cnt;
     int rc = 0;
 
     lfs_ctx_p = (LFS_CTX_t *) calloc(1, sizeof(LFS_CTX_t));
@@ -169,9 +169,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
      */
 
     /* Create MPI communicator for LF servers */
-    is_srv = PoolIsIOnode(pool);
-    zero_srv_rank = mpi_split_world(&params->mpi_comm, is_srv, 1, rank, size);
-    if (!is_srv || zero_srv_rank < 0 ||
+    if (!PoolIsIOnode(pool) ||
         !(params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr))
         goto _exit;
 
@@ -180,29 +178,31 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
     if (params->lf_mr_flags.prov_key &&
         ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
                              params->mr_prov_keys, len, MPI_BYTE,
-                             params->mpi_comm)))) {
+                             pool->ionode_comm)))) {
         LOG(LOG_ERR, "LF PROV_KEYS MPI_Allgather failed:%d", rc);
         goto _close_comm;
     }
     if (params->lf_mr_flags.virt_addr &&
         ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
                              params->mr_virt_addrs, len, MPI_BYTE,
-                             params->mpi_comm)))) {
+                             pool->ionode_comm)))) {
         LOG(LOG_ERR, "LF VIRT_ADDRS MPI_Allgather failed:%d", rc);
         //goto _close_comm;
     }
 _close_comm:
-    MPI_Comm_free(&params->mpi_comm);
+    //MPI_Comm_free(&pool->ionode_comm);
 
     /* Broadcast the keys to all [clients] */
     cnt = params->fam_cnt * srv_cnt;
     if (params->lf_mr_flags.prov_key &&
-        ((rc = mpi_broadcast_arr64(params->mr_prov_keys, cnt, zero_srv_rank)))) {
+        ((rc = mpi_broadcast_arr64(params->mr_prov_keys, cnt,
+				   pool->zero_ion_rank)))) {
         LOG(LOG_ERR, "LF PROV_KEYS MPI broadcast failed:%d", rc);
         goto _exit;
     }
     if (params->lf_mr_flags.virt_addr &&
-        ((rc = mpi_broadcast_arr64(params->mr_virt_addrs, cnt, zero_srv_rank)))) {
+        ((rc = mpi_broadcast_arr64(params->mr_virt_addrs, cnt,
+				   pool->zero_ion_rank)))) {
         LOG(LOG_ERR, "LF VIRT_ADDRS MPI broadcast failed:%d", rc);
         //goto _exit;
     }

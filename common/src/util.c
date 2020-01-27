@@ -288,7 +288,7 @@ int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role,
 {
 	MPI_Comm	world_comm, comm = MPI_COMM_NULL;
 	MPI_Group	group_all, group;
-	int		*lf_roles, *ranks;
+	int		*lf_roles, *ranks = NULL;
 	int		i, size, zero_srv_rank, rc;
 
 	lf_roles = (int *) calloc(gbl_size, sizeof(int));
@@ -297,7 +297,7 @@ int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role,
 			   lf_roles, sizeof(int), MPI_BYTE, MPI_COMM_WORLD);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Allgather");
-		return rc;
+		goto _err;
 	}
 	ranks = (int *) calloc(gbl_size, sizeof(int));
 	zero_srv_rank = -1;
@@ -312,30 +312,36 @@ int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role,
 	rc = MPI_Comm_dup(MPI_COMM_WORLD, &world_comm);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Comm_dup failed:%d", rc);
-		return rc;
+		goto _err;
 	}
 	rc = MPI_Comm_group(world_comm, &group_all);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Comm_group failed:%d", rc);
-		return rc;
+		goto _err;
 	}
 	rc = MPI_Group_incl(group_all, size, ranks, &group);
 	free(ranks);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Group_incl failed:%d role:%d size:%d",
 		    rc, my_role, size);
-		return rc;
+		goto _err;
 	}
 	rc = MPI_Comm_create(world_comm, group, &comm);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Comm_create failed:%d role:%d size:%d",
 		    rc, my_role, size);
-		return rc;
+		goto _err;
 	}
 	ASSERT(comm != MPI_COMM_NULL);
 
 	memcpy(mpi_comm, &comm, sizeof(MPI_Comm));
 	return zero_srv_rank;
+
+_err:
+	free(lf_roles);
+	free(ranks);
+	*mpi_comm = MPI_COMM_NULL;
+	return -1;
 }
 
 static char *strnchr(const char *s, size_t count, int c)
