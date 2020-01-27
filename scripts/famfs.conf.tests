@@ -16,6 +16,7 @@ id = 0 ; this is a default
 # uuid
 # host = "node01" ; node's hostname or IP
 mds = 1 ; run one MD server on this ionode
+force_helper = true ; there's only node in the test configuration!
 
 [mddevice]
 pk = 1

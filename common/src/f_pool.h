@@ -34,7 +34,16 @@ typedef struct f_ionode_info_ {
     char	*hostname;	/* IO node hostname */
     uint32_t	conf_id;	/* ID in configuration file */
     uint32_t	mds;		/* number of MD servers running on this node */
+    struct {
+	unsigned long	    flags;	/* f_ioninfo_flags */
+    }		io;
 } F_IONODE_INFO_t;
+
+/* Flag specs for f_ionode_info_ */
+enum f_ioninfo_flags {
+    _IONODE__FCE_HLPR,	/* force Helper threads on this IO node */
+};
+BITOPS(IOnode, ForceHelper,	f_ionode_info_, _IONODE__FCE_HLPR)
 
 /* Pool device shareable atomics (blob) */
 typedef struct f_pdev_sha_ {
@@ -145,11 +154,13 @@ enum f_pool_flags {
     _POOL_FAM_EMUL,	/* FAM device emulation with fabric attached memory on IO nodes */
     _POOL_IS_IONODE,	/* This is IO node */
     _POOL_MDS,		/* MD server is running on this IO node */
+    _POOL_FCE_HLPR,	/* Force Helper threads [on this IO node] */
 };
 BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
 BITOPS(Pool, IsIOnode,	f_pool_, _POOL_IS_IONODE)
 BITOPS(Pool, HasMDS,	f_pool_, _POOL_MDS)
+BITOPS(Pool, ForceHelper, f_pool_, _POOL_FCE_HLPR)
 
 #endif /* F_POOL_H_ */
 

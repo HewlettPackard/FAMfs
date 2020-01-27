@@ -135,6 +135,8 @@ static void set_my_ionode_info(F_POOL_t *p)
     info = get_ionode_info(p, NULL);
     if (info) {
 	SetPoolIsIOnode(p);
+	if (IOnodeForceHelper(info))
+	    SetPoolForceHelper(p);
 	if (info->mds)
 	    SetPoolHasMDS(p);
 	else
@@ -384,6 +386,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	f_uuid_parse(c->ionode_uuid[u][0], ioi->uuid);
 	if (configurator_int_val(c->ionode_mds[u][0], &l)) goto _syntax;
 	ioi->mds = (uint32_t)l;
+	if (configurator_bool_val(c->ionode_force_helper[u][0], &b)) goto _syntax;
+	if (b)
+	    SetIOnodeForceHelper(ioi);
 	if (c->ionode_host[u][0])
 	    ioi->hostname = strdup(c->ionode_host[u][0]);
 	else if (u == 0)
@@ -899,9 +904,10 @@ void f_print_layouts(void) {
     for (u = 0; u < p->ionode_count; u++) {
 	F_IONODE_INFO_t *info = &p->ionodes[u];
 
-	printf("  #%u%s id:%u %s MDS:%u\n",
+	printf("  #%u%s id:%u %s MDS:%u flags:%s\n",
 	    u, (u == p->ionode_id && PoolIsIOnode(p))?"*":"",
-	    info->conf_id, info->hostname, info->mds);
+	    info->conf_id, info->hostname, info->mds,
+	    IOnodeForceHelper(info)?"H":"");
     }
 }
 

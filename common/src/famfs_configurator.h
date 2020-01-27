@@ -95,6 +95,7 @@
     UNIFYCR_CFG_MULTI(ionode, uuid, STRING, NULLSTRING, "IO node UUID", configurator_uuid_check, 1) \
     UNIFYCR_CFG_MULTI(ionode, host, STRING, NULLSTRING, "IO node IP or hostname", NULL, 1) \
     UNIFYCR_CFG_MULTI(ionode, mds, INT, 1, "number of MD servers on this node", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ionode, force_helper, BOOL, off, "force Helper threads on this node", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, id, INT, NULLSTRING, "device reference", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, uuid, STRING, NULLSTRING, "device UUID", configurator_uuid_check, 1) \
     UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "FAM URL", NULL, 1) \
