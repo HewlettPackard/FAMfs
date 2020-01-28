@@ -500,15 +500,14 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 				/* Prepare BoS */
 				assert (f_map_seek_iter(it, e));
 				/* Copy PU values */
-				e = e_to_bosl(it->bosl, e);
-				pu = e >> pu_factor;
+				pu = e_to_bosl(it->bosl, e) >> pu_factor;
 				buf = bos_buf + f_map_pu_p_sz(map, i, buf);
 				copy_pu_to_bosl(it->bosl, pu, buf);
 				/* Clear PU dirty bit */
 				// _f_map_clear_pu_dirty_bosl(it->bosl, pu);
 				/* Callback */
 				if (cb)
-					cb(cb_arg, (F_PU_VAL_t *)buf);
+					cb(e, cb_arg, (F_PU_VAL_t *)buf);
 			}
 		}
 	} while (count > 0);

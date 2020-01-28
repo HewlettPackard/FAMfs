@@ -273,6 +273,35 @@ static F_COND_t se_or_ee_not_zero = {
     .vf_get = &sm_se_or_ee_not_zero,
 };
 
+/* Map load callback function data */
+struct cb_data {
+    unsigned int	n_ext;		/* arg: extent 3 */
+    unsigned int	pu_entries;	/* arg: number of map entries per PU */
+    unsigned int	entry_sz;	/* arg: map entry size */
+    int			ext_failed;	/* result */
+};
+
+/* Map load callback function - for structured maps */
+static void map_load_cb(uint64_t e __attribute__((unused)),
+	void *arg, const F_PU_VAL_t *pu)
+{
+    struct cb_data *data = (struct cb_data *) arg;
+    const F_SLAB_ENTRY_t *se = &pu->se;
+    const F_EXTENT_ENTRY_t *ee;
+    unsigned int i;
+// printf("e:%lu ", e);
+
+    /* Scan PU entries */
+    for (i = 0; i < data->pu_entries; i++) {
+	if (se->mapped) {
+	    ee = &pu->ee + data->n_ext;
+	    if (ee->failed)
+		data->ext_failed++;
+	}
+	se = (F_SLAB_ENTRY_t *) ((char*)se + data->entry_sz);
+    }
+}
+
 
 /* unittest: f_map */
 int main (int argc, char *argv[]) {
@@ -283,6 +312,7 @@ int main (int argc, char *argv[]) {
     F_SLAB_ENTRY_t *se;
     F_EXTENT_ENTRY_t *ee;
     mdhim_options_t *db_opts = NULL;
+    struct cb_data cbdata;
     size_t page, page_sz, pu_sz;
     uint64_t e, ul;
     unsigned long *p;
@@ -999,6 +1029,9 @@ int main (int argc, char *argv[]) {
 	    if (!map) goto err0;
 	    dirty_sz = map->geometry.bosl_pu_count;
 	    pu_factor = map->geometry.pu_factor;
+	    cbdata.pu_entries = 1U<<pu_factor;
+	    cbdata.entry_sz = e_sz;
+	    cbdata.n_ext = iext;
 
 	    t = 2; /* Create local bitmap for tracking writes to KV store */
 	    assert(!mlog);
@@ -1027,7 +1060,8 @@ int main (int argc, char *argv[]) {
 		    int actual, max_globals;
 
 		    t = 5; /* Load empty map */
-		    rc = f_map_load(m);
+		    cbdata.ext_failed = 0;
+		    rc = f_map_load_cb(m, map_load_cb, (void*)&cbdata);
 		    if (rc != 0) goto err1;
 		    /* maximal numbers of entries in map */
 		    max_globals = pass;
@@ -1040,6 +1074,8 @@ int main (int argc, char *argv[]) {
 		    if (!it) goto err2;
 		    actual = v = (int)f_map_weight(it, F_MAP_WHOLE);
 		    if (!IN_RANGE(v, pass, max_globals)) goto err3;
+		    /* check weight vs. load fn callback result */
+		    if (v != (rc = cbdata.ext_failed)) goto err3;
 
 		    t = 7; /* Add an unique random entry */
 		    for (i = 0; i <= actual; i++) {

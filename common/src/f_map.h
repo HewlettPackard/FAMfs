@@ -283,7 +283,7 @@ F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg
 /* Attach map to persistent KV store */
 int f_map_register(F_MAP_t *map, int layout_id);
 /* Map load callback function - it's called once per PU */
-typedef void (*F_MAP_LOAD_CB_fn)(void *arg, const F_PU_VAL_t *entry);
+typedef void (*F_MAP_LOAD_CB_fn)(uint64_t e, void *arg, const F_PU_VAL_t *pu);
 /* Load all KVs for [one partition of] the registered map; call back on PU */
 int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg);
 /* Load all KVs for [one partition of] the registered map */

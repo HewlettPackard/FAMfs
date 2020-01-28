@@ -104,7 +104,7 @@ int main (int argc __attribute__ ((unused)),
      * Test group one: in-memory bitmaps
      */
     tg = 1;
-    printf("Running group %d tests: in-memory bitmaps\n", tg);
+    printf("Running group %d tests: bitmaps and bifold bitmaps\n", tg);
 
     rcu_register_thread();
     /* For dofferent BoS page size */
@@ -211,7 +211,7 @@ int main (int argc __attribute__ ((unused)),
      * Test group two: in-memory structured map
      */
     tg = 2;
-    printf("Running group %d tests: in-memory structured map\n", tg);
+    printf("Running group %d tests: structured map\n", tg);
 
     /* For dofferent BoS page size */
     for (pages = 1; pages < BOS_PAGE_MAX; pages++) {

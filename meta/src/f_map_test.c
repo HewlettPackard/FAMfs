@@ -219,6 +219,34 @@ static F_COND_t cv_laminated = {
 /* The [simple] bitmap condition: a bit is set */
 static F_COND_t laminated = F_BIT_CONDITION;
 
+/* Map load callback function data */
+struct cb_data {
+    unsigned int	n_ext;		/* arg: extent 3 */
+    unsigned int	pu_entries;	/* arg: number of map entries per PU */
+    unsigned int	entry_sz;	/* arg: map entry size */
+    int			ext_failed;	/* result */
+};
+
+/* Map load callback function - for structured maps */
+static void map_load_cb(uint64_t e __attribute__((unused)),
+	void *arg, const F_PU_VAL_t *pu)
+{
+    struct cb_data *data = (struct cb_data *) arg;
+    const F_SLAB_ENTRY_t *se = &pu->se;
+    const F_EXTENT_ENTRY_t *ee;
+    unsigned int i;
+
+    /* Scan PU entries */
+    for (i = 0; i < data->pu_entries; i++) {
+	if (se->mapped) {
+	    ee = &pu->ee + data->n_ext;
+	    if (ee->failed)
+		data->ext_failed++;
+	}
+	se = (F_SLAB_ENTRY_t *) ((char*)se + data->entry_sz);
+    }
+}
+
 
 /* unittest: f_map */
 int main (int argc, char *argv[]) {
@@ -229,6 +257,7 @@ int main (int argc, char *argv[]) {
     F_SLAB_ENTRY_t *se;
     F_EXTENT_ENTRY_t *ee;
     mdhim_options_t *db_opts = NULL;
+    struct cb_data cbdata;
     size_t page, page_sz, pu_sz;
     uint64_t e, ul;
     unsigned long *p;
@@ -744,6 +773,10 @@ int main (int argc, char *argv[]) {
 	    m = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, (pages==1)?0:page_sz,
 			   F_MAPLOCKING_DEFAULT);
 	    if (!m) goto err0;
+	    /* Fill in cb fn data */
+	    cbdata.pu_entries = 1U<<m->geometry.pu_factor;
+	    cbdata.entry_sz = e_sz;
+	    cbdata.n_ext = iext;
 
 	    /* Test partitioned map with only partition, all partitions */
 	    for (global = 0; global <= 1; global++) {
@@ -764,8 +797,9 @@ int main (int argc, char *argv[]) {
 		    rc = f_map_register(m, layout_id);
 		    if (rc != 0) goto err1;
 
-		    t = 4; /* Load empty map */
-		    rc = f_map_load(m);
+		    t = 4; /* Load the map */
+		    cbdata.ext_failed = 0;
+		    rc = f_map_load_cb(m, map_load_cb, (void*)&cbdata);
 		    if (rc != 0) goto err1;
 
 		    t = 5; /* Create BoS for entry #0 */
@@ -786,6 +820,11 @@ int main (int argc, char *argv[]) {
 		    if (!it) goto err2;
 		    v = (int)f_map_weight(it, F_MAP_WHOLE);
 		    if (v != pass) goto err3;
+		    /* check vs. map load fn callback result */
+		    rc = cbdata.ext_failed;
+		    if (global)
+			rc /= node_size; /* 'node_size' parts on this single node! */
+		    if (v != rc) goto err3;
 
 		    t = 8; /* Add an unique random entry */
 		    ii = max(pass, (int)m->bosl_entries);
