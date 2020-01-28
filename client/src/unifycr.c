@@ -3084,7 +3084,7 @@ static int CountTasksPerNode(int rank, int numTasks)
             for (i = 1; i < numTasks; i++) {
                 rc = MPI_Recv(hostname, UNIFYCR_MAX_FILENAME,
                               MPI_CHAR, MPI_ANY_SOURCE,
-                              MPI_ANY_TAG, MPI_CMD_WORLD,
+                              MPI_ANY_TAG, MPI_COMM_WORLD,
                               &status);
 
                 if (rc != 0) {
@@ -3158,7 +3158,7 @@ static int CountTasksPerNode(int rank, int numTasks)
                                 rank_set[i][j], i, rank_cnt[i]); fflush(stdout);
                                 */
                         rc = MPI_Send(&rank_cnt[i], 1,
-                                      MPI_INT, rank_set[i][j], 0, MPI_CMD_WORLD);
+                                      MPI_INT, rank_set[i][j], 0, MPI_COMM_WORLD);
                         if (rc != 0) {
                             DEBUG("cannot send local rank cnt");
                             return -1;
@@ -3168,7 +3168,7 @@ static int CountTasksPerNode(int rank, int numTasks)
 
                         /*send the local rank set to the corresponding rank*/
                         rc = MPI_Send(rank_set[i], rank_cnt[i],
-                                      MPI_INT, rank_set[i][j], 0, MPI_CMD_WORLD);
+                                      MPI_INT, rank_set[i][j], 0, MPI_COMM_WORLD);
                         /*
                         printf("rank:%d, 2sending to %d, rank_cnt[%d] is %d\n", rank,
                                 rank_set[i][j], i, rank_cnt[i]); fflush(stdout);*/
@@ -3201,14 +3201,14 @@ static int CountTasksPerNode(int rank, int numTasks)
             /* non-root process performs MPI_send to send
              * hostname to root node */
             rc = MPI_Send(localhost, UNIFYCR_MAX_FILENAME,
-                          MPI_CHAR, 0, 0, MPI_CMD_WORLD);
+                          MPI_CHAR, 0, 0, MPI_COMM_WORLD);
             if (rc != 0) {
                 DEBUG("cannot send host name");
                 return -1;
             }
             /*receive the local rank count */
             rc = MPI_Recv(&local_rank_cnt, 1, MPI_INT, 0,
-                          0, MPI_CMD_WORLD, &status);
+                          0, MPI_COMM_WORLD, &status);
             if (rc != 0) {
                 DEBUG("cannot receive local rank cnt");
                 return -1;
@@ -3217,7 +3217,7 @@ static int CountTasksPerNode(int rank, int numTasks)
             /* receive the the local rank list */
             local_rank_lst = (int *)malloc(local_rank_cnt * sizeof(int));
             rc = MPI_Recv(local_rank_lst, local_rank_cnt, MPI_INT, 0,
-                          0, MPI_CMD_WORLD, &status);
+                          0, MPI_COMM_WORLD, &status);
             if (rc != 0) {
                 free(local_rank_lst);
                 DEBUG("cannot receive local rank list");
@@ -3335,7 +3335,7 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
                     if (local_rank_lst[i] != rank) {
                         int rc = MPI_Send(&local_del_cnt, 1, MPI_INT,
                                           local_rank_lst[i], 0,
-                                          MPI_CMD_WORLD);
+                                          MPI_COMM_WORLD);
                         if (rc != MPI_SUCCESS) {
                             DEBUG("rank:%d, MPI_Send failed", dbg_rank);
                             return UNIFYCR_FAILURE;
@@ -3351,7 +3351,7 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
         } else {
             MPI_Status status;
             int rc = MPI_Recv(&local_del_cnt, 1, MPI_INT, local_rank_lst[0],
-                              0, MPI_CMD_WORLD, &status);
+                              0, MPI_COMM_WORLD, &status);
 
             if (rc != MPI_SUCCESS) {
                 DEBUG("rank:%d, MPI_Recv failed.", dbg_rank);

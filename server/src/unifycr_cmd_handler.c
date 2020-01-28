@@ -859,12 +859,12 @@ int open_log_file(app_config_t *app_config,
 */
 int unifycr_broadcast_exit(int qid)
 {
-    int exit_cmd = XFER_CMD_EXIT, rc = ULFS_SUCCESS;
+    int exit_cmd = XFER_COMM_EXIT, rc = ULFS_SUCCESS;
     int i;
     for (i = 0; i < glb_size; i++) {
         MPI_Send(&exit_cmd, sizeof(int), MPI_CHAR,
                  i,
-                 CLI_DATA_TAG, MPI_CMD_WORLD);
+                 CLI_DATA_TAG, MPI_COMM_WORLD);
     }
 
     int cmd = CMD_UNMOUNT;

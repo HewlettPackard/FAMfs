@@ -173,7 +173,7 @@ int rm_pack_send_requests(char *req_msg_buf,
     char *ptr = req_msg_buf;
 
     /*send format: cmd, req_num*/
-    int cmd = XFER_CMD_DATA;
+    int cmd = XFER_COMM_DATA;
     memcpy(ptr, &cmd, sizeof(int));
     memcpy(ptr + sizeof(int), &(req_num),
            sizeof(int));

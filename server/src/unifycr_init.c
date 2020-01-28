@@ -94,10 +94,10 @@ static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
         return -1;
     }
     memset(vec, 0, wsize);
-    MPI_Barrier(MPI_CMD_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
     vec[rank] = (char) is_member;
     ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
-             vec, 1, MPI_BYTE, MPI_CMD_WORLD),
+             vec, 1, MPI_BYTE, MPI_COMM_WORLD),
             "MPI_Allgather");
     for (i = 0; i < wsize; i++) {
         if (vec[i] < 0) {
@@ -156,11 +156,11 @@ int main(int argc, char *argv[])
     if (rc != MPI_SUCCESS)
         exit(1);
 
-    rc = MPI_Comm_rank(MPI_CMD_WORLD, &glb_rank);
+    rc = MPI_Comm_rank(MPI_COMM_WORLD, &glb_rank);
     if (rc != MPI_SUCCESS)
         exit(1);
 
-    rc = MPI_Comm_size(MPI_CMD_WORLD, &glb_size);
+    rc = MPI_Comm_size(MPI_COMM_WORLD, &glb_size);
     if (rc != MPI_SUCCESS)
         exit(1);
 
@@ -331,7 +331,7 @@ int main(int argc, char *argv[])
 	exit(1);
     }
 
-    MPI_Barrier(MPI_CMD_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
     {
         char fname[256];
         sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
@@ -396,7 +396,7 @@ int main(int argc, char *argv[])
 
     unifycr_exit();
 
-    MPI_Barrier(MPI_CMD_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
     return 0;
 }
@@ -434,7 +434,7 @@ static int CountTasksPerNode(int rank, int numTasks)
                 rc = MPI_Recv(hostname, ULFS_MAX_FILENAME,
                               MPI_CHAR, MPI_ANY_SOURCE,
                               MPI_ANY_TAG,
-                              MPI_CMD_WORLD, &status);
+                              MPI_COMM_WORLD, &status);
 
                 if (rc != 0) {
                     return -1;
@@ -498,7 +498,7 @@ static int CountTasksPerNode(int rank, int numTasks)
                 for (j = 0; j < rank_cnt[i]; j++) {
                     if (rank_set[i][j] != 0) {
                         rc = MPI_Send(&rank_cnt[i], 1,
-                                      MPI_INT, rank_set[i][j], 0, MPI_CMD_WORLD);
+                                      MPI_INT, rank_set[i][j], 0, MPI_COMM_WORLD);
                         if (rc != 0) {
                             return -1;
                         }
@@ -507,7 +507,7 @@ static int CountTasksPerNode(int rank, int numTasks)
 
                         /*send the local rank set to the corresponding rank*/
                         rc = MPI_Send(rank_set[i], rank_cnt[i],
-                                      MPI_INT, rank_set[i][j], 0, MPI_CMD_WORLD);
+                                      MPI_INT, rank_set[i][j], 0, MPI_COMM_WORLD);
                         if (rc != 0) {
                             return -1;
                         }
@@ -536,13 +536,13 @@ static int CountTasksPerNode(int rank, int numTasks)
         } else {
             /* non-root process performs MPI_send to send
              * hostname to root node */
-            rc = MPI_Send(localhost, ULFS_MAX_FILENAME, MPI_CHAR, 0, 0, MPI_CMD_WORLD);
+            rc = MPI_Send(localhost, ULFS_MAX_FILENAME, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
             if (rc != 0) {
                 return -1;
             }
             /*receive the local rank count */
             rc = MPI_Recv(&local_rank_cnt, 1, MPI_INT, 0,
-                          0, MPI_CMD_WORLD, &status);
+                          0, MPI_COMM_WORLD, &status);
             if (rc != 0) {
                 return -1;
             }
@@ -550,7 +550,7 @@ static int CountTasksPerNode(int rank, int numTasks)
             /* receive the the local rank list */
             local_rank_lst = (int *)malloc(local_rank_cnt * sizeof(int));
             rc = MPI_Recv(local_rank_lst, local_rank_cnt, MPI_INT, 0,
-                          0, MPI_CMD_WORLD, &status);
+                          0, MPI_COMM_WORLD, &status);
             if (rc != 0) {
                 free(local_rank_lst);
                 return -1;
