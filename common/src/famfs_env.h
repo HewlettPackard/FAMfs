@@ -43,6 +43,16 @@
 		(type *)( (char *)__mptr - offsetof(type,member) );})
 #endif /* container_of */
 
+#define timespecadd(t, inc)				\
+	do {						\
+		(t)->tv_sec += (inc)->tv_sec;		\
+		(t)->tv_nsec += (inc)->tv_nsec;		\
+		if ((t)->tv_nsec >= 1000000000U) {	\
+			(t)->tv_sec++;			\
+			(t)->tv_nsec -= 1000000000U;	\
+		}					\
+	} while (0)
+
 struct fam_map_;
 
 /* defined in util.c */

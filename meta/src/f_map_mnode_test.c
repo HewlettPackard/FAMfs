@@ -289,7 +289,6 @@ static void map_load_cb(uint64_t e __attribute__((unused)),
     const F_SLAB_ENTRY_t *se = &pu->se;
     const F_EXTENT_ENTRY_t *ee;
     unsigned int i;
-// printf("e:%lu ", e);
 
     /* Scan PU entries */
     for (i = 0; i < data->pu_entries; i++) {
