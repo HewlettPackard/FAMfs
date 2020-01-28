@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <string.h>
+#include <errno.h>
 #include "log.h"
 #include "famfs_global.h"
 #include "unifycr_global.h"
@@ -42,16 +43,23 @@
 #include "unifycr_const.h"
 #include "unifycr_sock.h"
 #include "unifycr_metadata.h"
+#include "famfs_rbq.h"
+
+extern f_rbq_t *rplyq[MAX_NUM_CLIENTS];
+extern f_rbq_t *cmdq[F_CMDQ_MAX];
+extern f_rbq_t *admq;
+extern volatile int exit_flag;
 
 /**
 * handle client-side requests, including init, open, fsync,
 * read, close, stat and unmount
 *
 * @param cmd_buf: received command from client
-* @param sock_id: position in poll_set
+* @param qid: position in poll_set
 * @return success/error code
 */
-int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_slice)
+#if 0
+int delegator_handle_command(char *ptr_cmd, int qid, long db_max_recs_per_slice)
 {
 
     /*init setup*/
@@ -66,11 +74,10 @@ int delegator_handle_command(char *ptr_cmd, int sock_id, long db_max_recs_per_sl
     switch (cmd & ~COMM_OPT_MASK) {
     case COMM_SYNC_DEL:
         (void)0;
-printf("cmd COMM_SYNC_DEL\n");
-        ptr_ack = sock_get_ack_buf(sock_id);
+        ptr_ack = sock_get_ack_buf(qid);
         ret_sz = pack_ack_msg(ptr_ack, cmd, ACK_SUCCESS,
                               &local_rank_cnt, sizeof(int));
-        rc = sock_ack_cli(sock_id, ret_sz);
+        rc = sock_ack_cli(qid, ret_sz);
         return rc;
 
     case COMM_MOUNT:
@@ -85,10 +92,9 @@ printf("cmd COMM_SYNC_DEL\n");
                 rc = -1;
             }
         }
-printf("cmd COMM_MOUNT %d\n", fam_fs);
-        rc = sync_with_client(ptr_cmd, sock_id);
+        rc = sync_with_client(ptr_cmd, qid);
 
-        ptr_ack = sock_get_ack_buf(sock_id);
+        ptr_ack = sock_get_ack_buf(qid);
         ret_sz = pack_ack_msg(ptr_ack, COMM_MOUNT, rc,
                               &max_recs_per_slice, sizeof(long));
 #if 0
@@ -97,34 +103,33 @@ printf("cmd COMM_MOUNT %d\n", fam_fs);
         *((int *)&ptr_ack[ret_sz]) = glb_size;
         ret_sz += sizeof(int);
 #endif
-        rc = sock_ack_cli(sock_id, ret_sz);
+        rc = sock_ack_cli(qid, ret_sz);
         fam_fs = cmd & COMM_OPT_FAMFS;
         return rc;
 
     case COMM_META:
         (void)0;
         int type = *((int *)ptr_cmd + 1);
-printf("cmd COMM_META %d\n", type);
         if (type == 1) {
             /*get file attribute*/
             f_fattr_t attr_val;
             rc = meta_process_attr_get(ptr_cmd,
-                                       sock_id, &attr_val);
+                                       qid, &attr_val);
 
-            ptr_ack = sock_get_ack_buf(sock_id);
+            ptr_ack = sock_get_ack_buf(qid);
             ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
                                   &attr_val, sizeof(f_fattr_t));
-            rc = sock_ack_cli(sock_id, ret_sz);
+            rc = sock_ack_cli(qid, ret_sz);
 
         }
 
         if (type == 2) {
             /*set file attribute*/
-            rc = meta_process_attr_set(ptr_cmd, sock_id);
+            rc = meta_process_attr_set(ptr_cmd, qid);
 
-            ptr_ack = sock_get_ack_buf(sock_id);
+            ptr_ack = sock_get_ack_buf(qid);
             ret_sz = pack_ack_msg(ptr_ack, cmd, rc, NULL, 0);
-            rc = sock_ack_cli(sock_id, ret_sz);
+            rc = sock_ack_cli(qid, ret_sz);
             /*ToDo: deliver the error code/success to client*/
         }
 
@@ -132,12 +137,12 @@ printf("cmd COMM_META %d\n", type);
             /*synchronize both index and file attribute
              *metadata to the key-value store*/
 
-            rc = meta_process_fsync(sock_id);
+            rc = meta_process_fsync(qid);
 
             /*ack the result*/
-            ptr_ack = sock_get_ack_buf(sock_id);
+            ptr_ack = sock_get_ack_buf(qid);
             ret_sz = pack_ack_msg(ptr_ack, cmd, rc, NULL, 0);
-            rc = sock_ack_cli(sock_id, ret_sz);
+            rc = sock_ack_cli(qid, ret_sz);
         }
 
         if (type == 4) {
@@ -145,30 +150,28 @@ printf("cmd COMM_META %d\n", type);
             fam_attr_val_t *attr_val = NULL;
             rc = meta_famattr_get(ptr_cmd, &attr_val);
 
-            ptr_ack = sock_get_ack_buf(sock_id);
+            ptr_ack = sock_get_ack_buf(qid);
             ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
                                   attr_val, fam_attr_val_sz(attr_val->part_cnt));
-            rc = sock_ack_cli(sock_id, ret_sz);
+            rc = sock_ack_cli(qid, ret_sz);
             free(attr_val);
         }
         break;
 
     case COMM_READ:
-printf("cmd COMM_READ\n");
         num = *(((int *)ptr_cmd) + 1);
         /* result is handled by the individual thread in
          * the request manager*/
-        rc = rm_read_remote_data(sock_id, num);
+        rc = rm_read_remote_data(qid, num);
         break;
 
     case COMM_MDGET:
-printf("cmd COMM_MDGET\n");
         num = *(((int *)ptr_cmd) + 1);
-        rc = rm_fetch_md(sock_id, num);
+        rc = rm_fetch_md(qid, num);
         if (rc) {
             LOG(LOG_ERR, "md_get err %d\n", rc);
         }
-        rc = sock_notify_cli(sock_id, COMM_READ);
+        rc = sock_notify_cli(qid, COMM_READ);
         if (rc != 0) {
             LOG(LOG_ERR, "sock notify failed\n");
             return rc;
@@ -176,8 +179,7 @@ printf("cmd COMM_MDGET\n");
         break;
 
     case COMM_UNMOUNT:
-printf("cmd COMM_UNMOUNT %d\n", sock_id);
-        unifycr_broadcast_exit(sock_id);
+        unifycr_broadcast_exit(qid);
         rc = ULFS_SUCCESS;
         break;
 
@@ -191,6 +193,192 @@ printf("cmd COMM_UNMOUNT %d\n", sock_id);
         break;
     }
     return rc;
+}
+#endif
+
+extern long max_recs_per_slice;
+
+int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
+
+    /*init setup*/
+
+    int rc = 0, ret_sz = 0;
+    int cmd = pcmd->opcode;
+    char *ptr_cmd = 0;
+    int num;
+    char *ptr_ack;
+    f_drply_t rply;
+    char qname[MAX_RBQ_NAME];
+
+    LOG(LOG_DBG, "svc command %x, masked %x\n", cmd, cmd & ~COMM_OPT_MASK);
+    bzero(&rply, sizeof(rply));
+    rply.ackcode = cmd;
+    rply.cid = pcmd->cid;
+    switch (cmd & ~COMM_OPT_MASK) {
+    case COMM_SYNC_DEL:
+        if (!admin) {
+            LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
+            return EINVAL;
+        }
+        if (rplyq[pcmd->cid]) {
+            LOG(LOG_INFO, "reply queue %d was not properly closed", pcmd->cid);
+            f_rbq_close(rplyq[pcmd->cid]);
+        }
+        sprintf(qname, "%s-%02d", F_RPLYQ_NAME, pcmd->cid); 
+        if ((rc = f_rbq_open(qname, &rplyq[pcmd->cid]))) {
+            rc = errno;
+            LOG(LOG_ERR, "can't open client reply queue %s", qname);
+            return rc;
+        }
+        break;
+
+    case COMM_MOUNT:
+        if (!admin) {
+            LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
+            return EINVAL;
+        }
+        if (fam_fs == -1) {
+            fam_fs = cmd & COMM_OPT_FAMFS ? 1 : 0;
+        } else {
+            if (fam_fs && !(cmd & COMM_OPT_FAMFS)) {
+                LOG(LOG_ERR, "Attempt to mount FAMFS on non-FAMFS DB\n");
+                return -1;
+            } else if (!fam_fs && (cmd & COMM_OPT_FAMFS)) {
+                LOG(LOG_ERR, "Attempt to mount not-FAM FS on FAMFS DB\n");
+                return -1;
+            }
+        }
+        rply.rc = f_setup_client(pcmd);
+        rply.max_rps = max_recs_per_slice;
+        break;
+
+    case COMM_META:
+        if (admin) {
+            LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
+            return EINVAL;
+        }
+        int type = pcmd->md_type;
+        if (type == MDRQ_GETFA) {
+            /*get file attribute*/
+            rply.rc = f_do_fattr_get(pcmd, &rply.fattr);
+            break;
+        }
+
+        if (type == MDRQ_SETFA) {
+            /*set file attribute*/
+            rply.rc = f_do_fattr_set(pcmd, &pcmd->fm_data);
+            break;
+        }
+
+        if (type == 3) {
+            /*synchronize both index and file attribute
+             *metadata to the key-value store*/
+
+            rply.rc = f_do_fsync(pcmd);
+            break;
+        }
+
+        if (type == 4) {
+            /*get FAM attribute*/
+            fam_attr_val_t *attr_val = NULL;
+            rc = meta_famattr_get(ptr_cmd, &attr_val);
+
+            ptr_ack = sock_get_ack_buf(pcmd->cid);
+            ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
+                                  attr_val, fam_attr_val_sz(attr_val->part_cnt));
+            rc = sock_ack_cli(pcmd->cid, ret_sz);
+            free(attr_val);
+        }
+        break;
+
+    case COMM_READ:
+        if (admin) {
+            LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
+            return EINVAL;
+        }
+        num = *(((int *)ptr_cmd) + 1);
+        /* result is handled by the individual thread in
+         * the request manager*/
+        rc = rm_read_remote_data(pcmd->cid, num);
+        break;
+
+    case COMM_MDGET:
+        if (admin) {
+            LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
+            return EINVAL;
+        }
+        num = *(((int *)ptr_cmd) + 1);
+        rc = rm_fetch_md(pcmd->cid, num);
+        if (rc) {
+            LOG(LOG_ERR, "md_get err %d\n", rc);
+        }
+        rc = sock_notify_cli(pcmd->cid, COMM_READ);
+        if (rc != 0) {
+            LOG(LOG_ERR, "sock notify failed\n");
+            return rc;
+        }
+        break;
+
+    case COMM_UNMOUNT:
+        if (!admin) {
+            LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
+            return EINVAL;
+        }
+        f_rbq_close(rplyq[pcmd->cid]);
+        rplyq[pcmd->cid] = 0;
+        return 0;
+
+    case COMM_SHTDWN:
+        if (!admin) {
+            LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
+            return EINVAL;
+        }
+
+        exit_flag = 1;
+        return 0;
+
+    case COMM_DIGEST:
+        return 0;
+
+    default:
+        LOG(LOG_DBG, "client %d: Unsupported command %x\n", pcmd->cid, cmd);
+        return ENOSYS;
+    }
+
+    if ((rc = f_rbq_push(rplyq[pcmd->cid], &rply, RBQ_TMO_1S))) {
+        LOG(LOG_ERR, "filed to post reply to client %d: %s", pcmd->cid, strerror(errno));
+    }
+    return rc;
+}
+
+void *f_command_thrd(void *arg) {
+    f_rbq_t     *myq = (f_rbq_t *)arg;
+    f_dcmd_t    fcmd;
+    int         rc;
+
+    while (1) {
+        if ((rc = f_rbq_pop(myq, &fcmd, 10*RBQ_TMO_1S))) {
+            if (rc == ETIMEDOUT) {
+                LOG(LOG_DBG, "SRV: 10s, no command");
+                if (exit_flag) {
+                    LOG(LOG_INFO, "svc exit gflag set, exiting");
+                    exit(0);
+                }
+                continue;
+            } else {
+                LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(errno), rc);
+                exit(1);
+            }
+
+        }
+        if (exit_flag)
+            return NULL;
+
+        if ((rc = f_srv_process_cmd(&fcmd, myq->rbq->name, 0))) {
+            LOG(LOG_FATAL, "%s", ULFS_str_errno(rc));
+            exit(rc);
+        }
+    }
 }
 
 /**
@@ -222,10 +410,11 @@ int pack_ack_msg(char *ptr_cmd, int cmd, int rc, void *val,
 * then attach to the client-side shared buffers.
 *
 * @param cmd_buf: received command from client
-* @param sock_id: position in poll_set
+* @param qid: position in poll_set
 * @return success/error code
 */
-int sync_with_client(char *cmd_buf, int sock_id)
+#if 0
+int sync_with_client(char *cmd_buf, int qid)
 {
     int app_id = *((int *)(cmd_buf) + 1);
     int local_rank_idx = *((int *)(cmd_buf) + 2);
@@ -315,7 +504,7 @@ int sync_with_client(char *cmd_buf, int sock_id)
     cli_signature_t *cli_signature =
         (cli_signature_t *)malloc(sizeof(cli_signature_t));
     cli_signature->app_id = app_id;
-    cli_signature->sock_id = sock_id;
+    cli_signature->qid = qid;
     rc = pthread_mutex_init(&(thrd_ctrl->thrd_lock), NULL);
     if (rc != 0) {
         return ULFS_ERROR_THRDINIT;
@@ -353,18 +542,162 @@ int sync_with_client(char *cmd_buf, int sock_id)
         return rc;
     }
 
-    tmp_config->thrd_idxs[sock_id] = arraylist_size(thrd_list) - 1;
-    tmp_config->client_ranks[sock_id] = local_rank_idx;
-    tmp_config->dbg_ranks[sock_id] = dbg_rank; /*add debug rank*/
+    tmp_config->thrd_idxs[qid] = arraylist_size(thrd_list) - 1;
+    tmp_config->client_ranks[qid] = local_rank_idx;
+    tmp_config->dbg_ranks[qid] = dbg_rank; /*add debug rank*/
 
-    invert_sock_ids[sock_id] = app_id;
+    invert_qids[qid] = app_id;
 
-    rc = attach_to_shm(tmp_config, app_id, sock_id);
+    rc = attach_to_shm(tmp_config, app_id, qid);
     if (rc != ULFS_SUCCESS) {
         return rc;
     }
 
-    rc = open_log_file(tmp_config, app_id, sock_id);
+    rc = open_log_file(tmp_config, app_id, qid);
+    if (rc < 0) {
+        return rc;
+    }
+
+    thrd_ctrl->has_waiting_delegator = 0;
+    thrd_ctrl->has_waiting_dispatcher = 0;
+    rc = pthread_create(&(thrd_ctrl->thrd), NULL, rm_delegate_request_thread,
+                        cli_signature);
+    if (rc != 0) {
+        return  ULFS_ERROR_THRDINIT;
+    }
+
+    return rc;
+}
+#endif
+
+int f_setup_client(f_dcmd_t *pcmd) {
+    int app_id = pcmd->app_id;
+    int local_rank_idx = pcmd->cid;
+    int dbg_rank = pcmd->dbg_rnk;
+    int qid = pcmd->cid;
+
+    app_config_t *tmp_config;
+    /*if this client is from a new application, then
+     * initialize this application's information
+     * */
+
+    int rc;
+    if (arraylist_get(app_config_list, app_id) == NULL) {
+        int num_procs_per_node  = pcmd->num_prc;
+        int req_buf_sz          = pcmd->rqbf_sz;
+        int recv_buf_sz         = pcmd->rcbf_sz;
+        long superblock_sz      = pcmd->sblk_sz;
+        long meta_offset        = pcmd->meta_of;
+        long meta_size          = pcmd->meta_sz;
+        long fmeta_offset       = pcmd->fmet_of;
+        long fmeta_size         = pcmd->fmet_sz;
+        long data_offset        = pcmd->data_of;
+        long data_size          = pcmd->data_sz;
+
+
+        LOG(LOG_DBG, 
+            "superblock_sz:%ld, num_procs_per_node:%d, req_buf_sz:%d, data_size:%ld\n", 
+            superblock_sz, num_procs_per_node, req_buf_sz, data_size);
+
+        tmp_config = (app_config_t *)malloc(sizeof(app_config_t));
+        memcpy(tmp_config->external_spill_dir, pcmd->ext_dir, MAX_PATH_LEN);
+
+        /*don't forget to free*/
+        tmp_config->num_procs_per_node = num_procs_per_node;
+        tmp_config->req_buf_sz = req_buf_sz;
+        tmp_config->recv_buf_sz = recv_buf_sz;
+        tmp_config->superblock_sz = superblock_sz;
+
+        tmp_config->meta_offset = meta_offset;
+        tmp_config->meta_size = meta_size;
+
+        tmp_config->fmeta_offset = fmeta_offset;
+        tmp_config->fmeta_size = fmeta_size;
+
+        tmp_config->data_offset = data_offset;
+        tmp_config->data_size = data_size;
+
+        int i;
+        for (i = 0; i < MAX_NUM_CLIENTS; i++) {
+            tmp_config->client_ranks[i] = -1;
+            tmp_config->shm_recv_bufs[i] = NULL;
+            tmp_config->shm_req_bufs[i] = NULL;
+            tmp_config->shm_superblocks[i] = NULL;
+            tmp_config->shm_superblock_fds[i] = -1;
+            tmp_config->shm_recv_fds[i] = -1;
+            tmp_config->shm_req_fds[i] = -1;
+            tmp_config->spill_log_fds[i] = -1;
+            tmp_config->spill_index_log_fds[i] = -1;
+        }
+
+        rc = arraylist_insert(app_config_list, app_id, tmp_config);
+        if (rc != 0) {
+            return rc;
+        }
+    } else {
+        tmp_config = (app_config_t *)arraylist_get(app_config_list,
+                     app_id);
+    }
+    /* The following code attach a delegator thread
+     * to this new connection */
+    thrd_ctrl_t *thrd_ctrl =
+        (thrd_ctrl_t *)malloc(sizeof(thrd_ctrl_t));
+    memset(thrd_ctrl, 0, sizeof(thrd_ctrl_t));
+
+    thrd_ctrl->exit_flag = 0;
+    cli_signature_t *cli_signature =
+        (cli_signature_t *)malloc(sizeof(cli_signature_t));
+    cli_signature->app_id = app_id;
+    cli_signature->qid = qid;
+    rc = pthread_mutex_init(&(thrd_ctrl->thrd_lock), NULL);
+    if (rc != 0) {
+        return ULFS_ERROR_THRDINIT;
+    }
+
+    rc = pthread_cond_init(&(thrd_ctrl->thrd_cond), NULL);
+    if (rc != 0) {
+        return ULFS_ERROR_THRDINIT;
+    }
+
+    thrd_ctrl->del_req_set =
+        (msg_meta_t *)malloc(sizeof(msg_meta_t));
+    if (!thrd_ctrl->del_req_set) {
+        return ULFS_ERROR_NOMEM;
+    }
+    memset(thrd_ctrl->del_req_set,
+           0, sizeof(msg_meta_t));
+
+    thrd_ctrl->del_req_stat =
+        (del_req_stat_t *)malloc(sizeof(del_req_stat_t));
+    if (!thrd_ctrl->del_req_stat) {
+        return ULFS_ERROR_NOMEM;
+    }
+    memset(thrd_ctrl->del_req_stat, 0, sizeof(del_req_stat_t));
+
+    thrd_ctrl->del_req_stat->req_stat =
+        (per_del_stat_t *)malloc(sizeof(per_del_stat_t) * glb_size);
+    if (!thrd_ctrl->del_req_stat->req_stat) {
+        return ULFS_ERROR_NOMEM;
+    }
+    memset(thrd_ctrl->del_req_stat->req_stat,
+           0, sizeof(per_del_stat_t) * glb_size);
+    rc = arraylist_add(thrd_list, thrd_ctrl);
+    if (rc != 0) {
+        return rc;
+    }
+
+    tmp_config->thrd_idxs[qid] = arraylist_size(thrd_list) - 1;
+    tmp_config->client_ranks[qid] = local_rank_idx;
+    tmp_config->dbg_ranks[qid] = dbg_rank; /*add debug rank*/
+
+    invert_qids[qid] = app_id;
+
+    rc = attach_to_shm(tmp_config, app_id, qid);
+    if (rc != ULFS_SUCCESS) {
+        return rc;
+    }
+
+    rc = open_log_file(tmp_config, app_id, qid);
     if (rc < 0) {
         return rc;
     }
@@ -380,19 +713,20 @@ int sync_with_client(char *cmd_buf, int sock_id)
     return rc;
 }
 
+
 /**
 * attach to the client-side shared memory
 * @param app_config: application information
 * @param app_id: the server-side
-* @param sock_id: position in poll_set in unifycr_sock.h
+* @param qid: position in poll_set in unifycr_sock.h
 * @return success/error code
 */
-int attach_to_shm(app_config_t *app_config, int app_id, int sock_id)
+int attach_to_shm(app_config_t *app_config, int app_id, int qid)
 {
     int ret = 0;
     char shm_name[GEN_STR_LEN] = {0};
 
-    int client_side_id = app_config->client_ranks[sock_id];
+    int client_side_id = app_config->client_ranks[qid];
 
     /* attach shared superblock,
      * a superblock is created by each
@@ -484,13 +818,13 @@ int attach_to_shm(app_config_t *app_config, int app_id, int sock_id)
 * overflows.
 * @param app_config: application information
 * @param app_id: the server-side application id
-* @param sock_id: position in poll_set in unifycr_sock.h
+* @param qid: position in poll_set in unifycr_sock.h
 * @return success/error code
 */
 int open_log_file(app_config_t *app_config,
-                  int app_id, int sock_id)
+                  int app_id, int qid)
 {
-    int client_side_id = app_config->client_ranks[sock_id];
+    int client_side_id = app_config->client_ranks[qid];
     char path[GEN_STR_LEN] = {0};
     sprintf(path, "%s/spill_%d_%d.log",
             app_config->external_spill_dir, app_id, client_side_id);
@@ -528,7 +862,7 @@ int open_log_file(app_config_t *app_config,
 * delegators in the job
 * @return success/error code
 */
-int unifycr_broadcast_exit(int sock_id)
+int unifycr_broadcast_exit(int qid)
 {
     int exit_cmd = XFER_COMM_EXIT, rc = ULFS_SUCCESS;
     int i;
@@ -540,8 +874,8 @@ int unifycr_broadcast_exit(int sock_id)
 
     int cmd = COMM_UNMOUNT;
 
-    char *ptr_ack = sock_get_ack_buf(sock_id);
+    char *ptr_ack = sock_get_ack_buf(qid);
     int ret_sz = pack_ack_msg(ptr_ack, cmd, rc, NULL, 0);
-    rc = sock_ack_cli(sock_id, ret_sz);
+    rc = sock_ack_cli(qid, ret_sz);
     return rc;
 }

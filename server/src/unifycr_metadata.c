@@ -204,11 +204,12 @@ int meta_init_indices()
 /**
 * store the file attribute to the key-value store
 * @param buf: file attribute received from the client
-* @param sock_id: the connection id in poll_set of
+* @param qid: the connection id in poll_set of
 * the delegator
 * @return success/error code
 */
-int meta_process_attr_set(char *buf, int sock_id)
+#if 0
+int meta_process_attr_set(char *buf, int qid)
 {
     int rc = ULFS_SUCCESS;
 
@@ -235,15 +236,41 @@ int meta_process_attr_set(char *buf, int sock_id)
 
     return rc;
 }
+#endif
+
+int f_do_fattr_set(f_dcmd_t *pcmd, f_fattr_t *pval) {
+    int rc = ULFS_SUCCESS;
+
+    *fattr_keys[0] = pval->gfid;
+    fattr_vals[0]->file_attr = pval->file_attr;
+    strcpy(fattr_vals[0]->fname, pval->filename);
+    fattr_vals[0]->loid = pval->loid;
+
+    md->primary_index = unifycr_indexes[1];
+    brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+            fattr_vals[0], sizeof(fattr_val_t), NULL, NULL);
+    if (!brm || brm->error) {
+        LOG(LOG_DBG, "client %d, no such file:%d\n", pcmd->cid, *fattr_keys[0]);
+        rc = ULFS_ERROR_MDHIM;
+    } else {
+        LOG(LOG_DBG, "client %d, setting fattr key:%d\n", pcmd->cid, *fattr_keys[0]);
+        rc = ULFS_SUCCESS;
+    }
+
+    mdhim_full_release_msg(brm);
+
+    return rc;
+}
+
 
 
 /* get the file attribute from the key-value store
 * @param buf: a buffer that stores the gid
-* @param sock_id: the connection id in poll_set of the delegator
+* @param qid: the connection id in poll_set of the delegator
 * @return success/error code
 */
-
-int meta_process_attr_get(char *buf, int sock_id, f_fattr_t *ptr_attr_val)
+#if 0
+int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val)
 {
     *fattr_keys[0] = *((int *)(buf + 2 * sizeof(int)));
     fattr_val_t *tmp_ptr_attr;
@@ -264,6 +291,36 @@ int meta_process_attr_get(char *buf, int sock_id, f_fattr_t *ptr_attr_val)
                     glb_rank, *fattr_keys[0]); */
         ptr_attr_val->file_attr = tmp_ptr_attr->file_attr;
         strcpy(ptr_attr_val->filename, tmp_ptr_attr->fname);
+
+        rc = ULFS_SUCCESS;
+    }
+
+    mdhim_full_release_msg(bgrm);
+    return rc;
+}
+#endif
+
+int f_do_fattr_get(f_dcmd_t *pcmd, f_fattr_t *pval) {
+    *fattr_keys[0] = pcmd->fm_gfid;
+    fattr_val_t *tmp_ptr_attr;
+
+    int rc;
+
+    md->primary_index = unifycr_indexes[1];
+    bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
+                    sizeof(fattr_key_t), MDHIM_GET_EQ);
+
+    if (!bgrm || bgrm->error) {
+        LOG(LOG_DBG, "client %d, no such file %d", pcmd->cid, *fattr_keys[0]);
+        rc = ULFS_ERROR_MDHIM;
+    } else {
+        tmp_ptr_attr = (fattr_val_t *)bgrm->values[0];
+        pval->gfid = *fattr_keys[0];
+
+        LOG(LOG_DBG, "client %d, getting fattr key:%d\n", pcmd->cid, *fattr_keys[0]);
+        pval->file_attr = tmp_ptr_attr->file_attr;
+        pval->loid = tmp_ptr_attr->loid;
+        strcpy(pval->filename, tmp_ptr_attr->fname);
 
         rc = ULFS_SUCCESS;
     }
@@ -308,6 +365,7 @@ int meta_famattr_get(char *buf, fam_attr_val_t **val_p)
     fam_attr_val_t *tmp_ptr_attr;
 
     int rc;
+LOG(LOG_DBG, "meta_famattr_get\n");
 
     md->primary_index = unifycr_indexes[2];
     bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
@@ -339,19 +397,19 @@ int meta_famattr_get(char *buf, fam_attr_val_t **val_p)
 
 /*synchronize all the indices and file attributes
 * to the key-value store
-* @param sock_id: the connection id in poll_set of the delegator
+* @param qid: the connection id in poll_set of the delegator
 * @return success/error code
 */
-
-int meta_process_fsync(int sock_id)
+#if 0
+int meta_process_fsync(int qid)
 {
     int i, ret = 0;
 
-    int app_id = invert_sock_ids[sock_id];
+    int app_id = invert_qids[qid];
     app_config_t *app_config = (app_config_t *)arraylist_get(app_config_list,
                                app_id);
 
-    int client_side_id = app_config->client_ranks[sock_id];
+    int client_side_id = app_config->client_ranks[qid];
 
     unsigned long num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
@@ -498,7 +556,165 @@ _process_fattr:
 
     return ret;
 }
+#endif
 
+int f_do_fsync(f_dcmd_t *pcmd) {
+    int i, ret = 0;
+    int qid = pcmd->cid;
+
+    int app_id = invert_qids[qid];
+    app_config_t *app_config = (app_config_t *)arraylist_get(app_config_list, app_id);
+
+    int client_side_id = app_config->client_ranks[qid];
+
+    unsigned long num_entries =
+        *((unsigned long *)(app_config->shm_superblocks[client_side_id] + 
+        app_config->meta_offset));
+
+    if (num_entries == 0) {
+        LOG(LOG_DBG, "nothing to fsync");
+        goto _process_fattr;
+    }
+
+    /* indices are stored in the superblock shared memory
+     *  created by the client*/
+    md_index_t *meta_payload =
+        (md_index_t *)(app_config->shm_superblocks[client_side_id]
+                            + app_config->meta_offset + page_sz);
+
+    md->primary_index = unifycr_indexes[0];
+
+    for (i = 0; i < num_entries; i++) {
+        fsmd_keys[i]->fid = meta_payload[i].fid;
+        fsmd_keys[i]->offset = meta_payload[i].file_pos;
+        fsmd_vals[i]->addr = meta_payload[i].mem_pos;
+        fsmd_vals[i]->len = meta_payload[i].length;
+        if (fam_fs) {
+            fsmd_vals[i]->node  = meta_payload[i].nid;
+            fsmd_vals[i]->chunk = meta_payload[i].cid;
+/*
+        printf("srv: fsync k/v[%d] fid=%ld off=%ld/len=%ld addr=%lu node=%ld chunk=%ld\n", i,
+        fsmd_keys[i]->fid, fsmd_keys[i]->offset, 
+        fsmd_vals[i]->len, fsmd_vals[i]->addr, fsmd_vals[i]->node, fsmd_vals[i]->chunk);
+*/
+
+        } else {
+            fsmd_vals[i]->delegator_id = glb_rank;
+            memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
+            memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
+                   &client_side_id, sizeof(int));
+        }
+
+        fsmd_ley_lens[i] = sizeof(fsmd_key_t);
+        unifycr_val_lens[i] = sizeof(fsmd_val_t);
+    }
+
+    //print_fsync_indices(fsmd_keys, fsmd_vals, num_entries);
+
+    if (num_entries == 1) {
+        brm = mdhimPut(md, fsmd_keys[0], sizeof(fsmd_key_t),
+                       fsmd_vals[0], sizeof(fsmd_val_t),
+                       NULL, NULL);
+        if (!brm || brm->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
+        } else {
+            ret = ULFS_SUCCESS;
+        }
+        mdhim_full_release_msg(brm);
+    } else {
+
+        brm = mdhimBPut(md, (void **)(&fsmd_keys[0]), fsmd_ley_lens,
+                  (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries, NULL, NULL);
+        brmp = brm;
+        if (!brmp || brmp->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
+        }
+
+        while (brmp) {
+            if (brmp->error < 0) {
+                ret = ULFS_ERROR_MDHIM;
+                break;
+            }
+
+            brm = brmp;
+            brmp = brmp->next;
+            mdhim_full_release_msg(brm);
+
+        }
+    }
+
+_process_fattr:
+    md->primary_index = unifycr_indexes[1];
+
+    num_entries =
+        *((unsigned long *)(app_config->shm_superblocks[client_side_id]
+                            + app_config->fmeta_offset));
+    //printf("sync to process %d attrs\n", num_entries);
+    if (num_entries == 0) {
+        LOG(LOG_DBG, "no entries to sync");
+        return 0;
+    }
+
+    /* file attributes are stored in the superblock shared memory
+     * created by the client*/
+    f_fattr_t *attr_payload =
+        (f_fattr_t *)(app_config->shm_superblocks[client_side_id]
+                + app_config->fmeta_offset + page_sz);
+
+
+    for (i = 0; i < num_entries; i++) {
+        *fattr_keys[i] = attr_payload[i].gfid;
+        fattr_vals[i]->file_attr = attr_payload[i].file_attr;
+        strcpy(fattr_vals[i]->fname, attr_payload[i].filename);
+
+        fattr_key_lens[i] = sizeof(fattr_key_t);
+        fattr_val_lens[i] = sizeof(fattr_val_t);
+    }
+
+    if (num_entries == 1) {
+        brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+                       fattr_vals[0], sizeof(fattr_val_t),
+                       NULL, NULL);
+        if (!brm || brm->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
+        } else {
+            ret = ULFS_SUCCESS;
+        }
+        mdhim_full_release_msg(brm);
+    } else {
+
+        brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
+                  (void **)(&fattr_vals[0]), fattr_val_lens, num_entries, NULL, NULL);
+        brmp = brm;
+        if (!brmp || brmp->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, 
+                "Rank - %d: Error inserting keys/values into MDHIM\n", md->mdhim_rank);
+        }
+
+        while (brmp) {
+            if (brmp->error < 0) {
+                ret = ULFS_ERROR_MDHIM;
+                break;
+            }
+
+            brm = brmp;
+            brmp = brmp->next;
+            mdhim_full_release_msg(brm);
+
+        }
+
+    }
+
+    LOG(LOG_DBG, "fsync sts=%d", ret);
+    return ret;
+}
 
 /* get the locations of all the requested file segments from
  * the key-value store.

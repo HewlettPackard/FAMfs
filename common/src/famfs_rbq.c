@@ -174,7 +174,6 @@ int f_rbq_push(f_rbq_t *q, void *e, long wait) {
         return -1;
     if (q->rbq->hwm > 0 && f_rbq_count(q) >= q->rbq->hwm) 
         pthread_cond_broadcast(&q->rbq->hwmc);
-
     return 0;
 } 
 
@@ -348,18 +347,19 @@ int main(int argc, char *argv[]) {
         printf("Consumer opened cmd: %lu[%d] in=%d\n", myq->rbq->esize, f_rbq_size(myq), f_rbq_count(myq));
     } else {
         printf("Consumer created cmd\n");
-        f_rbq_setlwm(myq, 4);
-        f_rbq_sethwm(myq, 24);
+        //f_rbq_setlwm(myq, 4);
+        //f_rbq_sethwm(myq, 24);
     }
 
     printf("waiting for queue\n");
-    s = f_rbq_wait_hwm(myq, tmo);
-    printf("%s\n", strerror(s));
+    //s = f_rbq_wait_hwm(myq, tmo);
+    //printf("%s\n", strerror(s));
 
 
     obuf[8] = 0;
     for (int j = 0; j < N; j++) {
-        if (s = f_rbq_pop(myq, &data, tmo)) {
+        //if (s = f_rbq_pop(myq, &data, tmo)) {
+        if (s = f_rbq_pop(myq, &data, -1)) {
             if (s == ETIMEDOUT) {
                 printf("TMO\n");
                 break;

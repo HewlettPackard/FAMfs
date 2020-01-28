@@ -1,3 +1,5 @@
+#ifndef FAMFS_RBQ_H
+#define FAMFS_RBQ_H
 
 #define MAX_RBQ_NAME 32
 #include <semaphore.h>
@@ -24,6 +26,11 @@ typedef struct {
     sem_t           *isem;
     sem_t           *osem;
 } f_rbq_t;
+
+#define RBQ_TMO_4EVER -1L
+#define RBQ_TMO_1S    1000000L
+#define RBQ_TMO_1M    (60*RBQ_TMO_1S)
+#define RBQ_NOWAIT    0
 
 //
 // Create ring buffer queue
@@ -155,3 +162,5 @@ static inline void f_rbq_resetwm(f_rbq_t *q) {
     f_rbq_setlwm(q, 0);
     f_rbq_sethwm(q, 0);
 }
+
+#endif

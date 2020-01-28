@@ -73,7 +73,7 @@ unifycrd_start_daemon()
             return 1
     fi
 #    ( $UNIFYCRD < /dev/null > /dev/null 2>&1 & )
-    ( $UNIFYCRD < /dev/null > ${UNIFYCR_META_DB_PATH}/unifycrd.t.log 2>&1 & )
+    ( $UNIFYCRD -d -v 7 < /dev/null > ${UNIFYCR_META_DB_PATH}/unifycrd.t.log 2>&1 & )
 }
 
 # Kill UnifyCR daemon.

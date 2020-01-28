@@ -79,6 +79,7 @@ void *sm_service_reads(void *ctx)
     int return_code, irecv_flag = 0;
     int rc, cmd, flag = 0;
 
+#if 0
 /* f_rbq */
     rc = sm_init_socket();
     if (rc < 0) {
@@ -86,6 +87,8 @@ void *sm_service_reads(void *ctx)
         return (void *)&sm_rc;
     }
 /* */
+#endif
+
     sm_ready = 1;
 
     dbg_rank = glb_rank;

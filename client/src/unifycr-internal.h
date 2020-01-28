@@ -106,6 +106,12 @@ do { \
                __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
 } while (0)
 
+#define ERROR(fmt, ...) \
+do { \
+        printf("famfs error: %s:%d: %s: " fmt "\n", \
+               __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
+} while (0)
+
 /* define a macro to capture function name, file name, and line number
  * along with user-defined string */
 #define UNIFYCR_UNSUPPORTED(fmt, args...) \
@@ -286,6 +292,7 @@ typedef struct {
 
     off_t chunks;                   /* number of chunks allocated to file */
     unifycr_chunkmeta_t *chunk_meta; /* meta data for chunks */
+    int loid;                       /* FAMFS layout id */
 
 } unifycr_filemeta_t;
 
@@ -386,18 +393,6 @@ extern long unifycr_key_slice_range;
 /*definition for unifycr*/
 #define UNIFYCR_CLI_TIME_OUT 5000
 
-#if 0
-typedef enum {
-    COMM_MOUNT,
-    COMM_META,
-    COMM_READ,
-    COMM_UNMOUNT,
-    COMM_DIGEST,
-    COMM_SYNC_DEL,
-    COMM_MDGET,
-} cmd_lst_t;
-#endif
-
 typedef enum {
     ACK_SUCCESS,
     ACK_FAIL,
@@ -468,6 +463,9 @@ char *normalized_path(const char *path, char *buf, size_t buf_sz);
 /* sets flag if the path is a special path */
 int unifycr_intercept_path(const char *path);
 
+int f_layout_of_path(char *path, char *ln);
+char *f_strip_layout(char *path);
+
 /* given an fd, return 1 if we should intercept this file, 0 otherwise,
  * convert fd to new fd value if needed */
 int unifycr_intercept_fd(int *fd);
@@ -524,7 +522,7 @@ int unifycr_fid_free(int fid);
 
 /* add a new file and initialize metadata
  * returns the new fid, or negative value on error */
-int unifycr_fid_create_file(const char *path);
+int unifycr_fid_create_file(const char *path, int loid);
 
 /* add a new directory and initialize metadata
  * returns the new fid, or a negative value on error */

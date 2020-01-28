@@ -51,8 +51,8 @@ struct sockaddr_un server_address;
 char cmd_buf[MAX_NUM_CLIENTS][GEN_STR_LEN];
 char ack_buf[MAX_NUM_CLIENTS][GEN_STR_LEN];
 int ack_msg[3] = {0};
-int detached_sock_id = -1;
-int cur_sock_id = -1;
+int detached_qid = -1;
+int cur_qid = -1;
 
 /**
 * initialize the listening socket on this delegator
@@ -132,15 +132,15 @@ int sock_remove(int idx)
 /*
  * send command to the client to let the client digest the
  * data in the shared receive buffer
- * @param: sock_id: socket index in poll_set
+ * @param: qid: socket index in poll_set
  * @param: cmd: command type
  *
  * */
-int sock_notify_cli(int sock_id, int cmd)
+int sock_notify_cli(int qid, int cmd)
 {
-    memcpy(ack_buf[sock_id], &cmd, sizeof(int));
-    int rc = write(poll_set[sock_id].fd,
-                   ack_buf[sock_id], sizeof(ack_buf[sock_id]));
+    memcpy(ack_buf[qid], &cmd, sizeof(int));
+    int rc = write(poll_set[qid].fd,
+                   ack_buf[qid], sizeof(ack_buf[qid]));
 
     if (rc < 0) {
         return ULFS_ERROR_WRITE;
@@ -175,7 +175,7 @@ int sock_wait_cli_cmd()
                     if (rc < 0) {
                         return ULFS_SOCKETFD_EXCEED;
                     } else {
-                        cur_sock_id = i;
+                        cur_qid = i;
                         return ULFS_SUCCESS;
                     }
                 } else if (i != 0 && poll_set[i].revents == POLLIN) {
@@ -183,16 +183,16 @@ int sock_wait_cli_cmd()
                                           cmd_buf[i], GEN_STR_LEN);
                     if (bytes_read == 0) {
                         sock_remove(i);
-                        detached_sock_id = i;
+                        detached_qid = i;
                         return ULFS_SOCK_DISCONNECT;
                     }
-                    cur_sock_id = i;
+                    cur_qid = i;
                     return ULFS_SUCCESS;
                 } else {
                     if (i == 0) {
                         return ULFS_SOCK_LISTEN;
                     } else {
-                        detached_sock_id = i;
+                        detached_qid = i;
                         if (i != 0 && poll_set[i].revents == POLLHUP) {
                             sock_remove(i);
                             return ULFS_SOCK_DISCONNECT;
@@ -211,10 +211,10 @@ int sock_wait_cli_cmd()
 
 }
 
-int sock_ack_cli(int sock_id, int ret_sz)
+int sock_ack_cli(int qid, int ret_sz)
 {
-    int rc = write(poll_set[sock_id].fd,
-                   ack_buf[sock_id], ret_sz);
+    int rc = write(poll_set[qid].fd,
+                   ack_buf[qid], ret_sz);
     if (rc < 0) {
         return ULFS_SOCK_OTHER;
     }
@@ -228,22 +228,22 @@ int sock_handle_error(int sock_error_no)
 
 int sock_get_error_id()
 {
-    return detached_sock_id;
+    return detached_qid;
 }
 
-char *sock_get_cmd_buf(int sock_id)
+char *sock_get_cmd_buf(int qid)
 {
-    return cmd_buf[sock_id];
+    return cmd_buf[qid];
 }
 
-char *sock_get_ack_buf(int sock_id)
+char *sock_get_ack_buf(int qid)
 {
-    return (char *)ack_buf[sock_id];
+    return (char *)ack_buf[qid];
 }
 
 int sock_get_id()
 {
-    return cur_sock_id;
+    return cur_qid;
 }
 
 int sock_sanitize()

@@ -111,5 +111,4 @@ void unifycr_print_chunk_list(char *path);
 int famfs_buf_reg(char *buf, size_t len, void **ctx);
 int famfs_buf_unreg(void *ctx);
 
-
 #endif /* UNIFYCR_H */

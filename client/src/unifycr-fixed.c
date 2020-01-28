@@ -75,9 +75,14 @@ extern int unifycr_spillover_max_chunks;
 #include "famfs_env.h"
 #include "fam_stripe.h"
 #include "lf_client.h"
+#include "famfs_rbq.h"
 
 /* FAM */
 extern LFS_CTX_t *lfs_ctx;
+
+extern f_rbq_t *adminq;
+extern f_rbq_t *rplyq;
+extern f_rbq_t *lo_cq[F_CMDQ_MAX];
 
 //static uint64_t wevents = 1;
 

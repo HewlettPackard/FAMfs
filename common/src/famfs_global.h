@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <inttypes.h>
 
+#include "famfs_env.h"
+
 
 #define GEN_STR_LEN 1024
 #define UNIFYCR_MAX_FILENAME     ( 128 )
@@ -13,7 +15,7 @@
 typedef struct {
     int fid;
     int gfid;
-    int loid;           /* famfs layout id (from config file) */
+    int loid;                               /* famfs layout id (from config file) */
     char filename[UNIFYCR_MAX_FILENAME];
     struct stat file_attr;
 } f_fattr_t;
@@ -27,15 +29,23 @@ typedef enum {
     COMM_DIGEST    = 0x5,
     COMM_SYNC_DEL  = 0x6,
     COMM_MDGET     = 0x7,
+    COMM_SHTDWN    = 0x8,
 
     COMM_OPT_MASK  = 0xff00,
     COMM_OPT_FAMFS = 0x0100,
-} cmd_lst_t;
+} f_srvcmd_t;
+
+typedef enum {
+    MDRQ_GETFA  = 1,
+    MDRQ_SETFA  = 2,
+    MDRQ_FSYNC  = 3,
+    MDRQ_GTFAM  = 4
+} f_mdrq_t;
 
 #define F_MAX_FNM     ( 128 )
 
 typedef struct {
-    cmd_lst_t           opcode;
+    f_srvcmd_t          opcode;
     int                 cid;
     union {
         struct {
@@ -54,7 +64,7 @@ typedef struct {
             char        ext_dir[UNIFYCR_MAX_FILENAME];
         };
         struct {
-            int         fm_cmd;
+            f_mdrq_t    md_type;
             union {
                 f_fattr_t   fm_data;
                 int         fm_gfid;
@@ -65,15 +75,23 @@ typedef struct {
 } f_dcmd_t;
 
 typedef struct {
-    cmd_lst_t           ackcode;
+    f_srvcmd_t          ackcode;
     int                 cid;
+    int                 rc;
     union {
-        
+        struct {
+            off_t               data_off;
+            size_t              data_size;
+        };
+        uint64_t                max_rps;
+        f_fattr_t               fattr;
     };
-} f_dack_t;
+} f_drply_t;
 
 #define F_MAX_CMDQ     64
+#define F_MAX_RPLYQ    8
 #define F_CMDQ_NAME    "f_cmdq"
+#define F_RPLYQ_NAME   "f_rplyq"
 
 
 typedef struct {

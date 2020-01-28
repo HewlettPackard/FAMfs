@@ -3,6 +3,8 @@ chunk_bits = 20
 chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
+debug = on
+verbosity = 7
 
 [meta]
 server_ratio = 1

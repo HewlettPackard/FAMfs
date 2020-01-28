@@ -236,6 +236,10 @@ lfio_stats_t        md_ag_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 
 int do_lf_stats = 0;
 
+f_rbq_t *adminq;
+f_rbq_t *rplyq;
+f_rbq_t *lo_cq[F_CMDQ_MAX];
+
 //
 // ===========================================
 //
@@ -413,6 +417,33 @@ inline int unifycr_stack_unlock()
     return 0;
 }
 
+int f_layout_of_path(char *path, char *ln){
+    char lo_name[FVAR_MONIKER_MAX];
+    F_LAYOUT_t *lo;
+    int id;
+
+    bzero(lo_name, sizeof(lo_name));
+    char *fpath = strstr(path, "::");
+    if (fpath) {
+        strncpy(lo_name, path, min(fpath - path, FVAR_MONIKER_MAX));
+        if (!(lo = f_get_layout_by_name(lo_name)))
+            return -1;
+        id = lo->info.conf_id;
+    } else {
+        lo = f_get_layout(0);
+        id = 0;
+    }
+    if (ln) 
+        strcpy(ln, lo->info.name);
+    
+    return id;
+}
+
+inline char *f_strip_layout(char *path) {
+    char *fpath = strstr(path, "::");
+    return fpath ? fpath + 2 : path;
+}
+
 /* sets flag if the path is a special path */
 inline int unifycr_intercept_path(const char *path)
 {
@@ -422,7 +453,18 @@ inline int unifycr_intercept_path(const char *path)
     }
 
     /* if the path starts with our mount point, intercept it */
-    if (strncmp(path, unifycr_mount_prefix, unifycr_mount_prefixlen) == 0) {
+    char *fpath = strstr(path, "::");
+    if (fpath) {
+        char lo_name[FVAR_MONIKER_MAX];
+        strncpy(lo_name, path, fpath - path);
+        F_LAYOUT_t *lo = f_get_layout_by_name(lo_name);
+        if (!lo)
+            return 0;
+        fpath += 2;
+    } else {
+        fpath = (char *)path;
+    }
+    if (strncmp(fpath, unifycr_mount_prefix, unifycr_mount_prefixlen) == 0) {
         return 1;
     }
     return 0;
@@ -748,12 +790,8 @@ int unifycr_fid_free(int fid)
 
 /* add a new file and initialize metadata
  * returns the new fid, or negative value on error */
-int unifycr_fid_create_file(const char *path)
+int unifycr_fid_create_file(const char *path, int loid)
 {
-    char *norm_path, buf[PATH_MAX];
-    norm_path = normalized_path(path, buf, PATH_MAX);
-    if (norm_path == NULL)
-        return -1; /* ENAMETOOLONG */
 
     int fid = unifycr_fid_alloc();
     if (fid < 0)  {
@@ -767,7 +805,7 @@ int unifycr_fid_create_file(const char *path)
     /* TODO: check path length to see if it is < 128 bytes
      * and return appropriate error if it is greater
      */
-    strcpy((void *)&unifycr_filelist[fid].filename, norm_path);
+    strcpy((void *)&unifycr_filelist[fid].filename, path);
     DEBUG("Filename %s got unifycr fd %d\n",
           unifycr_filelist[fid].filename, fid);
 
@@ -779,6 +817,7 @@ int unifycr_fid_create_file(const char *path)
     meta->real_size = 0;
     meta->storage = FILE_STORAGE_NULL;
     meta->flock_status = UNLOCKED;
+    meta->loid = loid;
     /* PTHREAD_PROCESS_SHARED allows Process-Shared Synchronization*/
     pthread_spin_init(&meta->fspinlock, PTHREAD_PROCESS_SHARED);
 
@@ -790,7 +829,19 @@ int unifycr_fid_create_file(const char *path)
 int unifycr_fid_create_directory(const char *path)
 {
     /* set everything we do for a file... */
-    int fid = unifycr_fid_create_file(path);
+    char *norm_path, buf[PATH_MAX];
+    norm_path = normalized_path(path, buf, PATH_MAX);
+    if (norm_path == NULL)
+        return -1; /* ENAMETOOLONG */
+
+    char *fpath = f_strip_layout(norm_path);
+    int loid = f_layout_of_path(norm_path, 0);
+    if (loid < 0) {
+        ERROR("layout doesn't exist: %s", path);
+        return -1;
+    }
+
+    int fid = unifycr_fid_create_file(fpath, loid);
     if (fid < 0) {
         /* was there an error? if so, return it */
         //errno = ENOSPC;
@@ -1020,11 +1071,12 @@ static int unifycr_get_global_fid(const char *path, int *gfid)
  * @param gfid: global file id
  * @return: error code
  * */
+#if 0
 static int set_global_file_meta(f_fattr_t *f_meta)
 {
     int cmd = COMM_META;
     int flag = 2;
-    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .fm_cmd = 2, .fm_data = *f_meta};
+    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .md_type = 2, .fm_data = *f_meta};
 
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1079,6 +1131,35 @@ static int set_global_file_meta(f_fattr_t *f_meta)
 
     return UNIFYCR_SUCCESS;
 }
+#endif
+static int f_create_file_global(f_fattr_t *f_meta)
+{
+    int rc;
+
+    f_drply_t r;
+    f_dcmd_t c = {
+        .opcode = COMM_META, 
+        .cid = local_rank_idx, 
+        .md_type = MDRQ_SETFA, 
+        .fm_data = *f_meta
+    };
+
+    f_rbq_t *cq = lo_cq[f_meta->loid];
+    ASSERT(cq);
+
+    if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
+        ERROR("can't push cretae file command onto layout %d queue", f_meta->loid);
+        return rc > 0 ? rc : errno;
+    }
+    
+    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
+        ERROR("couldn't get response for cretae file from layout %d queue", f_meta->loid);
+        return rc > 0 ? rc : errno; 
+    }
+
+    return r.rc;
+}
+
 
 /*
  * get global file metadata from the delegator,
@@ -1088,13 +1169,14 @@ static int set_global_file_meta(f_fattr_t *f_meta)
  * @return: file_meta that point to the structure of
  * the retrieved metadata
  * */
+#if 0
 static int get_global_file_meta(int gfid, f_fattr_t **file_meta)
 {
     /* format value length, payload 1, payload 2*/
     int cmd = COMM_META;
     int flag = 1;
 
-    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .fm_cmd = 1, .fm_gfid = gfid};
+    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .md_type = 1, .fm_gfid = gfid};
 
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1152,6 +1234,41 @@ static int get_global_file_meta(int gfid, f_fattr_t **file_meta)
     memcpy(*file_meta, cmd_buf + 2 * sizeof(int), sizeof(f_fattr_t));
     return UNIFYCR_SUCCESS;
 }
+#endif
+
+static int f_find_file_global(int gfid, int loid, f_fattr_t **file_meta) {
+    int rc;
+
+    f_drply_t r;
+    f_dcmd_t c = {
+        .opcode = COMM_META, 
+        .cid = local_rank_idx, 
+        .md_type = MDRQ_GETFA, 
+        .fm_gfid = gfid};
+
+    f_rbq_t *cq = lo_cq[loid];
+    ASSERT(cq);
+
+    if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
+        ERROR("can't push cretae file command onto layout %d queue", loid);
+        return rc > 0 ? rc : errno;
+    }
+    
+    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
+        ERROR("couldn't get response for cretae file from layout %d queue", loid);
+        return rc > 0 ? rc : errno; 
+    }
+    if (r.rc) {
+        // not found in global DB
+        *file_meta = NULL;
+        return ENOENT;
+    }
+
+    *file_meta = (f_fattr_t *)malloc(sizeof(f_fattr_t));
+    **file_meta = r.fattr;
+
+    return 0;
+}
 
 int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
 {
@@ -1159,7 +1276,7 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
     size_t size;
     int cmd = COMM_META;
     int flag = 4;
-    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .fm_cmd = 4, .fam_id = fam_id};
+    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .md_type = 4, .fam_id = fam_id};
 
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1260,29 +1377,37 @@ static int ins_file_meta(unifycr_fattr_buf_t *ptr_f_meta_log,
 int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                      off_t *outpos)
 {
-    char *norm_path, buf[PATH_MAX];
+    int loid = 0;
+    char *norm_path, buf[PATH_MAX], *fpath;
+    char lo_name[FVAR_MONIKER_MAX];
     norm_path = normalized_path(path, buf, PATH_MAX);
     if (norm_path == NULL)
         return -1; /* ENAMETOOLONG */
 
+    fpath = f_strip_layout(norm_path);
+
     /* check that path is short enough */
-    size_t pathlen = strlen(norm_path) + 1;
+    size_t pathlen = strlen(fpath) + 1;
     if (pathlen > UNIFYCR_MAX_FILENAME) {
         errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NAMETOOLONG);
         return -1;
+    }
+    if ((loid = f_layout_of_path(norm_path, lo_name)) < 0) {
+        ERROR("non-exisitng layout %s secified: %s", lo_name, norm_path);
+        return EINVAL;
     }
 
     /* assume that we'll place the file pointer at the start of the file */
     off_t pos = 0;
 
     /* check whether this file already exists */
-    int fid = _unifycr_get_fid_from_path(norm_path);
+    int fid = _unifycr_get_fid_from_path(fpath);
     DEBUG("unifycr_get_fid_from_path() gave %d\n", fid);
 
     int gfid = -1, rc = 0;
     if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         if (fid < 0) {
-            rc = unifycr_get_global_fid(norm_path, &gfid);
+            rc = unifycr_get_global_fid(fpath, &gfid);
             if (rc != UNIFYCR_SUCCESS) {
                 DEBUG("Failed to generate fid for file %s\n", path);
                 errno = unifycr_err_map_to_errno(UNIFYCR_ERR_IO);
@@ -1292,14 +1417,25 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
             gfid = abs(gfid);
 
             f_fattr_t *ptr_meta = NULL;
+#if 0
             rc = get_global_file_meta(gfid, &ptr_meta);
             if (ptr_meta == NULL) {
                 fid = -1;
+#endif
+            if (f_find_file_global(gfid, loid, &ptr_meta)) {
+                // file not found in global DB
+                fid = -1;
+            } else if (ptr_meta->loid != loid) {
+                // found the file, but in the wrong layout
+                ERROR("file %s exists in different layout globally: got %d, expected %d",
+                    path, ptr_meta->loid, loid);
+                free(ptr_meta);
+                return ENOENT;
             } else {
                 /* other process has created this file, but its
                  * attribute is not cached locally,
                  * allocate a file id slot for this existing file */
-                fid = unifycr_fid_create_file(norm_path);
+                fid = unifycr_fid_create_file(fpath, loid);
                 if (fid < 0) {
                     DEBUG("Failed to create new file %s\n", path);
                     errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NFILE);
@@ -1317,11 +1453,11 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                  * */
                 unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
                 meta->real_size = ptr_meta->file_attr.st_size;
+                meta->loid = loid;
                 ptr_meta->fid = fid;
                 ptr_meta->gfid = gfid;
 
-                ins_file_meta(&unifycr_fattrs,
-                              ptr_meta);
+                ins_file_meta(&unifycr_fattrs, ptr_meta);
                 free(ptr_meta);
             }
         } else {
@@ -1340,7 +1476,7 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                   free_chunk_stack, unifycr_filelist, unifycr_chunks);
 
             /* allocate a file id slot for this new file */
-            fid = unifycr_fid_create_file(norm_path);
+            fid = unifycr_fid_create_file(fpath, loid);
             if (fid < 0) {
                 DEBUG("Failed to create new file %s\n", path);
                 errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NFILE);
@@ -1357,17 +1493,16 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
 
             if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
                 /*create a file and send its attribute to key-value store*/
-                f_fattr_t *new_fmeta =
-                    (f_fattr_t *)malloc(sizeof(f_fattr_t));
-                strcpy(new_fmeta->filename, norm_path);
+
+                f_fattr_t *new_fmeta = (f_fattr_t *)malloc(sizeof(f_fattr_t));
+                strcpy(new_fmeta->filename, fpath);
                 new_fmeta->fid = fid;
                 new_fmeta->gfid = gfid;
-
-                set_global_file_meta(new_fmeta);
-                ins_file_meta(&unifycr_fattrs,
-                              new_fmeta);
+                new_fmeta->loid = loid;
+                if ((rc = f_create_file_global(new_fmeta))) 
+                    return rc;
+                ins_file_meta(&unifycr_fattrs, new_fmeta);
                 free(new_fmeta);
-
             }
         } else {
             /* ERROR: trying to open a file that does not exist without O_CREATE */
@@ -2153,6 +2288,9 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     app_id = l_app_id;
     glb_size = size;
 
+    ASSERT(fs_type == FAMFS);   // For now
+    /* TODO we'll need to get rid of all the other suff eventually */
+
     rc = unifycr_config_init(&client_cfg, 0, NULL);
     if (rc) {
         DEBUG("rank:%d, failed to initialize configuration:%d",
@@ -2160,20 +2298,20 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
         return -1;
     }
 
-    if ((rc = unifycrfs_mount(prefix, size, rank))) {
-        printf("unifycrfs_mount failed: %d\n", rc);
-        return rc;
-    }
-
     if (subtype == FAMFS) {
-	F_POOL_t *pool;
 
         if ((rc = f_set_layouts_info(&client_cfg))) {
             printf("failed to get layout info: %d\n", rc);
             return rc;
         }
-	pool = f_get_pool();
-	assert( pool ); /* f_set_layouts_info must fail if no pool */
+
+	F_POOL_t *pool = f_get_pool();
+	ASSERT(pool); /* f_set_layouts_info must fail if no pool */
+
+        if ((rc = unifycrfs_mount(prefix, size, rank))) {
+            printf("unifycrfs_mount failed: %d\n", rc);
+            return rc;
+        }
 
 	/* DEBUG */
 	if (pool->verbose) {
@@ -2212,6 +2350,7 @@ static void famfs_client_exit(unifycr_cfg_t *cfg, LFS_CTX_t **lfs_ctx_p)
 * data flush for persistence.
 * @return success/error code
 */
+#if 0
 int unifycr_shutdown()
 {
     int cmd = COMM_UNMOUNT;
@@ -2255,11 +2394,54 @@ int unifycr_shutdown()
 
     return UNIFYCR_SUCCESS;
 }
+#endif
+
+int unifycr_shutdown() {
+    ASSERT(fs_type == FAMFS);
+
+    f_dcmd_t    c = {.opcode = COMM_SHTDWN, .cid = local_rank_idx};
+    int rc;
+
+    F_POOL_t *pool;
+    pool = f_get_pool();
+    if (f_rbq_push(adminq, &c, RBQ_TMO_1S)) {
+        ERROR("couldn't push UNMOUNT command to svr");
+    }
+    f_rbq_destroy(rplyq);
+    f_rbq_close(adminq);
+    for (int i = 0; i < pool->info.layouts_count; i++) {
+        if (lo_cq[i]) {
+            if ((rc = f_rbq_close(lo_cq[i]))) {
+                ERROR("error closing queue of %d: %d", i, rc);
+            }
+        }
+    }
+
+    famfs_client_exit(&client_cfg, &lfs_ctx);
+
+    return 0;
+}
+
 
 int unifycr_unmount() {
-    if (fs_type != UNIFYCR_LOG && fs_type != FAMFS) {
-        DEBUG("wrong FS type %d\n", fs_type);
-        return UNIFYCR_FAILURE;
+    ASSERT(fs_type == FAMFS);
+
+    f_dcmd_t    c = {.opcode = COMM_UNMOUNT, .cid = local_rank_idx};
+    int rc;
+
+    F_POOL_t *pool;
+    pool = f_get_pool();
+    if (f_rbq_push(adminq, &c, RBQ_TMO_1S)) {
+        ERROR("couldn't push UNMOUNT command to svr");
+    }
+    f_rbq_destroy(rplyq);
+    f_rbq_close(adminq);
+    for (int i = 0; i < pool->info.layouts_count; i++) {
+        if (lo_cq[i]) {
+            if ((rc = f_rbq_close(lo_cq[i]))) {
+                ERROR("error closing queue of %d: %d", i, rc);
+            }
+        }
     }
 
     famfs_client_exit(&client_cfg, &lfs_ctx);
@@ -2272,6 +2454,7 @@ int unifycr_unmount() {
 * to the corresponding delegator on the
 * server side.
 */
+#if 0
 static int unifycr_sync_to_del()
 {
     int rc = -1;
@@ -2413,6 +2596,132 @@ static int unifycr_sync_to_del()
 
     return 0;
 }
+#endif
+
+static int f_server_sync() {
+    ASSERT(fs_type == FAMFS);
+
+    f_dcmd_t    c;
+    f_drply_t   r;
+
+    int rc = -1;
+    int superblock_start = UNIFYCR_SUPERBLOCK_KEY;
+    int num_procs_per_node = local_rank_cnt;
+    int req_buf_sz = shm_req_size;
+    int recv_buf_sz = shm_recv_size;
+    long superblock_sz = glb_superblock_size;
+
+    long meta_offset =
+        (void *)unifycr_indices.ptr_num_entries
+        - unifycr_superblock;
+    long meta_size = unifycr_max_index_entries
+                     * sizeof(md_index_t);
+
+    long fmeta_offset =
+        (void *)unifycr_fattrs.ptr_num_entries
+        - unifycr_superblock;
+
+    long fmeta_size = unifycr_max_fattr_entries *
+                      sizeof(f_fattr_t);
+
+    long data_offset =
+        (void *)unifycr_chunks - unifycr_superblock;
+    long data_size = (long)unifycr_max_chunks * unifycr_chunk_size;
+
+    char external_spill_dir[UNIFYCR_MAX_FILENAME] = {0};
+    strcpy(external_spill_dir, external_data_dir);
+
+    /* copy the client-side information to the command
+     * buffer, and then send to the delegator. The delegator
+     * will attach to the client-side shared memory, and open
+     * the spill log file based on these information*/
+    c.opcode = COMM_MOUNT;
+    c.app_id = app_id;
+    c.cid = local_rank_idx;
+    c.dbg_rnk = dbg_rank;
+    c.num_prc = num_procs_per_node;
+    c.rqbf_sz = req_buf_sz;
+    c.rcbf_sz = recv_buf_sz;
+    c.sblk_sz = superblock_sz;
+    c.meta_of = meta_offset;
+    c.meta_sz = meta_size;
+    c.fmet_of = fmeta_offset;
+    c.fmet_sz = fmeta_size;
+    c.data_of = data_offset;
+    c.data_sz = data_size;
+    strncpy(c.ext_dir, external_spill_dir, F_MAX_FNM);
+
+    if ((rc = f_rbq_push(adminq, &c, 10*RBQ_TMO_1S))) {
+        ERROR("rank %d couldn't send MOUNT command: %d", dbg_rank, rc < 0 ? errno : rc);
+        return -1;
+    }
+    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
+        ERROR("rank %d couldn't mount FAMfs: %d", dbg_rank, rc < 0 ? errno : rc);
+        return -1;
+    }
+    if (r.rc) {
+        ERROR("rank %d FAMfs mount error: %d", dbg_rank, r.rc);
+        return -1;
+    }
+
+#if 0
+    int res = __real_write(client_sockfd,
+                           cmd_buf, sizeof(cmd_buf));
+    if (res != 0) {
+        int bytes_read = 0;
+        int rc = -1;
+        cmd_fd.events = POLLIN | POLLPRI;
+        cmd_fd.revents = 0;
+
+        rc = poll(&cmd_fd, 1, -1);
+        if (rc == 0) {
+            /* encounter timeout*/
+            return -1;
+        } else {
+            if (rc > 0) {
+                if (cmd_fd.revents != 0) {
+                    if (cmd_fd.revents == POLLIN) {
+                        bytes_read = __real_read(client_sockfd, cmd_buf,
+                                                 sizeof(cmd_buf));
+                        if (bytes_read == 0) {
+                            /*remote connection is closed*/
+                            return -1;
+                        } else {
+                            if (*((int *)cmd_buf) != COMM_MOUNT || *((int *)cmd_buf + 1)
+                                != ACK_SUCCESS) {
+                                /*encounter delegator-side error*/
+                                return rc;
+                            } else {
+                                unifycr_key_slice_range =
+                                    *((long *)(cmd_buf + 2 * sizeof(int)));
+#if 0
+                                /*success*/
+                                my_srv_rank = *((int*)(cmd_buf + 2*sizeof(int) + sizeof(long)));
+#endif
+                            }
+                        }
+                    } else {
+                        /*encounter connection error*/
+                        return -1;
+                    }
+                } else {
+                    /*file descriptor is negative*/
+                    return -1;
+                }
+            } else {
+                /* encounter error*/
+                return -1;
+            }
+        }
+    } else {
+        /*write error*/
+        return -1;
+    }
+#endif
+
+    return 0;
+}
+
 
 /**
 * Initialize the shared recv memory buffer
@@ -2493,6 +2802,7 @@ static int unifycr_init_req_shm(int local_rank_idx, int app_id)
 * same node from the first delegator
 * on the server side
 */
+#if 0
 static int get_del_cnt()
 {
     int cmd = COMM_SYNC_DEL;
@@ -2557,6 +2867,60 @@ static int get_del_cnt()
     return *(int *)(cmd_buf + 2 * sizeof(int));
 
 }
+#endif
+
+static int f_srv_connect() {
+    int         rc;
+    char        qname[MAX_RBQ_NAME];
+    F_POOL_t    *pool = f_get_pool();
+    f_dcmd_t    c = {.opcode = COMM_SYNC_DEL, .cid = local_rank_idx};
+    f_drply_t   r;
+
+    ASSERT(pool);
+
+    sprintf(qname, "%s-%02d", F_RPLYQ_NAME, local_rank_idx);
+    if ((rc = f_rbq_create(qname, sizeof(f_drply_t), F_MAX_RPLYQ, &rplyq, 1))) {
+        ERROR("failed to create reply queue: %d %s", rc, strerror(errno));
+        return rc;
+    }
+
+    sprintf(qname, "%s-admin", F_CMDQ_NAME);
+    if ((rc = f_rbq_open(qname, &adminq))) {
+        ERROR("failed to open admin queue: %d %s", rc, strerror(errno));
+        return rc;
+    }
+
+    if ((rc = f_rbq_push(adminq, &c, RBQ_TMO_1S))) {
+        ERROR("failed to send command: %d %s", rc, strerror(errno));
+        return rc;
+    }
+
+
+    if ((rc = f_rbq_pop(rplyq, &r, 10*RBQ_TMO_1S))) {
+        ERROR("failed to get reply: %d %s", rc, strerror(errno));
+        return rc;
+    }
+    if (r.ackcode != c.opcode || r.rc != 0) {
+        ERROR("bad reply: opcode=%d, rc=%d", r.ackcode, r.rc);
+        return -1;
+    }
+    bzero(lo_cq, sizeof(lo_cq));
+    for (int i = 0; i < pool->info.layouts_count; i++) {
+        F_LAYOUT_t *lo = f_get_layout(i);
+        if (lo == NULL) {
+            ERROR("get layout [%d] info\n", i);
+            return -1;
+        }
+        sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
+        if ((rc = f_rbq_open(qname, &lo_cq[i]))) {
+            ERROR("can't open LO %s command queue: %d", lo->info.name, rc);
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
 
 /**
 * initialize the client-side socket
@@ -2920,7 +3284,35 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
     if (ret != UNIFYCR_SUCCESS)
         return ret;
 
-    if (fs_type == UNIFYCR_LOG || fs_type == UNIFYCR_STRIPE || fs_type == FAMFS) {
+    if (fs_type == FAMFS) {
+        /* connect to servers */
+
+        int rc = unifycr_init_req_shm(local_rank_idx, app_id);
+        if (rc < 0) {
+            DEBUG("rank:%d, fail to init shared request memory.", dbg_rank);
+            return UNIFYCR_FAILURE;
+        }
+
+        rc = unifycr_init_recv_shm(local_rank_idx, app_id);
+        if (rc < 0) {
+            DEBUG("rank:%d, fail to init shared receive memory.", dbg_rank);
+            return UNIFYCR_FAILURE;
+        }
+
+        if ((rc = f_srv_connect())) {
+            ERROR("rank %d couldn't connect to server: %d", dbg_rank, rc);
+            return UNIFYCR_FAILURE;
+        }
+
+        rc = f_server_sync();
+        if (rc < 0) {
+            DEBUG("rank:%d, fail to convey information to the delegator.",
+                  dbg_rank);
+            return UNIFYCR_FAILURE;
+        }
+
+    } else if (fs_type == UNIFYCR_LOG || fs_type == UNIFYCR_STRIPE) {
+#if 0
         char host_name[UNIFYCR_MAX_FILENAME] = {0};
         int rc = gethostname(host_name, UNIFYCR_MAX_FILENAME);
 
@@ -2998,8 +3390,9 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
                   dbg_rank);
             return UNIFYCR_FAILURE;
         }
-
+#endif
     }
+
     /* add mount point as a new directory in the file list */
     if (unifycr_get_fid_from_path(prefix) >= 0) {
         /* we can't mount this location, because it already exists */

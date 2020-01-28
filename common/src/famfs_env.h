@@ -159,6 +159,7 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define F_CHUNK_SIZE_MAX	(16*MIB)
 #define F_LAYOUTS_MAX		1024	/* Maximum number of layouts, for config & maps */
 #define F_IONODES_MAX		1024	/* Maximum number of IO nodes */
+#define F_CMDQ_MAX              32      /* Maximum number of command queues per server */
 
 #define F_UUID_BUF_SIZE		(37)	/* Print buffer size for UUID */
 

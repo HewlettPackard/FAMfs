@@ -68,6 +68,7 @@
 #include "famfs_stats.h"
 #include "famfs_env.h"
 #include "famfs_global.h"
+#include "famfs_rbq.h"
 //
 // === libfabric stuff =============
 //
@@ -85,6 +86,11 @@
 extern int unifycr_spilloverblock;
 extern int unifycr_use_spillover;
 extern int dbgrank;
+
+extern f_rbq_t *adminq;
+extern f_rbq_t *rplyq;
+extern f_rbq_t *lo_cq[F_CMDQ_MAX];
+
 
 /* ---------------------------------------
  * POSIX wrappers: paths
@@ -1850,7 +1856,8 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
 
 static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
 
-static int unifycr_fsync(void)
+#if 0
+static int unifycr_fsync(int fd)
 {
     if (!*unifycr_indices.ptr_num_entries)
         return 0;
@@ -1913,6 +1920,46 @@ static int unifycr_fsync(void)
     }
     return 0;
 }
+#endif
+
+static int f_fsync(int fd) {
+    int rc;
+    f_drply_t r;
+    f_dcmd_t c = {
+        .opcode = COMM_META,
+        .cid = local_rank_idx,
+        .md_type = MDRQ_FSYNC
+    };
+
+    if (!*unifycr_indices.ptr_num_entries)
+        return 0;
+    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fd);
+    ASSERT(meta);
+
+    STATS_START(start);
+
+    if (fs_type == FAMFS && allow_merge)
+        famfs_merge_md();
+
+    f_rbq_t *cq = lo_cq[meta->loid];
+    ASSERT(cq);
+
+    if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
+        ERROR("can't push cretae file command onto layout %d queue", meta->loid);
+        return rc > 0 ? rc : errno;
+    }
+    
+    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
+        ERROR("couldn't get response for cretae file from layout %d queue", meta->loid);
+        return rc > 0 ? rc : errno; 
+    }
+
+    UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
+    *unifycr_indices.ptr_num_entries = 0;
+    //*unifycr_fattrs.ptr_num_entries = 0;
+
+    return r.rc;
+}
 
 int UNIFYCR_WRAP(fsync)(int fd)
 {
@@ -1926,7 +1973,10 @@ int UNIFYCR_WRAP(fsync)(int fd)
         }
 
         /* transfer ("flush") all modified in-core data to backend device */
-        return unifycr_fsync();
+#if 0
+        return unifycr_fsync(fd);
+#endif
+        return f_fsync(fd);
     } else {
         MAP_OR_FAIL(fsync);
         int ret = UNIFYCR_REAL(fsync)(fd);
@@ -2120,8 +2170,11 @@ int UNIFYCR_WRAP(close)(int fd)
         }
 
         /* transfer ("flush") all modified in-core data to backend device */
-        if(unifycr_fsync())
+#if 0
+        if(unifycr_fsync(fd))
 		return -1; /* EIO */
+#endif
+        int rc = f_fsync(fd);
 
         /* close the file id */
         int close_rc = unifycr_fid_close(fid);
@@ -2136,7 +2189,7 @@ int UNIFYCR_WRAP(close)(int fd)
 
         /* TODO: free file descriptor */
 
-        return 0;
+        return rc;
     } else {
         MAP_OR_FAIL(close);
         int ret = UNIFYCR_REAL(close)(fd);

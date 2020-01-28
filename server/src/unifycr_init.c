@@ -71,7 +71,7 @@ arraylist_t *app_config_list;
 pthread_t data_thrd;
 arraylist_t *thrd_list;
 
-int invert_sock_ids[MAX_NUM_CLIENTS]; /*records app_id for each sock_id*/
+int invert_qids[MAX_NUM_CLIENTS]; /*records app_id for each qid*/
 int log_print_level = LOG_WARN;
 
 unifycr_cfg_t server_cfg;
@@ -79,6 +79,11 @@ static LFS_CTX_t *lfs_ctx_p = NULL;
 
 extern char *mds_vec;
 extern int  num_mds;
+
+f_rbq_t *rplyq[MAX_NUM_CLIENTS];
+f_rbq_t *cmdq[F_CMDQ_MAX];
+f_rbq_t *admq;
+volatile int exit_flag = 0;
 
 static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
     int i, n = 0;
@@ -116,6 +121,7 @@ static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
 
 volatile int sm_ready = 0;
 extern int num_fds;
+long max_recs_per_slice;
 
 int main(int argc, char *argv[])
 {
@@ -126,8 +132,9 @@ int main(int argc, char *argv[])
     int rc;
     bool daemon;
     long l;
-    f_rbq_t *cmdq;
+    f_dcmd_t acmd;
     char qname[MAX_RBQ_NAME];
+    pthread_t lo_thrd[F_CMDQ_MAX];
 
     rc = unifycr_config_init(&server_cfg, argc, argv);
     if (rc != 0)
@@ -183,19 +190,6 @@ int main(int argc, char *argv[])
 
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
-    for (int i = 0; i < pool->info.layouts_count; i++) {
-        F_LAYOUT_t *lo = f_get_layout(i);
-        if (lo == NULL) {
-            LOG(LOG_ERR, "get layout [%d] info\n", i);
-            exit(1);
-        }
-        sprintf(qname, "%s-%s-%02d", F_CMDQ_NAME, lo->info.name, local_rank_idx);
-        if ((rc = f_rbq_create(qname, sizeof(f_dcmd_t), F_MAX_CMDQ, &cmdq, 1))) {
-            LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
-            exit(rc);
-        }
-printf("layout %d:%s queue %s created\n", i, lo->info.name, qname);
-    }
     
     /* UNIFYCR_DEFAULT_LOG_FILE */
     if (server_cfg.log_file == NULL)
@@ -209,30 +203,67 @@ printf("layout %d:%s queue %s created\n", i, lo->info.name, qname);
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
-printf("1 %s", ULFS_str_errno(ULFS_ERROR_MDINIT));
         exit(1);
     }
 
     app_config_list = arraylist_create();
     if (app_config_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
-printf("2 %s", ULFS_str_errno(ULFS_ERROR_NOMEM));
         exit(1);
     }
 
     thrd_list = arraylist_create();
     if (thrd_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
-printf("3 %s", ULFS_str_errno(ULFS_ERROR_NOMEM));
         exit(1);
     }
 
+    /* Create admin queue on all nodes */
+    sprintf(qname, "%s-admin", F_CMDQ_NAME);
+    if ((rc = f_rbq_create(qname, sizeof(f_dcmd_t), F_MAX_CMDQ, &admq, 1))) {
+        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
+        exit(rc);
+    }
+
+    if (pool->info.layouts_count > F_CMDQ_MAX) {
+        LOG(LOG_ERR, "too many layouts, not enough work queues");
+        exit(1);
+    }
+
+    /* Create command queues and start layout threads only on compute nodes */
+    bzero(rplyq, sizeof(rplyq));
+    if (!f_host_is_ionode(NULL) || PoolForceHelper(pool)) {
+
+        bzero(lo_thrd, sizeof(lo_thrd));
+        for (int i = 0; i < pool->info.layouts_count; i++) {
+            F_LAYOUT_t *lo = f_get_layout(i);
+            if (lo == NULL) {
+                LOG(LOG_ERR, "get layout [%d] info\n", i);
+                exit(1);
+            }
+            sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
+            if ((rc = f_rbq_create(qname, sizeof(f_dcmd_t), F_MAX_CMDQ, &cmdq[i], 1))) {
+                LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
+                exit(rc);
+            }
+            LOG(LOG_INFO, "layout %d:%s queue %s created", i, lo->info.name, qname);
+            if ((rc = pthread_create(&lo_thrd[i], NULL, f_command_thrd, cmdq[i]))) {
+                LOG(LOG_ERR, "LO %s svc thread create failed", lo->info.name);
+                exit(rc);
+            }
+        }
+    }
+
+    /* we DO NOT support multiple instances of famfs demon on one node */
+    ASSERT(local_rank_idx == 0);
+
+#if 0
     rc = sock_init_server(local_rank_idx);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_SOCKET));
-printf("4 %s", ULFS_str_errno(ULFS_ERROR_SOCKET));
         exit(1);
     }
+#endif
 
     if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank, PoolHasMDS(pool))) > 0) {
         LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
@@ -250,7 +281,6 @@ printf("4 %s", ULFS_str_errno(ULFS_ERROR_SOCKET));
 	if (rc) {
 	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
 		glb_rank, glb_size, rc);
-printf("6 %d/%d: Failed to start FAM emulation: %d", glb_rank, glb_size, rc);
 		exit(1);
 	}
     }
@@ -259,9 +289,27 @@ printf("6 %d/%d: Failed to start FAM emulation: %d", glb_rank, glb_size, rc);
     rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
-printf("7 %s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
         exit(1);
     }
+
+/* f_rbq
+    rc = sock_wait_cli_cmd();
+    if (rc != ULFS_SUCCESS) {
+        int ret = sock_handle_error(rc);
+        if (ret != 0) {
+            LOG(LOG_ERR, "%s",
+                ULFS_str_errno(ret));
+            exit(1);
+        }
+    } else {
+        int qid = sock_get_id();
+        if (qid != 0) {
+            exit(1);
+        }
+    }
+*/
+    while (!sm_ready)
+        usleep(10);
 
     /*wait for the service manager to connect to the
      *request manager so that they can exchange control
@@ -270,32 +318,12 @@ printf("7 %s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
         printf("unifycrd is running\n");
     }
 
-/* f_rbq */
-    rc = sock_wait_cli_cmd();
-    if (rc != ULFS_SUCCESS) {
-        int ret = sock_handle_error(rc);
-        if (ret != 0) {
-            LOG(LOG_ERR, "%s",
-                ULFS_str_errno(ret));
-printf("8 %s", ULFS_str_errno(ret));
-            exit(1);
-        }
-    } else {
-        int sock_id = sock_get_id();
-        if (sock_id != 0) {
-            exit(1);
-        }
-    }
-/* */
-    while (!sm_ready)
-        usleep(10);
-printf("SM up\n");
-
     rc = meta_init_store(db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
         exit(1);
     }
+    max_recs_per_slice = db_opts->max_recs_per_slice;
 
     rc = meta_register_fam(lfs_ctx_p);
     if (rc != ULFS_SUCCESS) {
@@ -312,10 +340,27 @@ printf("SM up\n");
     }
 
     while (1) {
+        if (exit_flag) {
+            LOG(LOG_INFO, "exit flag set");
+            break;
+        }
+        if ((rc = f_rbq_pop(admq, &acmd, RBQ_TMO_4EVER))) {
+            LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(errno), rc);
+            exit(1);
+        }
+        
+        if ((rc = f_srv_process_cmd(&acmd, admq->rbq->name, 1))) {
+            LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
+            continue;
+        }
+    }
+
+#if 0
+    while (1) {
         rc = sock_wait_cli_cmd();
         if (rc != ULFS_SUCCESS) {
-            int sock_id = sock_get_error_id();
-            if (sock_id == 1) {
+            int qid = sock_get_error_id();
+            if (qid == 1) {
                 /* received exit command from the
                  * service manager
                  * thread.
@@ -332,11 +377,11 @@ printf("SM up\n");
             }
 
         } else {
-            int sock_id = sock_get_id();
-            /*sock_id is 0 if it is a listening socket*/
-            if (sock_id != 0) {
-                char *cmd = sock_get_cmd_buf(sock_id);
-                int cmd_rc = delegator_handle_command(cmd, sock_id,
+            int qid = sock_get_id();
+            /*qid is 0 if it is a listening socket*/
+            if (qid != 0) {
+                char *cmd = sock_get_cmd_buf(qid);
+                int cmd_rc = delegator_handle_command(cmd, qid,
 						db_opts->max_recs_per_slice);
                 if (cmd_rc != ULFS_SUCCESS) {
                     LOG(LOG_ERR, "%s",
@@ -347,8 +392,9 @@ printf("SM up\n");
         }
 
     }
+#endif
 
-    f_rbq_destroy(cmdq);
+    unifycr_exit();
 
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
@@ -643,6 +689,25 @@ static int unifycr_exit()
             }
         }
     }
+
+    exit_flag = 1;
+    f_dcmd_t c = {.opcode = COMM_SHTDWN, .cid = 0};
+    F_POOL_t *pool;
+    pool = f_get_pool();
+    for (int i = 0; i < pool->info.layouts_count; i++)
+        if (cmdq[i])
+            f_rbq_push(cmdq[i], &c, RBQ_TMO_1S);
+
+    for (int i = 0; i < pool->info.layouts_count; i++)
+        if (cmdq[i])
+            if ((rc = f_rbq_destroy(cmdq[i]))) 
+    
+
+    for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+        if (rplyq[i])
+            f_rbq_close(rplyq[i]);
+
+    f_rbq_destroy(admq);
 
     /* shutdown the metadata service */
     meta_sanitize(); /* mdhim_options_destroy(db_opts) */
