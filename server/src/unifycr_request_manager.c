@@ -173,7 +173,7 @@ int rm_pack_send_requests(char *req_msg_buf,
     char *ptr = req_msg_buf;
 
     /*send format: cmd, req_num*/
-    int cmd = XFER_COMM_DATA;
+    int cmd = XFER_CMD_DATA;
     memcpy(ptr, &cmd, sizeof(int));
     memcpy(ptr + sizeof(int), &(req_num),
            sizeof(int));
@@ -368,7 +368,7 @@ int rm_receive_remote_message(int app_id,
     }
 
     /*purify shared receive buffer*/
-    rc = sock_notify_cli(qid, COMM_DIGEST);
+    rc = sock_notify_cli(qid, CMD_DIGEST);
     if (rc != 0) {
         return rc;
     }
@@ -438,7 +438,7 @@ int rm_process_received_msg(int app_id, int qid,
             /*client-side receive buffer is full,
              * wait until the client reads all the
              * data*/
-            rc = sock_notify_cli(qid, COMM_READ);
+            rc = sock_notify_cli(qid, CMD_READ);
 
             if (rc != 0) {
                 return rc;

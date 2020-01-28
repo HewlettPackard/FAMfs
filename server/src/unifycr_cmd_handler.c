@@ -70,9 +70,9 @@ int delegator_handle_command(char *ptr_cmd, int qid, long db_max_recs_per_slice)
     long max_recs_per_slice = db_max_recs_per_slice;
     char *ptr_ack;
 
-    LOG(LOG_DBG, "DLG command %x, masked %x\n", cmd, cmd & ~COMM_OPT_MASK);
-    switch (cmd & ~COMM_OPT_MASK) {
-    case COMM_SYNC_DEL:
+    LOG(LOG_DBG, "DLG command %x, masked %x\n", cmd, cmd & ~CMD_OPT_MASK);
+    switch (cmd & ~CMD_OPT_MASK) {
+    case CMD_SYNC_DEL:
         (void)0;
         ptr_ack = sock_get_ack_buf(qid);
         ret_sz = pack_ack_msg(ptr_ack, cmd, ACK_SUCCESS,
@@ -80,14 +80,14 @@ int delegator_handle_command(char *ptr_cmd, int qid, long db_max_recs_per_slice)
         rc = sock_ack_cli(qid, ret_sz);
         return rc;
 
-    case COMM_MOUNT:
+    case CMD_MOUNT:
         if (fam_fs == -1) {
-            fam_fs = cmd & COMM_OPT_FAMFS ? 1 : 0;
+            fam_fs = cmd & CMD_OPT_FAMFS ? 1 : 0;
         } else {
-            if (fam_fs && !(cmd & COMM_OPT_FAMFS)) {
+            if (fam_fs && !(cmd & CMD_OPT_FAMFS)) {
                 LOG(LOG_ERR, "Attempt to mount FAMFS on non-FAMFS DB\n");
                 rc = -1;
-            } else if (!fam_fs && (cmd & COMM_OPT_FAMFS)) {
+            } else if (!fam_fs && (cmd & CMD_OPT_FAMFS)) {
                 LOG(LOG_ERR, "Attempt to mount not-FAM FS on FAMFS DB\n");
                 rc = -1;
             }
@@ -95,7 +95,7 @@ int delegator_handle_command(char *ptr_cmd, int qid, long db_max_recs_per_slice)
         rc = sync_with_client(ptr_cmd, qid);
 
         ptr_ack = sock_get_ack_buf(qid);
-        ret_sz = pack_ack_msg(ptr_ack, COMM_MOUNT, rc,
+        ret_sz = pack_ack_msg(ptr_ack, CMD_MOUNT, rc,
                               &max_recs_per_slice, sizeof(long));
 #if 0
         *((int *)&ptr_ack[ret_sz]) = glb_rank;
@@ -104,10 +104,10 @@ int delegator_handle_command(char *ptr_cmd, int qid, long db_max_recs_per_slice)
         ret_sz += sizeof(int);
 #endif
         rc = sock_ack_cli(qid, ret_sz);
-        fam_fs = cmd & COMM_OPT_FAMFS;
+        fam_fs = cmd & CMD_OPT_FAMFS;
         return rc;
 
-    case COMM_META:
+    case CMD_META:
         (void)0;
         int type = *((int *)ptr_cmd + 1);
         if (type == 1) {
@@ -158,32 +158,32 @@ int delegator_handle_command(char *ptr_cmd, int qid, long db_max_recs_per_slice)
         }
         break;
 
-    case COMM_READ:
+    case CMD_READ:
         num = *(((int *)ptr_cmd) + 1);
         /* result is handled by the individual thread in
          * the request manager*/
         rc = rm_read_remote_data(qid, num);
         break;
 
-    case COMM_MDGET:
+    case CMD_MDGET:
         num = *(((int *)ptr_cmd) + 1);
         rc = rm_fetch_md(qid, num);
         if (rc) {
             LOG(LOG_ERR, "md_get err %d\n", rc);
         }
-        rc = sock_notify_cli(qid, COMM_READ);
+        rc = sock_notify_cli(qid, CMD_READ);
         if (rc != 0) {
             LOG(LOG_ERR, "sock notify failed\n");
             return rc;
         }
         break;
 
-    case COMM_UNMOUNT:
+    case CMD_UNMOUNT:
         unifycr_broadcast_exit(qid);
         rc = ULFS_SUCCESS;
         break;
 
-    case COMM_DIGEST:
+    case CMD_DIGEST:
         break;
 
     default:
@@ -198,7 +198,7 @@ int delegator_handle_command(char *ptr_cmd, int qid, long db_max_recs_per_slice)
 
 extern long max_recs_per_slice;
 
-int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
+int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
 
     /*init setup*/
 
@@ -207,15 +207,15 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
     char *ptr_cmd = 0;
     int num;
     char *ptr_ack;
-    f_drply_t rply;
+    f_svcrply_t rply;
     char qname[MAX_RBQ_NAME];
 
-    LOG(LOG_DBG, "svc command %x, masked %x\n", cmd, cmd & ~COMM_OPT_MASK);
+    LOG(LOG_DBG, "svc command %x, masked %x\n", cmd, cmd & ~CMD_OPT_MASK);
     bzero(&rply, sizeof(rply));
     rply.ackcode = cmd;
     rply.cid = pcmd->cid;
-    switch (cmd & ~COMM_OPT_MASK) {
-    case COMM_SYNC_DEL:
+    switch (cmd & ~CMD_OPT_MASK) {
+    case CMD_SVCRQ:
         if (!admin) {
             LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
             return EINVAL;
@@ -232,18 +232,18 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
         }
         break;
 
-    case COMM_MOUNT:
+    case CMD_MOUNT:
         if (!admin) {
             LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
             return EINVAL;
         }
         if (fam_fs == -1) {
-            fam_fs = cmd & COMM_OPT_FAMFS ? 1 : 0;
+            fam_fs = cmd & CMD_OPT_FAMFS ? 1 : 0;
         } else {
-            if (fam_fs && !(cmd & COMM_OPT_FAMFS)) {
+            if (fam_fs && !(cmd & CMD_OPT_FAMFS)) {
                 LOG(LOG_ERR, "Attempt to mount FAMFS on non-FAMFS DB\n");
                 return -1;
-            } else if (!fam_fs && (cmd & COMM_OPT_FAMFS)) {
+            } else if (!fam_fs && (cmd & CMD_OPT_FAMFS)) {
                 LOG(LOG_ERR, "Attempt to mount not-FAM FS on FAMFS DB\n");
                 return -1;
             }
@@ -252,7 +252,7 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
         rply.max_rps = max_recs_per_slice;
         break;
 
-    case COMM_META:
+    case CMD_META:
         if (admin) {
             LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
             return EINVAL;
@@ -291,18 +291,12 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
         }
         break;
 
-    case COMM_READ:
-        if (admin) {
-            LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
-            return EINVAL;
-        }
-        num = *(((int *)ptr_cmd) + 1);
-        /* result is handled by the individual thread in
-         * the request manager*/
-        rc = rm_read_remote_data(pcmd->cid, num);
+    case CMD_READ:
+        LOG(LOG_ERR, "assisted read command is not supported");
+        rply.rc = ENOSYS;
         break;
 
-    case COMM_MDGET:
+    case CMD_MDGET:
         if (admin) {
             LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
             return EINVAL;
@@ -312,14 +306,14 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
         if (rc) {
             LOG(LOG_ERR, "md_get err %d\n", rc);
         }
-        rc = sock_notify_cli(pcmd->cid, COMM_READ);
+        rc = sock_notify_cli(pcmd->cid, CMD_READ);
         if (rc != 0) {
             LOG(LOG_ERR, "sock notify failed\n");
             return rc;
         }
         break;
 
-    case COMM_UNMOUNT:
+    case CMD_UNMOUNT:
         if (!admin) {
             LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
             return EINVAL;
@@ -328,7 +322,10 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
         rplyq[pcmd->cid] = 0;
         return 0;
 
-    case COMM_SHTDWN:
+    case CMD_QUIT:
+        return 0;
+
+    case CMD_SHTDWN:
         if (!admin) {
             LOG(LOG_ERR, "admin command (%d) on non-admin queue: %s", cmd, qn);
             return EINVAL;
@@ -337,12 +334,10 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
         exit_flag = 1;
         return 0;
 
-    case COMM_DIGEST:
-        return 0;
-
+    case CMD_DIGEST:
     default:
         LOG(LOG_DBG, "client %d: Unsupported command %x\n", pcmd->cid, cmd);
-        return ENOSYS;
+        rply.rc = ENOSYS;
     }
 
     if ((rc = f_rbq_push(rplyq[pcmd->cid], &rply, RBQ_TMO_1S))) {
@@ -353,7 +348,7 @@ int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin) {
 
 void *f_command_thrd(void *arg) {
     f_rbq_t     *myq = (f_rbq_t *)arg;
-    f_dcmd_t    fcmd;
+    f_svcrq_t    fcmd;
     int         rc;
 
     while (1) {
@@ -570,7 +565,7 @@ int sync_with_client(char *cmd_buf, int qid)
 }
 #endif
 
-int f_setup_client(f_dcmd_t *pcmd) {
+int f_setup_client(f_svcrq_t *pcmd) {
     int app_id = pcmd->app_id;
     int local_rank_idx = pcmd->cid;
     int dbg_rank = pcmd->dbg_rnk;
@@ -864,15 +859,15 @@ int open_log_file(app_config_t *app_config,
 */
 int unifycr_broadcast_exit(int qid)
 {
-    int exit_cmd = XFER_COMM_EXIT, rc = ULFS_SUCCESS;
+    int exit_cmd = XFER_CMD_EXIT, rc = ULFS_SUCCESS;
     int i;
     for (i = 0; i < glb_size; i++) {
         MPI_Send(&exit_cmd, sizeof(int), MPI_CHAR,
                  i,
-                 CLI_DATA_TAG, MPI_COMM_WORLD);
+                 CLI_DATA_TAG, MPI_CMD_WORLD);
     }
 
-    int cmd = COMM_UNMOUNT;
+    int cmd = CMD_UNMOUNT;
 
     char *ptr_ack = sock_get_ack_buf(qid);
     int ret_sz = pack_ack_msg(ptr_ack, cmd, rc, NULL, 0);

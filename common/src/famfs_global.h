@@ -22,17 +22,19 @@ typedef struct {
 
 
 typedef enum {
-    COMM_MOUNT     = 0x1, /*the list of addrs: appid, size of buffer, offset of data section, metadata section*/
-    COMM_META      = 0x2,
-    COMM_READ      = 0x3,
-    COMM_UNMOUNT   = 0x4,
-    COMM_DIGEST    = 0x5,
-    COMM_SYNC_DEL  = 0x6,
-    COMM_MDGET     = 0x7,
-    COMM_SHTDWN    = 0x8,
+    CMD_SVCRQ     = 0x1,    // request service
+    CMD_MOUNT     = 0x2,    // mount FAMfs
+    CMD_META      = 0x10,   // file metadata ops
+    CMD_MDGET     = 0x20,   // retrieve file data access metadata
+    CMD_UNMOUNT   = 0x31,   // unmount FAMfs
+    CMD_QUIT      = 0x32,   // exit command for worker thread
+    CMD_SHTDWN    = 0x33,   // shutdown FAMfs server
+    
+    CMD_READ      = 0x43,   // depricated
+    CMD_DIGEST    = 0x45,   // depricated
 
-    COMM_OPT_MASK  = 0xff00,
-    COMM_OPT_FAMFS = 0x0100,
+    CMD_OPT_MASK  = 0xff00,
+    CMD_OPT_FAMFS = 0x0100,
 } f_srvcmd_t;
 
 typedef enum {
@@ -72,7 +74,7 @@ typedef struct {
             };
         };
     };
-} f_dcmd_t;
+} f_svcrq_t;
 
 typedef struct {
     f_srvcmd_t          ackcode;
@@ -86,7 +88,7 @@ typedef struct {
         uint64_t                max_rps;
         f_fattr_t               fattr;
     };
-} f_drply_t;
+} f_svcrply_t;
 
 #define F_MAX_CMDQ     64
 #define F_MAX_RPLYQ    8

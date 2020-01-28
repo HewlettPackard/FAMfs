@@ -1418,7 +1418,7 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
 
     shm_meta_t *tmp_sh_meta;
 
-    int cmd = COMM_READ;
+    int cmd = CMD_READ;
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &(read_req_set.count), sizeof(int));
 
@@ -1645,7 +1645,7 @@ int famfs_read(read_req_t *read_req, int count)
             return 0;
     }
 
-    *(int *)cmd_buf = COMM_MDGET;
+    *(int *)cmd_buf = CMD_MDGET;
     *((int *)cmd_buf + 1) = rq_cnt;
     *rc_ptr = 0;
 
@@ -1873,7 +1873,7 @@ static int unifycr_fsync(int fd)
 
     if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         /*put indices to key-value store*/
-        int cmd = COMM_META;
+        int cmd = CMD_META;
         memcpy(cmd_buf, &cmd, sizeof(int));
         int flag = 3;
         memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1896,7 +1896,7 @@ static int unifycr_fsync(int fd)
                             return -1;
                         } else {
                             /**/
-                            if (*((int *)cmd_buf) != COMM_META ||
+                            if (*((int *)cmd_buf) != CMD_META ||
                                 *((int *)cmd_buf + 1) != ACK_SUCCESS) {
                                 return -1;
                             } else {
@@ -1924,9 +1924,9 @@ static int unifycr_fsync(int fd)
 
 static int f_fsync(int fd) {
     int rc;
-    f_drply_t r;
-    f_dcmd_t c = {
-        .opcode = COMM_META,
+    f_svcrply_t r;
+    f_svcrq_t c = {
+        .opcode = CMD_META,
         .cid = local_rank_idx,
         .md_type = MDRQ_FSYNC
     };

@@ -31,7 +31,7 @@
 #define UNIFYCR_CMD_HANDLER_H
 int delegator_handle_command(char *ptr_cmd, int qid, long max_recs_per_slice);
 void *f_command_thrd(void *arg);
-int f_srv_process_cmd(f_dcmd_t *pcmd, char *qn, int admin);
+int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin);
 int sync_with_client(char *buf, int client_id);
 int open_log_file(app_config_t *app_config,
                   int app_id, int client_id);
@@ -51,8 +51,8 @@ int pack_ack_msg(char *ptr_cmd, int cmd,
                  int rc, void *val, int val_len);
 int unifycr_broadcast_exit(int qid);
 
-int f_setup_client(f_dcmd_t *pcmd);
-int f_do_fattr_get(f_dcmd_t *pcmd, f_fattr_t *pval);
-int f_do_fattr_set(f_dcmd_t *pcmd, f_fattr_t *pval);
-int f_do_fsync(f_dcmd_t *pcmd);
+int f_setup_client(f_svcrq_t *pcmd);
+int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval);
+int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval);
+int f_do_fsync(f_svcrq_t *pcmd);
 #endif

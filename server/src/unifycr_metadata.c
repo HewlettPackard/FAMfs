@@ -238,7 +238,7 @@ int meta_process_attr_set(char *buf, int qid)
 }
 #endif
 
-int f_do_fattr_set(f_dcmd_t *pcmd, f_fattr_t *pval) {
+int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval) {
     int rc = ULFS_SUCCESS;
 
     *fattr_keys[0] = pval->gfid;
@@ -300,7 +300,7 @@ int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val)
 }
 #endif
 
-int f_do_fattr_get(f_dcmd_t *pcmd, f_fattr_t *pval) {
+int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval) {
     *fattr_keys[0] = pcmd->fm_gfid;
     fattr_val_t *tmp_ptr_attr;
 
@@ -558,7 +558,7 @@ _process_fattr:
 }
 #endif
 
-int f_do_fsync(f_dcmd_t *pcmd) {
+int f_do_fsync(f_svcrq_t *pcmd) {
     int i, ret = 0;
     int qid = pcmd->cid;
 

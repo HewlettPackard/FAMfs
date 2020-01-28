@@ -1074,9 +1074,9 @@ static int unifycr_get_global_fid(const char *path, int *gfid)
 #if 0
 static int set_global_file_meta(f_fattr_t *f_meta)
 {
-    int cmd = COMM_META;
+    int cmd = CMD_META;
     int flag = 2;
-    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .md_type = 2, .fm_data = *f_meta};
+    f_svcrq_t c = {.opcode = CMD_META, .cid = local_rank_idx, .md_type = 2, .fm_data = *f_meta};
 
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1103,7 +1103,7 @@ static int set_global_file_meta(f_fattr_t *f_meta)
                             /*remote connection is closed*/
                             return -1;
                         } else {
-                            if (*((int *)cmd_buf) != COMM_META || *((int *)cmd_buf + 1)
+                            if (*((int *)cmd_buf) != CMD_META || *((int *)cmd_buf + 1)
                                 != ACK_SUCCESS) {
                                 /*encounter delegator-side error*/
                                 return -1;
@@ -1136,9 +1136,9 @@ static int f_create_file_global(f_fattr_t *f_meta)
 {
     int rc;
 
-    f_drply_t r;
-    f_dcmd_t c = {
-        .opcode = COMM_META, 
+    f_svcrply_t r;
+    f_svcrq_t c = {
+        .opcode = CMD_META, 
         .cid = local_rank_idx, 
         .md_type = MDRQ_SETFA, 
         .fm_data = *f_meta
@@ -1173,10 +1173,10 @@ static int f_create_file_global(f_fattr_t *f_meta)
 static int get_global_file_meta(int gfid, f_fattr_t **file_meta)
 {
     /* format value length, payload 1, payload 2*/
-    int cmd = COMM_META;
+    int cmd = CMD_META;
     int flag = 1;
 
-    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .md_type = 1, .fm_gfid = gfid};
+    f_svcrq_t c = {.opcode = CMD_META, .cid = local_rank_idx, .md_type = 1, .fm_gfid = gfid};
 
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1203,7 +1203,7 @@ static int get_global_file_meta(int gfid, f_fattr_t **file_meta)
                             /*remote connection is closed*/
                             return -1;
                         } else {
-                            if (*((int *)cmd_buf) != COMM_META || *((int *)cmd_buf + 1)
+                            if (*((int *)cmd_buf) != CMD_META || *((int *)cmd_buf + 1)
                                 != ACK_SUCCESS) {
                                 *file_meta = NULL;
                                 return -1;
@@ -1239,9 +1239,9 @@ static int get_global_file_meta(int gfid, f_fattr_t **file_meta)
 static int f_find_file_global(int gfid, int loid, f_fattr_t **file_meta) {
     int rc;
 
-    f_drply_t r;
-    f_dcmd_t c = {
-        .opcode = COMM_META, 
+    f_svcrply_t r;
+    f_svcrq_t c = {
+        .opcode = CMD_META, 
         .cid = local_rank_idx, 
         .md_type = MDRQ_GETFA, 
         .fm_gfid = gfid};
@@ -1274,9 +1274,9 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
 {
     fam_attr_val_t hdr;
     size_t size;
-    int cmd = COMM_META;
+    int cmd = CMD_META;
     int flag = 4;
-    f_dcmd_t c = {.opcode = COMM_META, .cid = local_rank_idx, .md_type = 4, .fam_id = fam_id};
+    f_svcrq_t c = {.opcode = CMD_META, .cid = local_rank_idx, .md_type = 4, .fam_id = fam_id};
 
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1303,7 +1303,7 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
                             /*remote connection is closed*/
                             return -1;
                         } else {
-                            if (*((int *)cmd_buf) != COMM_META || *((int *)cmd_buf + 1)
+                            if (*((int *)cmd_buf) != CMD_META || *((int *)cmd_buf + 1)
                                 != ACK_SUCCESS) {
                                 *fam_meta = NULL;
                                 return -1;
@@ -2353,7 +2353,7 @@ static void famfs_client_exit(unifycr_cfg_t *cfg, LFS_CTX_t **lfs_ctx_p)
 #if 0
 int unifycr_shutdown()
 {
-    int cmd = COMM_UNMOUNT;
+    int cmd = CMD_UNMOUNT;
     char cmd_buf[GEN_STR_LEN] = {0};
     int bytes_read = 0;
     int rc;
@@ -2383,7 +2383,7 @@ int unifycr_shutdown()
     if (cmd_fd.revents != 0 && cmd_fd.revents == POLLIN) {
         bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
         if (bytes_read <= 0 ||
-            *((int *)cmd_buf) != COMM_UNMOUNT ||
+            *((int *)cmd_buf) != CMD_UNMOUNT ||
             *((int *)cmd_buf + 1) != ACK_SUCCESS) {
             DEBUG("pipe read error %m\n");
             return UNIFYCR_FAILURE;
@@ -2399,7 +2399,7 @@ int unifycr_shutdown()
 int unifycr_shutdown() {
     ASSERT(fs_type == FAMFS);
 
-    f_dcmd_t    c = {.opcode = COMM_SHTDWN, .cid = local_rank_idx};
+    f_svcrq_t    c = {.opcode = CMD_SHTDWN, .cid = local_rank_idx};
     int rc;
 
     F_POOL_t *pool;
@@ -2426,7 +2426,7 @@ int unifycr_shutdown() {
 int unifycr_unmount() {
     ASSERT(fs_type == FAMFS);
 
-    f_dcmd_t    c = {.opcode = COMM_UNMOUNT, .cid = local_rank_idx};
+    f_svcrq_t    c = {.opcode = CMD_UNMOUNT, .cid = local_rank_idx};
     int rc;
 
     F_POOL_t *pool;
@@ -2459,11 +2459,11 @@ static int unifycr_sync_to_del()
 {
     int rc = -1;
 
-    int cmd = COMM_MOUNT;
-    f_dcmd_t    c;
+    int cmd = CMD_MOUNT;
+    f_svcrq_t    c;
 
     if (fs_type == FAMFS)
-        cmd |= COMM_OPT_FAMFS;
+        cmd |= CMD_OPT_FAMFS;
 
     int superblock_start = UNIFYCR_SUPERBLOCK_KEY;
     int num_procs_per_node = local_rank_cnt;
@@ -2563,7 +2563,7 @@ static int unifycr_sync_to_del()
                             /*remote connection is closed*/
                             return -1;
                         } else {
-                            if (*((int *)cmd_buf) != COMM_MOUNT || *((int *)cmd_buf + 1)
+                            if (*((int *)cmd_buf) != CMD_MOUNT || *((int *)cmd_buf + 1)
                                 != ACK_SUCCESS) {
                                 /*encounter delegator-side error*/
                                 return rc;
@@ -2601,8 +2601,8 @@ static int unifycr_sync_to_del()
 static int f_server_sync() {
     ASSERT(fs_type == FAMFS);
 
-    f_dcmd_t    c;
-    f_drply_t   r;
+    f_svcrq_t    c;
+    f_svcrply_t   r;
 
     int rc = -1;
     int superblock_start = UNIFYCR_SUPERBLOCK_KEY;
@@ -2635,7 +2635,7 @@ static int f_server_sync() {
      * buffer, and then send to the delegator. The delegator
      * will attach to the client-side shared memory, and open
      * the spill log file based on these information*/
-    c.opcode = COMM_MOUNT;
+    c.opcode = CMD_MOUNT;
     c.app_id = app_id;
     c.cid = local_rank_idx;
     c.dbg_rnk = dbg_rank;
@@ -2687,7 +2687,7 @@ static int f_server_sync() {
                             /*remote connection is closed*/
                             return -1;
                         } else {
-                            if (*((int *)cmd_buf) != COMM_MOUNT || *((int *)cmd_buf + 1)
+                            if (*((int *)cmd_buf) != CMD_MOUNT || *((int *)cmd_buf + 1)
                                 != ACK_SUCCESS) {
                                 /*encounter delegator-side error*/
                                 return rc;
@@ -2805,7 +2805,7 @@ static int unifycr_init_req_shm(int local_rank_idx, int app_id)
 #if 0
 static int get_del_cnt()
 {
-    int cmd = COMM_SYNC_DEL;
+    int cmd = CMD_SYNC_DEL;
     memcpy(cmd_buf, &cmd, sizeof(int));
 
     int res = __real_write(client_sockfd,
@@ -2832,7 +2832,7 @@ static int get_del_cnt()
                             printf("read() failed %m\n");
                             return -1;
                         } else {
-                            if (*((int *)cmd_buf) != COMM_SYNC_DEL || *((int *)cmd_buf + 1)
+                            if (*((int *)cmd_buf) != CMD_SYNC_DEL || *((int *)cmd_buf + 1)
                                 != ACK_SUCCESS) {
                                 /*encounter delegator-side error*/
                                 printf("delegator return %d\n", rc);
@@ -2873,13 +2873,13 @@ static int f_srv_connect() {
     int         rc;
     char        qname[MAX_RBQ_NAME];
     F_POOL_t    *pool = f_get_pool();
-    f_dcmd_t    c = {.opcode = COMM_SYNC_DEL, .cid = local_rank_idx};
-    f_drply_t   r;
+    f_svcrq_t   c = {.opcode = CMD_SVCRQ, .cid = local_rank_idx};
+    f_svcrply_t r;
 
     ASSERT(pool);
 
     sprintf(qname, "%s-%02d", F_RPLYQ_NAME, local_rank_idx);
-    if ((rc = f_rbq_create(qname, sizeof(f_drply_t), F_MAX_RPLYQ, &rplyq, 1))) {
+    if ((rc = f_rbq_create(qname, sizeof(f_svcrply_t), F_MAX_RPLYQ, &rplyq, 1))) {
         ERROR("failed to create reply queue: %d %s", rc, strerror(errno));
         return rc;
     }
@@ -3084,7 +3084,7 @@ static int CountTasksPerNode(int rank, int numTasks)
             for (i = 1; i < numTasks; i++) {
                 rc = MPI_Recv(hostname, UNIFYCR_MAX_FILENAME,
                               MPI_CHAR, MPI_ANY_SOURCE,
-                              MPI_ANY_TAG, MPI_COMM_WORLD,
+                              MPI_ANY_TAG, MPI_CMD_WORLD,
                               &status);
 
                 if (rc != 0) {
@@ -3158,7 +3158,7 @@ static int CountTasksPerNode(int rank, int numTasks)
                                 rank_set[i][j], i, rank_cnt[i]); fflush(stdout);
                                 */
                         rc = MPI_Send(&rank_cnt[i], 1,
-                                      MPI_INT, rank_set[i][j], 0, MPI_COMM_WORLD);
+                                      MPI_INT, rank_set[i][j], 0, MPI_CMD_WORLD);
                         if (rc != 0) {
                             DEBUG("cannot send local rank cnt");
                             return -1;
@@ -3168,7 +3168,7 @@ static int CountTasksPerNode(int rank, int numTasks)
 
                         /*send the local rank set to the corresponding rank*/
                         rc = MPI_Send(rank_set[i], rank_cnt[i],
-                                      MPI_INT, rank_set[i][j], 0, MPI_COMM_WORLD);
+                                      MPI_INT, rank_set[i][j], 0, MPI_CMD_WORLD);
                         /*
                         printf("rank:%d, 2sending to %d, rank_cnt[%d] is %d\n", rank,
                                 rank_set[i][j], i, rank_cnt[i]); fflush(stdout);*/
@@ -3201,14 +3201,14 @@ static int CountTasksPerNode(int rank, int numTasks)
             /* non-root process performs MPI_send to send
              * hostname to root node */
             rc = MPI_Send(localhost, UNIFYCR_MAX_FILENAME,
-                          MPI_CHAR, 0, 0, MPI_COMM_WORLD);
+                          MPI_CHAR, 0, 0, MPI_CMD_WORLD);
             if (rc != 0) {
                 DEBUG("cannot send host name");
                 return -1;
             }
             /*receive the local rank count */
             rc = MPI_Recv(&local_rank_cnt, 1, MPI_INT, 0,
-                          0, MPI_COMM_WORLD, &status);
+                          0, MPI_CMD_WORLD, &status);
             if (rc != 0) {
                 DEBUG("cannot receive local rank cnt");
                 return -1;
@@ -3217,7 +3217,7 @@ static int CountTasksPerNode(int rank, int numTasks)
             /* receive the the local rank list */
             local_rank_lst = (int *)malloc(local_rank_cnt * sizeof(int));
             rc = MPI_Recv(local_rank_lst, local_rank_cnt, MPI_INT, 0,
-                          0, MPI_COMM_WORLD, &status);
+                          0, MPI_CMD_WORLD, &status);
             if (rc != 0) {
                 free(local_rank_lst);
                 DEBUG("cannot receive local rank list");
@@ -3335,7 +3335,7 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
                     if (local_rank_lst[i] != rank) {
                         int rc = MPI_Send(&local_del_cnt, 1, MPI_INT,
                                           local_rank_lst[i], 0,
-                                          MPI_COMM_WORLD);
+                                          MPI_CMD_WORLD);
                         if (rc != MPI_SUCCESS) {
                             DEBUG("rank:%d, MPI_Send failed", dbg_rank);
                             return UNIFYCR_FAILURE;
@@ -3351,7 +3351,7 @@ int unifycrfs_mount(const char prefix[], size_t size, int rank)
         } else {
             MPI_Status status;
             int rc = MPI_Recv(&local_del_cnt, 1, MPI_INT, local_rank_lst[0],
-                              0, MPI_COMM_WORLD, &status);
+                              0, MPI_CMD_WORLD, &status);
 
             if (rc != MPI_SUCCESS) {
                 DEBUG("rank:%d, MPI_Recv failed.", dbg_rank);
