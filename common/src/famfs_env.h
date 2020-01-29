@@ -8,6 +8,7 @@
 #define FAMFS_ENV_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,8 +55,14 @@
 	} while (0)
 
 struct fam_map_;
+struct f_slab_entry_;
 
 /* defined in util.c */
+extern uint16_t f_crc4_fast_table[];
+void f_crc4_init_table(void);
+unsigned char f_crc4_sm_chk(struct f_slab_entry_ *se);
+unsigned char f_crc4(void *buffer, int len);
+unsigned char f_crc4_chk(void *buffer, int len);
 char** getstrlist(const char *buf, int *count);
 char** getstrlist_allow_empty(const char *buf, int *count);
 char *f_get_myhostname(void);
@@ -69,6 +76,33 @@ void daemonize(void);
 int f_parse_moniker(const char *moniker, int *data, int *parity,
     int *mirrors, size_t *chunk_size);
 
+
+/* Return 0 if CRC-4 is correct.
+  Call r-utils.c:f_crc4_init_table() first to initialize table */
+static inline unsigned char f_crc4_fast_chk(void *buffer, int len)
+{
+    unsigned char c;
+    int i, crc = 0;
+
+    for (i = 0; i < len; i++) {
+	c = ((unsigned char *)buffer)[i];
+	crc = f_crc4_fast_table[crc|c];
+    }
+    return (unsigned char)(crc >> 8);
+}
+
+/* x^4 + x + 1 -- Transposed table */
+static const unsigned char crc4_table_tp[16] =		\
+	{ 0x0, 0x9, 0xb, 0x2, 0xf, 0x6, 0x4, 0xd,	\
+	  0x7, 0xe, 0xc, 0x5, 0x8, 0x1, 0x3, 0xa};
+
+/* Calculate CRC-4 on buffer of len bytes.
+  Return crc value to be stored in the last four bits */
+static inline unsigned char f_crc4_fast(void *buffer, int len)
+{
+    /* Look in transposed table */
+    return crc4_table_tp[ f_crc4_fast_chk(buffer, len) ];
+}
 
 static inline size_t _getval(char *name, char *v, size_t df) {
     size_t  val = 0;

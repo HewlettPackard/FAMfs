@@ -6,6 +6,7 @@
 
 #include <uuid/uuid.h>
 
+#include "famfs_env.h"
 #include "f_pool.h"
 #include "f_layout.h"
 #include "famfs_maps.h"
@@ -20,6 +21,26 @@ static F_META_IFACE_t *meta_iface = NULL;
 F_POOL_t *f_get_pool(void) {
     return pool;
 }
+
+/* Return 0 if the slab map entry checksum (CRC-4) is correct */
+unsigned char f_crc4_sm_chk(F_SLAB_ENTRY_t *se)
+{
+    unsigned char c;
+    size_t i;
+    int crc = 0;
+
+    for (i = 0; i < offsetof(F_SLAB_ENTRY_t, rc); i++) {
+	c = ((unsigned char *)se)[i];
+	crc = f_crc4_fast_table[crc | c];
+    }
+    /* Skip recovery count (32bits) */
+    for (i += sizeof(se->rc); i < sizeof(F_SLAB_ENTRY_t); i++) {
+	c = ((unsigned char *)se)[i];
+	crc = f_crc4_fast_table[crc | c];
+    }
+    return (unsigned char)(crc >> 8);
+}
+
 
 /* Layout name (moniker) parser */
 int f_layout_parse_name(struct f_layout_info_ *info)
@@ -788,8 +809,10 @@ static int cfg_load(unifycr_cfg_t *c)
 /* Set layout info from configurator once */
 int f_set_layouts_info(unifycr_cfg_t *cfg)
 {
-    if (cfg && pool == NULL)
+    if (cfg && pool == NULL) {
+	f_crc4_init_table();
 	return cfg_load(cfg);
+    }
     return -1;
 }
 

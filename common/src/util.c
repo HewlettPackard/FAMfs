@@ -20,6 +20,74 @@
 #include "famfs_lf_connect.h"
 
 
+/* x^4 + x + 1 -- CRC-4/ITU-T G.704 Poly -- fast table algorithm */
+static const unsigned char crc4_table[16] =		\
+	{ 0x0, 0xd, 0x3, 0xe, 0x6, 0xb, 0x5, 0x8,	\
+	  0xc, 0x1, 0xf, 0x2, 0xa, 0x7, 0x9, 0x4};
+
+/* 8K table for fast (byte-after-byte) CRC-4 calculation;
+  used by f_crc4_chk_fast, f_crc4_fast */
+uint16_t f_crc4_fast_table[4096];
+
+/**
+ * f_crc4_chk - Check CRC-4
+ *
+ * Return 0 if CRC is correct.
+ */
+unsigned char f_crc4_chk(void *buffer, int len)
+{
+    unsigned char crc = 0;
+    unsigned char c;
+    int i;
+
+    for (i = 0; i < len; i++) {
+	c = ((unsigned char *)buffer)[i];
+	crc = crc4_table[(crc ^ c) & 0xf];
+	c >>= 4;
+	crc = crc4_table[crc ^ c];
+    }
+    return crc;
+}
+
+/**
+ * f_crc4 - Calculate CRC-4 on buffer of len bytes;
+ *
+ * Last four bits of buffer must be zeros.
+ * Return crc value to be stored in the last four bits.
+ */
+inline unsigned char f_crc4(void *buffer, int len)
+{
+#if 0
+    /* x^4 + x + 1 -- Transposed table */
+    static const unsigned char crc4_table_tp[16] =	\
+	{ 0x0, 0x9, 0xb, 0x2, 0xf, 0x6, 0x4, 0xd,	\
+	  0x7, 0xe, 0xc, 0x5, 0x8, 0x1, 0x3, 0xa};
+#endif
+    /* look in transposed table */
+    return crc4_table_tp[ f_crc4_chk(buffer, len) ];
+}
+
+void f_crc4_init_table(void)
+{
+    unsigned char crc, c;
+    uint16_t w, r, idx;
+
+    /* initialize table */
+    for (crc = 0; crc < 16; crc++) {
+	idx = crc;
+	idx <<= 8;
+	for (w = 0; w < 256; w++) {
+	    c = w;
+	    r = crc4_table[(crc ^ c) & 0x0f];
+	    c >>= 4;
+	    r = crc4_table[r ^ c];
+	    f_crc4_fast_table[idx + w] = r << 8;
+	}
+    }
+    /* check calculations */
+    assert( f_crc4_fast("123456789\x80", 10) == 0x0 ); /*CRC-4/ITU-T*/
+}
+
 #define N_STRLIST_DELIM ","
 static char** _getstrlist(const char *buf, int *count, int allow_empty)
 {

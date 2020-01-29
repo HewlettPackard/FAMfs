@@ -67,7 +67,7 @@ typedef struct f_slab_entry_ {
                     unsigned int    degraded     :  1; /* slab is degraded (dev failed) */
                     unsigned int    _reserved    :  9; /* reserved */
                     unsigned int    _reserved2   : 16; /* reserved for extents' CRC16 */
-		    unsigned int    checksum     :  4; /* slab entry checksum */
+		    unsigned int    checksum     :  4; /* slab entry CRC-4 checksum */
 		} /* PROP */;
 		struct {
 		    uint64_t        _pv;       /* 64-bit value for cmpxchg */
@@ -239,6 +239,13 @@ typedef struct f_map_info_ {
 #define LO_TO_SM_ID(layout_id)	((layout_id) *2 )	/* Layout ID to Slab map ID */
 #define LO_TO_CV_ID(layout_id)	((layout_id) *2 + 1)	/* Layout ID to Claim vector */
 #define LO_MAP_TO_ID(map_id)	(map_id/2)		/* Map ID to layout ID */
+
+/* Calculate the sheet map entry CRC-4 checksum */
+static inline unsigned char f_crc4_sm_fast(F_SLAB_ENTRY_t *se)
+{
+    /* Look in transposed table */
+    return crc4_table_tp[ f_crc4_sm_chk(se) ];
+}
 
 
 /* List of stripes */
