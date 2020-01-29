@@ -92,8 +92,8 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
         int i, part;
 
         /* On each ionode */
-        if (PoolIsIOnode(pool)) {
-	    i = pool->ionode_id;
+        if (NodeIsIOnode(&pool->mynode)) {
+	    i = pool->mynode.ionode_id;
             /* Initialize libfabric target on node 'i' */
             rc = lf_servers_init(&lf_servers, params, i, 0);
             if (rc) {
@@ -169,7 +169,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
      */
 
     /* Create MPI communicator for LF servers */
-    if (!PoolIsIOnode(pool) ||
+    if (!NodeIsIOnode(&pool->mynode) ||
         !(params->lf_mr_flags.prov_key || params->lf_mr_flags.virt_addr))
         goto _exit;
 
@@ -255,14 +255,14 @@ int meta_register_fam(LFS_CTX_t *lfs_ctx)
     pool = f_get_pool();
     assert( pool );
     /* Do nothing on client */
-    if (!PoolIsIOnode(pool))
+    if (!NodeIsIOnode(&pool->mynode))
 	return 0;
 
     /* Having the real FAM? */
     if (!PoolFAMEmul(pool)) {
 
 	/* Register all FAMs on ionode zero */
-	if (pool->ionode_id == 0) {
+	if (pool->mynode.ionode_id == 0) {
 	    F_POOL_DEV_t *pdev;
 
 	    part_cnt = 1; /* TODO: Support FAM partitioning */
@@ -292,7 +292,7 @@ int meta_register_fam(LFS_CTX_t *lfs_ctx)
 	attr = fam_attr->part_attr;
 
 	fam_map = params->fam_map;
-	node_id = pool->ionode_id;
+	node_id = pool->mynode.ionode_id;
 	assert( IN_RANGE(node_id, 0, pool->ionode_count-1) );
 	ids = fam_map->fam_ids[node_id];
 	node_fams = fam_map->node_fams[node_id];

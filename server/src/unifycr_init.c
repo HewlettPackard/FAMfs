@@ -177,20 +177,19 @@ int main(int argc, char *argv[])
     /* DEBUG */
     if (log_print_level > 0 && glb_rank == 0) {
 	unifycr_config_print(&server_cfg, NULL);
-	printf("%s\n", pool->hostname);
+	printf("%s\n", pool->mynode.hostname);
 	f_print_layouts();
 	printf("\n");
     }
 
     /* Create MPI communicator for IO nodes */
     pool->zero_ion_rank = mpi_split_world(&pool->ionode_comm,
-				PoolIsIOnode(pool), 1,
+				NodeIsIOnode(&pool->mynode), 1,
 				glb_rank, glb_size);
     assert( pool->zero_ion_rank >= 0 );
 
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
-    
     /* UNIFYCR_DEFAULT_LOG_FILE */
     if (server_cfg.log_file == NULL)
         exit(1);
@@ -232,7 +231,7 @@ int main(int argc, char *argv[])
 
     /* Create command queues and start layout threads only on compute nodes */
     bzero(rplyq, sizeof(rplyq));
-    if (!f_host_is_ionode(NULL) || PoolForceHelper(pool)) {
+    if (!f_host_is_ionode(NULL) || NodeForceHelper(&pool->mynode)) {
 
         bzero(lo_thrd, sizeof(lo_thrd));
         for (int i = 0; i < pool->info.layouts_count; i++) {
@@ -265,7 +264,9 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank, PoolHasMDS(pool))) > 0) {
+    if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank,
+			    NodeHasMDS(&pool->mynode))) > 0)
+    {
         LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
         num_mds = rc;
     } else if (rc < 0) {

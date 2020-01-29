@@ -70,7 +70,6 @@ enum pool_dev_flags {
     _DEV_DISABLED,	/* device disabled (for example, being replaced) */
     _DEV_MISSING,	/* device is missing from the pool */
 };
-
 BITOPS(Dev, Failed,     f_pdev_sha_, _DEV_FAILED)
 BITOPS(Dev, Disabled,   f_pdev_sha_, _DEV_DISABLED)
 BITOPS(Dev, Missing,    f_pdev_sha_, _DEV_MISSING)
@@ -119,6 +118,23 @@ typedef struct f_pool_info_ {
     uint16_t		*pdev_indexes;	/* array of active pool devices, index in devlist */
 } F_POOL_INFO_t;
 
+typedef struct f_mynode_ {
+    char		*hostname;	/* this node's hostname */
+    uint32_t		ionode_id;	/* for IO node ONLY: index in ionodes array */
+    struct {
+	unsigned long	    flags;	/* f_mynode_flags */
+    }			io;
+} F_MYNODE_t;
+/* Flag specs for f_mynode_ */
+enum f_mynode_flags {
+    _NODE_IS_IONODE,	/* This is IO node */
+    _NODE_MDS,		/* MD server is running on this IO node */
+    _NODE_FCE_HLPR,	/* Force Helper threads [on this IO node] */
+};
+BITOPS(Node, IsIOnode,	  f_mynode_, _NODE_IS_IONODE)
+BITOPS(Node, HasMDS,	  f_mynode_, _NODE_MDS)
+BITOPS(Node, ForceHelper, f_mynode_, _NODE_FCE_HLPR)
+
 typedef struct f_pool_ {
     uuid_t		uuid;		/* pool uuid */
     pthread_rwlock_t	lock;		/* pool lock */
@@ -126,12 +142,12 @@ typedef struct f_pool_ {
     pthread_spinlock_t	dict_lock;	/* dictionary lock */
     F_POOL_INFO_t	info;		/* front-most pool attributes */
     struct list_head	layouts;	/* pool layouts list */
-    char		*hostname;	/* this node's hostname */
     struct lf_info_	*lf_info;	/* libfabric info */
+    struct n_params_	*lfs_params;	/* legacy N_PARAMS_t */
+    F_MYNODE_t		mynode;		/* structure that represents this node */
     MPI_Comm		ionode_comm;	/* MPI communicator for IO nodes */
 //    MPI_Comm		helper_comm;	/* MPI communicator for Helpers */
     int			zero_ion_rank;	/* rank in COMM_WORLD of zero rank in ionode_comm */
-    struct n_params_	*lfs_params;	/* legacy N_PARAMS_t */
     int			verbose;	/* debug flag */
 //    uint32_t	nparts;		/* layout partition number estimate */
     uint32_t		pool_ags;	/* allocation group array size; also this is
@@ -139,7 +155,6 @@ typedef struct f_pool_ {
     uint32_t		ag_devs;	/* size of the pool device array, 2nd dimension */
     uint32_t		pool_devs;	/* size of the pool device array, total */
     uint32_t		ionode_count;	/* number of IO nodes */
-    uint32_t		ionode_id;	/* for IO node ONLY: index in ionodes array */
     F_AG_t		*ags;		/* allocation group array */
     struct f_pool_dev_	*devlist;	/* two-dimentional array of pool devices */
     F_IONODE_INFO_t	*ionodes;	/* array of IO node info of .ionode_count size */
@@ -156,15 +171,9 @@ typedef struct f_pool_ {
 enum f_pool_flags {
     _POOL_BG_ACTIVE,	/* Background task is active. */
     _POOL_FAM_EMUL,	/* FAM device emulation with fabric attached memory on IO nodes */
-    _POOL_IS_IONODE,	/* This is IO node */
-    _POOL_MDS,		/* MD server is running on this IO node */
-    _POOL_FCE_HLPR,	/* Force Helper threads [on this IO node] */
 };
 BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
-BITOPS(Pool, IsIOnode,	f_pool_, _POOL_IS_IONODE)
-BITOPS(Pool, HasMDS,	f_pool_, _POOL_MDS)
-BITOPS(Pool, ForceHelper, f_pool_, _POOL_FCE_HLPR)
 
 #endif /* F_POOL_H_ */
 

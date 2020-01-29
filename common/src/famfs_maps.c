@@ -155,18 +155,18 @@ static void set_my_ionode_info(F_POOL_t *p)
     assert (p && p->ionodes);
     info = get_ionode_info(p, NULL);
     if (info) {
-	SetPoolIsIOnode(p);
+	SetNodeIsIOnode(&p->mynode);
 	if (IOnodeForceHelper(info))
-	    SetPoolForceHelper(p);
+	    SetNodeForceHelper(&p->mynode);
 	if (info->mds)
-	    SetPoolHasMDS(p);
+	    SetNodeHasMDS(&p->mynode);
 	else
-	    ClearPoolHasMDS(p);
-	p->ionode_id = (uint32_t)(info - p->ionodes);
-	assert( p->ionode_id < p->ionode_count );
+	    ClearNodeHasMDS(&p->mynode);
+	p->mynode.ionode_id = (uint32_t)(info - p->ionodes);
+	assert( p->mynode.ionode_id < p->ionode_count );
     } else {
-	ClearPoolIsIOnode(p);
-	ClearPoolHasMDS(p);
+	ClearNodeIsIOnode(&p->mynode);
+	ClearNodeHasMDS(&p->mynode);
     }
 }
 
@@ -287,7 +287,7 @@ static void free_pool(F_POOL_t *p)
 	f_dict_free(p->dict);
 	pthread_spin_destroy(&p->dict_lock);
 	pthread_rwlock_destroy(&p->lock);
-	free(p->hostname);
+	free(p->mynode.hostname);
 	free(p);
     }
 }
@@ -327,8 +327,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	assert( uuid_parse(FAMFS_PDEVS_UUID_DEF, p->uuid) == 0);
     }
     /* my node name */
-    p->hostname = f_get_myhostname();
-    if (!p->hostname) goto _nomem;
+    p->mynode.hostname = f_get_myhostname();
+    if (!p->mynode.hostname) goto _nomem;
 
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
@@ -415,7 +415,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	if (c->ionode_host[u][0])
 	    ioi->hostname = strdup(c->ionode_host[u][0]);
 	else if (u == 0)
-	    ioi->hostname = strdup(p->hostname);
+	    ioi->hostname = strdup(p->mynode.hostname);
 	else
 	    goto _noarg;
 	p->ionodelist[u] = strdup(ioi->hostname);
@@ -763,7 +763,7 @@ static int cfg_alloc_params(F_POOL_t *p, N_PARAMS_t **params_p)
     if (sscanf(lf_info->service, "%5d", &params->lf_port) != 1)
 	goto _badval;
     params->nodelist = p->ionodelist;
-    params->node_id = p->ionode_id;
+    params->node_id = p->mynode.ionode_id;
     params->fam_cnt = (fam_emul)?info->dev_count:p->ionode_count;
     params->fam_map = map_fams_to_ionodes(p, params->fam_cnt);
 
@@ -930,7 +930,7 @@ void f_print_layouts(void) {
 	F_IONODE_INFO_t *info = &p->ionodes[u];
 
 	printf("  #%u%s id:%u %s MDS:%u flags:%s\n",
-	    u, (u == p->ionode_id && PoolIsIOnode(p))?"*":"",
+	    u, (u == p->mynode.ionode_id && NodeIsIOnode(&p->mynode))?"*":"",
 	    info->conf_id, info->hostname, info->mds,
 	    IOnodeForceHelper(info)?"H":"");
     }
@@ -942,7 +942,7 @@ int f_host_is_ionode(const char *hostname)
     if (hostname)
 	return !!get_ionode_info(pool, hostname);
 
-    return pool && PoolIsIOnode(pool);
+    return pool && NodeIsIOnode(&pool->mynode);
 }
 
 /* Is 'hostname' a MD server? If NULL, check my node name */
@@ -953,6 +953,6 @@ int f_host_is_mds(const char *hostname)
 
 	return info && info->mds;
     }
-    return pool && PoolHasMDS(pool);
+    return pool && NodeHasMDS(&pool->mynode);
 }
 
