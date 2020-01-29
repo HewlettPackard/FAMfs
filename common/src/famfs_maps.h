@@ -92,7 +92,7 @@ typedef struct f_slab_entry_ {
  * is declared as failed.
  *
  * If the slab layout supports recovery then it may be possible to recover failed extent
- * stripe by stripe, starting from the beginning of the sheet.
+ * stripe by stripe, starting from the beginning of the slab.
  * When all slab's stripes have recovered, the failed status is reset.
  */
 typedef struct f_extent_entry_ {
@@ -240,7 +240,7 @@ typedef struct f_map_info_ {
 #define LO_TO_CV_ID(layout_id)	((layout_id) *2 + 1)	/* Layout ID to Claim vector */
 #define LO_MAP_TO_ID(map_id)	(map_id/2)		/* Map ID to layout ID */
 
-/* Calculate the sheet map entry CRC-4 checksum */
+/* Calculate the slab map entry CRC-4 checksum */
 static inline unsigned char f_crc4_sm_fast(F_SLAB_ENTRY_t *se)
 {
     /* Look in transposed table */
