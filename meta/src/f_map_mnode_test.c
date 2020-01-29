@@ -286,18 +286,19 @@ static void map_load_cb(uint64_t e __attribute__((unused)),
 	void *arg, const F_PU_VAL_t *pu)
 {
     struct cb_data *data = (struct cb_data *) arg;
-    const F_SLAB_ENTRY_t *se = &pu->se;
+    const F_SLAB_ENTRY_t *se;
     const F_EXTENT_ENTRY_t *ee;
     unsigned int i;
 
     /* Scan PU entries */
     for (i = 0; i < data->pu_entries; i++) {
+	se = &pu->se;
 	if (se->mapped) {
 	    ee = &pu->ee + data->n_ext;
 	    if (ee->failed)
 		data->ext_failed++;
 	}
-	se = (F_SLAB_ENTRY_t *) ((char*)se + data->entry_sz);
+	pu = (F_PU_VAL_t *) ((char*)pu + data->entry_sz);
     }
 }
 
@@ -1226,6 +1227,13 @@ int main (int argc, char *argv[]) {
 		    f_map_mark_dirty(map, it->entry);
 		}
 		f_map_free_iter(it); it = NULL;
+
+		/* We need the barrier to ensure the count in map load cb fn
+		returns the exact global entries number; otherwise some got deleted
+		in DB by a peer and the callback function count would have less */
+		if (global)
+		    MPI_BARRIER;
+
 		/* delete empty PU in DB */
 		rc = f_map_flush(map);
 		if (rc != 0) goto err2;
