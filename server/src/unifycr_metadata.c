@@ -359,13 +359,12 @@ int meta_famattr_put(int fam_id, fam_attr_val_t *val)
     return rc;
 }
 
-int meta_famattr_get(char *buf, fam_attr_val_t **val_p)
+int meta_famattr_get(int fam_id, fam_attr_val_t **val_p)
 {
-    *fattr_keys[0] = *((int *)(buf + 2 * sizeof(int)));
+    *fattr_keys[0] = fam_id;
     fam_attr_val_t *tmp_ptr_attr;
 
     int rc;
-LOG(LOG_DBG, "meta_famattr_get\n");
 
     md->primary_index = unifycr_indexes[2];
     bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],

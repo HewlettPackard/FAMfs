@@ -306,6 +306,7 @@ typedef struct {
 /*unifycr structures*/
 typedef struct {
     int fid;
+    int lid;                        /* layout id */
     long offset;
     long length;
     char *buf;

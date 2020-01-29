@@ -1274,10 +1274,16 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
 {
     fam_attr_val_t hdr;
     size_t size;
-    int cmd = CMD_META;
-    int flag = 4;
-    f_svcrq_t c = {.opcode = CMD_META, .cid = local_rank_idx, .md_type = 4, .fam_id = fam_id};
+    int rc;
+    f_svcrq_t c = {
+        .opcode = CMD_META, 
+        .cid = local_rank_idx, 
+        .md_type = MDRQ_FAMAT, 
+        .fam_id = fam_id
+    };
+    f_svcrply_t r;
 
+#if 0
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
     memcpy(cmd_buf + sizeof(int) + sizeof(int), &fam_id, sizeof(int));
@@ -1334,6 +1340,36 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
     size = fam_attr_val_sz(hdr.part_cnt);
     *fam_meta = (fam_attr_val_t *)malloc(size);
     memcpy(*fam_meta, cmd_buf + 2 * sizeof(int), size);
+#endif
+    if ((rc = f_rbq_push(adminq, &c, RBQ_TMO_1S*10))) {
+        ERROR("couldn't push fam attr get admin q: %d\n", rc < 0 ? errno : rc);
+        return rc;
+    }
+    *fam_meta = NULL;
+
+    int n = 0, j = 0;
+    do {
+        if ((rc = f_rbq_pop(rplyq, &r, RBQ_TMO_1S*30))) {
+            if (*fam_meta)
+                free(*fam_meta);
+            ERROR("error getting FAM %d attr: %d", fam_id, rc < 0 ? errno : rc);
+            return rc;
+        }
+
+        if (!*fam_meta) {
+            n = r.cnt + r.more;
+            *fam_meta = (fam_attr_val_t *)malloc(fam_attr_val_sz(n));
+            (*fam_meta)->part_cnt = n;
+        }
+
+        for (int i = 0; i < r.cnt; i++) {
+            (*fam_meta)->part_attr[j].prov_key  = r.prt_atr[i].prov_key;
+            (*fam_meta)->part_attr[j].virt_addr = r.prt_atr[i].virt_addr;
+            j++;
+        }
+    } while (j < n);
+
+    
     return UNIFYCR_SUCCESS;
 }
 

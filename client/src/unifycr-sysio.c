@@ -1585,8 +1585,15 @@ int famfs_read(read_req_t *read_req, int count)
 
     f_fattr_t tmp_meta_entry;
     f_fattr_t *ptr_meta_entry;
+    if (!count)
+        return 0;
+    int lid = read_req[0].lid;
 
     for (i = 0; i < count; i++) {
+        if (read_req[0].lid != lid) {
+            ERROR("read rqs on different layouts, expected %d, got %d", read_req[0].lid, lid);
+            return -EIO;
+        }
         read_req[i].fid -= unifycr_fd_limit;
         tmp_meta_entry.fid = read_req[i].fid;
 
@@ -1645,45 +1652,32 @@ int famfs_read(read_req_t *read_req, int count)
             return 0;
     }
 
-    *(int *)cmd_buf = CMD_MDGET;
-    *((int *)cmd_buf + 1) = rq_cnt;
-    *rc_ptr = 0;
+    f_svcrq_t c = {
+       .opcode  = CMD_MDGET,
+       .cid     = local_rank_idx,
+       .md_rcnt = rq_cnt
+    };
+    f_svcrply_t r;
 
     STATS_START(start);
     
-    __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
-
-    cmd_fd.events = POLLIN | POLLPRI;
-    cmd_fd.revents = 0;
-
-    rc = poll(&cmd_fd, 1, -1);
-    if (rc == 0) {
-        /*time out event*/
-        DEBUG("MD/read TMO: poll %d rq:\n", rq_cnt);
-        for (i = 0; i < rq_cnt; i++) {
-            DEBUG("fid %d: %ld(%ld)\n", rq_ptr[i].fid, rq_ptr[i].offset, rq_ptr[i].length);
-        }
-        return -ETIME;
-    } else if (rc > 0) {
-
-        if (cmd_fd.revents != 0) {
-            if (cmd_fd.revents == POLLIN) {
-                bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
-                if (*rc_ptr < 0) {
-                    DEBUG("error reading MD: %d\n", *rc_ptr);
-                    return -EIO;
-                } else if (!*rc_ptr) {
-                    DEBUG("no MD found\n");
-                    return -EIO;
-                }
-            } else {
-                DEBUG("unexpected event %d\n", cmd_fd.revents);
-                return -EIO;
-            }
-        } else {
-            DEBUG("revents == 0\n");
-            return -EAGAIN;
-        }
+    DEBUG("MD/read TMO: poll %d rq:\n", rq_cnt);
+    for (i = 0; i < rq_cnt; i++) {
+        DEBUG("fid %d: %ld(%ld)\n", rq_ptr[i].fid, rq_ptr[i].offset, rq_ptr[i].length);
+    }
+    f_rbq_t *cq = lo_cq[lid];
+    ASSERT(cq);
+    if ((rc = f_rbq_push(cq, &c, RBQ_TMO_1S))) {
+        ERROR("can't push MD_GET cmd, layout %d: %d", lid, rc < 0 ? errno : rc);
+        return -EIO;
+    }
+    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
+        ERROR("can't get reply to MD_GET from layout %d: %d", lid, rc < 0 ? errno : rc);
+        return -EIO;
+    }
+    if (r.rc) {
+        ERROR("error retrieving file MD: %d", r.rc);
+        return -EIO;
     }
     UPDATE_STATS(md_fg_stat, *rc_ptr, *rc_ptr*sizeof(fsmd_kv_t), start);
 
@@ -1724,6 +1718,7 @@ ssize_t UNIFYCR_WRAP(pread)(int fd, void *buf, size_t count, off_t offset)
             tmp_req.fid = fd + unifycr_fd_limit;
             tmp_req.length = count;
             tmp_req.offset = offset;
+            tmp_req.lid = unifycr_get_meta_from_fid(fd)->loid;
             int read_rc =  famfs_read(&tmp_req, 1);
 
             if (read_rc == 0) {

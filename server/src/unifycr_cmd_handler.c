@@ -202,18 +202,16 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
 
     /*init setup*/
 
-    int rc = 0, ret_sz = 0;
+    int rc = 0;
     int cmd = pcmd->opcode;
-    char *ptr_cmd = 0;
-    int num;
-    char *ptr_ack;
     f_svcrply_t rply;
     char qname[MAX_RBQ_NAME];
 
     LOG(LOG_DBG, "svc command %x, masked %x\n", cmd, cmd & ~CMD_OPT_MASK);
     bzero(&rply, sizeof(rply));
     rply.ackcode = cmd;
-    rply.cid = pcmd->cid;
+    rply.more= 0;
+
     switch (cmd & ~CMD_OPT_MASK) {
     case CMD_SVCRQ:
         if (!admin) {
@@ -253,24 +251,53 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
         break;
 
     case CMD_META:
+        if (pcmd->md_type == MDRQ_FAMAT) {
+            if (!admin) {
+                LOG(LOG_ERR, "FAM attr get cmd on non-admin queue: %s", qn);
+                return EINVAL;
+            }
+            /*get FAM attribute*/
+            fam_attr_val_t *pval = NULL;
+            int n = 0;
+            if (!(rply.rc = meta_famattr_get(pcmd->fam_id, &pval))) {
+                for (int i = 0; i < pval->part_cnt; i++) {
+                    rply.prt_atr[n].prov_key  = pval->part_attr[i].prov_key;
+                    rply.prt_atr[n].virt_addr = pval->part_attr[i].virt_addr;
+                    if (++n >= KA_PAIR_MAX) {
+                        rply.cnt = n;
+                        rply.more = pval->part_cnt - n;
+                        if ((rc = f_rbq_push(rplyq[pcmd->cid], &rply, RBQ_TMO_1S))) {
+                            LOG(LOG_ERR, "can't push partial reply onto q %d: %d\n", pcmd->cid, rc);
+                            free(pval);
+                            return rc;
+                        }
+                        n = 0;
+                    }
+                }
+            }
+            rply.cnt = n;
+            rply.more = 0;
+
+            free(pval);
+            break;
+        }
         if (admin) {
             LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
             return EINVAL;
         }
-        int type = pcmd->md_type;
-        if (type == MDRQ_GETFA) {
+        if (pcmd->md_type == MDRQ_GETFA) {
             /*get file attribute*/
             rply.rc = f_do_fattr_get(pcmd, &rply.fattr);
             break;
         }
 
-        if (type == MDRQ_SETFA) {
+        if (pcmd->md_type == MDRQ_SETFA) {
             /*set file attribute*/
             rply.rc = f_do_fattr_set(pcmd, &pcmd->fm_data);
             break;
         }
 
-        if (type == 3) {
+        if (pcmd->md_type == MDRQ_FSYNC) {
             /*synchronize both index and file attribute
              *metadata to the key-value store*/
 
@@ -278,17 +305,6 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             break;
         }
 
-        if (type == 4) {
-            /*get FAM attribute*/
-            fam_attr_val_t *attr_val = NULL;
-            rc = meta_famattr_get(ptr_cmd, &attr_val);
-
-            ptr_ack = sock_get_ack_buf(pcmd->cid);
-            ret_sz = pack_ack_msg(ptr_ack, cmd, rc,
-                                  attr_val, fam_attr_val_sz(attr_val->part_cnt));
-            rc = sock_ack_cli(pcmd->cid, ret_sz);
-            free(attr_val);
-        }
         break;
 
     case CMD_READ:
@@ -301,16 +317,8 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
             return EINVAL;
         }
-        num = *(((int *)ptr_cmd) + 1);
-        rc = rm_fetch_md(pcmd->cid, num);
-        if (rc) {
+        if ((rply.rc = rm_fetch_md(pcmd->cid, pcmd->md_rcnt))) 
             LOG(LOG_ERR, "md_get err %d\n", rc);
-        }
-        rc = sock_notify_cli(pcmd->cid, CMD_READ);
-        if (rc != 0) {
-            LOG(LOG_ERR, "sock notify failed\n");
-            return rc;
-        }
         break;
 
     case CMD_UNMOUNT:
@@ -319,6 +327,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             return EINVAL;
         }
         f_rbq_close(rplyq[pcmd->cid]);
+        /* TODO clean up client thread resources */
         rplyq[pcmd->cid] = 0;
         return 0;
 

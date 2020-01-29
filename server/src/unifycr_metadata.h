@@ -69,7 +69,7 @@ void print_fsync_indices(fsmd_key_t **keys, fsmd_val_t **vals, long num_entries)
 int meta_process_attr_set(char *ptr_cmd, int qid);
 int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val);
 int meta_famattr_put(int fam_id, fam_attr_val_t *val);
-int meta_famattr_get(char *buf, fam_attr_val_t **ptr_val);
+int meta_famattr_get(int fam_id, fam_attr_val_t **ptr_val);
 int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv);
 
 #endif

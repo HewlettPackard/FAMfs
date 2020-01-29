@@ -41,54 +41,10 @@ typedef enum {
     MDRQ_GETFA  = 1,
     MDRQ_SETFA  = 2,
     MDRQ_FSYNC  = 3,
-    MDRQ_GTFAM  = 4
+    MDRQ_FAMAT  = 4
 } f_mdrq_t;
 
 #define F_MAX_FNM     ( 128 )
-
-typedef struct {
-    f_srvcmd_t          opcode;
-    int                 cid;
-    union {
-        struct {
-            int         app_id;
-            int         dbg_rnk;
-            int         num_prc;
-            int         rqbf_sz;
-            int         rcbf_sz;
-            long        sblk_sz;
-            long        meta_of;
-            long        meta_sz;
-            long        fmet_of;
-            long        fmet_sz;
-            long        data_of;
-            long        data_sz;
-            char        ext_dir[UNIFYCR_MAX_FILENAME];
-        };
-        struct {
-            f_mdrq_t    md_type;
-            union {
-                f_fattr_t   fm_data;
-                int         fm_gfid;
-                int         fam_id;
-            };
-        };
-    };
-} f_svcrq_t;
-
-typedef struct {
-    f_srvcmd_t          ackcode;
-    int                 cid;
-    int                 rc;
-    union {
-        struct {
-            off_t               data_off;
-            size_t              data_size;
-        };
-        uint64_t                max_rps;
-        f_fattr_t               fattr;
-    };
-} f_svcrply_t;
 
 #define F_MAX_CMDQ     64
 #define F_MAX_RPLYQ    8
@@ -161,6 +117,57 @@ typedef struct {
 	LFS_EXCG_t	part_attr[];	/* partition LF remote key & virt addr */
 } fam_attr_t;
 #define fam_attr_sz(cnt) (sizeof(fam_attr_t) + (cnt)*sizeof(LFS_EXCG_t))
+
+// server request
+typedef struct {
+    f_srvcmd_t          opcode;
+    int                 cid;
+    union {
+        struct {
+            int         app_id;
+            int         dbg_rnk;
+            int         num_prc;
+            int         rqbf_sz;
+            int         rcbf_sz;
+            long        sblk_sz;
+            long        meta_of;
+            long        meta_sz;
+            long        fmet_of;
+            long        fmet_sz;
+            long        data_of;
+            long        data_sz;
+            char        ext_dir[UNIFYCR_MAX_FILENAME];
+        };
+        struct {
+            f_mdrq_t    md_type;
+            union {
+                f_fattr_t   fm_data;
+                int         fm_gfid;
+                int         fam_id;
+                int         md_rcnt;
+            };
+        };
+    };
+} f_svcrq_t;
+
+#define KA_PAIR_MAX  (sizeof(f_fattr_t)/sizeof(LFS_EXCG_t))
+// server reply
+typedef struct {
+    f_srvcmd_t          ackcode;
+    short               more;
+    short               cnt;
+    int                 rc;
+    union {
+        struct {
+            off_t       data_off;
+            size_t      data_size;
+        };
+        uint64_t        max_rps;
+        LFS_EXCG_t      prt_atr[KA_PAIR_MAX];
+        f_fattr_t       fattr;
+    };
+} f_svcrply_t;
+
 
 
 extern famfs_mr_list_t known_mrs;
