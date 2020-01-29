@@ -190,13 +190,9 @@ static int find_pd_index_in_ag(F_AG_t *ags, uint32_t pool_ags,
     return -1;
 }
 
-struct f_pool_dev_ *f_find_pdev(unsigned int index) {
-    struct f_pool_ *p = pool;
+static uint16_t find_pdev(struct f_pool_ *p, unsigned int index) {
     F_AG_t *ag;
     unsigned int u;
-
-    if (p == NULL)
-	return NULL;
 
     ag = p->ags;
     for (u = 0; u < p->pool_ags; u++, ag++) {
@@ -205,9 +201,16 @@ struct f_pool_dev_ *f_find_pdev(unsigned int index) {
 
 	for (uu = 0; uu < ag->pdis; uu++, pdev++)
 	    if (pdev->pool_index == index)
-		return pdev;
+		return p->ag_devs*u + uu;
     }
-    return NULL;
+    return F_PDI_NONE;
+}
+
+struct f_pool_dev_ *f_find_pdev(unsigned int media_id) {
+    struct f_pool_ *p = pool;
+
+    return (media_id <= p->info.pdev_max_idx)?
+	(&p->devlist[ p->info.media_ids[media_id] ]) : NULL;
 }
 
 static int cmp_pdev_by_index(const void *a, const void *b)
@@ -258,6 +261,7 @@ static void free_pool(F_POOL_t *p)
 	    free(p->devlist);
 	}
 	free(p->info.pdev_indexes);
+	free(p->info.media_ids);
 
 	if (p->ags) {
 	    for (i = 0; i < p->pool_ags; i++) {
@@ -461,6 +465,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     p->ag_devs = ag_maxlen;
 
     /* Devices */
+    pool_info->pdev_max_idx = 0;
     p->pool_devs = ag_maxlen * p->pool_ags;
     p->devlist = (F_POOL_DEV_t*)calloc(sizeof(F_POOL_DEV_t), p->pool_devs);
     if (!p->devlist) goto _nomem;
@@ -472,10 +477,11 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	int pd_index;
 	uint16_t pool_index;
 
+	/* device media_id */
 	if (configurator_int_val(c->device_id[u][0], &l)) goto _noarg;
 	pool_index = (uint32_t)l;
 
-	/* Find device in AG by pool_index and map it to devlist */
+	/* Find device in AG by media_id (pool_index) and map it to devlist */
 	pd_index = find_pd_index_in_ag(p->ags, p->pool_ags, p->ag_devs,
 				       pool_index, p->devlist);
 	if (!IN_RANGE(pd_index, 0, (int)p->pool_devs-1)) goto _syntax;
@@ -504,6 +510,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    fam->pkey = pool_info->pkey_def;
 	else
 	    fam->pkey = (uint64_t)l;
+	if (pool_info->pdev_max_idx < pool_index)
+	    pool_info->pdev_max_idx = pool_index;
 
 	if (pthread_rwlock_init(&pdev->rwlock, NULL)) goto _nomem;
 	pdev->pool = p;
@@ -527,7 +535,10 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    pdev->idx_dev = uu;	/* 2nd index */
 	}
     }
-    /* Array of active pool devices: indexes in devlist */
+
+    /* Populate pool devlist lookup helper arrays */
+
+    /* Array of indexes in devlist for devlist stripped of F_PDI_NONE devices */
     pool_info->pdev_indexes = (uint16_t *) calloc(pool_info->dev_count,
 						  sizeof(uint16_t));
     if (!pool_info->pdev_indexes) goto _nomem;
@@ -540,6 +551,12 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    assert( uu < p->pool_devs );
 	    pool_info->pdev_indexes[u] = uu;
     }
+    /* Array of indexes in devlist for each media_id from zero to 'pdev_max_idx' */
+    pool_info->media_ids = (uint16_t *) calloc(pool_info->pdev_max_idx+1,
+					       sizeof(uint16_t));
+    if (!pool_info->media_ids) goto _nomem;
+    for (u = 0; u <= pool_info->pdev_max_idx; u++)
+	pool_info->media_ids[u] = find_pdev(p, u);
 
     /* Layout count */
     count = configurator_get_sec_size(c, "layout");

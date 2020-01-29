@@ -112,10 +112,13 @@ typedef struct f_pool_info_ {
     size_t		size_def;	/* default device size, bytes */
     uint64_t		pkey_def;	/* default FAM device protection key */
     uint32_t		layouts_count;	/* number of layouts in pool */
-    uint32_t		dev_count;	/* number of active pool devices */
+    uint32_t		dev_count;	/* number of pool devices: active and missing */
     uint32_t		missing_count;	/* number of missing pool devices */
     uint32_t		pdev_max_idx;	/* the attribute array size: max used device index */
-    uint16_t		*pdev_indexes;	/* array of active pool devices, index in devlist */
+
+			/* pool devlist lookup helper arrays that have index in devlist */
+    uint16_t		*pdev_indexes;	/* all pool devices, array of 'dev_count' size */
+    uint16_t		*media_ids;	/* indexed by media_id, 0..pdev_max_idx */
 } F_POOL_INFO_t;
 
 typedef struct f_mynode_ {
