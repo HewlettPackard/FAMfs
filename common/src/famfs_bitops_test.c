@@ -12,6 +12,7 @@
 #include "famfs_bitmap.h"
 
 #define passes		3	/* Number of test passes */
+#define rnd_passes	1000	/* Number of random test passes */
 #define b_size_start	1
 #define b_size_end	(BITS_PER_LONG*2+1)
 #define cont_ones_end	(BITS_PER_LONG+1)
@@ -94,16 +95,20 @@ int main (void) {
 		    if ((int)bit != j+k) goto err;
 		    /* Count all ones */
 		    t=18; if (bitmap_weight(bmap, sz) != k) goto err;
+		    /* Find last one */
+		    t=19;
+		    bit = find_last_bit(bmap, sz);
+		    if ((int)bit != (j+k-1)) goto err;
 		    /* Zero out all ones */
 		    for (i = j; i < (j+k); i++)
 			clear_bit(i, bmap);
-		    t=19; if (!bitmap_empty(bmap, sz)) goto err;
+		    t=20; if (!bitmap_empty(bmap, sz)) goto err;
 		    /* Fill in */
 		    bitmap_fill(bmap, sz);
-		    t=20; if (bitmap_weight(bmap, sz) != sz) goto err;
+		    t=21; if ((i = bitmap_weight(bmap, sz)) != sz) goto err;
 		    /* Zero all buffer */
 		    bitmap_zero(bmap, sz);
-		    t=21; if (!bitmap_empty(bmap, sz)) goto err;
+		    t=22; if (!bitmap_empty(bmap, sz)) goto err;
 		}
 	    }
 	}
@@ -213,7 +218,7 @@ int main (void) {
     /* i: repeat random size test */
     for (i = b_size_start; i <= b_size_end; i++) {
 	/* Repeat the test */
-	for (pass = 0; pass < passes; pass++) {
+	for (pass = 0; pass < rnd_passes; pass++) {
 	    /* sz: size */
 	    sz = rand() % (b_size_end - b_size_start + 1) + b_size_start;
 	    bmap = bitmap_zalloc(sz);
@@ -234,15 +239,23 @@ int main (void) {
 		goto err;
 	    }
 
-	    /* Test 3: Cycles */
+	    /* Test 2: Cycles */
 	    t = 2;
 	    v0 = v1 = 0;
 	    for_each_clear_bit(bit, bmap, sz) v0++;
-	    for_each_set_bit(bit, bmap, sz) v1++;
+	    pos = sz;
+	    for_each_set_bit(bit, bmap, sz) {
+		v1++;
+		pos = bit;
+	    }
 	    if ((v0 + v1) != sz) {
 		printf("  ones:%d, zeros:%d\n", v1, v0);
 		goto err;
 	    }
+	    /* Test 3: Find last bit set */
+	    t = 3;
+	    bit = find_last_bit(bmap, sz);
+	    if ((int)bit != pos) goto err;
 	}
 	bitmap_free(bmap); bmap = NULL;
     }
@@ -255,8 +268,8 @@ err:
 	   tg, t, pass+1, passes);
     printf("  %d one%s start @%d in bitmap of size:%d\n",
 	   k, (k>1)?"s":"", j, sz);
-    printf("  test variables: pos=%d buf[%d]=0x%016lX i=%d\n",
-	   pos, BIT_WORD(pos), bmap[BIT_WORD(pos)], i);
+    printf("  test variables: pos=%d buf[%d]=0x%016lX i=%d bit=%lu\n",
+	   pos, BIT_WORD(pos), bmap[BIT_WORD(pos)], i, bit);
     return 1;
 }
 

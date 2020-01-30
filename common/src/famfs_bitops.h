@@ -17,6 +17,7 @@
 #define BITS_PER_INT		(BITS_PER_BYTE*sizeof(int))
 // BITS_PER_LONG - See famfs_ktypes.h
 #define BITS_TO_LONGS(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
+#define BITMAP_LAST_WORD_MASK(nbits) (~0UL >> (-(nbits) & (BITS_PER_LONG - 1)))
 
 
 static __always_inline unsigned long __ffs(unsigned long word) {
@@ -84,6 +85,10 @@ static __always_inline int fls(int x)
 	return r;
 }
 
+static __always_inline unsigned long __fls(unsigned long word) {
+	return BITS_PER_LONG - 1 - __builtin_clzl(word);
+}
+#if 0
 static __always_inline unsigned long __fls(unsigned long word)
 {
 	int num = BITS_PER_LONG - 1;
@@ -114,7 +119,7 @@ static __always_inline unsigned long __fls(unsigned long word)
 		num -= 1;
 	return num;
 }
-
+#endif
 
 #if BITS_PER_LONG == 32
 static __always_inline int fls64(u64 x)
@@ -459,6 +464,31 @@ static inline unsigned long find_first_zero_bit(const unsigned long *addr, unsig
 found:
 	return result + ffz(tmp);
 }
+
+/*
+ * Find the last set bit in a memory region.
+ * Returns the bit number of the last set bit, or size.
+ *
+ * This implementation of find_last_bit was stolen from
+ * Linus' lib/find_bit.c
+ */
+static inline unsigned long find_last_bit(const unsigned long *addr, unsigned long size)
+{
+	if (size) {
+		unsigned long val = BITMAP_LAST_WORD_MASK(size);
+		unsigned long idx = (size-1) / BITS_PER_LONG;
+
+		do {
+			val &= addr[idx];
+			if (val)
+				return idx * BITS_PER_LONG + __fls(val);
+
+			val = ~0ul;
+		} while (idx--);
+	}
+	return size;
+}
+
 
 /**
  * test_bit - Determine whether a bit is set
