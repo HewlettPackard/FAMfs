@@ -261,9 +261,8 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             int n = 0;
             if (!(rply.rc = meta_famattr_get(pcmd->fam_id, &pval))) {
                 for (int i = 0; i < pval->part_cnt; i++) {
-                    rply.prt_atr[n].prov_key  = pval->part_attr[i].prov_key;
-                    rply.prt_atr[n].virt_addr = pval->part_attr[i].virt_addr;
-                    if (++n >= KA_PAIR_MAX) {
+                    rply.prt_atr[n++] = pval->part_attr[i];
+                    if (n >= KA_PAIR_MAX) {
                         rply.cnt = n;
                         rply.more = pval->part_cnt - n;
                         if ((rc = f_rbq_push(rplyq[pcmd->cid], &rply, RBQ_TMO_1S))) {

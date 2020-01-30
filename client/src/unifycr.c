@@ -123,7 +123,7 @@ int *local_rank_lst = NULL;
 int local_rank_cnt = 0;
 
 int local_del_cnt = 0;
-int client_sockfd;
+//int client_sockfd;
 struct pollfd cmd_fd;
 long shm_req_size = UNIFYCR_SHMEM_REQ_SIZE;
 long shm_recv_size = UNIFYCR_SHMEM_RECV_SIZE;
@@ -1362,13 +1362,10 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
             (*fam_meta)->part_cnt = n;
         }
 
-        for (int i = 0; i < r.cnt; i++) {
-            (*fam_meta)->part_attr[j].prov_key  = r.prt_atr[i].prov_key;
-            (*fam_meta)->part_attr[j].virt_addr = r.prt_atr[i].virt_addr;
-            j++;
-        }
-    } while (j < n);
+        for (int i = 0; i < r.cnt; i++)
+            (*fam_meta)->part_attr[j++]  = r.prt_atr[i];
 
+    } while (j < n);
     
     return UNIFYCR_SUCCESS;
 }
@@ -2691,14 +2688,17 @@ static int f_server_sync() {
         ERROR("rank %d couldn't send MOUNT command: %d", dbg_rank, rc < 0 ? errno : rc);
         return -1;
     }
+
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
         ERROR("rank %d couldn't mount FAMfs: %d", dbg_rank, rc < 0 ? errno : rc);
         return -1;
     }
+
     if (r.rc) {
         ERROR("rank %d FAMfs mount error: %d", dbg_rank, r.rc);
         return -1;
     }
+    unifycr_key_slice_range = r.max_rps;
 
 #if 0
     int res = __real_write(client_sockfd,
@@ -2970,7 +2970,7 @@ static int f_srv_connect() {
 * delegators on the same node
 * @return success/error code
 */
-
+#if 0
 static int unifycr_init_socket(int proc_id, int l_num_procs_per_node,
                                int l_num_del_per_node)
 {
@@ -3020,6 +3020,7 @@ static int unifycr_init_socket(int proc_id, int l_num_procs_per_node,
     return 0;
 
 }
+#endif
 
 int compare_fattr(const void *a, const void *b)
 {
