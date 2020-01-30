@@ -88,7 +88,7 @@ typedef struct f_layout_partition_ {
     pthread_rwlock_t	lock;		/* partition lock */
     struct f_layout_	*layout;	/* layout back pointer */
     uint32_t		part_num;	/* partition number */
-    pthread_t		*thread;	/* partition (allocation) daemon thread struct */
+    pthread_t		thread;		/* partition (allocation) daemon thread struct */
     int			thread_res;	/* allocator thread exit code */
     pthread_mutex_t	lock_ready;	/* allocator thread ready condition mutex */
     pthread_cond_t	cond_ready;	/* allocator thread condition ready */

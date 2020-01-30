@@ -28,12 +28,18 @@ static void *f_allocator_thread(void *ctx);
 int start_allocator_thread(F_LAYOUT_t *lo)
 {
 	F_LO_PART_t *lp = lo->lp;
-	int rc = 0;
+	int e_sz, rc = 0;
 
 	pthread_mutex_init(&lp->lock_ready, NULL);
 	pthread_cond_init(&lp->cond_ready, NULL);
 
-	rc = pthread_create(lp->thread, NULL, &f_allocator_thread, lo);
+	/* Initialize layout maps */
+	e_sz = sizeof(F_SLAB_ENTRY_t) + lo->info.chunks*sizeof(F_EXTENT_ENTRY_t);
+	lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
+	lo->claimvec = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
+	if (!lo->slabmap || !lo->claimvec) return EINVAL;
+
+	rc = pthread_create(&lp->thread, NULL, f_allocator_thread, lo);
 	if (!rc) {
 		/* Wait for the allocator thread to initialize and load maps */
 		pthread_mutex_lock(&lp->lock_ready);
@@ -54,7 +60,7 @@ int stop_allocator_thread(F_LAYOUT_t *lo)
 
 	SetLayoutQuit(lo);
 	pthread_cond_signal(&lp->a_thread_cond);
-	rc = pthread_join(*(lp->thread), &res);
+	rc = pthread_join(lp->thread, &res);
 	if (rc)
 		LOG(LOG_ERR, "%s[%d]: error %d in pthread_join", lo->info.name, lo->lp->part_num, rc);
 
@@ -309,6 +315,8 @@ static int read_maps(F_LO_PART_t *lp)
 			/* Populate device extent map */
 		}
 	}
+
+	return 0;
 
 _ret:
 	if (sm_iter ) {f_map_free_iter(sm_iter); sm_iter = NULL;}
@@ -658,7 +666,7 @@ static void *f_allocator_thread(void *ctx)
 	lp->part_num = thr_rank;
 	lo->part_count = thr_cnt;
 	
-	LOG(LOG_INFO, "%s[%d]: starting allocator on node %s", lo->info.name, lp->part_num, pool->mynode.hostname);
+	LOG(LOG_INFO, "%s[%d]: starting allocator on %s", lo->info.name, lp->part_num, pool->mynode.hostname);
 
 	rc = layout_partition_init(lp);
 
@@ -688,10 +696,12 @@ static void *f_allocator_thread(void *ctx)
 	if (!rc) {
 		pthread_mutex_lock(&lp->lock_ready);
 		lp->ready = 1;
+		SetLayoutActive(lo);
 		pthread_mutex_unlock(&lp->lock_ready);
 		pthread_cond_signal(&lp->cond_ready);
 	}
 
+	SetLayoutQuit(lo);
 	while (!LayoutQuit(lo) && !rc) {
 		struct timespec to, wait;
 		
@@ -714,6 +724,7 @@ static void *f_allocator_thread(void *ctx)
 			bool report_alloc_errors = !LayoutNoSpace(lo);
 
 			/* Run stripe allocator */
+			LOG(LOG_DBG, "%s[%d]: allocator run @%lu", lo->info.name, lp->part_num, to.tv_sec);
 			pthread_rwlock_wrlock(&lp->lock);
 			rc = f_stripe_allocator(lp);
 			if (rc) {
@@ -730,7 +741,8 @@ static void *f_allocator_thread(void *ctx)
 	flush_maps(lp);
 	layout_partition_free(lp);
 
-	LOG(LOG_INFO, "%s[%d]: allocator exiting on node %s", lo->info.name, lp->part_num, pool->mynode.hostname);
+	LOG(LOG_INFO, "%s[%d]: allocator exiting on %s rc=%d", 
+		lo->info.name, lp->part_num, pool->mynode.hostname, rc);
 
 	if (LayoutThreadFailed(lo)) {
 		pthread_mutex_lock(&lp->lock_ready);

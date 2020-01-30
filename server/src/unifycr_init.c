@@ -342,13 +342,13 @@ int main(int argc, char *argv[])
     }
 
     /* Start allocator threads on IO nodes only */
-/*    if (NodeIsIOnode(&pool->mynode)) {
+    if (NodeIsIOnode(&pool->mynode)) {
 	rc = f_start_allocator_threads();
     	if (rc != ULFS_SUCCESS) {
 	    LOG(LOG_WARN, "%s starting allocator threads", ULFS_str_errno(rc));
     	}
     }
-*/
+
     while (1) {
         if (exit_flag) {
             LOG(LOG_INFO, "exit flag set");
@@ -719,10 +719,10 @@ static int unifycr_exit()
 
     f_rbq_destroy(admq);
 
-/*    if (NodeIsIOnode(&pool->mynode)) {
+    if (NodeIsIOnode(&pool->mynode)) {
 	f_stop_allocator_threads();
     }
-*/
+
     /* shutdown the metadata service */
     meta_sanitize(); /* mdhim_options_destroy(db_opts) */
     /* notify the service threads to exit*/

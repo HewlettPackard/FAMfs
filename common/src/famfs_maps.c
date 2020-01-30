@@ -635,6 +635,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     lo->lp = (F_LO_PART_t *) calloc(sizeof(F_LO_PART_t), 1);
     if (!lo->lp) goto _nomem;
     lp = lo->lp;
+    lp->layout = lo;
     if (pthread_rwlock_init(&lp->claimdec_lock, NULL)) goto _nomem;
     if (pthread_spin_init(&lp->alloc_lock, PTHREAD_PROCESS_PRIVATE))
 	goto _nomem;
