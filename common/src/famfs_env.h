@@ -183,7 +183,7 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 
 /* Metadata/MDHIM */
 #define META_DEFAULT_DB_PATH /l/ssd/
-#define META_DEFAULT_DB_NAME unifycr_db
+#define META_DEFAULT_DB_NAME famfs_db
 #define META_DEFAULT_SERVER_RATIO 1
 #define META_DEFAULT_RANGE_SZ MIB
 

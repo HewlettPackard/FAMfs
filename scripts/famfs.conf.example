@@ -4,9 +4,15 @@ chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
 
+[log]
+# verbosity = 7 ; the highest level:7
+# dir = /dev/shm
+# file = log
+
 [meta]
 server_ratio = 1
 range_size = 1048576
+# db_path = /dev/shm
 
 [spillover]
 size = 2G

@@ -11,7 +11,7 @@ server_ratio = 1
 range_size = 1048576
 
 [spillover]
-size = 1G
+size = 2G
 
 [ionode]
 id = 0 ; this is a default
