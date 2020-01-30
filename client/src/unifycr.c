@@ -2668,7 +2668,7 @@ static int f_server_sync() {
      * buffer, and then send to the delegator. The delegator
      * will attach to the client-side shared memory, and open
      * the spill log file based on these information*/
-    c.opcode = CMD_MOUNT;
+    c.opcode = CMD_MOUNT | CMD_OPT_FAMFS;
     c.app_id = app_id;
     c.cid = local_rank_idx;
     c.dbg_rnk = dbg_rank;

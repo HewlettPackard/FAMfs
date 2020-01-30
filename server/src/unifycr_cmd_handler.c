@@ -586,9 +586,9 @@ int f_setup_client(f_svcrq_t *pcmd) {
 
     int rc;
     if (arraylist_get(app_config_list, app_id) == NULL) {
-        int num_procs_per_node  = pcmd->num_prc;
-        int req_buf_sz          = pcmd->rqbf_sz;
-        int recv_buf_sz         = pcmd->rcbf_sz;
+        int  num_procs_per_node = pcmd->num_prc;
+        int  req_buf_sz         = pcmd->rqbf_sz;
+        int  recv_buf_sz        = pcmd->rcbf_sz;
         long superblock_sz      = pcmd->sblk_sz;
         long meta_offset        = pcmd->meta_of;
         long meta_size          = pcmd->meta_sz;
@@ -596,7 +596,6 @@ int f_setup_client(f_svcrq_t *pcmd) {
         long fmeta_size         = pcmd->fmet_sz;
         long data_offset        = pcmd->data_of;
         long data_size          = pcmd->data_sz;
-
 
         LOG(LOG_DBG, 
             "superblock_sz:%ld, num_procs_per_node:%d, req_buf_sz:%d, data_size:%ld\n", 
