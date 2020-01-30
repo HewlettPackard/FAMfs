@@ -126,6 +126,15 @@ typedef struct f_extent_bitmap_ {
 } __attribute__((packed)) F_EXTENT_BITMAP_t;
 
 /*
+ *  Slab Map entry: 
+ * [F_SLAB_ENTRY_t 0][F_EXTENT_ENTRY_t 0][F_EXTENT_ENTRY_t 1]...[F_EXTENT_ENTRY_t N]
+ */
+typedef struct f_slabmap_entry {
+    F_SLAB_ENTRY_t	slab_rec;
+    F_EXTENT_ENTRY_t	extent_rec[0];
+} F_SLABMAP_ENTRY_t;
+
+/*
  * Claim Vector (CV)
  *
  * [Claim 0][Claim 1]...[Claim N]

@@ -21,7 +21,7 @@
 
 
 typedef uint64_t	f_stripe_t;
-typedef uint32_t	f_sheet_t;
+typedef uint32_t	f_slab_t;
 
 #define R_STRIPE_SET_MAX	(64*KiB)
 struct f_stripe_set {
@@ -29,12 +29,18 @@ struct f_stripe_set {
     f_stripe_t		*stripes;
 };
 
-struct f_sheet_usage {
-    uint32_t		used;		/* # stripes used (allocated) in sheet*/
+#define F_LWM_ALLOC_STRIPES	2048	/* Stripe preallocation list low water mark */
+#define F_HWM_ALLOC_STRIPES	4096	/* Stripe preallocation list high water mark */
+#define F_MAX_ALLOC_STRIPES	10*1024	/* Stripe preallocation max */
+#define F_MIN_ALLOC_SLABS	2	/* min # of slabs to allocate across */
+#define F_STRIPE_BUCKETS	1024	/* # of stripe preallocation lists */
+
+struct f_slab_usage {
+    uint32_t		used;		/* # stripes used (allocated) in slab*/
 #if 0
-    uint32_t		claimed;	/* # stripes claimed (by r-volume) in sheet */
-    uint32_t		committed;	/* # stripes committed in sheet */
-    uint32_t		next;		/* next stripe to allocate in sheet */
+    uint32_t		claimed;	/* # stripes claimed (by r-volume) in slab */
+    uint32_t		committed;	/* # stripes committed in slab */
+    uint32_t		next;		/* next stripe to allocate in slab */
 #endif
 };
 
@@ -79,23 +85,31 @@ typedef struct f_pooldev_index_ {
 
 /* Partition info */
 typedef struct f_layout_partition_ {
+    pthread_rwlock_t	lock;		/* partition lock */
+    struct f_layout_	*layout;	/* layout back pointer */
     uint32_t		part_num;	/* partition number */
     pthread_t		*thread;	/* partition (allocation) daemon thread struct */
+    int			thread_res;	/* allocator thread exit code */
+    pthread_mutex_t	lock_ready;	/* allocator thread ready condition mutex */
+    pthread_cond_t	cond_ready;	/* allocator thread condition ready */
+    pthread_mutex_t	a_thread_lock;	/* allocator thread wait condition mutex */
+    pthread_cond_t	a_thread_cond;	/* allocator thread wait condition */
+    int			ready;		/* allocator thread ready flag */
 
     uint32_t		slab0;		/* first slab in this partition */
     uint32_t		slab_count;	/* total number of slabs in this partition */
     uint64_t		stripe0;	/* first stripe in this partition */
     uint64_t		stripe_count;	/* total number of stripes in this partition */
 
-    /* Sheet usage maps */
-    struct f_sheet_usage *sheet_usage;	/* stripe usage in each sheet */
-    unsigned long	*sheet_bmap;	/* Allocated sheets bitmap */
-    unsigned long	*sync_bmap;	/* Sync-ed sheets bitmap */
-    unsigned long	*recovering_bmap; /* Recovering sheets bitmap */
+    /* Slab usage maps */
+    struct f_slab_usage *slab_usage;	/* stripe usage in each slab */
+    unsigned long	*slab_bmap;	/* Allocated slab bitmap */
+    unsigned long	*sync_bmap;	/* Sync-ed slabs bitmap */
+    unsigned long	*recovering_bmap; /* Recovering slabs bitmap */
     unsigned long	*error_logged_bmap; /* Sheet error logging bitmap */
-//    unsigned long	*ctv_bmap;	/* Allocated stripes bitmap (CTV only) */
+    unsigned long	*cv_bmap;	/* Allocated stripes bitmap */
     uint32_t		bmap_size;	/* Bitmap size */
-    f_sheet_t		sync_count;
+    f_slab_t		sync_count;
 //    uint32_t		sync_search;
 
      /* Stripe allocation */
@@ -106,7 +120,7 @@ typedef struct f_layout_partition_ {
     uint64_t		lwm_stripes;	/* stripe preallocation list low water mark */
     uint64_t		hwm_stripes;	/* stripe preallocation list high water mark */
     uint64_t		max_alloc_stripes; /* preallocated stripes limit */
-    uint16_t		min_alloc_sheets; /* min # of sheets to pre-allocate stripes across */
+    uint16_t		min_alloc_slabs; /* min # of slabs to pre-allocate stripes across */
     int			increase_prealloc; /* flag to increase stripe allocation limits */
 
     /* Stripe release/claim decrement */
@@ -116,14 +130,16 @@ typedef struct f_layout_partition_ {
 #if 0
     struct list_head	releaseq;	/* stripe release queue */
     pthread_spinlock_t	releaseq_lock;	/* stripe release queue lock */
-
-    atomic_t	allocated_sheets;	/* partition allocated slabs counter */
-    atomic_t	degraded_sheets;	/* partition degraded slabs counter */
-    atomic_t	missing_dev_sheets;	/* slabs with missing devices counter */
-    atomic_t	failed_sheets;		/* partition failed sheets counter */
-    atomic_t	allocated_stripes;	/* partition allocated stripes counter */
-    atomic_t	mapped_stripes;		/* partition mapped stripes counter */
 #endif
+
+    atomic_t	slabmap_version;	/* partition slabmap version */
+    atomic_t	allocated_slabs;	/* partition allocated slabs counter */
+    atomic_t	degraded_slabs;		/* partition degraded slabs counter */
+    atomic_t	missing_dev_slabs;	/* slabs with missing devices counter */
+    atomic_t	failed_slabs;		/* partition failed slabs counter */
+    atomic_t	allocated_stripes;	/* partition allocated stripes counter */
+//    atomic_t	mapped_stripes;		/* partition mapped stripes counter */
+
     int			alloc_error;	/* last allocation error */
 
     /* REMOVEME: devel stats counters. */
@@ -158,7 +174,7 @@ typedef struct f_layout_info_ {
     uint64_t		stripe_count;	/* total number of stripes */
     uint32_t		conf_id;	/* layout ID in configuration file */
     uint32_t		chunk_sz;	/* chunk size in bytes */
-    uint32_t		slab_stripes;	/* number of stripes in one slab, stripes_in_sheet */
+    uint32_t		slab_stripes;	/* number of stripes in one slab, stripes_in_slab */
     uint32_t		slab_count;	/* total number of slabs */
     uint32_t		devnum;		/* total number of devices */
     uint32_t		misdevnum;	/* number of missing devices */
@@ -179,8 +195,8 @@ typedef struct f_layout_ {
     struct f_pool_	*pool;		/* reference to parent pool structure */
 
     long		thread_run_intl; /* layout allocator thread run interval */
-    atomic_t		active_thread_count; /* layout active allocator threads count */
-    uint32_t		thread_count;	/* layout allocator threads count */
+//    atomic_t		active_thread_count; /* layout active allocator threads count */
+    uint32_t		part_count;	/* layout allocator threads count */
     struct f_layout_partition_	*lp;	/* layout partition structure or NULL */
 
     struct f_map_	*slabmap;	/* slab map */
@@ -202,6 +218,7 @@ enum f_layout_flags {
     _L_ABORTRC,		/* Abort layout recovery */
     _L_SPCERR_LOGGED,	/* Layout out of space error logged */
     _L_THREAD_FAILED,	/* Layout allocator thread failed */
+    _L_QUIT,		/* Layout exiting */
 };
 BITOPS(Layout, Active,		f_layout_, _L_ACTIVE)
 BITOPS(Layout, NoSpace,		f_layout_, _L_NOSPC)
@@ -209,6 +226,7 @@ BITOPS(Layout, Recover,		f_layout_, _L_RECOVER)
 BITOPS(Layout, AbortRC,		f_layout_, _L_ABORTRC)
 BITOPS(Layout, SpcErrLogged,	f_layout_, _L_SPCERR_LOGGED)
 BITOPS(Layout, ThreadFailed,	f_layout_, _L_THREAD_FAILED)
+BITOPS(Layout, Quit,		f_layout_, _L_QUIT)
 
 
 #endif /* F_LAYOUT_H_ */
