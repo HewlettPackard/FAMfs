@@ -186,6 +186,194 @@ static inline f_stripe_t slab_to_stripe0(F_LAYOUT_t *lo, f_slab_t slab)
 	return (slab * lo->info.slab_stripes);
 }
 
+static inline void inc_slab_used(F_LO_PART_t *lp, f_stripe_t stripe)
+{
+	f_slab_t slab = stripe_to_slab(lp->layout, stripe);
+	ASSERT(slab < lp->slab_count);
+	ASSERT(++(lp->slab_usage[slab].used) <= lp->layout->info.slab_stripes);
+	atomic_inc(&lp->allocated_stripes);
+}
+
+static inline void dec_slab_used(F_LO_PART_t *lp, f_stripe_t stripe)
+{
+	f_slab_t slab = stripe_to_slab(lp->layout, stripe);
+	ASSERT(slab < lp->slab_count);
+	lp->slab_usage[slab].used--;
+	atomic_dec(&lp->allocated_stripes);
+}
+
+static inline int slab_used(F_LO_PART_t *lp, f_stripe_t stripe)
+{
+	f_slab_t slab = stripe_to_slab(lp->layout, stripe);
+	ASSERT(slab < lp->slab_count);
+	return lp->slab_usage[slab].used;
+}
+
+static inline bool slab_full(F_LO_PART_t *lp, f_stripe_t stripe)
+{
+	return (slab_used(lp, stripe) == lp->layout->info.slab_stripes);
+}
+
+static inline bool all_slabs_full(F_LO_PART_t *lp)
+{
+	int n = lp->slab_count;
+	
+	while (n--) {
+		f_stripe_t s0 = slab_to_stripe0(lp->layout, n);
+		if (!slab_allocated(lp, n))
+			return false;
+		if (!slab_full(lp, s0))
+			return false;
+	}
+	return true;
+}
+
+static inline bool all_allocated_slabs_full(F_LO_PART_t *lp)
+{
+	int n = lp->slab_count;
+	
+	while (n--) {
+		f_stripe_t s0 = slab_to_stripe0(lp->layout, n);
+		if (!slab_allocated(lp, n))
+			continue;
+		if (!slab_full(lp, s0))
+			return false;
+	}
+	return true;
+}
+
+/* Map load callback function data */
+struct cb_data {
+	F_LO_PART_t 	*lp;
+	int		err;
+};
+
+/*
+ * Slab map load callback function. Called on each slab map PU load
+ */
+static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
+{
+	struct cb_data *data = (struct cb_data *) arg;
+	F_LO_PART_t *lp = data->lp;;
+	F_LAYOUT_t *lo = lp->layout;
+	F_SLABMAP_ENTRY_t *sme;
+	f_slab_t slab = e;
+	unsigned int pu_entries = 1U << lo->slabmap->geometry.pu_factor;
+	unsigned int e_sz = lo->slabmap->geometry.entry_sz;
+	unsigned int i;
+
+	for(i = 0; i < pu_entries; i++, slab++) {
+		f_stripe_t s0 = slab_to_stripe0(lo, slab);;
+		unsigned int n;
+
+		sme = (F_SLABMAP_ENTRY_t *)&pu->se;
+		if (!sme) {
+			LOG(LOG_ERR, "%s[%d]: error on SM entry %u", lo->info.name, lp->part_num, slab);
+			data->err++;
+		}
+	
+		/* Check slab map entry CRC */
+		if (f_crc4_sm_chk(&sme->slab_rec)) {
+			LOG(LOG_ERR, "%s[%d]: slab %u CRC error", lo->info.name, lp->part_num, slab);
+			data->err++;
+		}
+
+		if (sme->slab_rec.mapped) {
+			set_slab_allocated(lp, slab);
+		} else { /* Unmapped slabs are considered in sync */
+			set_slab_in_sync(lp, slab);
+			lp->sync_count++;
+			continue;
+		} 
+		
+		if (sme->slab_rec.stripe_0 != s0) {
+			LOG(LOG_ERR, "%s[%d]: slab %u s0 mismatch", lo->info.name, lp->part_num, slab);
+			data->err++;
+		}
+	
+		if (!sme->slab_rec.failed && !sme->slab_rec.degraded) {
+			set_slab_in_sync(lp, slab);
+			lp->sync_count++;
+		} else if (sme->slab_rec.degraded) {
+			atomic_inc(&lp->degraded_slabs);
+		}  else if (sme->slab_rec.failed) {
+			atomic_inc(&lp->failed_slabs);	
+		}
+
+		/* Process this slab map entry */
+		for (n = 0;  n < lo->info.chunks; n++) {
+			F_POOL_DEV_t *pdev = f_find_pdev(sme->extent_rec[n].media_id);	
+			
+			if (!pdev) {
+				LOG(LOG_ERR, "%s[%d]: slab %u ext %u invalid dev idx %u", 
+					lo->info.name, lp->part_num, slab, n, sme->extent_rec[n].media_id);
+				data->err++;
+			}
+
+			if (f_crc4_fast_chk(&sme->extent_rec[n], sizeof(F_EXTENT_ENTRY_t))) {
+				LOG(LOG_ERR, "%s[%d]: slab %u ext %u CRC err", lo->info.name, lp->part_num, slab, n);
+				data->err++;
+			}
+
+			if (DevMissing(&pdev->sha)) {
+				LOG(LOG_INFO, "%s[%d]: missing dev in slab %u ext %u", 
+					lo->info.name, lp->part_num, slab, n); 
+				atomic_inc(&lp->missing_dev_slabs);
+			}
+
+			/* All chunk extents have to be mapped */
+			if (!sme->extent_rec[n].mapped) {
+				LOG(LOG_ERR, "%s[%d]: slab %u ext %u not mapped", 
+					lo->info.name, lp->part_num, slab, n);
+				data->err++;
+			}
+				
+			/* Populate device extent map */
+		}
+
+		LOG(LOG_DBG, "%s[%d]: slab %u loaded: %d errors", lo->info.name, lp->part_num, slab, data->err++);
+		pu = (F_PU_VAL_t *) ((char*)pu + e_sz);
+	}
+
+}
+
+/*
+ * Claim vector load callback function. Called on each slab map PU load
+ */
+static void claimvec_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
+{
+	struct cb_data *data = (struct cb_data *) arg;
+	F_LO_PART_t *lp = data->lp;;
+	F_LAYOUT_t *lo = lp->layout;
+	f_stripe_t s = e;
+	unsigned int pu_entries = 1U << lo->claimvec->geometry.pu_factor;
+	unsigned int e_sz = lo->claimvec->geometry.entry_sz;
+	unsigned int i;
+
+	if (bbitmap_empty((unsigned long *)pu, e_sz*pu_entries)) return;
+
+	for(i = 0; i < pu_entries; i++, s++) {
+		if (test_bbit_patterns(i, CV_ALLOCATED_P | CV_LAMINATED_P, (unsigned long *)pu)) {
+			F_SLABMAP_ENTRY_t *sme;
+			f_slab_t slab = stripe_to_slab(lo, s);
+
+			/* Verify that the slab is mapped */
+			sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+			if (!sme->slab_rec.mapped) {
+				LOG(LOG_ERR, "%s[%d]: slab %u (s %lu) not mapped", 
+					lo->info.name, lp->part_num, slab, s);
+				data->err++;
+			} else {
+				inc_slab_used(lp, s);
+			}
+		} else if (test_bbit(i, CVE_PREALLOC, (unsigned long *)pu)) {
+			LOG(LOG_DBG, "%s[%d]: clearing preallocated stipe %lu", lo->info.name, lp->part_num, s);
+			set_bbit(i, CVE_FREE, (unsigned long *)pu);
+		}
+		LOG(LOG_DBG, "%s[%d]: stripe %lu loaded: %d errors", lo->info.name, lp->part_num, s, data->err++);
+	}
+}
+
 /*
  * Load and process this partition of the slab map and the claim vector 
  *
@@ -198,6 +386,7 @@ static int read_maps(F_LO_PART_t *lp)
 	F_LAYOUT_t *lo = lp->layout;
 	F_ITER_t *sm_iter;
 	F_SLABMAP_ENTRY_t *sme;
+	struct cb_data cbdata;
 	int rc;
 
 	ASSERT(lo->slabmap && lo->claimvec);
@@ -215,10 +404,12 @@ static int read_maps(F_LO_PART_t *lp)
 		return rc;
 	}
 
-	rc = f_map_load(lo->slabmap);
-	if (rc) {
-		LOG(LOG_ERR, "%s[%d]: error %d loading SM", lo->info.name, lp->part_num, rc);
-		return rc;
+	cbdata.err = 0;
+	rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
+	if (rc || cbdata.err) {
+		LOG(LOG_ERR, "%s[%d]: error %d loading SM, %d load errors", 
+			lo->info.name, lp->part_num, rc, cbdata.err);
+		return rc ? rc : cbdata.err;
 	}
 
 	LOG(LOG_DBG, "%s[%d]: loading claim vector", lo->info.name, lp->part_num);
@@ -234,10 +425,12 @@ static int read_maps(F_LO_PART_t *lp)
 		return rc;
 	}
 
-	rc = f_map_load(lo->claimvec);
-	if (rc) {
-		LOG(LOG_ERR, "%s[%d]: error %d loading CV", lo->info.name, lp->part_num, rc);
-		return rc;
+	cbdata.err = 0;
+	rc = f_map_load_cb(lo->claimvec, claimvec_load_cb, (void *)&cbdata);
+	if (rc || cbdata.err) {
+		LOG(LOG_ERR, "%s[%d]: error %d loading CV, %d load errors", 
+			lo->info.name, lp->part_num, rc, cbdata.err);
+		return rc ? rc : cbdata.err;
 	}
 
 	/* Scan this slab map partition and set the devices extents bitmaps, etc. */
@@ -558,7 +751,7 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 	}
 		
 	/* Preallocation queue maintenance */
-	ASSERT(lp->lwm_stripes && !lp->hwm_stripes);
+	ASSERT(lp->lwm_stripes && lp->hwm_stripes);
 	pthread_spin_lock(&lp->alloc_lock);
 	if (lp->increase_prealloc) {
 		if (lp->lwm_stripes < lp->max_alloc_stripes) {
