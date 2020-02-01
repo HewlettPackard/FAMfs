@@ -95,7 +95,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t **lfs_ctx_pp)
         if (NodeIsIOnode(&pool->mynode)) {
 	    i = pool->mynode.ionode_id;
             /* Initialize libfabric target on node 'i' */
-            rc = lf_servers_init(&lf_servers, params, i, 0);
+            rc = lf_servers_init(&lf_servers, params, i);
             if (rc) {
                 err("Can't start FAM emulation target on [%d]:%s rc:%d",
                     i, params->nodelist[params->node_id], rc);

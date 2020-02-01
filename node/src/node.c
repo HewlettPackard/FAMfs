@@ -70,7 +70,7 @@ static int lf_target_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params)
     node_id = params->node_id;
     srv_cnt = params->node_servers;
 
-    if (params->part_mreg == 0)
+    if (params->opts.part_mreg == 0)
 	ON_ERROR(posix_memalign(&params->fam_buf, getpagesize(), params->vmem_sz), "srv memory alloc failed");
 
     lf_servers = (LF_SRV_t **) malloc(srv_cnt*sizeof(void*));
@@ -521,7 +521,7 @@ static void do_phy_stripes(uint64_t *stripe, W_TYPE_t op, N_PARAMS_t *params, W_
 				"Error allocating chunk");
 
 			/* Add dest partition offset? */
-			if (params->part_mreg != 0)
+			if (params->opts.part_mreg != 0)
 			    fam_extent -= partition * params->srv_extents;
 			ASSERT(fam_extent >= 0);
 

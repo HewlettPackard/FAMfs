@@ -67,7 +67,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     thread_cnt = params->w_thread_cnt;
     service = node2service(params->lf_port, node, partition_id);
     sprintf(port, "%5d", service);
-    if (params->lf_mr_flags.true_fam)
+    if (params->opts.true_fam)
 	node = (int)lf_node->fam_id;
 
     // Provider discovery
@@ -189,7 +189,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     /* per worker --> */
     tx_epp = (struct fid_ep **) malloc(thread_cnt * sizeof(void*));
     ASSERT(tx_epp);
-    if (params->use_cq) {
+    if (params->opts.use_cq) {
         tx_cqq = (struct fid_cq **) malloc(thread_cnt  * sizeof(void*));
         ASSERT(tx_cqq);
     } else {
@@ -250,7 +250,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	    ON_FI_ERROR(fi_ep_bind(tx_epp[i], &av->fid, 0), "fi_ep_bind failed");
 	}
 
-        if (params->use_cq) {
+        if (params->opts.use_cq) {
             // Create completion queues
 
             memset(&cq_attr, 0, sizeof(cq_attr));
@@ -292,7 +292,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 	ON_FI_ERROR(fi_enable(ep), "fi_enale failed");
 
     // zhpe support
-    if (params->lf_mr_flags.true_fam) {
+    if (params->opts.true_fam) {
 	struct fi_zhpe_ext_ops_v1 *ext_ops;
 	size_t sa_len;
 	char url[16];
@@ -350,7 +350,7 @@ int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
     lf_node->local_desc = local_desc;
     lf_node->size = thread_cnt;
     if (!params->lf_mr_flags.prov_key)
-	lf_node->mr_key = params->lf_mr_flags.zhpe_support? FI_ZHPE_FAM_RKEY : \
+	lf_node->mr_key = params->opts.zhpe_support? FI_ZHPE_FAM_RKEY : \
 			  node2lf_mr_pkey(node, params->node_servers, partition_id);
     lf_node->cq_affinity = cq_affinity;
     lf_node->service = service;
@@ -481,14 +481,14 @@ int lf_clients_init(N_PARAMS_t *params)
 
 	    /* FI_MR_VIRT_ADDR? */
 	    if (params->lf_mr_flags.virt_addr) {
-		if (params->part_mreg == 0)
+		if (params->opts.part_mreg == 0)
 		    cl->dst_virt_addr = (uint64_t) params->fam_buf;
 		else
 		    cl->dst_virt_addr = (uint64_t) params->mr_virt_addrs[lf_client_idx];
 	    } else
 		cl->dst_virt_addr = 0;
 
-	    if (params->multi_domains || (i == 0 && part == 0)) {
+	    if (params->opts.multi_domains || (i == 0 && part == 0)) {
 		/* Join the fabric and domain */
 		cl->fabric = NULL;
 	    } else {
@@ -510,7 +510,7 @@ int lf_clients_init(N_PARAMS_t *params)
 
 	    lf_all_clients[lf_client_idx] = cl;
 	    if (verbose) {
-		if (params->lf_mr_flags.true_fam)
+		if (params->opts.true_fam)
 		    printf("%d CL attached to FAM module %d(p%d) mr_key:%lu\n",
 			   my_node_id, i, part, cl->mr_key);
 		else
@@ -732,7 +732,7 @@ int lf_srv_init(LF_SRV_t *priv)
 	ON_FI_ERROR(fi_cq_open(domain, &cq_attr, &rx_cqq[0], NULL),
 		    "srv fi_cq_open failed");
 	flags = FI_TRANSMIT | FI_RECV;
-	if (!params->use_cq)
+	if (!params->opts.use_cq)
 	    flags |= FI_SELECTIVE_COMPLETION;
 	ON_FI_ERROR(fi_ep_bind(ep, &rx_cqq[0]->fid, flags),
 		    "srv fi_ep_bind failed");
@@ -744,11 +744,11 @@ int lf_srv_init(LF_SRV_t *priv)
 
     // Create memory region
     if (!params->lf_mr_flags.prov_key)
-	mr_key = params->lf_mr_flags.zhpe_support? FI_ZHPE_FAM_RKEY : \
+	mr_key = params->opts.zhpe_support? FI_ZHPE_FAM_RKEY : \
 		 node2lf_mr_pkey(my_node_id, params->node_servers, cl->partition);
 
     void **bufp, *buf;
-    if (params->part_mreg == 0) {
+    if (params->opts.part_mreg == 0) {
 	len = params->vmem_sz;
 	bufp = &params->fam_buf;
         priv->length = 0;
@@ -756,7 +756,7 @@ int lf_srv_init(LF_SRV_t *priv)
 	unsigned int page_size = getpagesize();
 	size_t part_length = params->vmem_sz / params->node_servers;
 
-	len = (params->lf_mr_flags.true_fam)? page_size : part_length;
+	len = (params->opts.true_fam)? page_size : part_length;
 	bufp = &buf;
 #if 0 /* posix_memalign or mmap */
 	ON_ERROR(posix_memalign(bufp, page_size, len), "srv memory alloc failed");
@@ -856,7 +856,7 @@ int lf_srv_init(LF_SRV_t *priv)
     return 0;
 }
 
-int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_Comm mpi_comm)
+int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank)
 {
     LF_SRV_t **lf_servers = NULL;
     int srv_cnt, node_id, lf_client_idx;
@@ -865,7 +865,7 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
     node_id = params->node_id;
     srv_cnt = params->node_servers;
 
-    if (params->part_mreg == 0) {
+    if (params->opts.part_mreg == 0) {
 	if ((rc = -posix_memalign(&params->fam_buf, getpagesize(),
 			params->vmem_sz))) {
 	    err("%d: srv memory alloc failed", rank);
@@ -925,52 +925,17 @@ int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank, MPI_
 	}
     }
 
-    if (!mpi_comm)
-	goto _done;
-
-    /* Exchange keys */
-    if (params->lf_mr_flags.prov_key) {
-	size_t len = srv_cnt * sizeof(uint64_t);
-
-	if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
-				params->mr_prov_keys, len, MPI_BYTE, mpi_comm))) {
-	    err("MPI_Allgather failed");
-	    goto _err;
-	}
-    }
-    /* Exchange virtual addresses */
-    if (params->lf_mr_flags.virt_addr) {
-	size_t len = srv_cnt * sizeof(uint64_t);
-
-	if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
-				params->mr_virt_addrs, len, MPI_BYTE, mpi_comm))) {
-	    err("MPI_Allgather failed");
-	    goto _err;
-	}
-    }
-    if (!params->lf_mr_flags.prov_key && !params->lf_mr_flags.virt_addr)
-	MPI_Barrier(mpi_comm);
-
     if (rank == 0) {
 	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
 		params->lf_mr_flags.scalable, params->lf_mr_flags.local, params->lf_mr_flags.basic,
 		params->lf_mr_flags.prov_key, params->lf_mr_flags.virt_addr, params->lf_mr_flags.allocated);
     }
 
-_done:
     *lf_servers_p = lf_servers;
     return 0;
 
 _err:
-    if (mpi_comm) {
-	MPI_Abort(mpi_comm, rc);
-	MPI_Finalize();
-	if (rank == 0)
-	    exit(rc);
-	/* Should be killed in sleep */
-	sleep(10);
-    }
-    return -1;
+    return rc;
 }
 
 void lf_srv_free(LF_SRV_t *srv) {

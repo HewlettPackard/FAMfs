@@ -480,6 +480,8 @@ off_t           saved_off;
 
 int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off)
 {
+    F_POOL_t *pool = lfs_ctx->pool;
+    LF_INFO_t *lf_info = pool->lf_info;
     N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
     char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
@@ -512,7 +514,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     tgt_srv_addr = &node->tgt_srv_addr[0];
     tx_ep = node->tx_epp[0];
 
-    if (lfs_params->use_cq) {
+    if (lf_info->opts.use_cq) {
         tx_cq = node->tx_cqq[0];
         evnt = 0;
         event = &evnt;
@@ -555,7 +557,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
         } else if (rc < 0 && rc != -FI_EAGAIN)
             break;
 
-        if (lfs_params->use_cq) {
+        if (lf_info->opts.use_cq) {
             int ret;
 
             wcnt = 0;
@@ -583,7 +585,7 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 	//buf += transfer_sz;
     //}
 
-    if (!lfs_params->use_cq) {
+    if (!lf_info->opts.use_cq) {
         rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
             err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%016lx",
@@ -614,6 +616,8 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 
 int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid)
 {
+    F_POOL_t *pool = lfs_ctx->pool;
+    LF_INFO_t *lf_info = pool->lf_info;
     N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
     //char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
@@ -646,7 +650,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     tgt_srv_addr = &node->tgt_srv_addr[0];
     tx_ep = node->tx_epp[0];
 
-    if (lfs_params->use_cq) {
+    if (lf_info->opts.use_cq) {
         tx_cq = node->tx_cqq[0];
         evnt = 0;
         event = &evnt;
@@ -681,7 +685,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
         } else if (rc < 0 && rc != -FI_EAGAIN)
             break;
 
-        if (lfs_params->use_cq) {
+        if (lf_info->opts.use_cq) {
             int ret;
 
             wcnt = 0;
@@ -699,7 +703,7 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     ON_FI_ERROR(rc, "%d: fi_read failed on FAM module %d(p%d)",
                     lfs_params->node_id, src_node, fam_stripe->partition);
 
-    if (!lfs_params->use_cq) {
+    if (!lf_info->opts.use_cq) {
         rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
             err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",

@@ -71,9 +71,7 @@ typedef struct lf_mr_mode_ {
 	unsigned int prov_key:1;
 	unsigned int virt_addr:1;
 	unsigned int allocated:1;
-	unsigned int zhpe_support:1;
-	unsigned int true_fam:1;
-	unsigned int _f:24;
+	unsigned int _f:26;
 } __attribute__((packed)) LF_MR_MODE_t;
 
 typedef struct lf_prg_mode_ {
@@ -82,6 +80,15 @@ typedef struct lf_prg_mode_ {
 	unsigned int _f:30;
 } __attribute__((packed)) LF_PRG_MODE_t;
 
+typedef struct lf_opts_ {
+	unsigned int zhpe_support:1;
+	unsigned int true_fam:1;
+	unsigned int part_mreg:1;
+	unsigned int multi_domains:1;
+	unsigned int use_cq:1;		/* 1: use CQ, 0: use I/O completion counters */
+	unsigned int _f:27;
+} __attribute__((packed)) LF_OPTS_t;
+
 typedef struct lf_info_ {
 	char		*fabric;
 	char		*domain;
@@ -89,7 +96,7 @@ typedef struct lf_info_ {
 	char		*provider;
 	LF_MR_MODE_t	mrreg;
 	LF_PRG_MODE_t	progress;
-	int		use_cq;
+	LF_OPTS_t	opts;		/* libfabric connection options */
 	uint64_t	io_timeout_ms;
 } LF_INFO_t;
 
@@ -151,11 +158,12 @@ typedef struct n_params_ {
 	int	    lf_srv_rx_ctx;	/* libfabric: number of SEPs rx contexts on a server */
 	LF_MR_MODE_t  lf_mr_flags;	/* libfabric: 1 - use scalable memory registration model */
 	LF_PRG_MODE_t lf_progress_flags;/* libfabric: force FI_PROGRESS_AUTO or _MANUAL */
+	LF_OPTS_t   opts;		/* libfabric connection options */
 	int	    verbose;		/* debug flag */
-	int         multi_domains;	/* 1: Client has to open multiple domains: one per initiator's node */
+//	int         multi_domains;	/* 1: Client has to open multiple domains: one per initiator's node */
 	int	    verify;		/* 0: Don't fill and verify data buffer */
 	int	    set_affinity;	/* set CPU affinity to workers and CQ */
-        int         use_cq;             /* use completion queue instead of counters */
+//	int         use_cq;             /* use completion queue instead of counters */
 	char	    *lf_fabric;		/* libfabric fabric */
 	char	    *lf_domain;		/* libfabric domain */
 	char	    *prov_name;		/* libfabric provider name */
@@ -163,9 +171,8 @@ typedef struct n_params_ {
 	unsigned int	node_servers;	/* number of LF servers per node */
 
 	int		cmd_trigger;	/* >0: trigget this command by LF server remote access */
-	int		part_mreg;	/* 1: register separate buffer per LF server partition */
-	MPI_Comm	mpi_comm;	/* MPI communicator for this node in servers/clients */
-	//int		client_only;	/* Run only LF client(s) */
+//	int		part_mreg;	/* 1: register separate buffer per LF server partition */
+//	MPI_Comm	mpi_comm;	/* MPI communicator for this node in servers/clients */
 
 	int		cmdv[ION_CMD_MAX]; /* parsed commands */
 	int		cmdc;		/* parsed command count */
@@ -197,8 +204,7 @@ typedef struct lf_srv_ {
 int lf_clients_init(N_PARAMS_t *params);
 int lf_client_init(LF_CL_t *client, N_PARAMS_t *params);
 void lf_client_free(LF_CL_t *client);
-int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params,
-    int rank, MPI_Comm mpi_comm);
+int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank);
 int lf_srv_init(LF_SRV_t *priv);
 void lf_srv_free(LF_SRV_t *priv);
 ssize_t lf_check_progress(struct fid_cq *cq, ssize_t *cmp);

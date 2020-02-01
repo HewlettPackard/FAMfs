@@ -55,6 +55,7 @@ static int get_lf_meta(N_PARAMS_t *params)
 int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
 {
     F_POOL_t *pool;
+    LF_INFO_t *lf_info;
     N_PARAMS_t *params;
     N_STRIPE_t *stripe = NULL;
     LFS_CTX_t *lfs_ctx_p;
@@ -70,6 +71,7 @@ int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
     pool = f_get_pool();
     assert( pool );
     params = pool->lfs_params;
+    lf_info = pool->lf_info;
 
     if ((rc = get_lf_meta(params))) {
 	DEBUG("rank:%d failed to get LF metadata from the delegator on mount, error:%d",
@@ -114,7 +116,7 @@ int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
     stripe->extent_stipes	= params->extent_sz / params->chunk_sz;
     stripe->srv_extents		= params->srv_extents;
     stripe->part_count		= params->node_servers;
-    stripe->part_mreg		= params->part_mreg;
+    stripe->part_mreg		= lf_info->opts.part_mreg;
     /* TODO: Allocate stripes to clients. Now the clients must me evenly distributed. */
     //stripe->node_id		= my_srv_rank * local_rank_cnt + local_rank_idx;
     //stripe->node_size		= my_srv_size * local_rank_cnt;

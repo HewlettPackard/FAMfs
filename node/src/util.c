@@ -660,7 +660,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->nodelist = nodelist;
     params->fam_map = fam_map;
     if (params->fam_map)
-	params->lf_mr_flags.true_fam = 1;
+	params->opts.true_fam = 1;
     params->vmem_sz = vmem_sz;
     params->chunk_sz = chunk_sz;
     params->extent_sz = extent_sz;
@@ -683,7 +683,7 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
     params->lf_domain = lf_domain;
     params->mr_prov_keys = NULL;
     params->mr_virt_addrs = NULL;
-    params->mpi_comm = MPI_COMM_NULL;
+//    params->mpi_comm = MPI_COMM_NULL;
 
     memset(&params->lf_mr_flags, 0, sizeof(LF_MR_MODE_t));
     if (lf_mr_basic) {
@@ -707,21 +707,21 @@ int arg_parser(int argc, char **argv, int be_verbose, int client_mode, N_PARAMS_
 	params->lf_mr_flags.scalable = 1;
 
     params->lf_mr_flags.local = lf_mr_local;
-    params->lf_mr_flags.zhpe_support = zhpe_support;
     params->lf_progress_flags.progress_manual = lf_progress_manual;
     params->lf_progress_flags.progress_auto = lf_progress_auto;
-    params->multi_domains = multi_domains;
+    params->opts.zhpe_support = zhpe_support;
+    params->opts.multi_domains = multi_domains;
+    params->opts.part_mreg = part_mreg;
 
     params->verify = verify;
     params->verbose = verbose;
     params->set_affinity = set_affinity;
-    params->use_cq = use_cq;
+    params->opts.use_cq = use_cq;
     params->lf_srv_rx_ctx = lf_srv_rx_ctx;
     params->srv_extents = srv_extents;
     params->node_servers = srv_cnt;
     params->part_sz = (off_t)vmem_sz / srv_cnt;
     params->cmd_trigger = cmd_trigger;
-    params->part_mreg = part_mreg;
     params->stripe_buf = NULL;
     params->fam_buf = NULL;
     params->lf_clients = NULL;

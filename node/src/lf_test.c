@@ -338,11 +338,32 @@ int main(int argc, char **argv) {
     if (lf_role == LF_ROLE_SRV) {
 	/* Emulate ION FAMs with libfabric targets */
 	if (!params->fam_map) {
-	    rc = lf_servers_init(&lf_servers, params, role_rank, mpi_comm);
+	    rc = lf_servers_init(&lf_servers, params, role_rank);
 	    if (rc) {
 		err("Can't start FAM emulation target on %s",
 		    params->nodelist[node_id]);
 		node_exit(1);
+	    }
+
+	    /* Exchange keys */
+	    if (params->lf_mr_flags.prov_key) {
+		size_t len = srv_cnt * sizeof(uint64_t);
+
+		if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
+				params->mr_prov_keys, len, MPI_BYTE, mpi_comm))) {
+		    err("MPI_Allgather failed");
+		    node_exit(1);
+		}
+	    }
+	    /* Exchange virtual addresses */
+	    if (params->lf_mr_flags.virt_addr) {
+		size_t len = srv_cnt * sizeof(uint64_t);
+
+		if ((rc = MPI_Allgather(MPI_IN_PLACE, len, MPI_BYTE,
+				params->mr_virt_addrs, len, MPI_BYTE, mpi_comm))) {
+		    err("MPI_Allgather failed");
+		    node_exit(1);
+		}
 	    }
 	}
 	if (params->verbose)
@@ -482,6 +503,7 @@ int main(int argc, char **argv) {
 	MPI_Barrier(mpi_comm);
 	if (params->verbose && role_rank == 0)
 	    printf("Servers exited\n");
+	MPI_Comm_free(&mpi_comm);
     }
     if (rc == 0)
 	printf("%d: SUCCESS!!!\n", rank);
@@ -598,7 +620,7 @@ static int do_phy_stripes(uint64_t *stripe, W_TYPE_t op, W_PRIVATE_t *priv,
 		map_stripe_chunk(chunk, extent, nchunks, params->parities);
 
 		/* Add dest partition offset? */
-		if (params->part_mreg != 0)
+		if (params->opts.part_mreg != 0)
 		    fam_extent -= partition * params->srv_extents;
 		ASSERT(fam_extent >= 0);
 
@@ -656,7 +678,7 @@ static void stripe_io_counter_clear(W_PRIVATE_t *priv, enum cntr_op_ op)
 
 	switch (op) {
 	case CNTR_OP_R:
-	    if (params->use_cq) {
+	    if (params->opts.use_cq) {
 		chunk->r_event = 0;
 	    } else {
 		cntr = node->rcnts[thread_id];
@@ -665,7 +687,7 @@ static void stripe_io_counter_clear(W_PRIVATE_t *priv, enum cntr_op_ op)
 	    }
 	    break;
 	case CNTR_OP_W:
-	    if (params->use_cq) {
+	    if (params->opts.use_cq) {
 		chunk->r_event = 0;
 	    } else {
 		cntr = node->wcnts[thread_id];
@@ -722,7 +744,7 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 
 	switch (op) {
 	case CNTR_OP_R:
-	    if (params->use_cq) {
+	    if (params->opts.use_cq) {
 		tx_cq = node->tx_cqq[thread_id];
 	    } else {
 		cntr = node->rcnts[thread_id];
@@ -730,7 +752,7 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 	    event = &chunk->r_event;
 	    break;
 	case CNTR_OP_W:
-	    if (params->use_cq) {
+	    if (params->opts.use_cq) {
 		tx_cq = node->tx_cqq[thread_id];
 	    } else {
 		cntr = node->wcnts[thread_id];
@@ -743,7 +765,7 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 	if (*event == 0)
 		continue;
 
-	if (params->use_cq) {
+	if (params->opts.use_cq) {
 	    cnt = *event;
 	    /* TODO: Implement timeout */
 	    do {
@@ -766,7 +788,7 @@ static int stripe_io_counter_wait(W_PRIVATE_t *priv, enum cntr_op_ op)
 #endif
 	} else if (rc) {
 	    int err;
-	    if (params->use_cq) {
+	    if (params->opts.use_cq) {
 		count = *event - (unsigned int)cnt;
 		err = errno;
 	    } else {
@@ -847,7 +869,7 @@ static int do_chunk(W_PRIVATE_t *priv, int chunk_n, uint64_t stripe, enum cntr_o
 	    } else if (rc < 0 && rc != -FI_EAGAIN)
 		break;
 
-	    if (params->use_cq) {
+	    if (params->opts.use_cq) {
 #ifdef IBV_SQ_WR_DEPTH
 		if (rc == 0 && *event <= IBV_SQ_WR_DEPTH + cnt)
 #else

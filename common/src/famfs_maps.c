@@ -345,7 +345,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (b)
 	SetPoolFAMEmul(p);
     else
-	lf_info->mrreg.true_fam = 1;
+	lf_info->opts.true_fam = 1;
     if (configurator_int_val(c->devices_size, &l)) goto _noarg;
     pool_info->size_def = (size_t)l;
     if (configurator_int_val(c->devices_pk, &l)) goto _noarg;
@@ -357,10 +357,10 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     lf_info->service = strdup(c->devices_port);
     lf_info->provider = strdup(c->devices_provider);
     if (!strcmp(lf_info->provider, "zhpe"))
-	lf_info->mrreg.zhpe_support = 1;
+	lf_info->opts.zhpe_support = 1;
     if (configurator_bool_val(c->devices_use_cq, &b)) goto _noarg;
     if (b)
-	lf_info->use_cq = 1;
+	lf_info->opts.use_cq = 1;
     if (configurator_int_val(c->devices_timeout, &l)) goto _noarg;
     lf_info->io_timeout_ms = (uint64_t)l;
     s = c->devices_memreg;
@@ -767,10 +767,12 @@ static int cfg_alloc_params(F_POOL_t *p, N_PARAMS_t **params_p)
     params->vmem_sz = info->extent_sz * params->srv_extents;
     params->node_servers = 1;
     /* part_mreg:1 - emulate multiple FAMs on each node as separate "partitions" */
-    params->part_mreg = (fam_emul)?1:0;
-    params->use_cq = lf_info->use_cq;
+    params->opts.zhpe_support = lf_info->opts.zhpe_support;
+    params->opts.true_fam = lf_info->opts.true_fam;
+    params->opts.part_mreg = (fam_emul)?1:0;
+    params->opts.use_cq = lf_info->opts.use_cq;
+    params->opts.multi_domains = 0;
     params->io_timeout_ms = lf_info->io_timeout_ms;
-    params->multi_domains = 0;
     memcpy(&params->lf_mr_flags, &lf_info->mrreg, sizeof(LF_MR_MODE_t));
     memcpy(&params->lf_progress_flags, &lf_info->progress, sizeof(LF_PRG_MODE_t));
     if (lf_info->fabric)
@@ -786,7 +788,7 @@ static int cfg_alloc_params(F_POOL_t *p, N_PARAMS_t **params_p)
     params->fam_map = map_fams_to_ionodes(p, params->fam_cnt);
 
     params->verbose = p->verbose;
-    params->mpi_comm = MPI_COMM_NULL;
+    //params->mpi_comm = MPI_COMM_NULL;
     params->w_thread_cnt = 1;
     if (!params->lf_mr_flags.scalable) {
         size_t len = params->fam_cnt * params->node_servers * sizeof(uint64_t);
