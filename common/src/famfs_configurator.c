@@ -627,14 +627,14 @@ int inih_config_handler(void *user,
 #define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)		\
     else if ((strcmp(section, #sec) == 0) &&			\
 	     (strcmp(kee, #key) == 0)) {			\
-	curval = cfg->sec##_##key;				\
+	char **v = &cfg->sec##_##key;				\
+	curval = *v;						\
 	defval = stringify(dv);					\
-	if (curval == NULL)					\
-	    cfg->sec##_##key = strdup(val);			\
-	else if (strcmp(defval, curval) == 0) {			\
-	    free(cfg->sec##_##key);				\
-	    cfg->sec##_##key = strdup(val);			\
-	}							\
+	if (curval && strcmp(defval, curval) == 0)		\
+	    free(*v);						\
+	*v = (!strcmp(#typ,"STRING") &&				\
+	      val[0]=='\"' && strlen(val)>1)?			\
+		    strndup(val+1, strlen(val)-2) : strdup(val);\
     }
 
 #define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)	\
