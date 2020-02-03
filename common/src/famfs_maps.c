@@ -888,6 +888,27 @@ void f_free_layouts_info(void)
     }
 }
 
+static void print_lf_info(LF_INFO_t *info) {
+    LF_MR_MODE_t m = info->mrreg;
+    LF_PRG_MODE_t pgs = info->progress;
+    LF_OPTS_t o = info->opts;
+
+    printf("\nlibfabric\n");
+    printf("provider:%s fabric:%s domain:%s service:%s timeout:%.3f sec\n",
+	info->provider, info->fabric, info->domain, info->service,
+	(float)info->io_timeout_ms/1000);
+    printf("MR mode: %s%s%s%s%s%s\n",
+	m.scalable?"scalable, ":"", m.basic?"basic, ":"",
+	m.local?"local, ":"", m.prov_key?"prov_key, ":"",
+	m. virt_addr?"virt_addr, ":"", m.allocated?"allocated":"");
+    printf("Data/control progress: %s%s\n",
+	pgs.progress_manual?"manual ":"", pgs.progress_auto?"progress_auto":"");
+    printf("Options: %s%s%s%s%s\n",
+	o.zhpe_support?"zhpe_support, ":"", o.true_fam?"true_fam, ":"",
+	o.part_mreg?"part_mreg, ":"", o.multi_domains?"multi_domains, ":"",
+	o.use_cq?"use_cq":"");
+}
+
 void f_print_layouts(void) {
     F_POOL_t *p = pool;
     F_POOL_INFO_t *pool_info;
@@ -917,6 +938,9 @@ void f_print_layouts(void) {
 		pr_uuid, pdev->size);
 	}
     }
+
+    /* libfabric info */
+    print_lf_info(p->lf_info);
 
     /* Layouts */
     printf("\nPool has %u layout(s).\n", pool_info->layouts_count);
