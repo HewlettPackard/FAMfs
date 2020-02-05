@@ -239,9 +239,10 @@ static void free_pdev(F_POOL_DEV_t *pdev)
 {
     if (pdev->dev) {
 	pthread_rwlock_destroy(&pdev->rwlock);
-	free(pdev->dev->f.url);
+	f_dev_free(&pdev->dev->f);
 	free(pdev->dev);
     }
+    free(pdev->sha);
 }
 
 static void free_pool(F_POOL_t *p)
@@ -250,8 +251,6 @@ static void free_pool(F_POOL_t *p)
 	F_POOL_DEV_t *pdev;
 	unsigned int i;
 
-	if (p->ionode_comm)
-	    MPI_Comm_free(&p->ionode_comm);
 	free_lf_params(&p->lfs_params);
 
 	pdev = p->devlist;
@@ -260,6 +259,7 @@ static void free_pool(F_POOL_t *p)
 		free_pdev(pdev);
 	    free(p->devlist);
 	}
+	f_domain_close(&p->mynode.domain);
 	free(p->info.pdev_indexes);
 	free(p->info.media_ids);
 
@@ -278,6 +278,17 @@ static void free_pool(F_POOL_t *p)
 	}
 	free(p->ionode_fams);
 
+	if (p->ionode_comm) {
+	    MPI_Barrier(p->ionode_comm);
+	    MPI_Comm_free(&p->ionode_comm);
+	}
+	if (p->mynode.emul_devlist) {
+	    for (i = 0; i < p->mynode.emul_devs; i++)
+		free_pdev(pdev);
+	    free(p->mynode.emul_devlist);
+	}
+	f_domain_close(&p->mynode.emul_domain);
+
 	if (p->lf_info) {
 	    LF_INFO_t *lf_info = p->lf_info;
 
@@ -287,11 +298,11 @@ static void free_pool(F_POOL_t *p)
 	    free(lf_info->provider);
 	    free(lf_info);
 	}
+	free(p->mynode.hostname);
 
 	f_dict_free(p->dict);
 	pthread_spin_destroy(&p->dict_lock);
 	pthread_rwlock_destroy(&p->lock);
-	free(p->mynode.hostname);
 	free(p);
     }
 }
@@ -340,7 +351,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (configurator_int_val(c->devices_extent_size, &l)) goto _noarg;
     pool_info->extent_sz = (unsigned long)l;
     if (configurator_int_val(c->devices_offset, &l)) goto _noarg;
-    pool_info->extent_start = (unsigned long)l;
+    pool_info->data_offset = (unsigned long)l;
     if (configurator_bool_val(c->devices_emulated, &b)) goto _noarg;
     if (b)
 	SetPoolFAMEmul(p);
@@ -493,13 +504,18 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	pdev->size = (size_t)l;
 	if (pdev->size == 0)
 	    pdev->size = p->info.size_def;
-	/* TODO: Parse extent_sz, extent_start */
-	pdev->extent_start = p->info.extent_start;
+
+	/* TODO: Parse extent_sz, offset */
+	pdev->extent_start = p->info.data_offset/p->info.extent_sz;
 	pdev->extent_sz = p->info.extent_sz;
 	pdev->extent_count = pdev->size/p->info.extent_sz;
+
+	pdev->sha = (F_PDEV_SHA_t *) calloc(sizeof(F_PDEV_SHA_t), 1);
+	if (!pdev->sha) goto _nomem;
+
 	if (configurator_bool_val(c->device_failed[u][0], &b)) goto _noarg;
 	if (b)
-	    SetDevFailed(&pdev->sha);
+	    SetDevFailed(pdev->sha);
 	/* Allocate FAMFS device */
 	pdev->dev = (F_DEV_t *) calloc(sizeof(F_DEV_t), 1);
 	if (!pdev->dev) goto _nomem;

@@ -315,7 +315,7 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 				data->err++;
 			}
 
-			if (DevMissing(&pdev->sha)) {
+			if (DevMissing(pdev->sha)) {
 				LOG(LOG_INFO, "%s[%d]: missing dev in slab %u ext %u", 
 					lo->info.name, lp->part_num, slab, n); 
 				atomic_inc(&lp->missing_dev_slabs);
@@ -493,7 +493,7 @@ static int read_maps(F_LO_PART_t *lp)
 				goto _ret;
 			}
 
-			if (DevMissing(&pdev->sha)) {
+			if (DevMissing(pdev->sha)) {
 				LOG(LOG_INFO, "%s[%d]: missing dev in slab %u ext %u", 
 					lo->info.name, lp->part_num, e, n); 
 				atomic_inc(&lp->missing_dev_slabs);

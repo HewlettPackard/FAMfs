@@ -36,19 +36,37 @@ typedef struct fam_map_ {
 	unsigned long long **fam_ids;	/* [node]->[fam] = <FAM Id> */
 } FAM_MAP_t;
 
+/* libfabric domain structure: that could be per device or per process */
+typedef struct lf_dom_ {
+    struct fid_fabric	*fabric;
+    struct fid_domain	*domain;
+    struct fid_av	*av;
+} LF_DOM_t;
+
 typedef struct fam_dev_ {
 //	size_t		size;		/* remote memory size, bytes */
 //	uint64_t	offset;		/* remote memory offset, bytes */
 	char		*url;		/* GenZ device URL */
-	uint64_t	pkey;		/* protection key associated with the remote memory */
-	void		*usr_buf;	/* optional user buffer */
+	void		*usr_buf;	/* optional user buffer, reference */
+	void		*local_desc;	/* local buffer descriptor */
 	/* unsigned long */
 	fi_addr_t	fi_addr;	/* array index of fabric address returned by av_insert */
 	uint64_t	virt_addr;	/* address of remote memory to access or NULL */
+	struct fid_mr	*mr;		/* memory region */
 	struct fid_ep	*ep;		/* connected fabric endpoint */
 	struct fid_cntr *rcnt;		/* completion and event counter for reads */
 	struct fid_cntr	*wcnt;		/* completion and event counter for writes */
-	struct fid_cq	*tx_cq;		/* comlition queue bound to this endpoint or NULL */
+	struct fid_cq	*cq;		/* comlition queue bound to this endpoint or NULL */
+	LF_DOM_t	*lf_dom;	/* libfabric domain struct or NULL if per process */
+	int		cq_affinity;	/* CQ affinity or zero */
+	union {
+	    uint64_t	pkey;		/* protection key associated with the remote memory */
+	    uint64_t	mr_key;		/* memory region protection key for a local buffer */
+	};
+
+	/* FAM emulation only */
+	int		service;	/* remote port number */
+	unsigned int	fam_part;	/* FAM partition number or zero */
 } FAM_DEV_t;
 
 typedef struct fam_bdev_ {
@@ -201,6 +219,8 @@ typedef struct lf_srv_ {
 
 
 /* defined in famfs_lf_connect.c */
+void f_dev_free(struct fam_dev_ *fdev);
+void f_domain_close(struct lf_dom_ **domain);
 int lf_clients_init(N_PARAMS_t *params);
 int lf_client_init(LF_CL_t *client, N_PARAMS_t *params);
 void lf_client_free(LF_CL_t *client);

@@ -22,6 +22,7 @@
 /* defined in famfs_lf_connect.h */
 struct fam_map_;
 struct lf_info_;
+struct lf_dom_;
 struct n_params_;
 
 
@@ -31,10 +32,10 @@ typedef uint64_t	FI_UINT64_t;
 
 /* IO node info */
 typedef struct f_ionode_info_ {
-    uuid_t	uuid;		/* IO node UUID */
-    char	*hostname;	/* IO node hostname */
-    uint32_t	conf_id;	/* ID in configuration file */
-    uint32_t	mds;		/* number of MD servers running on this node */
+    uuid_t		uuid;		/* IO node UUID */
+    char		*hostname;	/* IO node hostname */
+    uint32_t		conf_id;	/* ID in configuration file */
+    uint32_t		mds;		/* number of MD servers running on this node */
     struct {
 	unsigned long	    flags;	/* f_ioninfo_flags */
     }		io;
@@ -69,10 +70,15 @@ enum pool_dev_flags {
     _DEV_FAILED,	/* device failed */
     _DEV_DISABLED,	/* device disabled (for example, being replaced) */
     _DEV_MISSING,	/* device is missing from the pool */
+    /* mynode.emul_devlist flags only: */
+    _DEV_EMULATED,	/* FAM device emulation with libfabric server */
+    _DEV_MULTIDOMAIN,	/* open domain per device */
 };
 BITOPS(Dev, Failed,     f_pdev_sha_, _DEV_FAILED)
 BITOPS(Dev, Disabled,   f_pdev_sha_, _DEV_DISABLED)
 BITOPS(Dev, Missing,    f_pdev_sha_, _DEV_MISSING)
+BITOPS(Dev, Emulated,   f_pdev_sha_, _DEV_EMULATED)
+BITOPS(Dev, MultiDomain,f_pdev_sha_, _DEV_MULTIDOMAIN)
 
 /* Allocation group of devices */
 typedef struct f_ag_ {
@@ -99,7 +105,7 @@ typedef struct f_pool_dev_ {
     uint16_t		idx_ag;		/* 1st index: AG */
     uint16_t		idx_dev;	/* 2nd index: pool device */
 
-    F_PDEV_SHA_t	sha;		/* pool device shareable atomics counters */
+    F_PDEV_SHA_t	*sha;		/* pool device shareable atomics counters */
 } F_POOL_DEV_t;
 /* pool_index special value: not an index, i.e. this device array element is empty */
 #define F_PDI_NONE	(( __typeof__ (((F_POOL_DEV_t*)0)->pool_index)) \
@@ -108,7 +114,7 @@ typedef struct f_pool_dev_ {
 /* Pool info */
 typedef struct f_pool_info_ {
     uint64_t		extent_sz;	/* pool extent size in bytes */
-    uint64_t		extent_start;	/* data starts at this offset on pool devices */
+    uint64_t		data_offset;	/* data starts at this offset on pool devices */
     size_t		size_def;	/* default device size, bytes */
     uint64_t		pkey_def;	/* default FAM device protection key */
     uint32_t		layouts_count;	/* number of layouts in pool */
@@ -123,6 +129,10 @@ typedef struct f_pool_info_ {
 
 typedef struct f_mynode_ {
     char		*hostname;	/* this node's hostname */
+    struct lf_dom_	*domain;	/* libfabric domain which is open on this node */
+    struct lf_dom_	*emul_domain;	/* libfabric domain for FAM emulation or NULL */
+    F_POOL_DEV_t	*emul_devlist;	/* array of FAM emulated devices */
+    uint32_t		emul_devs;	/* number of emulated FAMs; size of emul_devlist */
     uint32_t		ionode_id;	/* for IO node ONLY: index in ionodes array */
     struct {
 	unsigned long	    flags;	/* f_mynode_flags */

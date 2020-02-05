@@ -26,6 +26,54 @@
 #include "famfs_lf_connect.h"
 
 
+void f_domain_close(struct lf_dom_ **domain_p)
+{
+    LF_DOM_t *domain = *domain_p;
+    int rc;
+
+    if (!domain)
+	return;
+
+    rc = fi_close(&domain->av->fid);
+    if (rc)
+	fi_err(rc, "close av");
+
+    rc = fi_close(&domain->domain->fid);
+    if (rc)
+	fi_err(rc, "close domain");
+
+    rc = fi_close(&domain->fabric->fid);
+    if (rc)
+	fi_err(rc, "close fabric");
+
+    *domain_p = NULL;
+}
+
+void f_dev_free(struct fam_dev_ *d)
+{
+    int rc;
+
+    if (!d)
+	return;
+
+    if (d->mr && (rc = fi_close(&d->mr->fid)))
+	fi_err(rc, "close mr");
+
+    if (d->ep && (rc = fi_close(&d->ep->fid)))
+	fi_err(rc, "close ep");
+
+    if (d->rcnt && (rc = fi_close(&d->rcnt->fid)))
+	fi_err(rc, "close rcnt");
+
+    if (d->wcnt && (rc = fi_close(&d->wcnt->fid)))
+	fi_err(rc, "close wcnt");
+
+    if (d->cq && (rc = fi_close(&d->cq->fid)))
+	fi_err(rc, "close cq");
+
+    free(d->url);
+}
+
 int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)
 {
     struct fi_info      *hints, *fi;
