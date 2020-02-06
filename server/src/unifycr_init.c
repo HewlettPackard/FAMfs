@@ -61,6 +61,8 @@
 #include "f_layout.h"
 #include "famfs_maps.h"
 #include "f_allocator.h"
+#include "mpi_utils.h"
+
 
 int *local_rank_lst;
 int local_rank_cnt;

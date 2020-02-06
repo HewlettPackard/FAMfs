@@ -30,6 +30,7 @@
 #include "lf_test.h"
 #include "ec_perf.h"
 #include "w_pool.h"
+#include "mpi_utils.h"
 
 
 /* If defined: limit send queue depth when CQ is used */

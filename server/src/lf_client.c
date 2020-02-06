@@ -26,6 +26,7 @@
 #include "unifycr_metadata.h"
 #include "famfs_maps.h"
 #include "f_pool.h"
+#include "mpi_utils.h"
 
 
 /* Start FAM emulation servers on nodes in hostlist */
