@@ -7,6 +7,7 @@
 #include <uuid/uuid.h>
 
 #include "famfs_env.h"
+#include "famfs_error.h"
 #include "f_pool.h"
 #include "f_layout.h"
 #include "famfs_maps.h"
@@ -235,6 +236,49 @@ static int cmp_pdi(const void *a, const void *b)
     return -1;
 }
 
+static int dev_ionode(F_POOL_t *p, struct f_dev_ *dev)
+{
+    F_IONODE_INFO_t *ionode = p->ionodes;
+    char *topo = dev->f.zfm.topo;
+    uint32_t i;
+
+    for (i = 0; i < p->ionode_count; i++, ionode++) {
+	if (!strncmp(topo, ionode->zfm.topo, strlen(ionode->zfm.topo)))
+	    return (int)i;
+    }
+    return -1;
+}
+
+static int clone_pool_dev(F_POOL_DEV_t *clone, F_POOL_DEV_t *pdev)
+{
+    FAM_DEV_t *fam, *cfam;
+
+    uuid_copy(clone->uuid, pdev->uuid);
+    clone->size = pdev->size;
+    clone->extent_sz = pdev->extent_sz;
+    clone->extent_start = pdev->extent_start;
+    clone->extent_count = pdev->extent_count;
+    clone->pool_index = pdev->pool_index;
+    clone->idx_ag = pdev->idx_ag;
+    clone->idx_dev = pdev->idx_dev;
+
+    fam = &pdev->dev->f;
+    assert( fam );
+    clone->dev = (F_DEV_t *) calloc(sizeof(F_DEV_t), 1);
+    if (!clone->dev)
+	return -ENOMEM;
+    cfam = &clone->dev->f;
+    cfam->zfm.topo = strdup(fam->zfm.topo);
+    if (fam->zfm.znode)
+	cfam->zfm.znode = strdup(fam->zfm.znode);
+    if (fam->zfm.geo)
+	cfam->zfm.geo = strdup(fam->zfm.geo);
+    cfam->ionode_idx = fam->ionode_idx;
+    cfam->service = fam->service;
+    cfam->fam_part = fam->fam_part;
+    return 0;
+}
+
 static void free_pdev(F_POOL_DEV_t *pdev)
 {
     if (pdev->dev) {
@@ -243,6 +287,56 @@ static void free_pdev(F_POOL_DEV_t *pdev)
 	free(pdev->dev);
     }
     free(pdev->sha);
+}
+
+/* Allocate libfabric devices for FAM emulation on this IO node. */
+static int emulated_devs_alloc(F_POOL_t *p)
+{
+    F_POOL_DEV_t *devlist = NULL;
+    F_POOL_DEV_t *pdev, *fdev;
+    F_POOL_INFO_t *info = &p->info;
+    F_MYNODE_t *mynode = &p->mynode;
+    uint16_t ion_idx, *pd_idx;
+    unsigned int i, j, k;
+    int rc;
+
+    ion_idx = (uint16_t)mynode->ionode_id;
+    pd_idx = info->pdev_indexes;
+    for (i = j = 0; i < info->dev_count; i++, pd_idx++) {
+        pdev = &p->devlist[*pd_idx];
+	if (pdev->dev->f.ionode_idx == ion_idx)
+	    j++;
+    }
+
+    if (j == 0) {
+	err("ionode #%u (%s) has no FAMs - please check configuration!",
+	    ion_idx, mynode->hostname);
+	return 0;
+    }
+    devlist = fdev = (F_POOL_DEV_t*) calloc(j, sizeof(F_POOL_DEV_t));
+
+    pd_idx = info->pdev_indexes;
+    for (i = k = 0; i < info->dev_count; i++, pd_idx++) {
+        pdev = &p->devlist[*pd_idx];
+	if (pdev->dev->f.ionode_idx != ion_idx)
+	    continue;
+	if ((rc = clone_pool_dev(fdev, pdev)))
+	    goto _err;
+	fdev->dev->f.zfm.url = strdup(mynode->hostname);
+	fdev->pool = p;
+	fdev++; k++;
+    }
+
+    mynode->emul_devs = j;
+    mynode->emul_devlist = devlist;
+    return 0;
+
+_err:
+    fdev = devlist;
+    for (i = 0; i < k; i++, fdev++)
+	 free_pdev(fdev);
+    free(devlist);
+    return rc;
 }
 
 static void free_pool(F_POOL_t *p)
@@ -264,16 +358,21 @@ static void free_pool(F_POOL_t *p)
 	free(p->info.media_ids);
 
 	if (p->ags) {
-	    for (i = 0; i < p->pool_ags; i++) {
-		free(p->ags[i].geo);
+	    for (i = 0; i < p->pool_ags; i++)
 		free(p->ags[i].gpdi);
-	    }
 	    free(p->ags);
 	}
 
 	if (p->ionodes) {
-	    for (i = 0; i < p->ionode_count; i++)
-		free(p->ionodes[i].hostname);
+	    F_IONODE_INFO_t *ioi = p->ionodes;
+
+	    for (i = 0; i < p->ionode_count; i++, ioi++) {
+		free(ioi->hostname);
+		free(ioi->zfm.url);
+		free(ioi->zfm.znode);
+		free(ioi->zfm.topo);
+		free(ioi->zfm.geo);
+	    }
 	    free(p->ionodes);
 	}
 	free(p->ionode_fams);
@@ -283,7 +382,8 @@ static void free_pool(F_POOL_t *p)
 	    MPI_Comm_free(&p->ionode_comm);
 	}
 	if (p->mynode.emul_devlist) {
-	    for (i = 0; i < p->mynode.emul_devs; i++)
+	    pdev = p->mynode.emul_devlist;
+	    for (i = 0; i < p->mynode.emul_devs; i++, pdev++)
 		free_pdev(pdev);
 	    free(p->mynode.emul_devlist);
 	}
@@ -352,6 +452,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info->extent_sz = (unsigned long)l;
     if (configurator_int_val(c->devices_offset, &l)) goto _noarg;
     pool_info->data_offset = (unsigned long)l;
+    if (configurator_bool_val(c->devices_multidomain, &b)) goto _noarg;
+    if (b)
+	lf_info->opts.multi_domains = 1;
     if (configurator_bool_val(c->devices_emulated, &b)) goto _noarg;
     if (b)
 	SetPoolFAMEmul(p);
@@ -434,6 +537,13 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	else
 	    goto _noarg;
 	p->ionodelist[u] = strdup(ioi->hostname);
+	if (!c->ionode_topo[u][0]) goto _noarg;
+	ioi->zfm.topo = strdup(c->ionode_topo[u][0]);
+	if (c->ionode_z_node[u][0])
+	    ioi->zfm.znode = strdup(c->ionode_z_node[u][0]);
+	if (c->ionode_geo[u][0])
+	    ioi->zfm.geo = strdup(c->ionode_geo[u][0]);
+
     }
     set_my_ionode_info(p);
 
@@ -455,8 +565,6 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	if (configurator_int_val(c->ag_id[u][0], &l)) goto _syntax;
 	ag->gid = (uint32_t)l;
 	f_uuid_parse(c->ag_uuid[u][0], ag->uuid);
-	if (c->ag_geo[u][0])
-	    ag->geo = strdup(c->ag_geo[u][0]);
 	/* List of devices in the group */
 	count = u;
 	assert( configurator_get_sizes(c, "ag", "devices", &count) );
@@ -478,14 +586,14 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     /* Devices */
     pool_info->pdev_max_idx = 0;
     p->pool_devs = ag_maxlen * p->pool_ags;
-    p->devlist = (F_POOL_DEV_t*)calloc(sizeof(F_POOL_DEV_t), p->pool_devs);
+    p->devlist = (F_POOL_DEV_t*) calloc(sizeof(F_POOL_DEV_t), p->pool_devs);
     if (!p->devlist) goto _nomem;
     pdev = p->devlist;
     for (u = 0; u < p->pool_devs; u++, pdev++)
 	pdev->pool_index = F_PDI_NONE;
     for (u = 0; u < pool_info->dev_count; u++) {
 	FAM_DEV_t *fam;
-	int pd_index;
+	int pd_index, idx;
 	uint16_t pool_index;
 
 	/* device media_id */
@@ -516,12 +624,22 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	if (configurator_bool_val(c->device_failed[u][0], &b)) goto _noarg;
 	if (b)
 	    SetDevFailed(pdev->sha);
-	/* Allocate FAMFS device */
+	/* Allocate FAMFS device in devlist */
 	pdev->dev = (F_DEV_t *) calloc(sizeof(F_DEV_t), 1);
 	if (!pdev->dev) goto _nomem;
 	fam = &pdev->dev->f;
-	if (c->device_url[u][0])
-	    fam->url = strdup(c->device_url[u][0]);
+	if (!PoolFAMEmul(p) && c->device_url[u][0])
+	    fam->zfm.url = strdup(c->device_url[u][0]);
+	if (!c->device_topo[u][0]) goto _noarg;
+	fam->zfm.topo = strdup(c->device_topo[u][0]);
+	if (c->device_z_node[u][0])
+	    fam->zfm.znode = strdup(c->device_z_node[u][0]);
+	if (c->device_geo[u][0])
+	    fam->zfm.geo = strdup(c->device_geo[u][0]);
+	/* match device IO node by toplogy */
+	if ((idx = dev_ionode(p, pdev->dev)) < 0) goto _syntax;
+	    fam->ionode_idx = (uint16_t)idx;
+
 	if (configurator_int_val(c->device_pk[u][0], &l))
 	    fam->pkey = pool_info->pkey_def;
 	else
@@ -538,12 +656,23 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     for (u = 0; u < p->pool_ags; u++) {
 	pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
 	qsort(pdev, p->ag_devs, sizeof(F_POOL_DEV_t), cmp_pdev_by_index);
+
+	p->ags[u].ionode_idx = pdev->dev->f.ionode_idx;
 	/* check the presence and enumerate devices in AG */
 	for (uu = 0; uu < p->ags[u].pdis; uu++, pdev++) {
 	    if (pdev->pool_index == F_PDI_NONE) {
 		/* non-existing device in AG */
 		fprintf (stderr, " AG id:%u - device not in configuration!\n",
 		    pdev->idx_ag);
+		goto _syntax;
+	    }
+	    if (p->ags[u].ionode_idx != pdev->dev->f.ionode_idx) {
+		/* mix of devices from different IO nodes in AG */
+		fprintf (stderr, " AG id:%u - device id:%u does not belong to"
+				 " IO node id:%u but %u\n",
+		    pdev->idx_ag, pdev->pool_index,
+		    p->ionodes[p->ags[u].ionode_idx].conf_id,
+		    pdev->dev->f.ionode_idx);
 		goto _syntax;
 	    }
 	    /* set pool device indexes in array for back-reference */
@@ -573,6 +702,10 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (!pool_info->media_ids) goto _nomem;
     for (u = 0; u <= pool_info->pdev_max_idx; u++)
 	pool_info->media_ids[u] = find_pdev(p, u);
+
+    /* Allocate fabric devices for FAM emulation */
+    if (PoolFAMEmul(p) && emulated_devs_alloc(p))
+	goto _nomem;
 
     /* Layout count */
     count = configurator_get_sec_size(c, "layout");
@@ -787,7 +920,7 @@ static int cfg_alloc_params(F_POOL_t *p, N_PARAMS_t **params_p)
     params->opts.true_fam = lf_info->opts.true_fam;
     params->opts.part_mreg = (fam_emul)?1:0;
     params->opts.use_cq = lf_info->opts.use_cq;
-    params->opts.multi_domains = 0;
+    params->opts.multi_domains = lf_info->opts.multi_domains;
     params->io_timeout_ms = lf_info->io_timeout_ms;
     memcpy(&params->lf_mr_flags, &lf_info->mrreg, sizeof(LF_MR_MODE_t));
     memcpy(&params->lf_progress_flags, &lf_info->progress, sizeof(LF_PRG_MODE_t));
@@ -944,15 +1077,34 @@ void f_print_layouts(void) {
     ag = p->ags;
     for (u = 0; u < p->pool_ags; u++, ag++) {
 	pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
-	printf("  AG#%u id:%u has %u devices:\n",
-		u, ag->gid, ag->pdis);
+	printf("  AG#%u id:%u @%u has %u devices:\n",
+	       u, ag->gid,
+	       p->ionodes[ag->ionode_idx].conf_id, ag->pdis);
 	for (uu = 0; uu < ag->pdis; uu++, pdev++) {
+	    F_ZFM_t *zfm;
+
 	    assert( pdev->pool_index != F_PDI_NONE );
 	    uuid_unparse(pdev->uuid, pr_uuid);
 	    printf ("    [%u,%u] id:%u uuid:%s size:%zu\n",
 		pdev->idx_ag, pdev->idx_dev, pdev->pool_index,
 		pr_uuid, pdev->size);
+	    zfm=&pdev->dev->f.zfm;
+	    printf("    znode:%s topo:%s geo:%s at ionode id:%u\n",
+		zfm->znode, zfm->topo, zfm->geo,
+		p->ionodes[pdev->dev->f.ionode_idx].conf_id);
 	}
+    }
+
+    /* IO nodes */
+    printf("\nConfiguration has %u IO nodes:\n", p->ionode_count);
+    for (u = 0; u < p->ionode_count; u++) {
+	F_IONODE_INFO_t *info = &p->ionodes[u];
+
+	printf("  #%u%s id:%u %s MDS:%u flags:%s znode:%s topo:%s geo:%s\n",
+	    u, (u == p->mynode.ionode_id && NodeIsIOnode(&p->mynode))?"*":"",
+	    info->conf_id, info->hostname, info->mds,
+	    IOnodeForceHelper(info)?"H":"",
+	    info->zfm.znode, info->zfm.topo, info->zfm.geo);
     }
 
     /* libfabric info */
@@ -982,17 +1134,6 @@ void f_print_layouts(void) {
 		pdi->sha->extents_used, pdi->sha->failed_extents);
 	}
 	printf("  Layout partition:%u\n", lo->lp->part_num);
-    }
-
-    /* IO nodes */
-    printf("\nConfiguration has %u IO nodes:\n", p->ionode_count);
-    for (u = 0; u < p->ionode_count; u++) {
-	F_IONODE_INFO_t *info = &p->ionodes[u];
-
-	printf("  #%u%s id:%u %s MDS:%u flags:%s\n",
-	    u, (u == p->mynode.ionode_id && NodeIsIOnode(&p->mynode))?"*":"",
-	    info->conf_id, info->hostname, info->mds,
-	    IOnodeForceHelper(info)?"H":"");
     }
 }
 

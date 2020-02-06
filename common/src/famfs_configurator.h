@@ -79,6 +79,7 @@
     UNIFYCR_CFG(devices, uuid, STRING, NULLSTRING, "device UUID", configurator_uuid_check) \
     UNIFYCR_CFG(devices, extent_size, INT, UNIFYCR_EXTENT_SIZE, "pool extent size in bytes", NULL) \
     UNIFYCR_CFG(devices, emulated, BOOL, off, "FAMs are emulated", NULL) \
+    UNIFYCR_CFG(devices, multidomain, BOOL, off, "FAMs are emulated", NULL) \
     UNIFYCR_CFG(devices, pk, INT, 0, "default FAM protection key", NULL) \
     UNIFYCR_CFG(devices, size, INT, UNIFYCR_EXTENT_SIZE, "default device size in bytes", NULL) \
     UNIFYCR_CFG(devices, offset, INT, UNIFYCR_EXTENT0_OFFSET, "default device extent zero offset in bytes", NULL) \
@@ -96,16 +97,21 @@
     UNIFYCR_CFG_MULTI(ionode, host, STRING, NULLSTRING, "IO node IP or hostname", NULL, 1) \
     UNIFYCR_CFG_MULTI(ionode, mds, INT, 1, "number of MD servers on this node", NULL, 1) \
     UNIFYCR_CFG_MULTI(ionode, force_helper, BOOL, off, "force Helper threads on this node", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ionode, z_node, STRING, NULLSTRING, "ZFM node name", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ionode, topo, STRING, NULLSTRING, "ZFM node topology", NULL, 1) \
+    UNIFYCR_CFG_MULTI(ionode, geo, STRING, NULLSTRING, "ION location (MFW model)", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, id, INT, NULLSTRING, "device reference", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, uuid, STRING, NULLSTRING, "device UUID", configurator_uuid_check, 1) \
     UNIFYCR_CFG_MULTI(device, url, STRING, NULLSTRING, "FAM URL", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, z_node, STRING, NULLSTRING, "FAM ZFM name", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, topo, STRING, NULLSTRING, "FAM ZFM topology", NULL, 1) \
+    UNIFYCR_CFG_MULTI(device, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, pk, INT, 0, "FAM protection key", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, size, INT, 0, "device size (bytes)", NULL, 1) \
     UNIFYCR_CFG_MULTI(device, failed, BOOL, off, "device is failed", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, id, INT, NULLSTRING, "allocation group", NULL, 1) \
     UNIFYCR_CFG_MULTI(ag, uuid, STRING, NULLSTRING, "AG UUID", configurator_uuid_check, 1) \
     UNIFYCR_CFG_MULTI(ag, devices, INT, NULLSTRING, "devices in AG", NULL, 0) \
-    UNIFYCR_CFG_MULTI(ag, geo, STRING, NULLSTRING, "FAM location (MFW model)", NULL, 1) \
     UNIFYCR_CFG_MULTI(layout, id, INT, NULLSTRING, "device ID in layout", NULL, 1) \
     UNIFYCR_CFG_MULTI(layout, devices, INT, NULLSTRING, "device ID in layout", NULL, 0) \
     UNIFYCR_CFG_MULTI(layout, name, STRING, LAYOUT0_NAME, "layout name (moniker)", configurator_moniker_check, 1) \

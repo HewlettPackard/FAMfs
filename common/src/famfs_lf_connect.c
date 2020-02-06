@@ -71,7 +71,10 @@ void f_dev_free(struct fam_dev_ *d)
     if (d->cq && (rc = fi_close(&d->cq->fid)))
 	fi_err(rc, "close cq");
 
-    free(d->url);
+    free(d->zfm.url);
+    free(d->zfm.znode);
+    free(d->zfm.topo);
+    free(d->zfm.geo);
 }
 
 int lf_client_init(LF_CL_t *lf_node, N_PARAMS_t *params)

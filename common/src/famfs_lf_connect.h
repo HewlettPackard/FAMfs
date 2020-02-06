@@ -17,10 +17,11 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
 #include <rdma/fi_ext_zhpe.h>
-#include <mpi.h>
+#include <uuid/uuid.h>
 
 #include "famfs_env.h"
 #include "famfs_ktypes.h"
+#include "famfs_bitops.h"
 
 
 #define to_lf_client_id(node, part_count, part) (node*part_count + part)
@@ -36,6 +37,33 @@ typedef struct fam_map_ {
 	unsigned long long **fam_ids;	/* [node]->[fam] = <FAM Id> */
 } FAM_MAP_t;
 
+/* GenZ fabric manager data: ION or FAM */
+typedef struct f_zfm_ {
+	char		*url;		/* GenZ device URL */
+	char		*znode;		/* node name */
+	char		*topo;		/* ION or FAM topology */
+	char		*geo;		/* geolocation; MFW model */
+} F_ZFM_t;
+
+/* IO node info */
+typedef struct f_ionode_info_ {
+    uuid_t		uuid;		/* IO node UUID */
+    char		*hostname;	/* IO node hostname */
+    F_ZFM_t		zfm;		/* GenZ fabric manager data */
+    uint32_t		conf_id;	/* ID in configuration file */
+    uint32_t		mds;		/* number of MD servers running on this node */
+    struct {
+	unsigned long	    flags;	/* f_ioninfo_flags */
+    }		io;
+} F_IONODE_INFO_t;
+
+/* Flag specs for f_ionode_info_ */
+enum f_ioninfo_flags {
+    _IONODE__FCE_HLPR,	/* force Helper threads on this IO node */
+};
+BITOPS(IOnode, ForceHelper,	f_ionode_info_, _IONODE__FCE_HLPR)
+
+
 /* libfabric domain structure: that could be per device or per process */
 typedef struct lf_dom_ {
     struct fid_fabric	*fabric;
@@ -46,7 +74,7 @@ typedef struct lf_dom_ {
 typedef struct fam_dev_ {
 //	size_t		size;		/* remote memory size, bytes */
 //	uint64_t	offset;		/* remote memory offset, bytes */
-	char		*url;		/* GenZ device URL */
+	F_ZFM_t		zfm;		/* GenZ fabric manager data */
 	void		*usr_buf;	/* optional user buffer, reference */
 	void		*local_desc;	/* local buffer descriptor */
 	/* unsigned long */
@@ -58,11 +86,12 @@ typedef struct fam_dev_ {
 	struct fid_cntr	*wcnt;		/* completion and event counter for writes */
 	struct fid_cq	*cq;		/* comlition queue bound to this endpoint or NULL */
 	LF_DOM_t	*lf_dom;	/* libfabric domain struct or NULL if per process */
-	int		cq_affinity;	/* CQ affinity or zero */
 	union {
 	    uint64_t	pkey;		/* protection key associated with the remote memory */
 	    uint64_t	mr_key;		/* memory region protection key for a local buffer */
 	};
+	int		cq_affinity;	/* CQ affinity or zero */
+	uint16_t	ionode_idx;	/* ionode index where device is located */
 
 	/* FAM emulation only */
 	int		service;	/* remote port number */
@@ -178,10 +207,8 @@ typedef struct n_params_ {
 	LF_PRG_MODE_t lf_progress_flags;/* libfabric: force FI_PROGRESS_AUTO or _MANUAL */
 	LF_OPTS_t   opts;		/* libfabric connection options */
 	int	    verbose;		/* debug flag */
-//	int         multi_domains;	/* 1: Client has to open multiple domains: one per initiator's node */
 	int	    verify;		/* 0: Don't fill and verify data buffer */
 	int	    set_affinity;	/* set CPU affinity to workers and CQ */
-//	int         use_cq;             /* use completion queue instead of counters */
 	char	    *lf_fabric;		/* libfabric fabric */
 	char	    *lf_domain;		/* libfabric domain */
 	char	    *prov_name;		/* libfabric provider name */
@@ -190,7 +217,6 @@ typedef struct n_params_ {
 
 	int		cmd_trigger;	/* >0: trigget this command by LF server remote access */
 //	int		part_mreg;	/* 1: register separate buffer per LF server partition */
-//	MPI_Comm	mpi_comm;	/* MPI communicator for this node in servers/clients */
 
 	int		cmdv[ION_CMD_MAX]; /* parsed commands */
 	int		cmdc;		/* parsed command count */
@@ -277,16 +303,5 @@ static inline int fam_node_by_index(FAM_MAP_t *m, int index)
 }
 
 
-/*
- * MPI utils
-**/
-
-/* defined in util.c */
-int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role, int gbl_rank, int gbl_size);
-
-static inline int mpi_broadcast_arr64(uint64_t *keys, int size, int rank0)
-{
-    return MPI_Bcast(keys, size*sizeof(uint64_t), MPI_BYTE, rank0, MPI_COMM_WORLD);
-}
-
 #endif /* FAMFS_LF_CONNECT_H */
+

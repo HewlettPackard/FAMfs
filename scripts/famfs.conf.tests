@@ -9,13 +9,19 @@ verbosity = 7
 [meta]
 server_ratio = 1
 range_size = 1048576
+db_path = /dev/shm
 
 [spillover]
 size = 2G
+data_dir = /dev/shm
+meta_dir = /dev/shm
 
 [ionode]
 id = 0 ; this is a default
 # uuid
+z_node = io1
+topo = "1.1.5"
+geo = "R2.Ch1.FS1.N1"
 # host = "node01" ; node's hostname or IP
 mds = 1 ; run one MD server on this ionode
 force_helper = true ; there's only node in the test configuration!
@@ -44,6 +50,9 @@ timeout = 30*1000 ; 30 sec
 [device] # FAM module or emulated FAM
 id = 1 ; Unique device id
 uuid = {bcc3b223-75d5-47e7-8788-a7afdbd95e63} ; version 4 UUID
+z_node = memory11
+topo = "1.1.5.1"
+geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
 failed = false ; default
 url = "zhpe:///ion1" ; default
 pk = 0 ; libfabric persistent key

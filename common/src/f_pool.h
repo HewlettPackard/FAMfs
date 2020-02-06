@@ -20,7 +20,9 @@
 
 
 /* defined in famfs_lf_connect.h */
-struct fam_map_;
+struct fam_map_; /* TODO: Remove me! */
+struct f_zfm_;
+struct f_ionode_info_;
 struct lf_info_;
 struct lf_dom_;
 struct n_params_;
@@ -29,23 +31,6 @@ struct n_params_;
 /* libfabric atomic types */
 typedef uint32_t	FI_UINT32_t;
 typedef uint64_t	FI_UINT64_t;
-
-/* IO node info */
-typedef struct f_ionode_info_ {
-    uuid_t		uuid;		/* IO node UUID */
-    char		*hostname;	/* IO node hostname */
-    uint32_t		conf_id;	/* ID in configuration file */
-    uint32_t		mds;		/* number of MD servers running on this node */
-    struct {
-	unsigned long	    flags;	/* f_ioninfo_flags */
-    }		io;
-} F_IONODE_INFO_t;
-
-/* Flag specs for f_ionode_info_ */
-enum f_ioninfo_flags {
-    _IONODE__FCE_HLPR,	/* force Helper threads on this IO node */
-};
-BITOPS(IOnode, ForceHelper,	f_ionode_info_, _IONODE__FCE_HLPR)
 
 /* Pool device shareable atomics (blob) */
 typedef struct f_pdev_sha_ {
@@ -70,23 +55,18 @@ enum pool_dev_flags {
     _DEV_FAILED,	/* device failed */
     _DEV_DISABLED,	/* device disabled (for example, being replaced) */
     _DEV_MISSING,	/* device is missing from the pool */
-    /* mynode.emul_devlist flags only: */
-    _DEV_EMULATED,	/* FAM device emulation with libfabric server */
-    _DEV_MULTIDOMAIN,	/* open domain per device */
 };
 BITOPS(Dev, Failed,     f_pdev_sha_, _DEV_FAILED)
 BITOPS(Dev, Disabled,   f_pdev_sha_, _DEV_DISABLED)
 BITOPS(Dev, Missing,    f_pdev_sha_, _DEV_MISSING)
-BITOPS(Dev, Emulated,   f_pdev_sha_, _DEV_EMULATED)
-BITOPS(Dev, MultiDomain,f_pdev_sha_, _DEV_MULTIDOMAIN)
 
 /* Allocation group of devices */
 typedef struct f_ag_ {
-    uuid_t	uuid;	/* group's uuid */
-    char	*geo;	/* geolocation, reference */
-    uint32_t	gid;	/* group's ID */
-    uint32_t	pdis;	/* size of gpdi */
-    uint16_t	*gpdi;	/* array of group's pool device indexes, pool_index */
+    uuid_t		uuid;		/* group's uuid */
+    uint16_t		*gpdi;		/* array of group's pool device indexes, pool_index */
+    uint32_t		gid;		/* group's ID */
+    uint32_t		pdis;		/* size of gpdi */
+    uint16_t		ionode_idx;	/* IO node index in ionodes, matched by topology */
 } F_AG_t;
 
 typedef struct f_pool_dev_ {
@@ -131,7 +111,7 @@ typedef struct f_mynode_ {
     char		*hostname;	/* this node's hostname */
     struct lf_dom_	*domain;	/* libfabric domain which is open on this node */
     struct lf_dom_	*emul_domain;	/* libfabric domain for FAM emulation or NULL */
-    F_POOL_DEV_t	*emul_devlist;	/* array of FAM emulated devices */
+    F_POOL_DEV_t	*emul_devlist;	/* array of FAM emulated devices or NULL */
     uint32_t		emul_devs;	/* number of emulated FAMs; size of emul_devlist */
     uint32_t		ionode_id;	/* for IO node ONLY: index in ionodes array */
     struct {
@@ -170,7 +150,7 @@ typedef struct f_pool_ {
     uint32_t		ionode_count;	/* number of IO nodes */
     F_AG_t		*ags;		/* allocation group array */
     struct f_pool_dev_	*devlist;	/* two-dimentional array of pool devices */
-    F_IONODE_INFO_t	*ionodes;	/* array of IO node info of .ionode_count size */
+    struct f_ionode_info_ *ionodes;	/* array of IO node info of .ionode_count size */
     struct fam_map_	*ionode_fams;	/* FAM map: IO nodes to FAMs */
     char		**ionodelist;	/* reference to ionode hostnames */
     struct {
@@ -183,7 +163,7 @@ typedef struct f_pool_ {
 /* Flag specs for f_pool */
 enum f_pool_flags {
     _POOL_BG_ACTIVE,	/* Background task is active. */
-    _POOL_FAM_EMUL,	/* FAM device emulation with fabric attached memory on IO nodes */
+    _POOL_FAM_EMUL,	/* FAM device emulation enabled on IO nodes */
 };
 BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
