@@ -1077,9 +1077,9 @@ void f_print_layouts(void) {
     ag = p->ags;
     for (u = 0; u < p->pool_ags; u++, ag++) {
 	pdev = ((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)[u];
-	printf("  AG#%u id:%u @%u has %u devices:\n",
-	       u, ag->gid,
-	       p->ionodes[ag->ionode_idx].conf_id, ag->pdis);
+	printf("  AG#%u id:%u has %u devices at ionode id:%u\n",
+	       u, ag->gid, ag->pdis,
+	       p->ionodes[ag->ionode_idx].conf_id);
 	for (uu = 0; uu < ag->pdis; uu++, pdev++) {
 	    F_ZFM_t *zfm;
 
