@@ -375,7 +375,6 @@ static void free_pool(F_POOL_t *p)
 	    }
 	    free(p->ionodes);
 	}
-	free(p->ionode_fams);
 
 	if (p->ionode_comm) {
 	    MPI_Barrier(p->ionode_comm);
@@ -511,9 +510,6 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     count = configurator_get_sec_size(c, "ionode");
     if (!IN_RANGE(count, 1, F_IONODES_MAX)) goto _noarg;
     p->ionode_count = (uint32_t)count;
-    p->ionode_fams = (FAM_MAP_t *) calloc(sizeof(FAM_MAP_t), 1);
-    p->ionode_fams->ionode_cnt = p->ionode_count;
-    if (!p->ionode_fams) goto _nomem;
     p->ionodes = (F_IONODE_INFO_t*) calloc(sizeof(F_IONODE_INFO_t),
 					   p->ionode_count);
     if (!p->ionodes) goto _nomem;

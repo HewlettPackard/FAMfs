@@ -20,12 +20,11 @@
 
 
 /* defined in famfs_lf_connect.h */
-struct fam_map_; /* TODO: Remove me! */
 struct f_zfm_;
 struct f_ionode_info_;
 struct lf_info_;
 struct lf_dom_;
-struct n_params_;
+struct n_params_; /* TODO: Remove me! */
 
 
 /* libfabric atomic types */
@@ -151,7 +150,6 @@ typedef struct f_pool_ {
     F_AG_t		*ags;		/* allocation group array */
     struct f_pool_dev_	*devlist;	/* two-dimentional array of pool devices */
     struct f_ionode_info_ *ionodes;	/* array of IO node info of .ionode_count size */
-    struct fam_map_	*ionode_fams;	/* FAM map: IO nodes to FAMs */
     char		**ionodelist;	/* reference to ionode hostnames */
     struct {
 	unsigned long	    flags;	/* f_pool_flags */

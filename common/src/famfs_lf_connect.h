@@ -68,6 +68,7 @@ BITOPS(IOnode, ForceHelper,	f_ionode_info_, _IONODE__FCE_HLPR)
 typedef struct lf_dom_ {
     struct fid_fabric	*fabric;
     struct fid_domain	*domain;
+    struct fi_info	*fi;
     struct fid_av	*av;
 } LF_DOM_t;
 

@@ -46,6 +46,7 @@ void f_domain_close(struct lf_dom_ **domain_p)
     if (rc)
 	fi_err(rc, "close fabric");
 
+    fi_freeinfo(domain->fi);
     *domain_p = NULL;
 }
 
