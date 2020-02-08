@@ -702,7 +702,7 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 		F_POOL_DEV_t *pdev;
 		pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[i];
 		pdev = f_find_pdev(pdi->pool_index);
-		if (!pdev || DevFailed(&pdev->sha) || DevMissing(&pdev->sha) || DevDisabled(&pdev->sha))
+		if (!pdev || DevFailed(pdev->sha) || DevMissing(pdev->sha) || DevDisabled(pdev->sha))
 			continue;
 		pdi0++;
 		memcpy(pdi0, pdi, sizeof(F_POOLDEV_INDEX_t));
