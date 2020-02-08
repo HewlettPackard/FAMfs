@@ -7,7 +7,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
 	      -I$(top_srcdir)/userspace-rcu/include \
 	      -I$(top_srcdir)/userspace-rcu/src
 
-AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS) -mcx16
 
 unifycrd_SOURCES = arraylist.c \
                    arraylist.h \

@@ -44,6 +44,20 @@ struct f_slab_usage {
 #endif
 };
 
+/*
+ * Parameters that govern which sheet allocation type is used.
+ * If device utilization variance exceeds F_DEV_UTIL_VAR_HWM switch to
+ * the utilization based allocation, otherwise use equal distribution
+ * allocation (by index)
+ */
+#define F_DEV_UTIL_VAR_LWM      10
+#define F_DEV_UTIL_VAR_HWM      25
+
+typedef enum {
+        F_BY_UTIL = 0,
+        F_BY_IDX,
+} F_SLAB_ALLOC_TYPE_t;
+
 /* devel stats counters. */
 enum fl_stats_types {
     FL_STRIPE_GET_REQ,
@@ -82,6 +96,28 @@ typedef struct f_pooldev_index_ {
     uint32_t		pl_extents_used;
     F_PDI_SHA_t		*sha;
 } F_POOLDEV_INDEX_t;
+
+/* 2-dimensional device allocation matrix */
+struct f_pdi_matrix_;
+typedef int (*mx_init_fn) (struct f_pdi_matrix_ *mx);
+typedef F_POOLDEV_INDEX_t * (*mx_lookup_fn) (struct f_pdi_matrix_ *mx, size_t row, size_t col);
+typedef void (*mx_sort_fn) (struct f_pdi_matrix_ *mx);
+typedef void (*mx_resort_fn) (struct f_pdi_matrix_ *mx, size_t row);
+typedef int (*mx_gen_devlist_fn) (struct f_pdi_matrix_ *mx, F_POOLDEV_INDEX_t *devlist, unsigned int *size);
+typedef void (*mx_release_fn) (struct f_pdi_matrix_ *mx);
+
+typedef struct f_pdi_matrix_ {
+    F_POOLDEV_INDEX_t	*addr;
+    size_t		rows;
+    size_t		cols;
+    /* Matrix operations */
+    mx_init_fn		init;
+    mx_lookup_fn	lookup;
+    mx_sort_fn		sort;
+    mx_resort_fn	resort;
+    mx_gen_devlist_fn	gen_devlist;
+    mx_release_fn	release;
+} F_PDI_MATRIX_t;
 
 /* Partition info */
 typedef struct f_layout_partition_ {
@@ -142,6 +178,8 @@ typedef struct f_layout_partition_ {
 
     int			alloc_error;	/* last allocation error */
 
+    F_PDI_MATRIX_t	*dmx; 		/* device allocation matrix (by AG/dev in AG) */
+
     /* REMOVEME: devel stats counters. */
     atomic_t		stats[FL_NR_STATS];
 
@@ -201,6 +239,8 @@ typedef struct f_layout_ {
 
     struct f_map_	*slabmap;	/* slab map */
     struct f_map_	*claimvec;	/* claim vector map */
+
+    F_SLAB_ALLOC_TYPE_t	slab_alloc_type;/* layout slab allocation type */
 
     struct {
 	unsigned long	    flags;	/* layout flags: f_layout_flags */

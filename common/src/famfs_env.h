@@ -205,6 +205,9 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define F_IONODES_MAX		1024	/* Maximum number of IO nodes */
 #define F_CMDQ_MAX              32      /* Maximum number of command queues per server */
 
+#define F_STRIPE_INVALID	0xffffffffffffffffUL
+#define F_SLAB_INVALID		0xffffffffUL
+
 #define F_UUID_BUF_SIZE		(37)	/* Print buffer size for UUID */
 
 /* Client */
