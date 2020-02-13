@@ -28,18 +28,20 @@ static void *f_allocator_thread(void *ctx);
 int start_allocator_thread(F_LAYOUT_t *lo)
 {
 	F_LO_PART_t *lp = lo->lp;
-	int e_sz, rc = 0;
+	int e_sz, chunks, rc = 0;
 
 	pthread_mutex_init(&lp->lock_ready, NULL);
 	pthread_cond_init(&lp->cond_ready, NULL);
 
 	/* Initialize layout maps */
-	e_sz = sizeof(F_SLAB_ENTRY_t) + lo->info.chunks*sizeof(F_EXTENT_ENTRY_t);
+	chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
+	e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
 	lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
 	lo->claimvec = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
 	if (!lo->slabmap || !lo->claimvec) return EINVAL;
 
 	lo->slab_alloc_type = F_BY_UTIL;
+	lo->thread_run_intl = 1000;
 	rc = pthread_create(&lp->thread, NULL, f_allocator_thread, lo);
 	if (!rc) {
 		/* Wait for the allocator thread to initialize and load maps */
@@ -264,9 +266,118 @@ static f_slab_t find_free_slab(F_LO_PART_t *lp)
 	return s;
 }
 
+static inline struct f_stripe_entry *alloc_stripe_entry(F_LO_PART_t *lp)
+{
+        struct f_stripe_entry *se;
+	F_LAYOUT_t *lo = lp->layout;
+
+        se = (struct f_stripe_entry *)calloc(sizeof(struct f_stripe_entry), 1);
+	if (!se) {
+		LOG(LOG_ERR, "%s[%d]:  error allocating stripe entry", lo->info.name, lp->part_num);
+		return ERR_PTR(-ENOMEM);
+	}
+	INIT_LIST_HEAD(&se->list);
+	se->lp = lp;
+
+	atomic_inc(lp->stats + FL_SE_ALLOC);
+	return se;
+}
+
+static inline void free_stripe_entry(struct f_stripe_entry *se)
+{
+	F_LO_PART_t *lp = se->lp;
+
+	ASSERT(lp);
+	ASSERT(list_empty(&se->list));
+
+	atomic_inc(lp->stats + FL_SE_FREE);
+	free(se);
+}
+
+
+/* Pre-allocation buckets management functions */
+static inline struct f_stripe_bucket *alloc_stripe_bucket(F_LO_PART_t *lp)
+{
+        struct f_stripe_bucket *sb;
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+
+        sb = calloc(sizeof(struct f_stripe_bucket), 1);
+	if (!sb) {
+		LOG(LOG_ERR, "%s[%d]:  error allocating stripe bucket", lo->info.name, lp->part_num);
+		return ERR_PTR(-ENOMEM);
+	}
+	INIT_LIST_HEAD(&sb->list);
+	INIT_LIST_HEAD(&sb->head);
+	bitmap_zero(sb->devmap, pool->info.pdev_max_idx+1);
+	atomic_set(&sb->count, 0);
+	sb->lp = lp;
+
+	atomic_inc(lp->stats + FL_SB_ALLOC);
+	return sb;
+}
+
+static inline void free_stripe_bucket(struct f_stripe_bucket *sb)
+{
+	F_LO_PART_t *lp = sb->lp;
+
+	ASSERT(lp);
+	ASSERT(!list_empty(&sb->list));
+
+	atomic_inc(lp->stats + FL_SB_FREE);
+	free(sb);
+}
+
+static struct f_stripe_bucket *find_stripe_bucket(F_LO_PART_t *lp, unsigned long *devmap)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	struct f_stripe_bucket *sb;
+	int i = 0;
+
+	list_for_each_entry(sb, &lp->alloc_buckets, list) {
+
+		ASSERT(!bitmap_empty(sb->devmap, pool->info.pdev_max_idx+1));
+
+		/* match them against the devmap */
+		if (bitmap_equal(sb->devmap, devmap, pool->info.pdev_max_idx+1)) {
+			LOG(LOG_DBG, "%s[%d]: found bucket %d", lo->info.name, lp->part_num, i);
+			return sb;
+		}
+		i++;
+	}
+	return NULL;
+}
+
+static struct f_stripe_bucket *add_stripe_bucket(F_LO_PART_t *lp, unsigned long *devmap)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	struct f_stripe_bucket *sb;
+
+ 	sb = alloc_stripe_bucket(lp);
+	if (IS_ERR(sb))
+		return sb;
+	bitmap_copy(sb->devmap, devmap, pool->info.pdev_max_idx+1);
+	list_add_tail(&sb->list, &lp->alloc_buckets);
+	atomic_inc(&lp->bucket_count);
+
+	if (atomic_read(&lp->bucket_count_max) < atomic_read(&lp->bucket_count))
+		atomic_set(&lp->bucket_count_max, atomic_read(&lp->bucket_count));
+
+	return sb;
+}
+
+static inline struct f_stripe_bucket *get_stripe_bucket(F_LO_PART_t *lp, unsigned long *devmap)
+{
+	struct f_stripe_bucket *sb = find_stripe_bucket(lp, devmap);
+	return (sb) ? sb : add_stripe_bucket(lp, devmap);
+}
+
 /* Map load callback function data */
 struct cb_data {
 	F_LO_PART_t 	*lp;
+	int		loaded;
 	int		err;
 };
 
@@ -276,7 +387,7 @@ struct cb_data {
 static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 {
 	struct cb_data *data = (struct cb_data *) arg;
-	F_LO_PART_t *lp = data->lp;;
+	F_LO_PART_t *lp = data->lp;
 	F_LAYOUT_t *lo = lp->layout;
 	F_SLABMAP_ENTRY_t *sme;
 	f_slab_t slab = e;
@@ -294,13 +405,12 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 			data->err++;
 		}
 	
-		/* Check slab map entry CRC */
-		if (f_crc4_sm_chk(&sme->slab_rec)) {
-			LOG(LOG_ERR, "%s[%d]: slab %u CRC error", lo->info.name, lp->part_num, slab);
-			data->err++;
-		}
-
 		if (sme->slab_rec.mapped) {
+			/* Check slab map entry CRC */
+			if (f_crc4_sm_chk(&sme->slab_rec)) {
+				LOG(LOG_ERR, "%s[%d]: slab %u CRC error", lo->info.name, lp->part_num, slab);
+				data->err++;
+			}
 			set_slab_allocated(lp, slab);
 		} else { /* Unmapped slabs are considered in sync */
 			set_slab_in_sync(lp, slab);
@@ -348,12 +458,16 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 				LOG(LOG_ERR, "%s[%d]: slab %u ext %u not mapped", 
 					lo->info.name, lp->part_num, slab, n);
 				data->err++;
+				continue;
 			}
 				
 			/* Populate device extent map */
+
 		}
 
-		LOG(LOG_DBG, "%s[%d]: slab %u loaded: %d errors", lo->info.name, lp->part_num, slab, data->err++);
+		data->loaded++;
+
+		LOG(LOG_DBG, "%s[%d]: slab %u loaded: %d errors", lo->info.name, lp->part_num, slab, data->err);
 		pu = (F_PU_VAL_t *) ((char*)pu + e_sz);
 	}
 
@@ -389,10 +503,12 @@ static void claimvec_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 				inc_slab_used(lp, s);
 			}
 		} else if (test_bbit(i, CVE_PREALLOC, (unsigned long *)pu)) {
-			LOG(LOG_DBG, "%s[%d]: clearing preallocated stipe %lu", lo->info.name, lp->part_num, s);
+			LOG(LOG_DBG3, "%s[%d]: clearing preallocated stipe %lu", lo->info.name, lp->part_num, s);
 			set_bbit(i, CVE_FREE, (unsigned long *)pu);
+			f_map_mark_dirty(lo->claimvec, s);
 		}
-		LOG(LOG_DBG, "%s[%d]: stripe %lu loaded: %d errors", lo->info.name, lp->part_num, s, data->err++);
+		LOG(LOG_DBG3, "%s[%d]: stripe %lu loaded: %d errors", lo->info.name, lp->part_num, s, data->err);
+		data->loaded++;
 	}
 }
 
@@ -424,13 +540,16 @@ static int read_maps(F_LO_PART_t *lp)
 		return rc;
 	}
 
+	cbdata.lp = lp;
 	cbdata.err = 0;
+	cbdata.loaded = 0;
 	rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
 		LOG(LOG_ERR, "%s[%d]: error %d loading SM, %d load errors", 
 			lo->info.name, lp->part_num, rc, cbdata.err);
 		return rc ? rc : cbdata.err;
 	}
+	LOG(LOG_DBG, "%s[%d]: %u slabs loaded: %d errors", lo->info.name, lp->part_num, cbdata.loaded, cbdata.err);
 
 	LOG(LOG_DBG, "%s[%d]: loading claim vector", lo->info.name, lp->part_num);
 	rc = f_map_init_prt(lo->claimvec, lo->part_count, lp->part_num, 0, 0);
@@ -446,11 +565,22 @@ static int read_maps(F_LO_PART_t *lp)
 	}
 
 	cbdata.err = 0;
+	cbdata.loaded = 0;
 	rc = f_map_load_cb(lo->claimvec, claimvec_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
 		LOG(LOG_ERR, "%s[%d]: error %d loading CV, %d load errors", 
 			lo->info.name, lp->part_num, rc, cbdata.err);
 		return rc ? rc : cbdata.err;
+	}
+	LOG(LOG_DBG, "%s[%d]: %u stripes loaded: %d errors", 
+		lo->info.name, lp->part_num, cbdata.loaded, cbdata.err);
+
+	if (cbdata.loaded) {
+		rc = f_map_flush(lo->claimvec);
+		if (rc) {
+			LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
+			return rc;
+		}
 	}
 #if 0
 	/* Scan this slab map partition and set the devices extents bitmaps, etc. */
@@ -564,9 +694,12 @@ static void sme_set_atomic(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, F_SLABMAP_ENT
 		volatile F_EXTENT_ENTRY_t *extp = &sme->extent_rec[n];
 
 		retries = 0;
-		ext._v64 = __atomic_load_8(&_sme->extent_rec[n], __ATOMIC_SEQ_CST);
+		old_ext._v64 = __atomic_load_8(&sme->extent_rec[n], __ATOMIC_SEQ_CST);
+		ext = _sme->extent_rec[n];
 		do {
-			ext = old_ext;
+			/* Flags could be updated concurrently */
+			if (old_ext.mapped && old_ext.failed)
+				ext.failed = old_ext.failed;
 			ext.checksum = 0;
 			ext.checksum = f_crc4_fast((char*)&ext, sizeof(ext));
 			if (likely(__atomic_compare_exchange_8(extp, &old_ext, ext._v64, 
@@ -577,9 +710,18 @@ static void sme_set_atomic(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, F_SLABMAP_ENT
 	}
 	
 	retries = 0;
-	se._v128 = __atomic_load_16(&_sme->slab_rec, __ATOMIC_SEQ_CST);
+	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
+//	 __atomic_load(&sme->slab_rec, &old_se, __ATOMIC_SEQ_CST);
+	se = _sme->slab_rec;
 	do {
-		se = old_se;
+		/* Flags could be updated concurrently */
+		if (old_se.mapped ) {
+			ASSERT(old_se.stripe_0 == se.stripe_0);
+			se.failed = old_se.failed;
+			se.degraded = old_se.degraded;
+			se.recovery = old_se.recovery;
+			se.recovered = old_se.recovered;
+		}
 		se.checksum = 0;
 		se.checksum = f_crc4_sm_fast(&se);
 		if (likely(__atomic_compare_exchange_16(sep, &old_se, se._v128, 
@@ -806,7 +948,11 @@ static void release_lp_dev_matrix(F_LO_PART_t *lp)
 static inline int alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 {
 	int extent = 0;
+	F_POOL_DEV_t *pdev = f_find_pdev(ext->media_id);
+	ASSERT(pdev);
 
+	/* Re-sort the matrix row we picked the device from */ 
+	lp->dmx->resort(lp->dmx, pdev->idx_ag);
 	return extent;
 }
 
@@ -924,8 +1070,8 @@ static unsigned int alloc_slab_extents_by_index(F_LO_PART_t *lp,
  */
 static unsigned int alloc_slab_extents(F_LO_PART_t *lp, F_SLABMAP_ENTRY_t *sme)
 {
-	F_POOL_t *pool = f_get_pool();
 	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
 	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
 	F_POOLDEV_INDEX_t *sorted_devlist = NULL;
 	unsigned int n = 0, devnum = pool->pool_ags;
@@ -1042,6 +1188,7 @@ static int release_slab(F_LO_PART_t *lp, f_slab_t slab)
 	reset_slab_usage(lp, slab);
 
 	/* Flush the slab map before releasing device extents */
+	f_map_mark_dirty(lo->slabmap, slab);
 	rc = f_map_flush(lo->slabmap);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing slabmap for slab %u",
@@ -1126,7 +1273,10 @@ static int __alloc_new_slab(F_LO_PART_t *lp, f_slab_t *slabp)
 	/* update bitmaps */
 	reset_slab_usage(lp, s);
 	set_slab_allocated(lp, s);
+	set_slab_in_sync(lp, s);
+	lp->sync_count++;
 
+	f_map_mark_dirty(lo->slabmap, s);
 	rc = f_map_flush(lo->slabmap);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing slabmap for slab %u",
@@ -1178,31 +1328,429 @@ static bool can_allocate_slab(F_LO_PART_t *lp)
 	return true;
 }
 
-/*
- * Go through all allocated slabs until we pre-allocate enough stripes
- * to satisfy the request.
- */
-static int prealloc_stripes(F_LO_PART_t *lp, int count)
+static inline bool can_allocate_from_slab(F_LO_PART_t *lp, f_slab_t slab)
+{ 
+	F_LAYOUT_t *lo = lp->layout;
+
+	// Skip unallocated slabs
+	if (!slab_allocated(lp, slab)) {
+		LOG(LOG_DBG, "%s[%d]: slab %u is not allocated", lo->info.name, lp->part_num, slab);
+		return false;
+	}
+
+	// Skip full slabs
+	if (lp->slab_usage[slab].used == lo->info.slab_stripes) {
+		LOG(LOG_DBG, "%s[%d]: slab %u is full", lo->info.name, lp->part_num, slab);
+		return false;
+	}
+	// Skip degraded slabs
+	if (!slab_in_sync(lp, slab)) {
+		LOG(LOG_DBG, "%s[%d]: slab %u is not in sync, skipping allocation", 
+			lo->info.name, lp->part_num, slab);
+		return false;
+	}
+	return true;
+}
+
+static int get_slab_devmap(F_LO_PART_t *lp, f_slab_t slab, unsigned long *devmap)
 {
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	F_SLABMAP_ENTRY_t *sme;
+	int n;
+
+	bitmap_zero(devmap, pool->info.pdev_max_idx+1);
+
+	/* Get the slab map entry */
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	if (!sme) {
+		LOG(LOG_ERR, "%s[%d]: error on SM entry %u", lo->info.name, lp->part_num, slab);
+		return -EINVAL;
+	}
+	
+	/* Sanity check */
+	if (!sme->slab_rec.mapped) {
+		LOG(LOG_ERR, "%s[%d]: slab %u s not mapped", lo->info.name, lp->part_num, slab);
+		return -ENOENT;
+	}
+
+	/* Construct the slab device map */
+	for (n = 0; n < lo->info.chunks; n++) {
+		unsigned int di = sme->extent_rec[n].media_id;
+		unsigned long bit = 1L << (di % BITS_PER_LONG);
+		devmap[di / BITS_PER_LONG] |= bit;
+	}
+
+	return 0;
+}
+
+/* 
+ * Pre-allocate stripe (set CVE_PREALLOC) 
+ */
+static int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	unsigned long old;
+	void *p = f_map_get_p(lo->claimvec, s);
+
+	if (!p) {
+		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
+		return -ENOENT;
+	}
+
+	/* Set the stripe preallocated */
+	old = atomic_test_and_set_bbit(BBIT_NR_IN_LONG(s), CVE_PREALLOC, p);
+
+	/* Check if someone beat us to it (should nver happen) */
+	ASSERT(old == CVE_FREE);
+
+	/* Set the dirty bit */
+	f_map_mark_dirty(lo->claimvec, s);
 	return 0;
 }
 
 /*
- * Release count of strides from the pre-allocated tree, all if the count is 0.
- * Called from the stripe allocator with layout lock taken.
+ * Release a stripe by clearing its claim vector
+ * Set drop_slab to false to prevent releasing empty slabs.
  */
-static int release_alloc_stripes(F_LO_PART_t *lp, int count)
+static int release_stripe(F_LO_PART_t *lp, f_stripe_t s, bool drop_slab)
 {
+	F_LAYOUT_t *lo = lp->layout;
+	unsigned long old;
+	void *p;
+	int rc = 0;
+
+	LOG(LOG_DBG3, "%s[%d]: releasing stripe %lu", lo->info.name, lp->part_num, s);
+
+	p = f_map_get_p(lo->claimvec, s);
+	if (!p) {
+		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
+		return -ENOENT;
+	}
+
+	/* Set the stripe preallocated */
+	old = atomic_test_and_set_bbit(BBIT_NR_IN_LONG(s), CVE_FREE, p);
+
+	/* Check if someone beat us to it (should nver happen) */
+	ASSERT(old != CVE_FREE);
+
+	/* Set the dirty bit */
+	f_map_mark_dirty(lo->claimvec, s);
+
+	/* Consider releasing this stripe slab if this was the last allocated stripe there */
+	dec_slab_used(lp, s);
+	if (!slab_used(lp, s) && drop_slab) {
+		f_slab_t slab = stripe_to_slab(lo, s);
+		if (slab < lp->min_alloc_slabs) {
+			LOG(LOG_INFO, "%s[%d]: slab %u is within min alloc sheets %u, not releasing", 
+				lo->info.name, lp->part_num, slab, lp->min_alloc_slabs);
+		    	return 0;
+	    	} 
+		rc = release_slab(lp, slab);
+		if (rc) {
+			LOG(LOG_ERR, "%s[%d]: error %d releasing slab %u", 
+				lo->info.name, lp->part_num, rc, slab);
+			return rc;
+		}
+    	}
+
 	return 0;
+}
+
+/*
+ * Release count of stripes from the pre-allocated tree, all if the count is 0.
+ * Called from the stripe allocator with layout partition lock taken.
+ */
+static int release_prealloc_stripes(F_LO_PART_t *lp, int count)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	struct f_stripe_entry *se, *next;
+	struct list_head tmplist;
+	struct f_stripe_bucket *sb, *nsb;
+	int remcount, n = 0, rc = 0;
+
+	LOG(LOG_DBG, "%s[%d]: releasing %d preallocated stripes", 
+		lo->info.name, lp->part_num, count ? count : atomic_read(&lp->prealloced_stripes));
+
+	INIT_LIST_HEAD(&tmplist);
+
+	/* Quickly copy all extra stripes into a temp list first */
+	pthread_spin_lock(&lp->alloc_lock);
+	remcount = count ? atomic_read(&lp->prealloced_stripes) - count : 0;
+	if (!atomic_read(&lp->prealloced_stripes)) {
+		pthread_spin_unlock(&lp->alloc_lock);
+		LOG(LOG_DBG, "%s[%d]: empty pre-allocation list, not releasing", lo->info.name, lp->part_num); 
+		return 0;
+	}
+	while (atomic_read(&lp->prealloced_stripes) > remcount) {
+		list_for_each_entry_safe(sb, nsb, &lp->alloc_buckets, list) {
+			if (list_empty(&sb->head)) {
+				LOG(LOG_DBG, "%s[%d]: empty bucket, count %d",
+					lo->info.name, lp->part_num, atomic_read(&sb->count));
+				continue;
+			}
+			se = list_first_entry(&sb->head, struct f_stripe_entry, list);
+			list_move_tail(&se->list, &tmplist);
+			n++;
+
+			/* Free empty bucket */
+			if (!atomic_dec_return(&sb->count)) {
+				ASSERT(list_empty(&sb->head));
+				list_del_init(&sb->list);
+				free_stripe_bucket(sb);
+				atomic_dec(&lp->bucket_count);
+			}
+			if (atomic_dec_return(&lp->prealloced_stripes) == remcount)
+				break;
+		}
+	}
+	pthread_spin_unlock(&lp->alloc_lock);
+
+	ASSERT(list_empty(&tmplist));
+		
+	/* Now release all extra stripes */
+	list_for_each_entry_safe(se, next, &tmplist, list) {
+		rc = release_stripe(lp, se->stripe, true);
+		if (rc < 0) {
+			LOG(LOG_ERR, "%s[%d]: error %d releasing stripe %lu", 
+				lo->info.name, lp->part_num, rc, se->stripe); 
+		}
+		list_del_init(&se->list);
+		free_stripe_entry(se);
+	}
+
+	if (!count && atomic_read(&lp->prealloced_stripes)) 
+		LOG(LOG_WARN, "%s[%d]: allocated stripes count %d after releasing all stripes", 
+			lo->info.name, lp->part_num, atomic_read(&lp->prealloced_stripes));
+	return rc;
 }
 
 /*
  * Go through the pre-allocated stripes list and purge all stripes
  * from degraded (not in sync) slabs
  */
-static int purge_alloc_stripes(F_LO_PART_t *lp)
+static int purge_prealloc_stripes(F_LO_PART_t *lp)
 {
+	F_LAYOUT_t *lo = lp->layout;
+	struct f_stripe_entry *se, *next;
+	struct f_stripe_bucket *sb, *nsb;
+	struct list_head tmplist;
+	int count = 0, rc = 0;
+
+	INIT_LIST_HEAD(&tmplist);
+
+	/* Quickly copy degraded stripes into a temp list first */
+	pthread_spin_lock(&lp->alloc_lock);
+	if (!atomic_read(&lp->prealloced_stripes)) {
+		pthread_spin_unlock(&lp->alloc_lock);
+		LOG(LOG_DBG, "%s[%d]: empty pre-allocation list, skipping check", lo->info.name, lp->part_num); 
+		return 0;
+	}
+	list_for_each_entry_safe(sb, nsb, &lp->alloc_buckets, list) {
+		if (list_empty(&sb->head)) {
+			LOG(LOG_DBG, "%s[%d]: empty bucket, count %d",
+				lo->info.name, lp->part_num, atomic_read(&sb->count));
+			continue;
+		}
+		list_for_each_entry_safe(se, next, &sb->head, list) {
+			if (slab_in_sync(lp, se->slab))
+				continue;
+			list_move_tail(&se->list, &tmplist);
+
+			/* Free empty bucket */
+			if (!atomic_dec_return(&sb->count)) {
+				ASSERT(list_empty(&sb->head));
+				list_del_init(&sb->list);
+				free_stripe_bucket(sb);
+				atomic_dec(&lp->bucket_count);
+			}
+
+			atomic_dec(&lp->prealloced_stripes);
+			count++;
+		}
+	}
+	pthread_spin_unlock(&lp->alloc_lock);
+
+	if (list_empty(&tmplist))
+		return 0;
+
+	LOG(LOG_DBG, "%s[%d]: releasing %d degraded stripes", lo->info.name, lp->part_num, count );
+
+	/* Now release all degraded stripes */
+	list_for_each_entry_safe(se, next, &tmplist, list) {
+		rc = release_stripe(lp, se->stripe, true);
+		if (rc < 0) {
+			LOG(LOG_ERR, "%s[%d]: error %d removing stripe %lu", 
+				lo->info.name, lp->part_num, rc, se->stripe); 
+		}
+		list_del_init(&se->list);
+		free_stripe_entry(se);
+	}
+
+	if (count) {
+		LOG(LOG_DBG, "%s[%d]: allocated stripes count %d after purging %d stripes", 
+			lo->info.name, lp->part_num, atomic_read(&lp->prealloced_stripes), count);
+	}
 	return 0;
+}
+
+/*
+ * Find unused stripes in the slab and add them to the preallocated
+ * stripes tree. 
+ */
+static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	struct list_head alloclist;
+	struct f_stripe_bucket *sb;
+	struct f_stripe_entry *se, *next;
+	F_ITER_t *cv_it;
+	f_stripe_t s0 = slab_to_stripe0(lo, slab);
+	unsigned long devmap[F_DEVMAP_SIZE];
+	int i, n, rc;
+
+	if (!count)
+		return 0;
+	
+	if (!slab_allocated(lp, slab)) {
+		LOG(LOG_WARN, "%s[%d]: slab %u is not yet allocated, skipping",
+			lo->info.name, lp->part_num, slab);
+		return -ENOENT;
+	}
+
+	LOG(LOG_DBG, "%s[%d]: allocating %d stripes in slab %u", lo->info.name, lp->part_num, count, slab);
+	INIT_LIST_HEAD(&alloclist);
+
+	rc = get_slab_devmap(lp, slab, devmap);
+	ASSERT(rc == 0);
+	ASSERT(!bitmap_empty(devmap, pool->info.pdev_max_idx+1));
+
+	cv_it = f_map_new_iter(lo->claimvec, F_NO_CONDITION, 0);
+	assert(cv_it);
+	for (n = 0, i = 0; i < lo->info.slab_stripes && n < count; i++) {
+		int v;
+		/* Probe if the entry is in memory and force its creation if not */
+		if (!f_map_probe_iter_at(cv_it, s0 + i, (void*)&v)) {
+			cv_it = f_map_seek_iter(cv_it, s0 + i);
+		} else if (v != CVE_FREE) {
+			LOG(LOG_DBG3, "%s[%d]: stripe %lu in slab %u: %d", lo->info.name, lp->part_num, s0 + i, slab, v);
+			continue;
+		} else {
+			rc = alloc_stripe(lp, s0 + i);
+			if (rc < 0) {
+				LOG(LOG_ERR, "%s[%d]: error allocating stripe %lu", 
+					lo->info.name, lp->part_num, s0 + i);
+				continue;
+			}
+		}
+		n++;
+ 		se = alloc_stripe_entry(lp);
+		se->stripe = s0 + i;
+		se->slab = slab;
+		LOG(LOG_DBG3, "%s[%d]: stripe %lu allocated in slab %u", 
+			lo->info.name, lp->part_num, se->stripe, slab);
+		list_add_tail(&se->list, &alloclist);
+	}
+
+	LOG(LOG_DBG, "%s[%d]: %d stripes allocated in slab %u (used %d)", 
+			lo->info.name, lp->part_num, n, slab, slab_used(lp, s0));
+
+	if (list_empty(&alloclist)) {
+		LOG(LOG_DBG, "%s[%d]: no stripes (%d) allocated in slab %u (used %d)", 
+			lo->info.name, lp->part_num, n, slab, slab_used(lp, s0));
+		return 0;
+	}
+
+	rc = f_map_flush(lo->claimvec);
+	if (rc) {
+		LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
+		list_for_each_entry_safe(se, next, &alloclist, list) {
+			list_del(&se->list);
+			release_stripe(lp, se->stripe, false);
+			free_stripe_entry(se);
+		}
+		return 0;
+	}
+
+	/* Claim vector is flushed, now insert stripes into the preallocated stripes hash */ 
+	pthread_spin_lock(&lp->alloc_lock);
+	sb = get_stripe_bucket(lp, devmap);
+	ASSERT(!IS_ERR(sb));
+	list_for_each_entry_safe(se, next, &alloclist, list) {
+		list_move_tail(&se->list, &sb->head);
+		atomic_inc(&lp->prealloced_stripes);
+		atomic_inc(&sb->count);
+		inc_slab_used(lp, se->stripe);
+	}
+	pthread_spin_unlock(&lp->alloc_lock);
+
+	return n;
+}
+
+/*
+ * Go through all allocated slabs until we pre-allocate enough stripes 
+ * to satisfy the request.
+ */
+static int prealloc_stripes(F_LO_PART_t *lp, int count)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	int *alloced;
+	int per_slab_count = DIV_CEIL(count, lp->min_alloc_slabs);
+	int max_slab = max_slab_allocated(lp);
+	int i, rc, n = 0;
+
+	if (!slabs_allocated(lp)) {
+		LOG(LOG_INFO, "%s[%d]: no allocated slabs found", lo->info.name, lp->part_num);
+		return 0;
+	}
+
+	if (!count) return 0;
+
+	LOG(LOG_DBG, "%s[%d]: allocating %d stripes", lo->info.name, lp->part_num, count);
+
+	alloced = alloca(sizeof(int) * lp->min_alloc_slabs);
+	if (!alloced) {
+		LOG(LOG_ERR, "%s[%d]: error allocating slab allocation array", lo->info.name, lp->part_num);
+		return 0;
+	}
+	memset(alloced, 0, sizeof(int) * lp->min_alloc_slabs);
+
+	/* Try to allocate stripes evenly distributed across slabs located on different devices */
+	for (i = 0; n < count && i < lp->min_alloc_slabs; i++) {
+		f_slab_t slab;
+		for (slab = i; alloced[i] < per_slab_count && 
+				slab < lp->slab_count; slab += lp->min_alloc_slabs) {
+
+			/* Can we allocate from this slab? */
+			if (!can_allocate_from_slab(lp, slab)) {
+				if (slab < max_slab) continue;
+				break;
+			}
+		
+			LOG(LOG_DBG3, "%s[%d]: allocating %d stripes in slab %u", 
+				lo->info.name, lp->part_num, per_slab_count, slab);
+
+			rc = prealloc_stripes_in_slab(lp, slab, per_slab_count - alloced[i]);
+			if (rc < 0) {
+				LOG(LOG_ERR, "%s[%d]: error %d allocating stripes in slab %u", 
+				lo->info.name, lp->part_num, rc, slab);
+				continue;
+			} else if (!rc) {
+				LOG(LOG_DBG, "%s[%d]: no stripes allocated in slab %u", 
+					lo->info.name, lp->part_num, slab);
+			} else {
+				alloced[i] += rc;
+				n += rc;
+				LOG(LOG_DBG, "%s[%d]: allocated %d of %d in slab %u, %d left",
+					lo->info.name, lp->part_num, rc, count, slab, count - n);
+			}
+		}
+	}
+	
+	if (!n) LOG(LOG_DBG, "%s[%d]: no stripes allocated in existing slabs", lo->info.name, lp->part_num);
+
+	return n;
 }
 
 /* Gauge the layout I/O pressure */
@@ -1221,14 +1769,68 @@ static int process_releaseq(F_LO_PART_t *lp)
 	return 0;
 }
 
+/* Virtual map iterator function, filters failed and degraded slabs */ 
+static int sm_is_slab_f_d(void *arg, const F_PU_VAL_t *entry)
+{
+	const F_SLAB_ENTRY_t *se = &entry->se;
+	return (se->mapped && (se->failed || se->degraded));
+}
+
+static F_COND_t sm_slab_f_d = {
+	.vf_get = &sm_is_slab_f_d,
+};
+
 /*
  * Release degraded slabs taking them out of allocation.
  */
 static int process_degraded_slabs(F_LO_PART_t *lp)
 {
-	return 0;
+	F_LAYOUT_t *lo = lp->layout;
+	F_ITER_t *sm_it;
+	int df = 0, rc = 0;
+
+	sm_it = f_map_get_iter(lo->slabmap, sm_slab_f_d, 0);
+	for_each_iter(sm_it) {
+		f_slab_t slab = sm_it->entry;
+		f_stripe_t s0 = slab_to_stripe0(lo, slab);
+
+		/* double check bitmaps */
+		ASSERT(slab_allocated(lp, slab) && !slab_in_sync(lp, slab));
+
+		/* Degraded and not used slab, just release it */
+		if (!slab_used(lp, s0)) {
+			LOG(LOG_DBG, "%s[%d]: releasing degraded/failed slab %u", lo->info.name, lp->part_num, slab);
+			rc = release_slab(lp, slab);
+			if (rc) LOG(LOG_ERR, "%s[%d]: error %d releasing D/F slab %u", 
+				lo->info.name, lp->part_num, rc, slab);
+		} else df++;
+	} 
+	f_map_free_iter(sm_it);
+
+	if (atomic_read(&lp->degraded_slabs) + atomic_read(&lp->failed_slabs) != df) {
+		 LOG(LOG_WARN, "%s[%d]: degraded slab count (%d) != actual (%d)",
+			lo->info.name, lp->part_num, atomic_read(&lp->degraded_slabs), 
+			df - atomic_read(&lp->failed_slabs));
+	}
+
+	return rc;
 }
 
+static unsigned int get_layout_slab_count(F_LAYOUT_t *lo)
+{
+	F_POOL_DEV_t *pdev;
+	F_POOLDEV_INDEX_t *pdi;
+	unsigned long pexts = 0;
+	int i;
+
+	for (i = 0; i < lo->devlist_sz; i++) {
+		pdi = &lo->devlist[i];
+		pdev = f_find_pdev(pdi->pool_index);	
+		pexts += pdev->extent_count;
+	}
+	
+	return DIV_CEIL(pexts, lo->info.chunks);
+}
 /*
  * Release the layout partition structure.
  */
@@ -1266,6 +1868,7 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	atomic_set(&lp->bucket_count, 0);
 	atomic_set(&lp->bucket_count_max, 0);
 
+	lo->info.slab_count	= get_layout_slab_count(lo);
 	lp->lwm_stripes		= F_LWM_ALLOC_STRIPES * chunk_size_factor;
 	lp->hwm_stripes		= F_HWM_ALLOC_STRIPES * chunk_size_factor;
 	lp->max_alloc_stripes	= F_MAX_ALLOC_STRIPES * chunk_size_factor;
@@ -1357,7 +1960,7 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 	}
 
 	/* Drop preallocated stripes from degraded slabs */
-	rc = purge_alloc_stripes(lp);
+	rc = purge_prealloc_stripes(lp);
 	if (rc) {
 		LOG(LOG_WARN, "%s[%d]: error %s purging pre-allocated stripes", 
 				lo->info.name, lp->part_num, strerror(rc));
@@ -1456,7 +2059,7 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 	/* Above the high water mark, release extra stripes */
 	} else if (rel_count >= stripes_threshold) {
 		LOG(LOG_DBG, "%s[%d]: releasing %d preallocated stripes", lo->info.name, lp->part_num, rel_count);
-		rc = release_alloc_stripes(lp, rel_count);
+		rc = release_prealloc_stripes(lp, rel_count);
 		if (rc) {
 			LOG(LOG_WARN, "%s[%d]: error %d releasing %d pre-allocated stripes",
 				lo->info.name, lp->part_num, rc, rel_count);
@@ -1549,7 +2152,7 @@ static void *f_allocator_thread(void *ctx)
 			bool report_alloc_errors = !LayoutNoSpace(lo);
 
 			/* Run stripe allocator */
-			LOG(LOG_DBG, "%s[%d]: allocator run @%lu", lo->info.name, lp->part_num, to.tv_sec);
+			LOG(LOG_DBG3, "%s[%d]: allocator run @%lu", lo->info.name, lp->part_num, to.tv_sec);
 			pthread_rwlock_wrlock(&lp->lock);
 			rc = f_stripe_allocator(lp);
 			if (rc) {
@@ -1562,7 +2165,7 @@ static void *f_allocator_thread(void *ctx)
 		}
 	}
 
-	ASSERT(!release_alloc_stripes(lp, 0));
+	ASSERT(!release_prealloc_stripes(lp, 0));
 	flush_maps(lp);
 	layout_partition_free(lp);
 

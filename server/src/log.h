@@ -44,7 +44,9 @@ typedef enum {
     LOG_ERR   = 2,
     LOG_WARN  = 3,
     LOG_INFO  = 4,
-    LOG_DBG   = 5
+    LOG_DBG   = 5,
+    LOG_DBG2  = 6,
+    LOG_DBG3  = 7
 } loglevel;
 
 char timestamp[256];

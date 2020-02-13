@@ -197,7 +197,7 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 
 /* Limits: slab, stripe, device and layout */
 #define F_DEVICES_MAX		4096	/* Maximum number of FAMs, divisible by 8 */
-#define F_STRIPE_DISK_COUNT	F_DEVICES_MAX /* Max number of disks per stripe */
+#define F_STRIPE_DEV_COUNT	F_DEVICES_MAX /* Max number of devices per stripe */
 #define FVAR_MONIKER_MAX	14	/* Max moniker string lemgth */
 #define F_CHUNK_SIZE_MIN	(4*KIB)	/* Minimum chunk size - 4K */
 #define F_CHUNK_SIZE_MAX	(16*MIB)

@@ -17,7 +17,7 @@
 #include "list.h"
 
 
-#define DRIVE_MAP_SIZE  BITS_TO_LONGS(F_STRIPE_DISK_COUNT)
+#define F_DEVMAP_SIZE  BITS_TO_LONGS(F_STRIPE_DEV_COUNT)
 
 
 typedef uint64_t	f_stripe_t;
@@ -29,7 +29,33 @@ struct f_stripe_set {
     f_stripe_t		*stripes;
 };
 
-#define F_LWM_ALLOC_STRIPES	2048	/* Stripe preallocation list low water mark */
+/* Stripe entry type */
+enum req_type {
+	F_ALLREQ,
+	F_ALLOC,
+	F_RELEASE,
+	F_BULK_RELEASE,
+};
+
+struct f_stripe_bucket {
+	struct			list_head list;		/* buckets list head */
+	struct			list_head head;		/* stripes list head */
+	atomic_t		count;			/* stripe count */
+	unsigned long		devmap[F_DEVMAP_SIZE];	/* device allocation bitmap */
+	struct f_layout_partition_ *lp;			/* Layout pointer */
+};
+
+struct f_stripe_entry {
+	struct	list_head list;				/* list head */
+	
+	f_stripe_t		stripe;			/* stripe # */
+	f_slab_t		slab;			/* stripe slab # */
+	enum			req_type type;		/* Stripe entry type */
+	struct f_layout_partition_ *lp;			/* Layout partition pointer */
+};
+
+#define F_LWM_ALLOC_STRIPES	256	/* Stripe preallocation list low water mark */
+//#define F_LWM_ALLOC_STRIPES	2048	/* Stripe preallocation list low water mark */
 #define F_HWM_ALLOC_STRIPES	4096	/* Stripe preallocation list high water mark */
 #define F_MAX_ALLOC_STRIPES	10*1024	/* Stripe preallocation max */
 #define F_MIN_ALLOC_SLABS	2	/* min # of slabs to allocate across */

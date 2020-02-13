@@ -507,7 +507,7 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 				// _f_map_clear_pu_dirty_bosl(it->bosl, pu);
 				/* Callback */
 				if (cb)
-					cb(e, cb_arg, (F_PU_VAL_t *)buf);
+					cb(e, cb_arg, (F_PU_VAL_t *)it->word_p);
 			}
 		}
 	} while (count > 0);
