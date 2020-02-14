@@ -22,7 +22,7 @@ BASE_SRCS = famfs_env.h famfs_error.h famfs_stats.h \
 	famfs_maps.h famfs_maps.c util.c \
 	mpi_utils.h mpi_utils.c \
         famfs_rbq.h famfs_rbq.c \
-        famfs_lfa.h
+        famfs_lfa.h famfs_lfa.c
 
 libfamfs_common_la_SOURCES = $(BASE_SRCS)
 libfamfs_common_la_CPPFLAGS =	-D_GNU_SOURCE=1 $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) \
