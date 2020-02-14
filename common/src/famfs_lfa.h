@@ -4,8 +4,8 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_LF_CONNECT_H
-#define FAMFS_LF_CONNECT_H
+#ifndef FAMFS_LFA_H
+#define FAMFS_LFA_H
 
 #include <string.h>
 #include <stdio.h>
@@ -18,37 +18,55 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
 #include <rdma/fi_ext_zhpe.h>
-#include <mpi.h>
+#include <rdma/fi_atomic.h>
 
-#include "famfs_env.h"
+//#include <mpi.h>
+
+//#include "famfs_env.h"
 
 #define F_LFA_MAXV  32                      // max size of atomic vector
 #define F_LFA_MAXB  8                       // max number of atmoic blobs
+#define F_LFA_LK_BASE 100000
+
+typedef struct f_lfa_slist_ {
+    char    *name;
+    char    *service;
+} F_LFA_SLIST_t;
 
 //
 // Atomic (data) Blob Descriptor
 //
 typedef struct f_lfa_abd_{
 
+    struct {
+        union {
+            uint64_t            in64;
+            uint32_t            in32;
+        };
+        union {
+            uint64_t            out64;
+            uint32_t            out32;
+        };
+    }                       ops[F_LFA_MAXV]; // Local operand buffer
+    uint64_t                ops_key;        // This blob's local protecion key
+    struct fid_mr           *ops_mr;        // Operand buffer MR
+    void                    *ops_mr_dsc;    //    and its descriptor
+
     struct f_lfa_desc_      *lfa;           // Backpointer to the LFA Descriptor of this blob
+    struct f_lfa_abd_       *next;          // next blob in chain
     uint64_t                flags;          // Status and mode flags
 
-    uint64_t                key;            // This blob's protection key: same for in/out/local
+    int                     nsrv;           // Number of remote nodes exporting this blob
+    F_LFA_SLIST_t           *slist;         // Node names list
+    fi_addr_t               *tadr;          // Atomic ops target addresses vector (includig loclal)
 
-    int                     ncnt;           // Number of remote nodes exporting this blob
-    char                    **nlist;        // Node names list
-    fi_addr_t               *trg_adr;       // Atomic ops target addresses vector (includig loclal)
-
-    size_t                  bsize;          // Size of in/out/data buffers
-    void                    *in_buf;        // Input buffer for all atomic ops, NULL if this is server-only
-    struct fid_mr           *in_mr;         // Input buffer MR
-    void                    *in_mr_dsc;     //    and its descriptor
-    void                    *out_buf;       // Output buffer for _compare_ and _fetch_ ops, NULL if server-only
-    struct fid              *out_mr;        // Output buffer MR
-    void                    *out_mr_dsc;    //    and its descriptor
     void                    *srv_buf;       // Server buffer, NULL if this is client-only
-    struct fid              *srv_mr;        // Server buffer MR
-    void                    *srv_dsc;       //    and its descriptor
+    size_t                  srv_bsz;
+    struct fid_mr           *srv_mr;        // Server buffer MR
+    uint64_t                srv_key;        // Server key
+
+    void                    *in_buf;        // Input buffer for all atomic ops, NULL if this is server-only
+    size_t                  in_bsz;         // Size of in/out/data buffers
 
 } F_LFA_ABD_t;
 
@@ -57,25 +75,29 @@ typedef struct f_lfa_abd_{
 //
 typedef struct f_lfa_desc_ {
 
-    pthread_mutex_lock_t    lock;           // Big Bad Lock for RBD chain
+    pthread_mutex_t         lock;           // Big Bad Lock for ABD chain
     F_LFA_ABD_t             *blobs;         // Pointer to the firts blob descriptor in chain (NULL terminated)
     struct fid_ep           *ep;            // Libfabric endpoint for atomic TXs
-    struct fid_cq           *cq;            // Completion queue for atomic ops
+    struct fid_domain       *dom;           // Domain
+    struct fid_av           *av;            // AV 
+    struct fid_cq           *cq;            // Completion Queue for atomic ops
+    struct fi_cq_tagged_entry cqe;          // CQ entry
 
 } F_LFA_DESC_t;
 
 //
 // Create atomic blob, open new endpoint, translate all addresses etc
 //   In
-//      fab     fabric object - must be initialized already
 //      dom     domain object - see above
+//      noav    if = 1, do not create AV
+//      fi      fabric info obtained when domain was created
 //   Out
 //      plfa    address of a pointer to hold created LFA structure
 //   Return
 //      0       success
 //    <>0       error, see errno/fi_errno
 //
-int f_lfa_create(struct fid_fabric *fab, struct fid_domain *dom, F_LFA_DESC_t **plfa);
+int f_lfa_create(struct fid_domain *dom, struct fid_av *av, struct fi_info *fi, F_LFA_DESC_t **plfa);
 
 //
 // Register local buffers for remote atomic blob access
@@ -88,7 +110,7 @@ int f_lfa_create(struct fid_fabric *fab, struct fid_domain *dom, F_LFA_DESC_t **
 //      pbuf:       address of a pointer to data buffer to be served out
 //                  if *pbuf == NULL, memory will be allocated
 //   Out
-//      pbdb:       (new) blob desriptor pointer
+//      pabd:       (new) blob desriptor pointer
 //   Return
 //      0           success
 //      EEXISTS     a blob with this key already registered
@@ -117,7 +139,7 @@ int f_lfa_register(F_LFA_DESC_t *lfa, uint64_t key, size_t bsize, void **pbuf, F
 //      EINVAL      remote buffer exists and its size != bsize
 //      <>0         error
 //
-int f_lfa_attach(F_LFA_DESC_t *lfa, uint64_t key, char **nlist, size_t bsize, void **ibuf, F_LFA_ABD_t **pabd);
+int f_lfa_attach(F_LFA_DESC_t *lfa, uint64_t key, F_LFA_SLIST_t *lst, int lcnt, size_t bsize, void **ibuf, F_LFA_ABD_t **pabd);
 
 //
 // Detach from remote atomic blob
@@ -203,12 +225,12 @@ int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, size_t size, void *trg);
 //  old:    pointer to the fetched value
 int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old);
 int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old);
-#define f_lfa_safw(l, t, i, v, o) f_lfa_addw(l, t, i, -(v), o)
-#define f_lfa_safl(l, t, i, v, o) f_lfa_addl(l, t, i, -(v), o)
-#define f_lfa_iafw(l, t, i, v, o) f_lfa_addw(l, t, i, 1, o)
-#define f_lfa_iafl(l, t, i, v, o) f_lfa_addl(l, t, i, 1, o)
-#define f_lfa_dafw(l, t, i, v, o) f_lfa_addw(l, t, i, -1, o)
-#define f_lfa_dafl(l, t ,i, v, o) f_lfa_addl(l, t, i, -1, o)
+#define f_lfa_safw(l, t, i, v, o) f_lfa_aafw(l, t, i, -(v), o)
+#define f_lfa_safl(l, t, i, v, o) f_lfa_aafl(l, t, i, -(v), o)
+#define f_lfa_iafw(l, t, i, v, o) f_lfa_aafw(l, t, i, 1, o)
+#define f_lfa_iafl(l, t, i, v, o) f_lfa_aafl(l, t, i, 1, o)
+#define f_lfa_dafw(l, t, i, v, o) f_lfa_aafw(l, t, i, -1, o)
+#define f_lfa_dafl(l, t ,i, v, o) f_lfa_aafl(l, t, i, -1, o)
 
 //
 // Atomic compare_and_swap: compare expected value with remote, if equal set new else return remote value found
@@ -232,7 +254,7 @@ int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long exp, long
 // We assume that wotking on words (32-bit) gives us less contention for a given place in memory
 //  abd:    blob descriptor
 //  trg_ix: index of target node
-//  off:    offset of the 1st word of the bir field
+//  off:    offset of the 1st word of the bit field
 //  boff:   intitial bit offset (hopefully it will be clear!)
 //  bsize:  max number of bits to scan
 // Return:
@@ -331,3 +353,4 @@ off_t f_lfa_toc_get(F_LFA_ABD_t *abd, int trg_ix);
 //  max_cnt: max number oc counters in the TOC
 int f_lfa_toc_free(F_LFA_ABD_t *abd, int trg_ix, off_t off);
 
+#endif
