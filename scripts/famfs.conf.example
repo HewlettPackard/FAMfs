@@ -57,7 +57,6 @@ memreg = "basic,local" ; basic|local|basic,local|scalable, default:basic
 progress = manual ; auto|manual|default, default:auto
 use_cq = true ; use completion queue instead of counters
 # timeout =
-# multidomain = true ; open libfabric domain for each endpoint
 
 [device] # FAM module or emulated FAM
 id = 1 ; Unique device id

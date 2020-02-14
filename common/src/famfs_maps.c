@@ -149,7 +149,7 @@ static F_IONODE_INFO_t *get_ionode_info(F_POOL_t *p, const char *hostname)
 }
 
 /* Set ionode_id and HasMDS, IsIOnode flags in pool struct */
-static void set_my_ionode_info(F_POOL_t *p)
+static void set_mynode_info(F_POOL_t *p)
 {
     F_IONODE_INFO_t *info;
 
@@ -163,11 +163,15 @@ static void set_my_ionode_info(F_POOL_t *p)
 	    SetNodeHasMDS(&p->mynode);
 	else
 	    ClearNodeHasMDS(&p->mynode);
-	p->mynode.ionode_id = (uint32_t)(info - p->ionodes);
-	assert( p->mynode.ionode_id < p->ionode_count );
+	if (PoolFAMEmul(p))
+	    SetNodeRunLFSrv(&p->mynode);
+	p->mynode.ionode_idx = (uint16_t)(info - p->ionodes);
+	assert( p->mynode.ionode_idx < p->ionode_count );
+	p->mynode.hostname = strdup(info->hostname);
     } else {
 	ClearNodeIsIOnode(&p->mynode);
 	ClearNodeHasMDS(&p->mynode);
+	p->mynode.hostname = f_get_myhostname();
     }
 }
 
@@ -211,7 +215,7 @@ struct f_pool_dev_ *f_find_pdev(unsigned int media_id) {
     struct f_pool_ *p = pool;
 
     return (media_id <= p->info.pdev_max_idx)?
-	(&p->devlist[ p->info.media_ids[media_id] ]) : NULL;
+	(&p->devlist[ p->info.pdi_by_media[media_id] ]) : NULL;
 }
 
 static int cmp_pdev_by_index(const void *a, const void *b)
@@ -261,80 +265,115 @@ static int clone_pool_dev(F_POOL_DEV_t *clone, F_POOL_DEV_t *pdev)
     clone->pool_index = pdev->pool_index;
     clone->idx_ag = pdev->idx_ag;
     clone->idx_dev = pdev->idx_dev;
-
+    if (pthread_rwlock_init(&clone->rwlock, NULL))
+	return -ENOMEM;
+    assert( pdev->dev );
     fam = &pdev->dev->f;
-    assert( fam );
     clone->dev = (F_DEV_t *) calloc(sizeof(F_DEV_t), 1);
     if (!clone->dev)
 	return -ENOMEM;
     cfam = &clone->dev->f;
+    cfam->lf_name = strdup(fam->lf_name);
     cfam->zfm.topo = strdup(fam->zfm.topo);
     if (fam->zfm.znode)
 	cfam->zfm.znode = strdup(fam->zfm.znode);
     if (fam->zfm.geo)
 	cfam->zfm.geo = strdup(fam->zfm.geo);
     cfam->ionode_idx = fam->ionode_idx;
-    cfam->service = fam->service;
-    cfam->fam_part = fam->fam_part;
+
     return 0;
 }
 
 static void free_pdev(F_POOL_DEV_t *pdev)
 {
     if (pdev->dev) {
+	FAM_DEV_t *d = &pdev->dev->f;
+
+	free(d->zfm.url);
+	free(d->zfm.znode);
+	free(d->zfm.topo);
+	free(d->zfm.geo);
+
 	pthread_rwlock_destroy(&pdev->rwlock);
-	f_dev_free(&pdev->dev->f);
 	free(pdev->dev);
     }
     free(pdev->sha);
+}
+
+/* Set back references to IO node index&position in all pool devices */
+static void set_pdevs_to_ions(F_POOL_t *p)
+{
+    F_POOL_INFO_t *info = &p->info;
+    F_IONODE_INFO_t *ioi;
+    unsigned int i, j, k;
+    unsigned int xchg_off = 0;
+
+    ioi = p->ionodes;
+    for (j = 0; j < p->ionode_count; j++, ioi++) {
+	F_POOL_DEV_t *pdev;
+	uint16_t *pd_idx = info->pdev_indexes;
+
+	for (i = k = 0; i < info->dev_count; i++, pd_idx++) {
+	    pdev = &p->devlist[*pd_idx];
+	    if (pdev->dev->f.ionode_idx != j)
+		continue;
+	    /* set back refs to IO node id&pos */
+	    pdev->ionode_idx = j;
+	    pdev->idx_in_ion = k++;
+	}
+	ioi->fam_xchg_off = xchg_off;
+	ioi->fam_devs = k;
+	xchg_off += k;
+    }
 }
 
 /* Allocate libfabric devices for FAM emulation on this IO node. */
 static int emulated_devs_alloc(F_POOL_t *p)
 {
     F_POOL_DEV_t *devlist = NULL;
-    F_POOL_DEV_t *pdev, *fdev;
+    F_POOL_DEV_t *pdev, *em_pdev;
     F_POOL_INFO_t *info = &p->info;
     F_MYNODE_t *mynode = &p->mynode;
+    size_t mr_size = 0;
     uint16_t ion_idx, *pd_idx;
-    unsigned int i, j, k;
+    unsigned int i, k;
     int rc;
 
-    ion_idx = (uint16_t)mynode->ionode_id;
-    pd_idx = info->pdev_indexes;
-    for (i = j = 0; i < info->dev_count; i++, pd_idx++) {
-        pdev = &p->devlist[*pd_idx];
-	if (pdev->dev->f.ionode_idx == ion_idx)
-	    j++;
-    }
-
-    if (j == 0) {
+    ion_idx = (uint16_t)mynode->ionode_idx;
+    mynode->emul_devs = p->ionodes[ion_idx].fam_devs;
+    if (mynode->emul_devs == 0) {
 	err("ionode #%u (%s) has no FAMs - please check configuration!",
 	    ion_idx, mynode->hostname);
 	return 0;
     }
-    devlist = fdev = (F_POOL_DEV_t*) calloc(j, sizeof(F_POOL_DEV_t));
+    devlist = em_pdev = (F_POOL_DEV_t*) calloc(mynode->emul_devs,
+						sizeof(F_POOL_DEV_t));
+    if (!devlist)
+	return -ENOMEM;
 
     pd_idx = info->pdev_indexes;
     for (i = k = 0; i < info->dev_count; i++, pd_idx++) {
         pdev = &p->devlist[*pd_idx];
 	if (pdev->dev->f.ionode_idx != ion_idx)
 	    continue;
-	if ((rc = clone_pool_dev(fdev, pdev)))
+	if ((rc = clone_pool_dev(em_pdev, pdev)))
 	    goto _err;
-	fdev->dev->f.zfm.url = strdup(mynode->hostname);
-	fdev->pool = p;
-	fdev++; k++;
+	em_pdev->dev->f.zfm.url = strdup(mynode->hostname);
+	em_pdev->dev->f.mr_size = em_pdev->size;
+	//em_pdev->dev->f.offset = info->data_offset;
+	em_pdev->pool = p;
+	mr_size += em_pdev->size;
+	em_pdev++; k++;
     }
 
-    mynode->emul_devs = j;
     mynode->emul_devlist = devlist;
+    mynode->emul_mr_size = mr_size;
     return 0;
 
 _err:
-    fdev = devlist;
-    for (i = 0; i < k; i++, fdev++)
-	 free_pdev(fdev);
+    em_pdev = devlist;
+    for (i = 0; i < k; i++, em_pdev++)
+	 free_pdev(em_pdev);
     free(devlist);
     return rc;
 }
@@ -345,17 +384,13 @@ static void free_pool(F_POOL_t *p)
 	F_POOL_DEV_t *pdev;
 	unsigned int i;
 
-	free_lf_params(&p->lfs_params);
+	lf_clients_free(p);
 
-	pdev = p->devlist;
-	if (pdev) {
-	    for (i = 0; i < p->pool_devs; i++, pdev++)
-		free_pdev(pdev);
-	    free(p->devlist);
-	}
-	f_domain_close(&p->mynode.domain);
+	for_each_pool_dev(p, pdev)
+	    free_pdev(pdev);
+	free(p->devlist);
 	free(p->info.pdev_indexes);
-	free(p->info.media_ids);
+	free(p->info.pdi_by_media);
 
 	if (p->ags) {
 	    for (i = 0; i < p->pool_ags; i++)
@@ -375,25 +410,27 @@ static void free_pool(F_POOL_t *p)
 	    }
 	    free(p->ionodes);
 	}
+	nodelist_free(p->ionodelist, p->ionode_count);
 
 	if (p->ionode_comm) {
 	    MPI_Barrier(p->ionode_comm);
 	    MPI_Comm_free(&p->ionode_comm);
 	}
+
+	lf_servers_free(p);
+
 	if (p->mynode.emul_devlist) {
 	    pdev = p->mynode.emul_devlist;
 	    for (i = 0; i < p->mynode.emul_devs; i++, pdev++)
 		free_pdev(pdev);
 	    free(p->mynode.emul_devlist);
 	}
-	f_domain_close(&p->mynode.emul_domain);
 
 	if (p->lf_info) {
 	    LF_INFO_t *lf_info = p->lf_info;
 
 	    free(lf_info->fabric);
 	    free(lf_info->domain);
-	    free(lf_info->service);
 	    free(lf_info->provider);
 	    free(lf_info);
 	}
@@ -440,9 +477,6 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (f_uuid_parse(c->devices_uuid, p->uuid)) {
 	assert( uuid_parse(FAMFS_PDEVS_UUID_DEF, p->uuid) == 0);
     }
-    /* my node name */
-    p->mynode.hostname = f_get_myhostname();
-    if (!p->mynode.hostname) goto _nomem;
 
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
@@ -451,9 +485,6 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info->extent_sz = (unsigned long)l;
     if (configurator_int_val(c->devices_offset, &l)) goto _noarg;
     pool_info->data_offset = (unsigned long)l;
-    if (configurator_bool_val(c->devices_multidomain, &b)) goto _noarg;
-    if (b)
-	lf_info->opts.multi_domains = 1;
     if (configurator_bool_val(c->devices_emulated, &b)) goto _noarg;
     if (b)
 	SetPoolFAMEmul(p);
@@ -467,7 +498,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	lf_info->fabric = strdup(c->devices_fabric);
     if (c->devices_domain)
 	lf_info->domain = strdup(c->devices_domain);
-    lf_info->service = strdup(c->devices_port);
+    if (c->devices_port == NULL) goto _noarg;
+    if (sscanf(c->devices_port, "%5d", &lf_info->service) != 1) goto _syntax;
     lf_info->provider = strdup(c->devices_provider);
     if (!strcmp(lf_info->provider, "zhpe"))
 	lf_info->opts.zhpe_support = 1;
@@ -528,11 +560,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    SetIOnodeForceHelper(ioi);
 	if (c->ionode_host[u][0])
 	    ioi->hostname = strdup(c->ionode_host[u][0]);
-	else if (u == 0)
-	    ioi->hostname = strdup(p->mynode.hostname);
-	else
+	else if (u > 0)
 	    goto _noarg;
-	p->ionodelist[u] = strdup(ioi->hostname);
 	if (!c->ionode_topo[u][0]) goto _noarg;
 	ioi->zfm.topo = strdup(c->ionode_topo[u][0]);
 	if (c->ionode_z_node[u][0])
@@ -541,7 +570,15 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    ioi->zfm.geo = strdup(c->ionode_geo[u][0]);
 
     }
-    set_my_ionode_info(p);
+    /* Set IO node name to `hostname` if omitted on single-node configuration */
+    if (p->ionodes[0].hostname == NULL) {
+	if (p->ionode_count > 1) goto _noarg;
+	if (!IOnodeForceHelper(p->ionodes)) goto _noarg;
+	p->ionodes[0].hostname = f_get_myhostname();
+    }
+    for (u = 0; u < p->ionode_count; u++)
+	p->ionodelist[u] = strdup(p->ionodes[u].hostname);
+    set_mynode_info(p);
 
     /* Device count */
     count = configurator_get_sec_size(c, "device");
@@ -624,8 +661,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	pdev->dev = (F_DEV_t *) calloc(sizeof(F_DEV_t), 1);
 	if (!pdev->dev) goto _nomem;
 	fam = &pdev->dev->f;
-	if (!PoolFAMEmul(p) && c->device_url[u][0])
-	    fam->zfm.url = strdup(c->device_url[u][0]);
+	fam->mr_size = pdev->size;
+	fam->offset = pool_info->data_offset;
 	if (!c->device_topo[u][0]) goto _noarg;
 	fam->zfm.topo = strdup(c->device_topo[u][0]);
 	if (c->device_z_node[u][0])
@@ -635,6 +672,13 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	/* match device IO node by toplogy */
 	if ((idx = dev_ionode(p, pdev->dev)) < 0) goto _syntax;
 	    fam->ionode_idx = (uint16_t)idx;
+	if (PoolFAMEmul(p)) {
+	    fam->lf_name = strdup(p->ionodes[idx].hostname);
+	} else {
+	    if (!c->device_url[u][0]) goto _noarg;
+	    fam->zfm.url = strdup(c->device_url[u][0]);
+	    fam->lf_name = strdup(fam->zfm.url);
+	}
 
 	if (configurator_int_val(c->device_pk[u][0], &l))
 	    fam->pkey = pool_info->pkey_def;
@@ -693,14 +737,17 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    pool_info->pdev_indexes[u] = uu;
     }
     /* Array of indexes in devlist for each media_id from zero to 'pdev_max_idx' */
-    pool_info->media_ids = (uint16_t *) calloc(pool_info->pdev_max_idx+1,
-					       sizeof(uint16_t));
-    if (!pool_info->media_ids) goto _nomem;
+    pool_info->pdi_by_media = (uint16_t *) calloc(pool_info->pdev_max_idx+1,
+						  sizeof(uint16_t));
+    if (!pool_info->pdi_by_media) goto _nomem;
     for (u = 0; u <= pool_info->pdev_max_idx; u++)
-	pool_info->media_ids[u] = find_pdev(p, u);
+	pool_info->pdi_by_media[u] = find_pdev(p, u);
+
+    /* Set back references to IO node index&position in all pool devices */
+    set_pdevs_to_ions(p);
 
     /* Allocate fabric devices for FAM emulation */
-    if (PoolFAMEmul(p) && emulated_devs_alloc(p))
+    if (NodeRunLFSrv(&p->mynode) && emulated_devs_alloc(p))
 	goto _nomem;
 
     /* Layout count */
@@ -808,7 +855,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     for (u = uu = 0; u < info->devnum; u++, pdi++) {
 	/* find pool device by id */
 	if (all_pdevs) {
-	    pdev = &pool->devlist[uu];
+	    pdev = &p->devlist[uu];
 	    while (pdev->pool_index == F_PDI_NONE &&
 		   ++uu < p->pool_devs) pdev++;
 	    assert( uu < p->pool_devs ); /* less than devnum */
@@ -848,112 +895,6 @@ _err:
     return rc;
 }
 
-/* Linaer map: devices to ionodes */
-static FAM_MAP_t *map_fams_to_ionodes(F_POOL_t *p, int count)
-{
-    FAM_MAP_t *m;
-    F_POOL_DEV_t *pdev;
-    unsigned long long *ids;
-    unsigned int pd;
-    int i, j, k, d, n, nn;
-
-    m = (FAM_MAP_t *) calloc(1, sizeof(FAM_MAP_t));
-    if (!m) goto _free;
-    m->ionode_cnt = p->ionode_count;
-    m->total_fam_cnt = count;
-    m->node_fams = (int *) calloc(m->ionode_cnt, sizeof(int));
-    m->fam_ids = (unsigned long long**) calloc(m->ionode_cnt, sizeof(*m->fam_ids));
-    if (!m->node_fams || !m->fam_ids) goto _free;
-
-    nn = m->total_fam_cnt / m->ionode_cnt;
-    k = m->total_fam_cnt % m->ionode_cnt;
-    pd = 0;
-    pdev = p->devlist;
-    for (i = d = 0; i < m->ionode_cnt; i++) {
-	n = (i < k)? (nn+1):nn; /* number of FAMs on ionode i */
-	m->node_fams[i] = n;
-	ids = (unsigned long long*) calloc(n, sizeof(unsigned long long));
-	for (j = 0; j < n; j++, d++, pd++, pdev++) {
-	    while (pd < p->pool_devs && pdev->pool_index == F_PDI_NONE) {
-		pdev++;
-		pd++;
-	    }
-	    assert( pd < p->pool_devs );
-	    ids[j] = pdev->pool_index;
-	}
-	m->fam_ids[i] = ids;
-    }
-    return m;
-
-_free:
-    free_fam_map(&m);
-    return NULL;
-}
-
-static int cfg_alloc_params(F_POOL_t *p, N_PARAMS_t **params_p)
-{
-    N_PARAMS_t *params;
-    F_LAYOUT_INFO_t *lo_info;
-    F_POOL_INFO_t *info = &p->info;
-    LF_INFO_t *lf_info = p->lf_info;
-    int rc;
-    bool fam_emul = PoolFAMEmul(p);
-
-    params = (N_PARAMS_t *) calloc(sizeof(N_PARAMS_t), 1);
-    if (!params) goto _nomem;
-
-    /* default layout */
-    lo_info = f_get_layout_info(0);
-    params->nchunks = lo_info->chunks;
-    params->parities = lo_info->chunks - lo_info->data_chunks;
-    params->chunk_sz = lo_info->chunk_sz;
-    params->extent_sz = info->extent_sz;
-    params->srv_extents = info->size_def / info->extent_sz;
-    params->vmem_sz = info->extent_sz * params->srv_extents;
-    params->node_servers = 1;
-    /* part_mreg:1 - emulate multiple FAMs on each node as separate "partitions" */
-    params->opts.zhpe_support = lf_info->opts.zhpe_support;
-    params->opts.true_fam = lf_info->opts.true_fam;
-    params->opts.part_mreg = (fam_emul)?1:0;
-    params->opts.use_cq = lf_info->opts.use_cq;
-    params->opts.multi_domains = lf_info->opts.multi_domains;
-    params->io_timeout_ms = lf_info->io_timeout_ms;
-    memcpy(&params->lf_mr_flags, &lf_info->mrreg, sizeof(LF_MR_MODE_t));
-    memcpy(&params->lf_progress_flags, &lf_info->progress, sizeof(LF_PRG_MODE_t));
-    if (lf_info->fabric)
-	params->lf_fabric = strdup(lf_info->fabric);
-    if (lf_info->domain)
-	params->lf_domain = strdup(lf_info->domain);
-    params->prov_name = strdup(lf_info->provider);
-    if (sscanf(lf_info->service, "%5d", &params->lf_port) != 1)
-	goto _badval;
-    params->nodelist = p->ionodelist;
-    params->node_id = p->mynode.ionode_id;
-    params->fam_cnt = (fam_emul)?info->dev_count:p->ionode_count;
-    params->fam_map = map_fams_to_ionodes(p, params->fam_cnt);
-
-    params->verbose = p->verbose;
-    //params->mpi_comm = MPI_COMM_NULL;
-    params->w_thread_cnt = 1;
-    if (!params->lf_mr_flags.scalable) {
-        size_t len = params->fam_cnt * params->node_servers * sizeof(uint64_t);
-        params->mr_prov_keys = (uint64_t *)malloc(len);
-        params->mr_virt_addrs = (uint64_t *)malloc(len);
-    }
-
-    *params_p = params;
-    return 0;
-
-_nomem:
-    rc = -ENOMEM;
-    goto _err;
-_badval:
-    rc = -4; /* invalid value */
-_err:
-    free_lf_params(&params);
-    return rc;
-}
-
 static int cfg_load(unifycr_cfg_t *c)
 {
     int rc;
@@ -966,9 +907,7 @@ static int cfg_load(unifycr_cfg_t *c)
 	if ((rc = cfg_load_layout(c, i)))
 	    return rc;
 
-    /* Allocate legacy N_PARAMS_t */
-    rc = cfg_alloc_params(pool, &pool->lfs_params);
-    return rc;
+    return 0;
 }
 
 /* Set layout info from configurator once */
@@ -986,7 +925,7 @@ F_LAYOUT_t *f_get_layout(int layout_id) {
     struct list_head *l;
     F_LAYOUT_t *lo;
 
-    if (pool && pool) {
+    if (pool) {
 	list_for_each(l, &pool->layouts) {
 	    lo = container_of(l, struct f_layout_, list);
 	    if ((int)lo->info.conf_id == layout_id)
@@ -1039,7 +978,7 @@ static void print_lf_info(LF_INFO_t *info) {
     LF_OPTS_t o = info->opts;
 
     printf("\nlibfabric\n");
-    printf("provider:%s fabric:%s domain:%s service:%s timeout:%.3f sec\n",
+    printf("provider:%s fabric:%s domain:%s service:%d timeout:%.3f sec\n",
 	info->provider, info->fabric, info->domain, info->service,
 	(float)info->io_timeout_ms/1000);
     printf("MR mode: %s%s%s%s%s%s\n",
@@ -1048,9 +987,8 @@ static void print_lf_info(LF_INFO_t *info) {
 	m. virt_addr?"virt_addr, ":"", m.allocated?"allocated":"");
     printf("Data/control progress: %s%s\n",
 	pgs.progress_manual?"manual ":"", pgs.progress_auto?"progress_auto":"");
-    printf("Options: %s%s%s%s%s\n",
+    printf("Options: %s%s%s\n",
 	o.zhpe_support?"zhpe_support, ":"", o.true_fam?"true_fam, ":"",
-	o.part_mreg?"part_mreg, ":"", o.multi_domains?"multi_domains, ":"",
 	o.use_cq?"use_cq":"");
 }
 
@@ -1097,7 +1035,7 @@ void f_print_layouts(void) {
 	F_IONODE_INFO_t *info = &p->ionodes[u];
 
 	printf("  #%u%s id:%u %s MDS:%u flags:%s znode:%s topo:%s geo:%s\n",
-	    u, (u == p->mynode.ionode_id && NodeIsIOnode(&p->mynode))?"*":"",
+	    u, (u == p->mynode.ionode_idx && NodeIsIOnode(&p->mynode))?"*":"",
 	    info->conf_id, info->hostname, info->mds,
 	    IOnodeForceHelper(info)?"H":"",
 	    info->zfm.znode, info->zfm.topo, info->zfm.geo);
@@ -1125,7 +1063,7 @@ void f_print_layouts(void) {
 	for (u = 0; u < lo->devlist_sz; u++, pdi++) {
 	    if (pdi->pool_index == F_PDI_NONE)
 		continue;
-	    printf("  dev#%u pool index:%u [%u,%u] ext used/failed:%u/%u\n",
+	    printf("  dev#%u media id:%u [%u,%u] ext used/failed:%u/%u\n",
 		u, pdi->pool_index, pdi->idx_ag, pdi->idx_dev,
 		pdi->sha->extents_used, pdi->sha->failed_extents);
 	}

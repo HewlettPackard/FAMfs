@@ -2357,7 +2357,6 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 	    f_free_layouts_info();
             return rc;
         }
-	lfs_ctx->pool = pool;
     }
     return 0;
 }

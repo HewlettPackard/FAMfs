@@ -6,18 +6,11 @@
 #include <string.h>
 #include <getopt.h>
 #include <malloc.h>
-//#include <arpa/inet.h>
-//#include <signal.h>
-//#include <sys/mman.h>
-//#include <sys/sysinfo.h>
-//#include <sys/types.h>
-//#include <sys/stat.h>
-//#include <limits.h>
-//#include <ifaddrs.h>
+#include <sys/mman.h>
 
 #include "famfs_env.h"
 #include "famfs_error.h"
-#include "famfs_lf_connect.h"
+#include "lf_connect.h"
 #include "w_pool.h"
 
 
@@ -783,4 +776,65 @@ void free_lf_params(N_PARAMS_t **params_p)
     *params_p = NULL;
 }
 #endif
+
+void free_fam_map(FAM_MAP_t **mp)
+{
+    FAM_MAP_t * m = *mp;
+
+    if (m) {
+	int *fams = m->node_fams;
+	unsigned long long **fam_ids = m->fam_ids;
+	int i;
+
+	for (i = 0; i < m->ionode_cnt; i++)
+	    if (fams[i])
+		free(fam_ids[i]);
+	free(fam_ids);
+	free(fams);
+	free(m);
+	*mp = NULL;
+    }
+}
+
+void free_lf_params(N_PARAMS_t **params_p)
+{
+    N_PARAMS_t *params = *params_p;
+    LF_CL_t **lf_all_clients;
+
+    if (params == NULL)
+	return;
+
+    lf_all_clients = params->lf_clients;
+    if (lf_all_clients) {
+	int count = params->fam_cnt * params->node_servers;
+
+	lf_clients_free(lf_all_clients, count);
+	params->lf_clients = NULL;
+    }
+
+    if (params->stripe_buf) {
+	int i;
+	for (i = 0; i < params->w_thread_cnt; i++) {
+	    if (params->lf_mr_flags.allocated)
+		munlock(params->stripe_buf[i], params->chunk_sz * params->nchunks);
+	    free(params->stripe_buf[i]);
+	}
+	free(params->stripe_buf);
+	params->stripe_buf = NULL;
+    }
+
+    nodelist_free(params->nodelist, params->node_cnt);
+    nodelist_free(params->clientlist, params->client_cnt);
+    free(params->prov_name);
+    free(params->lf_fabric);
+    free(params->lf_domain);
+    free(params->mr_prov_keys);
+    free(params->mr_virt_addrs);
+    free_fam_map(&params->fam_map);
+    free(params->fam_buf);
+    free(params->node_name);
+    free(params);
+    *params_p = NULL;
+}
+
 

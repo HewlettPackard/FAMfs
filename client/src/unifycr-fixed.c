@@ -76,6 +76,7 @@ extern int unifycr_spillover_max_chunks;
 #include "fam_stripe.h"
 #include "lf_client.h"
 #include "famfs_rbq.h"
+#include "famfs_lf_cqprogress.h"
 
 /* FAM */
 extern LFS_CTX_t *lfs_ctx;
@@ -388,18 +389,20 @@ famfs_mr_list_t known_mrs = {0, NULL};
 
 #define FAMFS_MR_AU 8
 #define LMR_BASE_KEY 1000000
+#define LMR_PID_SHIFT 8
 
 int famfs_buf_reg(char *buf, size_t len, void **rid) {
     struct fid_mr *mr;
-    N_PARAMS_t *par = lfs_ctx->lfs_params;
-    LF_CL_t    **srv = par->lf_clients;
-    int i, j;
+    F_POOL_t *pool = lfs_ctx->pool;
+    LF_INFO_t *lf_info = pool->lf_info;
+    F_POOL_DEV_t *pdev;
+    int i;
 
     if (fs_type != FAMFS)
         return -EINVAL;
 
     // if local registration is not enabled, do nothing
-    if (!par->lf_mr_flags.local) 
+    if (!lf_info->mrreg.local)
         return 0;
 
     if (!known_mrs.cnt) {
@@ -411,8 +414,8 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
         known_mrs.cnt = FAMFS_MR_AU;
         i = 0;
     } else {
-        for (i = 0; i < known_mrs.cnt; i++) 
-            if (!known_mrs.regs[i].buf) 
+        for (i = 0; i < known_mrs.cnt; i++)
+            if (!known_mrs.regs[i].buf)
                 break;
         if (i == known_mrs.cnt) {
             known_mrs.regs = (lf_mreg_t *)realloc(known_mrs.regs, known_mrs.cnt*sizeof(lf_mreg_t));
@@ -424,33 +427,38 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
             known_mrs.cnt += FAMFS_MR_AU;
         }
     }
-    unsigned long my_key = LMR_BASE_KEY + par->node_id*10000 + local_rank_idx*100 + i;
-    int n = par->fam_cnt*par->node_servers;
+    //unsigned long my_key = LMR_BASE_KEY + par->node_id*10000 + local_rank_idx*100 + i;
+    unsigned long my_key = LMR_BASE_KEY + (getpid() << LMR_PID_SHIFT) + i;
+    int n = pool->info.dev_count;
     known_mrs.regs[i].mreg = (struct fid_mr **)calloc(n, sizeof(struct fid_mr *));
     known_mrs.regs[i].desc = (void **)calloc(n, sizeof(void *));
     known_mrs.regs[i].buf = buf;
     known_mrs.regs[i].len = len;
-    for (j = 0; j < n; j++) {
-        ON_FI_ERR_RET(fi_mr_reg(srv[j]->domain, buf, len, FI_READ | FI_WRITE, 0, my_key, 0, &known_mrs.regs[i].mreg[j], NULL), "cln fi_mr_reg failed");
-        known_mrs.regs[i].desc[j] = fi_mr_desc(known_mrs.regs[i].mreg[j]);
+
+    for_each_pool_dev(pool, pdev) {
+	ON_FI_ERR_RET(fi_mr_reg(pool->mynode.domain->domain, buf, len, FI_READ | FI_WRITE,
+				0, my_key, 0, &known_mrs.regs[i].mreg[_i], NULL),
+		      "cln fi_mr_reg failed");
+        known_mrs.regs[i].desc[_i] = fi_mr_desc(known_mrs.regs[i].mreg[_i]);
     }
 
-    if (rid) 
+    if (rid)
         *rid = (void *)&known_mrs.regs[i];
 
     return 0;
 }
 
 int famfs_buf_unreg(void *rid) {
-    N_PARAMS_t *par = lfs_ctx->lfs_params;
-    int j;
+    F_POOL_t *pool = lfs_ctx->pool;
+    LF_INFO_t *lf_info = pool->lf_info;
+    F_POOL_DEV_t *pdev;
 
-    if (!par->lf_mr_flags.local)
+    if (!lf_info->mrreg.local)
         return 0;
 
     lf_mreg_t *mr = (lf_mreg_t *)rid;
-    for (j = 0; j < par->fam_cnt*par->node_servers; j++)
-        ON_FI_ERR_RET(fi_close(&mr->mreg[j]->fid), "cln fi_close failed");
+    for_each_pool_dev(pool, pdev)
+        ON_FI_ERR_RET(fi_close(&mr->mreg[_i]->fid), "cln fi_close failed");
 
     free(mr->mreg);
     free(mr->desc);
@@ -461,14 +469,15 @@ int famfs_buf_unreg(void *rid) {
 }
 
 static void *lookup_mreg(char *buf, size_t len, int nid) {
-    N_PARAMS_t *pr = lfs_ctx->lfs_params;
-    int i; 
+    F_POOL_t *pool = lfs_ctx->pool;
+    LF_INFO_t *lf_info = pool->lf_info;
+    int i;
 
-    if (!pr->lf_mr_flags.local)
+    if (!lf_info->mrreg.local)
         return NULL;
 
-    for (i = 0; i < known_mrs.cnt; i++) 
-        if (buf >= known_mrs.regs[i].buf && buf + len <= known_mrs.regs[i].buf + known_mrs.regs[i].len) 
+    for (i = 0; i < known_mrs.cnt; i++)
+        if (buf >= known_mrs.regs[i].buf && buf + len <= known_mrs.regs[i].buf + known_mrs.regs[i].len)
             break;
 
     return i == known_mrs.cnt ? NULL : known_mrs.regs[i].desc[nid];
@@ -481,17 +490,17 @@ off_t           saved_off;
 int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off)
 {
     F_POOL_t *pool = lfs_ctx->pool;
-    LF_INFO_t *lf_info = pool->lf_info;
-    N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
-    char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
+    LF_INFO_t *lf_info = pool->lf_info;
+    F_POOL_DEV_t *pdev;
+    FAM_DEV_t *fdev;
     N_CHUNK_t *chunk;
-    LF_CL_t *node;
     struct famsim_stats *stats_fi_wr;
     struct fid_cntr *cntr = NULL;
     fi_addr_t *tgt_srv_addr;
     struct fid_ep *tx_ep = NULL;
     struct fid_cq *tx_cq = NULL;
+    void *local_desc;
     //size_t transfer_sz;
     off_t off;
     //int i, blocks;
@@ -503,23 +512,24 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     /* to FAM chunk */
     chunk = get_fam_chunk(chunk_phy_id, fam_stripe, &dst_node);
     if (chunk == NULL) {
-	DEBUG("%d chunk:%d - ENOSPC\n", lfs_params->node_id, chunk_phy_id);
+	DEBUG("%s: chunk:%d - ENOSPC\n",
+	    pool->mynode.hostname, chunk_phy_id);
 	errno = ENOSPC;
 	return UNIFYCR_ERR_NOSPC;
     }
-    ASSERT(chunk->lf_client_idx < lfs_params->fam_cnt * lfs_params->node_servers);
-    node = lfs_params->lf_clients[chunk->lf_client_idx];
+    assert( pdev = f_find_pdev_by_media_id(pool, chunk->lf_client_idx) );
+    fdev = &pdev->dev->f;
 
     /* Do RMA synchronous write */
-    tgt_srv_addr = &node->tgt_srv_addr[0];
-    tx_ep = node->tx_epp[0];
+    tgt_srv_addr = &fdev->fi_addr;
+    tx_ep = fdev->ep;
 
     if (lf_info->opts.use_cq) {
-        tx_cq = node->tx_cqq[0];
+        tx_cq = fdev->cq;
         evnt = 0;
         event = &evnt;
     } else {
-        cntr = node->wcnts[0];
+        cntr = fdev->wcnt;
         chunk->w_event = fi_cntr_read(cntr);
         event = &chunk->w_event;
     }
@@ -527,30 +537,31 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     //transfer_sz = params->transfer_sz;
     //int blocks = len / transfer_sz;
     ASSERT(chunk_offset + len <= unifycr_chunk_size);
-    ASSERT(dst_node == node->node_id);
-    ASSERT(dst_node < lfs_params->fam_cnt);
+    //ASSERT(dst_node == 'chunk # in stripe');
+    ASSERT(dst_node < pool->info.dev_count);
     if (trg_ni)
-        *trg_ni = dst_node;
-    off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
+        *trg_ni = /* dst_node; */ chunk->lf_client_idx; /* media id */
+    off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * fam_stripe->chunk_sz;
     if (trg_off)
         *trg_off = off;
-    off += node->dst_virt_addr;
+    off += fdev->virt_addr;
+    local_desc = lookup_mreg(buf, len, chunk->lf_client_idx);
 
     stats_fi_wr = lfs_ctx->famsim_stats_fi_wr;
     STATS_START(start);
 
     //for (i = 0; i < blocks; i++) {
-    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%016lx mr_key:%lu",
-        lfs_params->node_id, chunk_phy_id, chunk_offset,
+    DEBUG("%s: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d len:%zu desc:%p off:%016lx mr_key:%lu",
+        pool->mynode.hostname, chunk_phy_id, chunk_offset,
         fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
-        dst_node, node->partition,
-        len, node->local_desc[0], off, node->mr_key);
+        dst_node,
+        len, local_desc, off, fdev->mr_key);
 
     famsim_stats_start(famsim_ctx, stats_fi_wr);
 
     do {
-        rc = fi_write(tx_ep, buf, len, lookup_mreg(buf, len, chunk->lf_client_idx),
-                      *tgt_srv_addr, off, node->mr_key, (void*)buf);
+        rc = fi_write(tx_ep, buf, len, local_desc,
+                      *tgt_srv_addr, off, fdev->mr_key, (void*)buf);
         if (rc == 0) {
             (*event)++;
             break;
@@ -572,9 +583,8 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
         }
     } while (rc == -FI_EAGAIN);
     /* TODO: Return I/O error */
-    ON_FI_ERROR(rc, "%d (%s): fi_write failed on FAM module %d(p%d)",
-                    lfs_params->node_id, nodelist[lfs_params->node_id],
-                    dst_node, fam_stripe->partition);
+    ON_FI_ERROR(rc, "%s: fi_write failed on FAM module %d",
+                    pool->mynode.hostname, dst_node);
 
     if (fam_stripe->extent == 0 && fam_stripe->stripe_in_part == 0)
         famsim_stats_stop(stats_fi_wr, 1);
@@ -586,18 +596,18 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
     //}
 
     if (!lf_info->opts.use_cq) {
-        rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
+        rc = fi_cntr_wait(cntr, *event, lf_info->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
-            err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%016lx",
-                lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
+            err("%s: lf_write timeout chunk:%d to %u/%u/%s on FAM module %d len:%zu off:%016lx",
+                pool->mynode.hostname, chunk_phy_id,
                 fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                dst_node, node->partition, len, off);
+                dst_node, len, off);
         } else if (rc) {
-            err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
-                    lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
+            err("%s: lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on FAM module %d cnt:%lu/%lu",
+                    pool->mynode.hostname, chunk_phy_id,
                     fi_cntr_readerr(cntr), rc,
                     fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                    dst_node, node->partition,
+                    dst_node,
                     fi_cntr_read(cntr), *event);
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
@@ -617,12 +627,11 @@ int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *
 int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid)
 {
     F_POOL_t *pool = lfs_ctx->pool;
-    LF_INFO_t *lf_info = pool->lf_info;
-    N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
     N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
-    //char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
+    LF_INFO_t *lf_info = pool->lf_info;
+    F_POOL_DEV_t *pdev;
+    FAM_DEV_t *fdev;
     N_CHUNK_t *chunk;
-    LF_CL_t *node;
     struct fid_cntr *cntr = NULL;
     fi_addr_t *tgt_srv_addr;
     struct fid_ep *tx_ep = NULL;
@@ -631,34 +640,38 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
     //int i, blocks;
     ssize_t wcnt;
     uint64_t *event, evnt;
+    void *local_desc;
     int src_node, rc = 0;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     /* to FAM chunk */
     chunk = get_fam_chunk(cid, fam_stripe, &src_node);
     if (chunk == NULL) {
-	DEBUG("%d chunk:%jd - ENOSPC\n", lfs_params->node_id, cid);
+	DEBUG("%s: chunk:%jd - ENOSPC\n",
+	    pool->mynode.hostname, cid);
 	errno = ENOSPC;
 	return UNIFYCR_ERR_NOSPC;
     }
+    assert( pdev = f_find_pdev_by_media_id(pool, nid) );
+    fdev = &pdev->dev->f;
 
-    node = lfs_params->lf_clients[nid];
-    ASSERT(src_node == node->node_id);
-    ASSERT(src_node == nid);
+    ASSERT(src_node <= pool->info.dev_count);
+    // ASSERT(src_node == nid); src_node: chunk # in stripe; nid: media_id
 
     /* Do RMA synchronous read */
-    tgt_srv_addr = &node->tgt_srv_addr[0];
-    tx_ep = node->tx_epp[0];
+    tgt_srv_addr = &fdev->fi_addr;
+    tx_ep = fdev->ep;
 
     if (lf_info->opts.use_cq) {
-        tx_cq = node->tx_cqq[0];
+        tx_cq = fdev->cq;
         evnt = 0;
         event = &evnt;
     } else {
-        cntr = node->rcnts[0];
+        cntr = fdev->rcnt;
         chunk->r_event = fi_cntr_read(cntr);
         event = &chunk->r_event;
     }
+    local_desc = lookup_mreg(buf, len, nid);
     //transfer_sz = params->transfer_sz;
     //int blocks = len / transfer_sz;
     /*
@@ -668,17 +681,17 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
 
     STATS_START(start);
 
-    off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*lfs_params->chunk_sz;
-    fam_off += node->dst_virt_addr;
-    DEBUG("%d: read chunk:%jd @%lu to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%016lx mr_key:%lu",
-	  lfs_params->node_id, cid, coff,
+    off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*fam_stripe->chunk_sz;
+    fam_off += fdev->virt_addr;
+    DEBUG("%s: read chunk:%jd @%lu to %u/%u/%s(@%lu) on FAM module %d len:%zu desc:%p off:%016lx mr_key:%lu",
+	  pool->mynode.hostname, cid, coff,
 	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
-	  src_node, node->partition,
-	  len, node->local_desc[0], fam_off, node->mr_key);
+	  src_node,
+	  len, local_desc, fam_off, fdev->mr_key);
 
     do {
-        rc = fi_read(tx_ep, buf, len, lookup_mreg(buf, len, nid),
-                     *tgt_srv_addr, fam_off, node->mr_key, (void*)buf);
+        rc = fi_read(tx_ep, buf, len, local_desc,
+                     *tgt_srv_addr, fam_off, fdev->mr_key, (void*)buf);
         if (rc == 0) {
             (*event)++;
             break;
@@ -692,7 +705,8 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
             ret = lf_check_progress(tx_cq, &wcnt);
             if (ret < 0) {
                 rc = ret;
-                err("lf_check_progress error:%d - %m", rc);
+                err("%s: lf_check_progress error:%d - %m",
+		    pool->mynode.hostname, rc);
                 break;
             }
             if (wcnt)
@@ -700,22 +714,22 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid
         }
     } while (rc == -FI_EAGAIN);
     /* TODO: Return I/O error */
-    ON_FI_ERROR(rc, "%d: fi_read failed on FAM module %d(p%d)",
-                    lfs_params->node_id, src_node, fam_stripe->partition);
+    ON_FI_ERROR(rc, "%s: fi_read failed on FAM module %d",
+                pool->mynode.hostname, src_node);
 
     if (!lf_info->opts.use_cq) {
-        rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
+        rc = fi_cntr_wait(cntr, *event, lf_info->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
-            err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
-                lfs_params->node_id, cid,
+            err("%s: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d len:%zu off:%jd",
+                pool->mynode.hostname, cid,
                 fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                src_node, node->partition, len, fam_off);
+                src_node, len, fam_off);
         } else if (rc) {
-            err("%d: lf_read chunk:%jd has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
-                    lfs_params->node_id, cid,
+            err("%s: lf_read chunk:%jd has %lu error(s):%d to %u/%u/%s on FAM module %d cnt:%lu/%lu",
+                    pool->mynode.hostname, cid,
                     fi_cntr_readerr(cntr), rc,
                     fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                    src_node, node->partition,
+                    src_node,
                     fi_cntr_read(cntr), *event);
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
@@ -851,8 +865,8 @@ static int unifycr_logio_chunk_write(
             //chunk_offset = off_in_chunk(pos);
 
             chunk_phy_id = physical_chunk_id(meta, chunk_id);
-            DEBUG("%d: write %zu bytes chunk:%d phy_chunk:%d @%lu\n",
-                  lfs_ctx->lfs_params->node_id, count, chunk_id, chunk_phy_id, chunk_offset);
+            DEBUG("%s: write %zu bytes chunk:%d phy_chunk:%d @%lu\n",
+                  lfs_ctx->pool->mynode.hostname, count, chunk_id, chunk_phy_id, chunk_offset);
             int rc = lf_write((char *)buf, count, chunk_phy_id, chunk_offset, &my_node, &my_off);
             if (rc) {
                 /* Print the real error code */

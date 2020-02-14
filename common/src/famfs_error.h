@@ -59,7 +59,8 @@
 #define ioerr(str, ...) fprintf(stderr, "%s: " #str " - %m\n", __FUNCTION__, ## __VA_ARGS__)
 
 #define fi_err(rc, msg, ...) fprintf(stderr, "%s: " #msg ": %d - %s\n", \
-	__FUNCTION__, (int)(rc), fi_strerror(-(int)(rc)), ## __VA_ARGS__)
+				__FUNCTION__, ## __VA_ARGS__,		\
+				(int)(rc), fi_strerror(-(int)(rc)))
 
 
 #endif /* ifndef FAMFS_ERROR_H */

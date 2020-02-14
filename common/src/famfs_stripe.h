@@ -34,16 +34,16 @@ typedef struct n_stripe_ {
 	unsigned int	extent;		/* I/O node FAM extent */
 	/* calculated from 'extent' for convenience */
 	unsigned int	stripe_in_part;	/* stripe in the partition */
-	int 		partition;	/* libfabric target partition */
+//	int 		partition;	/* libfabric target partition */
 	/* constants */
 	int		d;		/* number of data chunks */
 	int 		p;		/* number of parity chunks */
 	int		node_id;	/* client node index in clientlist */
-	int		part_mreg;	/* 1: LF dest address starts with 0 at a partition; 1: single buffer per node */
 	unsigned int	node_size;	/* client node count */
 	unsigned int	extent_stipes;	/* extent size, in stripes */
 	unsigned int	srv_extents;	/* partition size, in extents */
-	unsigned int	part_count;	/* number of partitions on ION */
+	uint32_t	chunk_sz;	/* layout chunk size in bytes */
+	uint32_t	media_id_0;	/* media id for first chunk in stripe */
 	struct n_chunk_	*chunks;	/* array (d+p) of chunks */
 } N_STRIPE_t;
 

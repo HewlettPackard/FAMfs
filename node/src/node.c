@@ -25,7 +25,8 @@
 #include "famfs_env.h"
 #include "famfs_stats.h"
 #include "famfs_stripe.h"
-#include "famfs_lf_connect.h"
+
+#include "lf_connect.h"
 #include "node.h"
 #include "w_pool.h"
 #include "ec_perf.h"

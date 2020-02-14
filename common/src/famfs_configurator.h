@@ -79,7 +79,6 @@
     UNIFYCR_CFG(devices, uuid, STRING, NULLSTRING, "device UUID", configurator_uuid_check) \
     UNIFYCR_CFG(devices, extent_size, INT, UNIFYCR_EXTENT_SIZE, "pool extent size in bytes", NULL) \
     UNIFYCR_CFG(devices, emulated, BOOL, off, "FAMs are emulated", NULL) \
-    UNIFYCR_CFG(devices, multidomain, BOOL, off, "FAMs are emulated", NULL) \
     UNIFYCR_CFG(devices, pk, INT, 0, "default FAM protection key", NULL) \
     UNIFYCR_CFG(devices, size, INT, UNIFYCR_EXTENT_SIZE, "default device size in bytes", NULL) \
     UNIFYCR_CFG(devices, offset, INT, UNIFYCR_EXTENT0_OFFSET, "default device extent zero offset in bytes", NULL) \

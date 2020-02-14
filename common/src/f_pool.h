@@ -15,16 +15,29 @@
 
 #include "famfs_env.h"
 #include "famfs_bitops.h"
+#include "famfs_zfm.h"
 #include "f_dict.h"
 #include "list.h"
 
 
+/* Iterate pool devices by pool_index:
+   F_POOL_t *p, F_POOL_DEV_t *pd */
+#define for_each_pool_dev(p, pd)				\
+	pd = p->devlist + p->info.pdev_indexes[0];		\
+	for (unsigned int _i = 0;				\
+	     p->devlist && _i < p->info.dev_count;		\
+	     pd = p->devlist + p->info.pdev_indexes[++_i])
+
+/* Iterate FAM devices which are emulated on this IO node */
+#define for_each_emul_pdev(p, pd)				\
+	pd = p->mynode.emul_devlist;				\
+	for (unsigned int _i = 0;				\
+	     _i < p->mynode.emul_devs; _i++, pd++)
+
+
 /* defined in famfs_lf_connect.h */
-struct f_zfm_;
-struct f_ionode_info_;
 struct lf_info_;
 struct lf_dom_;
-struct n_params_; /* TODO: Remove me! */
 
 
 /* libfabric atomic types */
@@ -84,6 +97,10 @@ typedef struct f_pool_dev_ {
     uint16_t		idx_ag;		/* 1st index: AG */
     uint16_t		idx_dev;	/* 2nd index: pool device */
 
+    /* The device placement: IO node index and the device index on the node */
+    uint16_t		ionode_idx;	/* IO node index in pool->ionodes array */
+    uint16_t		idx_in_ion;	/* index in IO node devices, sorted like in devlist */
+
     F_PDEV_SHA_t	*sha;		/* pool device shareable atomics counters */
 } F_POOL_DEV_t;
 /* pool_index special value: not an index, i.e. this device array element is empty */
@@ -103,27 +120,53 @@ typedef struct f_pool_info_ {
 
 			/* pool devlist lookup helper arrays that have index in devlist */
     uint16_t		*pdev_indexes;	/* all pool devices, array of 'dev_count' size */
-    uint16_t		*media_ids;	/* indexed by media_id, 0..pdev_max_idx */
+    uint16_t		*pdi_by_media;	/* indexed by media_id, of pdev_max_idx+1 size */
 } F_POOL_INFO_t;
+
+/* IO node info */
+typedef struct f_ionode_info_ {
+    uuid_t		uuid;		/* IO node UUID */
+    char		*hostname;	/* IO node hostname */
+    F_ZFM_t		zfm;		/* GenZ fabric manager data */
+    uint32_t		conf_id;	/* ID in configuration file */
+    uint32_t		mds;		/* number of MD servers running on this node */
+    struct {
+	unsigned long	    flags;	/* f_ioninfo_flags */
+    }		io;
+    uint32_t		fam_devs;	/* number of FAM devices on IO node */
+    uint32_t		fam_xchg_off;	/* offset in global array of prov_keys/virt_addrs */
+} F_IONODE_INFO_t;
+
+/* Flag specs for f_ionode_info_ */
+enum f_ioninfo_flags {
+    _IONODE__FCE_HLPR,	/* force Helper threads on this IO node */
+};
+BITOPS(IOnode, ForceHelper,	f_ionode_info_, _IONODE__FCE_HLPR)
 
 typedef struct f_mynode_ {
     char		*hostname;	/* this node's hostname */
     struct lf_dom_	*domain;	/* libfabric domain which is open on this node */
-    struct lf_dom_	*emul_domain;	/* libfabric domain for FAM emulation or NULL */
-    F_POOL_DEV_t	*emul_devlist;	/* array of FAM emulated devices or NULL */
-    uint32_t		emul_devs;	/* number of emulated FAMs; size of emul_devlist */
-    uint32_t		ionode_id;	/* for IO node ONLY: index in ionodes array */
     struct {
 	unsigned long	    flags;	/* f_mynode_flags */
     }			io;
+    uint16_t		ionode_idx;	/* for IO node ONLY: index in ionodes array */
+
+    /* FAM emulation only: NodeRunLFSrv */
+    struct lf_dom_	*emul_domain;	/* libfabric domain for FAM emulation or NULL */
+    size_t		emul_mr_size;	/* total memory region size provided or zero */
+    F_POOL_DEV_t	*emul_devlist;	/* array of FAM emulated devices or NULL */
+    uint32_t		emul_devs;	/* number of emulated FAMs; size of emul_devlist */
 } F_MYNODE_t;
+
 /* Flag specs for f_mynode_ */
 enum f_mynode_flags {
     _NODE_IS_IONODE,	/* This is IO node */
+    _NODE_RUN_LFSRV,	/* This is IO node AND FAM device emulation enabled */
     _NODE_MDS,		/* MD server is running on this IO node */
     _NODE_FCE_HLPR,	/* Force Helper threads [on this IO node] */
 };
 BITOPS(Node, IsIOnode,	  f_mynode_, _NODE_IS_IONODE)
+BITOPS(Node, RunLFSrv,	  f_mynode_, _NODE_RUN_LFSRV)
 BITOPS(Node, HasMDS,	  f_mynode_, _NODE_MDS)
 BITOPS(Node, ForceHelper, f_mynode_, _NODE_FCE_HLPR)
 
@@ -135,7 +178,6 @@ typedef struct f_pool_ {
     F_POOL_INFO_t	info;		/* front-most pool attributes */
     struct list_head	layouts;	/* pool layouts list */
     struct lf_info_	*lf_info;	/* libfabric info */
-    struct n_params_	*lfs_params;	/* legacy N_PARAMS_t */
     F_MYNODE_t		mynode;		/* structure that represents this node */
     MPI_Comm		ionode_comm;	/* MPI communicator for IO nodes */
 //    MPI_Comm		helper_comm;	/* MPI communicator for Helpers */
@@ -148,8 +190,8 @@ typedef struct f_pool_ {
     uint32_t		pool_devs;	/* size of the pool device array, total */
     uint32_t		ionode_count;	/* number of IO nodes */
     F_AG_t		*ags;		/* allocation group array */
-    struct f_pool_dev_	*devlist;	/* two-dimentional array of pool devices */
-    struct f_ionode_info_ *ionodes;	/* array of IO node info of .ionode_count size */
+    F_POOL_DEV_t	*devlist;	/* two-dimentional array of pool devices */
+    F_IONODE_INFO_t	*ionodes;	/* array of IO node info of .ionode_count size */
     char		**ionodelist;	/* reference to ionode hostnames */
     struct {
 	unsigned long	    flags;	/* f_pool_flags */
@@ -165,6 +207,15 @@ enum f_pool_flags {
 };
 BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
+
+
+F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx);
+F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id);
+
+int lf_clients_init(F_POOL_t *p);
+void lf_clients_free(F_POOL_t *p);
+int lf_servers_init(F_POOL_t *p);
+void lf_servers_free(F_POOL_t *p);
 
 #endif /* F_POOL_H_ */
 

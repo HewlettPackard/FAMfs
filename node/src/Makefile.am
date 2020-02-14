@@ -1,10 +1,12 @@
 bin_PROGRAMS	= node lf_test
 
 node_SOURCES	= queue.h w_pool.h w_pool.c \
+		lf_connect.h lf_connect.c \
 		node.h node.c \
 		ec_perf.h ec_perf.c util.c
 
 lf_test_SOURCES	= lf_test.h lf_test.c \
+		lf_connect.h lf_connect.c \
 		ec_perf.h ec_perf.c util.c
 
 node_LDFLAGS	= -L$(top_builddir)/node/isa-l/.libs $(MPI_CLDFLAGS) $(LIBFABRIC_LIBS)

@@ -171,12 +171,13 @@ int main(int argc, char *argv[])
     if (rc < 0)
         exit(1);
 
-    if ((rc = f_set_layouts_info(&server_cfg))) {
-        printf("srv failed to get layout info: %d\n", rc);
+    if ((rc = f_set_layouts_info(&server_cfg)) ||
+	(rc = create_lfs_ctx(&lfs_ctx_p)))
+    {
+        printf("srv failed to load configuration: %d\n", rc);
         return rc;
     }
-    pool = f_get_pool();
-    assert( pool ); /* should be set by f_set_layouts_info() */
+    pool = lfs_ctx_p->pool;
     /* DEBUG */
     if (log_print_level > 0 && glb_rank == 0) {
 	unifycr_config_print(&server_cfg, NULL);
@@ -281,7 +282,7 @@ int main(int argc, char *argv[])
 
     /* Fork LF server process if FAM emulation is required */
     if (PoolFAMEmul(pool)) {
-	rc = lfs_emulate_fams(glb_rank, glb_size, &lfs_ctx_p);
+	rc = lfs_emulate_fams(glb_rank, glb_size, lfs_ctx_p);
 	if (rc) {
 	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
 		glb_rank, glb_size, rc);

@@ -17,7 +17,6 @@
 
 typedef struct lfs_ctx_ {
 	F_POOL_t	*pool;		/* famfs pool structure, reference */
-	N_PARAMS_t	*lfs_params;	/* LF clients */
 	N_STRIPE_t	*fam_stripe;	/* FAM stripe attributes */
 	struct famsim_stats *famsim_stats_fi_wr; /* Carbion stats: fi_write */
 } LFS_CTX_t;
