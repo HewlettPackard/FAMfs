@@ -16,6 +16,7 @@
 #include "famfs_env.h"
 #include "famfs_bitops.h"
 #include "famfs_zfm.h"
+#include "famfs_lfa.h"
 #include "f_dict.h"
 #include "list.h"
 
@@ -39,10 +40,6 @@
 struct lf_info_;
 struct lf_dom_;
 
-
-/* libfabric atomic types */
-typedef uint32_t	FI_UINT32_t;
-typedef uint64_t	FI_UINT64_t;
 
 /* Pool device shareable atomics (blob) */
 typedef struct f_pdev_sha_ {

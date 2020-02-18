@@ -798,6 +798,18 @@ static void free_layout(F_LAYOUT_t *lo)
     free(lo);
 }
 
+static uint16_t find_pdi(F_LAYOUT_t *lo, unsigned int index) {
+    unsigned int u;
+
+    for (u = 0; u < lo->devlist_sz; u++) {
+	F_POOLDEV_INDEX_t *pdi = &lo->devlist[u];
+
+	if (pdi->pool_index == index)
+	    return u;
+    }
+    return F_PDI_NONE;
+}
+
 /* Create layout structure from configurator at index */
 static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 {
@@ -807,7 +819,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     F_POOL_t *p = pool;
     F_POOL_DEV_t *pdev;
     F_POOLDEV_INDEX_t *pdi;
-    unsigned int u, uu;
+    unsigned int u, uu, pdi_max_idx;
     int rc, count;
     long l;
     bool all_pdevs;
@@ -851,6 +863,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     lo->devlist = (F_POOLDEV_INDEX_t *) calloc(sizeof(F_POOLDEV_INDEX_t),
 	lo->devlist_sz);
     if (!lo->devlist) goto _nomem;
+    pdi_max_idx = 0;
     pdi = lo->devlist;
     for (u = uu = 0; u < info->devnum; u++, pdi++) {
 	/* find pool device by id */
@@ -870,6 +883,8 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    pdi->pool_index = F_PDI_NONE;
 	} else {
 	    pdi->pool_index = pdev->pool_index;
+	    if (pdi_max_idx < pdev->pool_index)
+		pdi_max_idx = pdev->pool_index;
 	    pdi->idx_ag = pdev->idx_ag;
 	    pdi->idx_dev = pdev->idx_dev;
 	    /* Allocate the device index shareable atomics */
@@ -877,8 +892,15 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    if (!pdi->sha) goto _nomem;
 	}
     }
+
     /* Sort by AG first, then by pool index */
     qsort(lo->devlist, lo->devlist_sz, sizeof(F_POOLDEV_INDEX_t), cmp_pdi);
+
+    /* Build fast pdi access array */
+    info->pdi_max_idx = pdi_max_idx;
+    info->pdi_by_media = (uint16_t *) calloc(pdi_max_idx+1, sizeof(uint16_t));
+    for (u = 0; u <= info->pdi_max_idx; u++)
+	info->pdi_by_media[u] = find_pdi(lo, u);
 
     lo->pool = p;
     /* Add to layouts list */
@@ -1063,6 +1085,7 @@ void f_print_layouts(void) {
 	for (u = 0; u < lo->devlist_sz; u++, pdi++) {
 	    if (pdi->pool_index == F_PDI_NONE)
 		continue;
+	    //assert( pdi == f_find_pdi_by_media_id(lo, pdi->pool_index) );
 	    printf("  dev#%u media id:%u [%u,%u] ext used/failed:%u/%u\n",
 		u, pdi->pool_index, pdi->idx_ag, pdi->idx_dev,
 		pdi->sha->extents_used, pdi->sha->failed_extents);

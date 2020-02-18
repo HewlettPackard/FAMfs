@@ -13,6 +13,9 @@
 #include <pthread.h>
 
 #include "famfs_env.h"
+#include "famfs_ktypes.h"
+#include "famfs_bitops.h"
+#include "famfs_lfa.h"
 #include "f_dict.h"
 #include "list.h"
 
@@ -244,6 +247,9 @@ typedef struct f_layout_info_ {
     uint32_t		misdevnum;	/* number of missing devices */
     uint16_t		chunks;		/* number of chunks constituting a stripe */
     uint16_t		data_chunks;	/* number of data chunks in stripe */
+
+    uint32_t		pdi_max_idx;	/* the higest media_id used in the layout */
+    uint16_t		*pdi_by_media;	/* devlist indexed by media_id, size: pdi_max_idx+1 */
 } F_LAYOUT_INFO_t;
 
 /*
@@ -294,6 +300,8 @@ BITOPS(Layout, SpcErrLogged,	f_layout_, _L_SPCERR_LOGGED)
 BITOPS(Layout, ThreadFailed,	f_layout_, _L_THREAD_FAILED)
 BITOPS(Layout, Quit,		f_layout_, _L_QUIT)
 
+
+F_POOLDEV_INDEX_t *f_find_pdi_by_media_id(F_LAYOUT_t *lo, unsigned int media_id);
 
 #endif /* F_LAYOUT_H_ */
 

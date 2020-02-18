@@ -24,6 +24,10 @@
 
 //#include "famfs_env.h"
 
+/* libfabric atomic types */
+typedef uint32_t	FI_UINT32_t;
+typedef uint64_t	FI_UINT64_t;
+
 #define F_LFA_MAXV  32                      // max size of atomic vector
 #define F_LFA_MAXB  8                       // max number of atmoic blobs
 #define F_LFA_LK_BASE 100000
