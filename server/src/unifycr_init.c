@@ -122,6 +122,19 @@ static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
     return n;
 }
 
+/* Common code at close that is called both on server normal shutdown and abort */
+static void famfs_exit()
+{
+    /* Close FAM emulation fabric */
+    free_lfs_ctx(&lfs_ctx_p);
+
+    /* Close all pool connections, free pool and all layout structures */
+    f_free_layouts_info();
+
+    /* Allocated at main(): free unifycr_cfg_t */
+    unifycr_config_free(&server_cfg);
+}
+
 volatile int sm_ready = 0;
 extern int num_fds;
 long max_recs_per_slice;
@@ -286,7 +299,7 @@ int main(int argc, char *argv[])
 	if (rc) {
 	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
 		glb_rank, glb_size, rc);
-		exit(1);
+		goto _err;;
 	}
     }
 
@@ -337,6 +350,14 @@ int main(int argc, char *argv[])
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
+
+    /* Open libfabric domain and connect to all pool devices */
+    if ((rc = lf_clients_init(pool))) {
+	LOG(LOG_ERR, "%d: node %s failed to initialize libfabric device(s), error:%d",
+	    glb_rank, pool->mynode.hostname, rc);
+	goto _err;
+    }
+
     {
         char fname[256];
         sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
@@ -411,7 +432,13 @@ int main(int argc, char *argv[])
 
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
-    return 0;
+    return rc;
+
+_err:
+    /* Close LF devices and free pool resources */
+    famfs_exit();
+    MPI_Abort(MPI_COMM_WORLD, (rc>0)?rc:-rc);
+    exit(1); /* never reach this point */
 }
 
 /**
@@ -706,7 +733,7 @@ static int unifycr_exit()
     exit_flag = 1;
     f_svcrq_t c = {.opcode = CMD_QUIT, .cid = 0};
     F_POOL_t *pool;
-    pool = f_get_pool();
+    pool = lfs_ctx_p->pool;
     for (int i = 0; i < pool->info.layouts_count; i++)
         if (cmdq[i])
             f_rbq_push(cmdq[i], &c, RBQ_TMO_1S);
@@ -734,14 +761,8 @@ static int unifycr_exit()
      * for acks*/
     sock_sanitize();
 
-    /* Close FAM emulation fabric */
-    free_lfs_ctx(&lfs_ctx_p);
-
-    /* Free pool and all layout structures */
-    f_free_layouts_info();
-
-    /* Allocated at main(): free unifycr_cfg_t */
-    unifycr_config_free(&server_cfg);
+    /* Close LF; free pool resources */
+    famfs_exit();
 
     return rc;
 }

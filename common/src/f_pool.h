@@ -116,7 +116,8 @@ typedef struct f_pool_info_ {
     uint32_t		pdev_max_idx;	/* the attribute array size: max used device index */
 
 			/* pool devlist lookup helper arrays that have index in devlist */
-    uint16_t		*pdev_indexes;	/* all pool devices, array of 'dev_count' size */
+    uint16_t		*pdev_indexes;	/* devlist stripped of holes (F_PDI_NONE), array of
+					device indexes in devlist of 'dev_count' size */
     uint16_t		*pdi_by_media;	/* indexed by media_id, of pdev_max_idx+1 size */
 } F_POOL_INFO_t;
 
