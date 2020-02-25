@@ -15,9 +15,24 @@
     do {                                    \
         int64_t __err = (err);              \
         fprintf(stderr, "lfa error @%s:%d" #msg ": %ld - %s\n", __FUNCTION__, __LINE__, ## __VA_ARGS__, \
-                    __err, fi_strerror(abs(err))); \
+                    __err, fi_strerror(abs(__err))); \
     } while (0);
 
+#define LOCK_LFA(a)\
+    do {\
+        int __err = pthread_mutex_lock(&a->lfa->lock);\
+        if (__err) {\
+            fprintf(stderr, "lfa lock @%s:%d error %d - %s\n", __FUNCTION__, __LINE__,\
+                    __err, strerror(abs(__err)));\
+            return -abs(__err);\
+        }\
+    } while(0);
+
+#define UNLOCK_LFA(a)\
+    do {\
+        pthread_mutex_unlock(&a->lfa->lock);\
+    } while (0);
+    
 
 static ssize_t _wait_cq(F_LFA_DESC_t *lfa) {
 
@@ -147,14 +162,14 @@ int f_lfa_register(F_LFA_DESC_t *lfa, uint64_t key, size_t bsize, void **pbuf, F
     int  rc = 0, f = 0;
 
     if (posix_memalign((void **)&abd, 4096, sizeof(F_LFA_ABD_t))) 
-        return ENOMEM;
+        return -ENOMEM;
     bzero(abd, sizeof(F_LFA_ABD_t));
     *pabd = abd;
 
     if (!*pbuf) {
         mem = calloc(1, bsize);
         if (!mem)
-            return ENOMEM;
+            return -ENOMEM;
         *pbuf = mem;
         f++;
     } else {
@@ -213,34 +228,53 @@ int f_lfa_attach(F_LFA_DESC_t *lfa, uint64_t key, F_LFA_SLIST_t *lst, int lcnt, 
     int  rc = 0, f = 0;
 
     if (posix_memalign((void **)&abd, 4096, sizeof(F_LFA_ABD_t))) 
-        return ENOMEM;
+        return -ENOMEM;
     bzero(abd, sizeof(F_LFA_ABD_t));
     *pabd = abd;
 
-    if (!*ibuf) {
-        mem = calloc(1, bsize);
-        if (!mem)
-            return ENOMEM;
-        *ibuf = mem;
-        f++;
+    if (ibuf && bsize) {
+        if (!*ibuf) {
+            mem = calloc(1, bsize);
+            if (!mem)
+                return -ENOMEM;
+            *ibuf = mem;
+            f++;
+        } else {
+            mem = *ibuf;
+        }
     } else {
-        mem = *ibuf;
+        mem = NULL;
+        bsize = 0;
     }
     abd->in_bsz = bsize;
     abd->in_buf = mem;
     abd->srv_key = key;
     abd->ops_key = key + F_LFA_LK_BASE;
-    ON_FIERR(rc = fi_mr_reg(lfa->dom, abd->ops, sizeof(abd->ops), FI_READ|FI_WRITE, 
-                            0, abd->ops_key, 0, &abd->ops_mr, NULL), goto _clean, "mr reg");
-    abd->tadr = calloc(lcnt, sizeof(fi_addr_t));
-    if (!abd->tadr) {
-        rc = ENOMEM;
-        goto _clean;
-    }
+    ON_FIERR(rc = fi_mr_reg(lfa->dom, abd->ops, sizeof(abd->ops), 
+        FI_READ|FI_WRITE|FI_REMOTE_READ|FI_REMOTE_WRITE, 
+        0, abd->ops_key, 0, &abd->ops_mr, NULL), goto _clean, "mr reg");
+
     abd->ops_mr_dsc = fi_mr_desc(abd->ops_mr);
     if (!abd->ops_mr_dsc) {
         LOG_FIERR(-FI_EBADFLAGS, "bad MR descriptor");
         return -FI_EBADFLAGS;
+    }
+
+    if (mem) {
+        ON_FIERR(rc = fi_mr_reg(lfa->dom, mem, bsize, 
+            FI_READ|FI_WRITE|FI_REMOTE_READ|FI_REMOTE_WRITE,
+            0, F_LFA_LK_BASE + abd->ops_key, 0, &abd->in_mr, NULL), goto _clean, "mr reg");
+
+        abd->in_mr_dsc = fi_mr_desc(abd->in_mr);
+        if (!abd->in_mr_dsc) {
+            LOG_FIERR(-FI_EBADFLAGS, "bad MR descriptor");
+            return -FI_EBADFLAGS;
+        }
+    }
+    abd->tadr = calloc(lcnt, sizeof(fi_addr_t));
+    if (!abd->tadr) {
+        rc = ENOMEM;
+        goto _clean;
     }
 
     abd->nsrv = lcnt;
@@ -278,9 +312,10 @@ _clean:
     }
     return rc;
 }
-
 int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old) {
     int rc;
+
+    LOCK_LFA(abd);
 
     abd->ops[0].in32 = val;
     rc = fi_fetch_atomic(
@@ -290,18 +325,22 @@ int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old) {
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT32, FI_SUM, NULL);
     if (rc) {
+        UNLOCK_LFA(abd);
         LOG_FIERR(rc, "fetch_atomic(add)");
         return rc;
     }
-    ON_FIERR(rc = _wait_cq(abd->lfa), return rc, "atomiq cq");
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
     if (old) 
         *old = abd->ops[0].out32;
 
+    UNLOCK_LFA(abd);
     return 0;
 }
 
 int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old) {
     int rc;
+
+    LOCK_LFA(abd);
 
     abd->ops[0].in64 = val;
     rc = fi_fetch_atomic(
@@ -314,15 +353,18 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old) {
         LOG_FIERR(rc, "fetch_atomic(add)");
         return rc;
     }
-    ON_FIERR(rc = _wait_cq(abd->lfa), return rc, "atomiq cq");
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
     if (old) 
         *old = abd->ops[0].out64;
 
+    UNLOCK_LFA(abd);
     return 0;
 }
 
 int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val) {
     int rc;
+
+    LOCK_LFA(abd);
 
     abd->ops[0].in32 = val;
     rc = fi_atomic(
@@ -334,12 +376,16 @@ int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val) {
         LOG_FIERR(rc, "fetch_atomic(add)");
         return rc;
     }
-    ON_FIERR(rc = _wait_cq(abd->lfa), return rc, "atomiq cq");
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
 
+    UNLOCK_LFA(abd); 
+    return 0;
 }
 
 int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val) {
     int rc;
+
+    LOCK_LFA(abd);
 
     abd->ops[0].in64 = val;
     rc = fi_atomic(
@@ -348,11 +394,13 @@ int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val) {
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT64, FI_SUM, NULL);
     if (rc) {
+        UNLOCK_LFA(abd);
         LOG_FIERR(rc, "fetch_atomic(add)");
         return rc;
     }
-    ON_FIERR(rc = _wait_cq(abd->lfa), return rc, "atomiq cq");
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
 
+    UNLOCK_LFA(abd);
     return 0;
 }
 
@@ -380,7 +428,9 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
     int rc, wrap = 0;
     uint32_t bit = boff%32;
     off_t bw = boff/32;
-    uint32_t bmask, cmask, bn = boff, bmax = bsize - 1;
+    uint32_t bmask, cmask, bn = boff, bmax = bsize;
+
+    LOCK_LFA(abd);
 
     while (bn < bmax) {
         abd->ops[0].in32 = bmask = 1<<bit;
@@ -390,13 +440,14 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
                 abd->lfa->ep,
                 &abd->ops[0].in32, 1, abd->ops_mr_dsc,
                 &abd->ops[0].out32, abd->ops_mr_dsc,
-                abd->tadr[trg_ix], off + bw, abd->srv_key,
+                abd->tadr[trg_ix], off + bw*sizeof(uint32_t), abd->srv_key,
                 FI_INT32, FI_BOR, NULL);
         if (rc) {
+            UNLOCK_LFA(abd);
             LOG_FIERR(rc, "fetch_atomic(bor)");
             return rc;
         }
-        ON_FIERR(rc = _wait_cq(abd->lfa), return rc, "atomiq cq");
+        ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
 
         if (abd->ops[0].out32 & bmask) {
             // oops, somebody had already set this bit
@@ -412,9 +463,10 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
             } 
         } else {
             // success, return bit number
+            UNLOCK_LFA(abd);
             return bw*32 + bit;
         }
-        if (bn > bmax) {
+        if (bn >= bmax) {
             if (!wrap) {
                 wrap++;
                 bn = bit = bw = 0;
@@ -426,6 +478,7 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
     }
 
     // oopsie, didn't fine any clear bit even afet full scan
+    UNLOCK_LFA(abd);
     return -ENOSPC;
 }
 
@@ -452,5 +505,46 @@ int f_lfa_destroy(F_LFA_DESC_t *lfa) {
     return 0;
 }
 
+int f_lfa_put(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
+    int rc;
 
+    if (!abd->in_buf)
+        return -ENOMEM;
+
+    LOCK_LFA(abd);
+
+    rc = fi_write(
+            abd->lfa->ep, abd->in_buf, size, abd->in_mr_dsc,
+            abd->tadr[trg_ix], off, abd->srv_key, NULL);
+    if (rc) {
+        UNLOCK_LFA(abd);
+        LOG_FIERR(rc, "rma write");
+        return rc;
+    }
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+
+    UNLOCK_LFA(abd);
+    return 0;
+}
+
+int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
+    int rc; 
+
+    if (!abd->in_buf)
+        return -ENOMEM;
+
+    LOCK_LFA(abd);
+    rc = fi_read(
+            abd->lfa->ep, abd->in_buf, size, abd->in_mr_dsc,
+            abd->tadr[trg_ix], off, abd->srv_key, NULL);
+    if (rc) {
+        UNLOCK_LFA(abd);
+        LOG_FIERR(rc, "rma write");
+        return rc;
+    }
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+
+    UNLOCK_LFA(abd);
+    return 0;
+}
 

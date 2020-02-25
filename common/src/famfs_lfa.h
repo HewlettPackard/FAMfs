@@ -71,6 +71,8 @@ typedef struct f_lfa_abd_{
 
     void                    *in_buf;        // Input buffer for all atomic ops, NULL if this is server-only
     size_t                  in_bsz;         // Size of in/out/data buffers
+    struct fid_mr           *in_mr;         // Input buffer MR
+    void                    *in_mr_dsc;     //    and its descriptor
 
 } F_LFA_ABD_t;
 
@@ -200,26 +202,29 @@ int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val);
 #define f_lfa_decl(l, t, i) f_lfa_addl(l, t, i, -1)
 
 //
-// Atomic put
+// Write atomic blob to server
 //  abd:    blob descriptor
 //  trg_ix: index of target node
 //  size:   size (in bytes) to transfer
-//  src:    data source pointer, NULL if abd's input buffer to be used directly
-//          If src != NULL, the data will be memmove'ed to abd's buffer prior to
-//          issuing fi_atomic call
+//  off:    offset from the beginning of server buffer
 //
-int f_lfa_put(F_LFA_ABD_t *abd, int trg_ix, size_t size, void *src);
+//  <src>:  data source pointer is in_buf registered in lfa_attach call, if noting 
+//          was registered, -ENOMEM will be returnd
+//
+int f_lfa_put(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size);
 
 //
-// Atomic get
+// Read atmomic blob from server
 //  abd:    blob descriptor
 //  trg_ix: index of target node
 //  size:   size (in bytes) to transfer
-//  src:    target data buffer, NULL if abd's output buffer to be used directly
-//          If trgc != NULL, the data will be memmove'ed from abd's buffer after
-//          fi_atomic call completes
+//  off:    offset from the beginning of server buffer
 //
-int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, size_t size, void *trg);
+//  <trg>:  data target pointer is in_buf registered in lfa_attach call, if noting
+//          was registered, -ENOMEM will be returnd
+//
+//
+int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size);
 
 // Atmic add_and_fetch(w|l): add and fetch old (remote) value
 //  abd:    blob descriptor
