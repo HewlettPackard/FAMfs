@@ -43,29 +43,29 @@ static ssize_t _wait_cq(F_LFA_DESC_t *lfa) {
 
     while (1) {
         ret = fi_cq_read(lfa->cq, &lfa->cqe, 1);
-        if (ret >= 0) {
+        if (ret > 0) {
             return 0;
-        }
-        if (ret == -FI_EAGAIN) {
+        } else if (!ret || ret == -FI_EAGAIN) {
             sched_yield();
-            continue;
-        } else if (ret != -FI_EAVAIL) {
+        } else if (ret == -FI_EAVAIL) {
             LOG_FIERR(ret, "fi_cq_read: error, more data available");
+            break;
+        } else {
+            LOG_FIERR(ret, "fi_cq_read failed:");
+            return ret;
         }
+    }
+
+    while (1) {
         rc = fi_cq_readerr(lfa->cq, &err_entry, 0);
-        if (!rc)
+        if (!rc || rc == -FI_EAGAIN) {
             /* Possibly no error? If so, retry. */
             sched_yield(); 
             continue;
-        if (rc > 0) {
+        } else if (rc > 0) {
             ret = -err_entry.err;
             LOG_FIERR(ret, "cq error");
             return ret;
-        }
-        if (rc == -FI_EAGAIN) {
-            /* Possible no error? If so, retry. */
-            sched_yield(); 
-            continue;
         }
         LOG_FIERR(rc, "fi_cq_readerr");
         return rc;
@@ -334,6 +334,7 @@ int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old) {
         *old = abd->ops[0].out32;
 
     UNLOCK_LFA(abd);
+
     return 0;
 }
 
@@ -350,6 +351,7 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old) {
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT64, FI_SUM, NULL);
     if (rc) {
+        UNLOCK_LFA(abd);
         LOG_FIERR(rc, "fetch_atomic(add)");
         return rc;
     }
@@ -358,6 +360,7 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old) {
         *old = abd->ops[0].out64;
 
     UNLOCK_LFA(abd);
+
     return 0;
 }
 
@@ -373,6 +376,7 @@ int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val) {
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT32, FI_SUM, NULL);
     if (rc) {
+        UNLOCK_LFA(abd);
         LOG_FIERR(rc, "fetch_atomic(add)");
         return rc;
     }
@@ -401,13 +405,84 @@ int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val) {
     ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
 
     UNLOCK_LFA(abd);
+
     return 0;
 }
-
+/*
+   Atomic compare_and_swap: compare expected value with remote, if equal set new else return remote value found
+    abd:    blob descriptor 
+    trg_ix: index of target node
+    off:    offset of the operand
+    exp:    value to check on remote side
+    val:    new value to set
+    rval:   pointer to the fetched value, only valid if EAGAIN (see below)
+   Return:
+    0       - success
+    -EAGAIN - remote compare failed, check *rval for the remote value
+    !=0     - check errno
+*/  
 int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int exp, int *rval) {
+    int rc;
+
+    LOCK_LFA(abd);
+
+    abd->ops[0].in32 = val;
+    abd->ops[1].in32 = exp;
+    rc = fi_compare_atomic(
+            abd->lfa->ep,
+            &abd->ops[0].in32, 1, abd->ops_mr_dsc,
+            &abd->ops[1].in32,  abd->ops_mr_dsc, 
+            &abd->ops[0].out32, abd->ops_mr_dsc,
+            abd->tadr[trg_ix], off, abd->srv_key,
+            FI_INT32, FI_CSWAP, NULL);
+
+    if (rc) {
+        UNLOCK_LFA(abd);
+        LOG_FIERR(rc, "fetch_compare_atomic");
+        return rc;
+    }
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+
+    if (rval)
+        *rval = abd->ops[0].out32;
+    if (abd->ops[0].out32 != exp)
+        rc = -EAGAIN;
+
+    UNLOCK_LFA(abd);
+
+    return rc;
 }
 
 int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long exp, long *rval) {
+    int rc;
+
+    LOCK_LFA(abd);
+
+    abd->ops[0].in64 = val;
+    abd->ops[1].in64 = exp;
+    rc = fi_compare_atomic(
+            abd->lfa->ep,
+            &abd->ops[0].in64, 1, abd->ops_mr_dsc,
+            &abd->ops[1].in64,  abd->ops_mr_dsc, 
+            &abd->ops[0].out64, abd->ops_mr_dsc,
+            abd->tadr[trg_ix], off, abd->srv_key,
+            FI_INT64, FI_CSWAP, NULL);
+
+    if (rc) {
+        UNLOCK_LFA(abd);
+        LOG_FIERR(rc, "fetch_compare_atomic");
+        return rc;
+    }
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+
+    if (rval)
+        *rval = abd->ops[0].out64;
+    if (abd->ops[0].out64 != exp)
+        rc = -EAGAIN;
+
+    UNLOCK_LFA(abd);
+
+    return rc;
 }
 
 /* 
@@ -480,6 +555,46 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
     // oopsie, didn't fine any clear bit even afet full scan
     UNLOCK_LFA(abd);
     return -ENOSPC;
+}
+
+/* 
+   Atomic bit_clear_and_fetch: clear a bit and check if it was set
+   Note of for the efficiency sake, there's no 64-bit (long) variant of this function.
+   We assume that wotking on words (32-bit) gives us less contention for a given place in memory
+    abd:    blob descriptor
+    trg_ix: index of target node
+    off:    offset of the 1st word of the bit field
+    bnum:   intitial bit offset
+   Return:
+    = 0:      - offset of the found clear bit
+    -EBUSY    - the bit was alrready cleared
+    <0:       - uh-oh.... 
+*/
+int f_lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum) {
+    int rc = 0;
+    uint32_t bit = bnum%32, bmask;
+    off_t bw = bnum/32;
+
+    LOCK_LFA(abd);
+
+    abd->ops[0].in32 = ~(bmask = 1<<bit);
+    rc = fi_fetch_atomic(
+            abd->lfa->ep,
+            &abd->ops[0].in32, 1, abd->ops_mr_dsc,
+            &abd->ops[0].out32, abd->ops_mr_dsc,
+            abd->tadr[trg_ix], off + bw*sizeof(uint32_t), abd->srv_key,
+            FI_INT32, FI_BAND, NULL);
+    if (rc) {
+        UNLOCK_LFA(abd);
+        LOG_FIERR(rc, "fetch_atomic(band)");
+        return rc;
+    }
+    if (abd->ops[0].out32 & bmask) 
+        rc = -EBUSY;
+
+    UNLOCK_LFA(abd);
+
+    return rc;
 }
 
 /*

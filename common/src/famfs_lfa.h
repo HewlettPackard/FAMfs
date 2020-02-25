@@ -24,10 +24,6 @@
 
 //#include "famfs_env.h"
 
-/* libfabric atomic types */
-typedef uint32_t	FI_UINT32_t;
-typedef uint64_t	FI_UINT64_t;
-
 #define F_LFA_MAXV  32                      // max size of atomic vector
 #define F_LFA_MAXB  8                       // max number of atmoic blobs
 #define F_LFA_LK_BASE 100000
@@ -251,7 +247,7 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old);
 //  rval:   pointer to the fetched value, only valid if EGAIN (see below)
 // Return:
 //  0       - success
-//  EAGAIN  - remote compare failed, check *rval for the remote value
+//  -EAGAIN - remote compare failed, check *rval for the remote value
 //  !=0     - check errno
 //  
 int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int exp, int *rval);
@@ -271,8 +267,22 @@ int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long exp, long
 //  -ENOSPACE - no free bits found
 //  <0:       - uh-oh.... 
 //
-int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize);
+int f_lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum);
 
+// 
+// Atomic bit_clear_and_fetch: clear a bit and check if it was set
+// Note of for the efficiency sake, there's no 64-bit (long) variant of this function.
+// We assume that wotking on words (32-bit) gives us less contention for a given place in memory
+//  abd:    blob descriptor
+//  trg_ix: index of target node
+//  off:    offset of the 1st word of the bit field
+//  bnum:   bit to clear
+// Return:
+//  = 0:     - offset of the found clear bit
+//  -EBUSY   - the desired bit was already clear
+//  <0:      - uh-oh.... 
+//
+int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize);
 // 
 // Cluster-wide spinlock acquire
 //  abd:    blob descriptor
