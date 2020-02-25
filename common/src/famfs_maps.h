@@ -126,7 +126,7 @@ typedef struct f_extent_bitmap_ {
 } __attribute__((packed)) F_EXTENT_BITMAP_t;
 
 /*
- *  Slab Map entry: 
+ *  Slab Map entry:
  * [F_SLAB_ENTRY_t 0][F_EXTENT_ENTRY_t 0][F_EXTENT_ENTRY_t 1]...[F_EXTENT_ENTRY_t N]
  */
 typedef struct f_slabmap_entry {

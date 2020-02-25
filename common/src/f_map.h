@@ -276,6 +276,8 @@ void f_map_exit(F_MAP_t *map);
 int f_map_reshape(F_MAP_t **new, F_SETTER_t setter, F_MAP_t *origin, F_COND_t cond);
 /* Helper: create a bitmap and clone BBIT or structured map to it */
 F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg);
+/* Print map description: KV size, in-memory size and so on */
+void f_map_fprint_desc(FILE *f, F_MAP_t *map);
 
 /*
  * Persistent map backend: the KV store

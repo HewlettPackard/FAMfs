@@ -26,7 +26,9 @@ BASE_SRCS = famfs_env.h famfs_error.h famfs_stats.h \
 
 libfamfs_common_la_SOURCES = $(BASE_SRCS)
 libfamfs_common_la_CPPFLAGS =	-D_GNU_SOURCE=1 $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) \
-				$(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+				$(LIBFABRIC_CFLAGS) $(MPI_CFLAGS) \
+				-I$(top_srcdir)/userspace-rcu/include \
+				-I$(top_srcdir)/userspace-rcu/src
 libfamfs_common_la_CFLAGS = $(AM_CFLAGS)
 libfamfs_common_la_LDFLAGS = $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 libfamfs_common_la_LIBADD = -lm -lnuma -lrt -lpthread -luuid

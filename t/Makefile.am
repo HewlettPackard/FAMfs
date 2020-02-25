@@ -36,7 +36,9 @@ test_ldadd = \
 	$(top_builddir)/t/lib/libtap.la \
 	$(top_builddir)/t/lib/libtestutil.la \
 	$(top_builddir)/client/src/libfamfs_gotcha.la \
-	-lmpi
+	$(top_builddir)/common/src/libfamfs_meta.la \
+	-L$(top_builddir)/userspace-rcu/src/.libs \
+	-lurcu-qsbr -lurcu-cds -lmpi
 
 test_cppflags = \
 	-I$(top_srcdir) \

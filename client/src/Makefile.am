@@ -41,7 +41,8 @@ libfamfs_la_LDFLAGS = \
   $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
   -lcrypto -lrt -lpthread
 libfamfs_la_LIBADD =	$(top_builddir)/common/src/libfamfs_common.la \
-		$(top_builddir)/common/src/libfamfs_meta.la
+		$(top_builddir)/common/src/libfamfs_meta.la \
+		$(top_builddir)/userspace-rcu/src/.libs/liburcu.la
 
 libfamfs_gotcha_la_SOURCES = \
   unifycr-fixed.c \

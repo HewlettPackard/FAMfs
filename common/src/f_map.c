@@ -1754,4 +1754,18 @@ F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg
 	return m;
 }
 
+/* Print map description: KV size, in-memory size and so on */
+void f_map_fprint_desc(FILE *f, F_MAP_t *m)
+{
+    fprintf(f, "  Part %u of %u in %spartitioned %s map; "
+	    "interleave: %u entr%s (%u PUs),\n",
+	    m->part, m->parts, (m->parts<=1)?"non-":"",
+	    f_map_has_globals(m)?"global":"local",
+	    1U<<m->geometry.intl_factor,
+	    m->geometry.intl_factor?"ies":"y",
+	    1U<<(m->geometry.intl_factor-m->geometry.pu_factor));
+    fprintf(f, "  entry_sz:%u, %u PU per BoS, BoS sz:%lu (%u entries) count:%lu\n",
+	    m->geometry.entry_sz, m->geometry.bosl_pu_count,
+	    m->bosl_sz, m->bosl_entries, m->nr_bosl);
+}
 

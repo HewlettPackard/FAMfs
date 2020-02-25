@@ -123,6 +123,8 @@ int f_db_bdel(int map_id, void **keys, size_t size)
 	return meta_iface->bdel_fn(map_id, size, keys);
 }
 
+/* I/O node */
+
 static F_IONODE_INFO_t *get_ionode_info(F_POOL_t *p, const char *hostname)
 {
     unsigned int count;
