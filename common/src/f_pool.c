@@ -17,6 +17,7 @@
 #include "f_pool.h"
 
 
+#if 0
 /* Lookup pool device in pool->devlist by IO node index and FAM position in the node */
 F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx)
 {
@@ -28,6 +29,7 @@ F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx)
     }
     return NULL;
 }
+#endif
 
 F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id)
 {

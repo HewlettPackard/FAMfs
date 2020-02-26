@@ -303,55 +303,52 @@ void free_lfs_ctx(LFS_CTX_t **lfs_ctx_p) {
 int meta_register_fam(LFS_CTX_t *lfs_ctx)
 {
     F_POOL_t *pool;
+    F_POOL_DEV_t *pdev;
     fam_attr_val_t *fam_attr = NULL;
-    LFS_EXCG_t *rmk, *attr;
-    unsigned int fam_id, i, node_fams;
-    int node_id, rc = 0;
+    LFS_EXCG_t *attr;
+    unsigned int fam_id, node_id;
+    int rc = 0;
 
-    pool = f_get_pool();
+    pool = lfs_ctx->pool;
     assert( pool );
     /* Do nothing on client */
     if (!NodeIsIOnode(&pool->mynode))
 	return 0;
+
+    //part_cnt = 1; /* TODO: Support FAM partitioning */
+    fam_attr = (fam_attr_val_t *)malloc(fam_attr_val_sz(1));
+    fam_attr->part_cnt = 1;
+    attr = fam_attr->part_attr;
 
     /* Having the real FAM? */
     if (!PoolFAMEmul(pool)) {
 
 	/* Register all FAMs on ionode zero */
 	if (pool->mynode.ionode_idx == 0) {
-	    F_POOL_DEV_t *pdev;
+	    for_each_pool_dev (pool, pdev) {
+		FAM_DEV_t *fdev = &pdev->dev->f;
 
-	    //part_cnt = 1; /* TODO: Support FAM partitioning */
-	    fam_attr = (fam_attr_val_t *)malloc(fam_attr_val_sz(1));
-	    fam_attr->part_cnt = 1;
-	    attr = fam_attr->part_attr;
-
-	    node_fams = pool->info.dev_count;
-	    for (i = 0; i < node_fams; i++) {
-		pdev = pool->devlist + pool->info.pdev_indexes[i];
 		fam_id = (unsigned int) pdev->pool_index;
-		/* TODO: Read device pk&offset from configuration */
-		attr->prov_key = 0;
-		attr->virt_addr = 0;
+		attr->prov_key = fdev->pkey;
+		attr->virt_addr = fdev->virt_addr;
 		rc |= meta_famattr_put(fam_id, fam_attr);
 	    }
 	}
     } else {
 
 	/* NOTE: FAM emulation only; limited to 31 bits */
-	fam_attr = (fam_attr_val_t *)malloc(fam_attr_val_sz(1));
-	fam_attr->part_cnt = 1;
-	attr = fam_attr->part_attr;
-
 	node_id = pool->mynode.ionode_idx;
 	assert( IN_RANGE(node_id, 0, pool->ionode_count-1) );
-	node_fams = pool->mynode.emul_devs;
-	rmk = lfs_ctx->lfs_shm->rmk;
-	for (i = 0; i < node_fams; i++) {
-	    F_POOL_DEV_t *pdev  = f_ionode_pos_to_pdev(pool, node_id, i);
+
+	for_each_pool_dev(pool, pdev) {
+	    FAM_DEV_t *fdev = &pdev->dev->f;
+
+	    if (pdev->ionode_idx != node_id)
+		continue;
 
 	    fam_id = (unsigned int) pdev->pool_index;
-	    memcpy(attr, rmk++, sizeof(LFS_EXCG_t));
+	    attr->prov_key = fdev->pkey;
+	    attr->virt_addr = fdev->virt_addr;
 	    rc |= meta_famattr_put(fam_id, fam_attr);
 	}
     }

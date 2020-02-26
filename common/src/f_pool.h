@@ -207,7 +207,7 @@ BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
 
 
-F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx);
+//F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx);
 F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id);
 
 int lf_clients_init(F_POOL_t *p);
