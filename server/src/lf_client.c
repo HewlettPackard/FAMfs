@@ -351,7 +351,7 @@ int meta_register_fam(LFS_CTX_t *lfs_ctx)
 	    F_POOL_DEV_t *pdev  = f_ionode_pos_to_pdev(pool, node_id, i);
 
 	    fam_id = (unsigned int) pdev->pool_index;
-	    memcpy(attr++, rmk++, sizeof(LFS_EXCG_t));
+	    memcpy(attr, rmk++, sizeof(LFS_EXCG_t));
 	    rc |= meta_famattr_put(fam_id, fam_attr);
 	}
     }
