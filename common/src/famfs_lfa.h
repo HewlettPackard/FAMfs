@@ -28,6 +28,9 @@
 #define F_LFA_MAXB  8                       // max number of atmoic blobs
 #define F_LFA_LK_BASE 100000
 
+typedef uint64_t FI_UINT64_t;
+typedef uint32_t FI_UINT32_t;
+
 typedef struct f_lfa_slist_ {
     char    *name;
     char    *service;
@@ -225,7 +228,7 @@ int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size);
 // Atmic add_and_fetch(w|l): add and fetch old (remote) value
 //  abd:    blob descriptor
 //  trg_ix: index of target node
-//  off:   offset of the operand
+//  off:    offset of the operand
 //  val:    value to add
 //  old:    pointer to the fetched value
 int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old);
@@ -250,8 +253,8 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old);
 //  -EAGAIN - remote compare failed, check *rval for the remote value
 //  !=0     - check errno
 //  
-int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int exp, int *rval);
-int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long exp, long *rval);
+int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint32_t val, uint32_t exp, uint32_t *rval);
+int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint64_t val, uint64_t exp, uint64_t *rval);
 
 // 
 // Atomic bit_find_clear_and_set: find first clear bit, starting from offset, and set it

@@ -421,7 +421,7 @@ int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val) {
     -EAGAIN - remote compare failed, check *rval for the remote value
     !=0     - check errno
 */  
-int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int exp, int *rval) {
+int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint32_t val, uint32_t exp, uint32_t *rval) {
     int rc;
 
     LOCK_LFA(abd);
@@ -453,7 +453,7 @@ int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int exp, int *r
     return rc;
 }
 
-int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long exp, long *rval) {
+int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint64_t val, uint64_t exp, uint64_t *rval) {
     int rc;
 
     LOCK_LFA(abd);
@@ -503,13 +503,15 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
     int rc, wrap = 0;
     uint32_t bit = boff%32;
     off_t bw = boff/32;
-    uint32_t bmask, cmask, bn = boff, bmax = bsize;
+    uint32_t bmask, bn = boff, bmax = bsize;
+
+    if (boff >= bsize)
+        return -EINVAL;
 
     LOCK_LFA(abd);
 
     while (bn < bmax) {
         abd->ops[0].in32 = bmask = 1<<bit;
-        cmask = ~bmask;
 
         rc = fi_fetch_atomic(
                 abd->lfa->ep,
@@ -528,7 +530,7 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
             // oops, somebody had already set this bit
             int clear = __builtin_ffs(~abd->ops[0].out32);
             if (!clear) {
-                // np clear bits in this word, go to next
+                // no clear bits in this word, go to next
                 bit = 0;
                 bn = ++bw*32;
             } else {
@@ -589,7 +591,9 @@ int f_lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum) {
         LOG_FIERR(rc, "fetch_atomic(band)");
         return rc;
     }
-    if (abd->ops[0].out32 & bmask) 
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+
+    if (!(abd->ops[0].out32 & bmask))
         rc = -EBUSY;
 
     UNLOCK_LFA(abd);
