@@ -1754,18 +1754,49 @@ F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg
 	return m;
 }
 
+/* Count the number of dirty PUs on map */
+static uint64_t get_dirty_count(F_MAP_t *m)
+{
+    F_ITER_t *it;
+    size_t dirty_sz;
+    uint64_t count = 0;
+
+    /* Dirty PU bitmap size, bytes */
+    dirty_sz = BITS_TO_LONGS(m->geometry.bosl_pu_count)*sizeof(long);
+    it = f_map_new_iter(m, F_NO_CONDITION, 0);
+    it = f_map_next_bosl(it);
+    for_each_bosl(it)
+	count += bitmap_weight(it->bosl->dirty, dirty_sz);
+
+    f_map_free_iter(it);
+    return count;
+}
+
 /* Print map description: KV size, in-memory size and so on */
 void f_map_fprint_desc(FILE *f, F_MAP_t *m)
 {
-    fprintf(f, "  Part %u of %u in %spartitioned %s map; "
-	    "interleave: %u entr%s (%u PUs),\n",
+    uint64_t dirty_count = get_dirty_count(m);
+
+    fprintf(f, "  ID:%d is %s map",
+	    m->id, f_map_is_structured(m)?"structured":
+			(m->geometry.entry_sz==1?"bitmap":"bbitmap"));
+    if (m->loaded)
+	fprintf(f, ", loaded");
+    if (dirty_count)
+	fprintf(f, ", dirty (%lu PUs)", dirty_count);
+    else
+	fprintf(f, ", clean");
+    fprintf(f, ";\n  part %u of %u in %spartitioned %s map; "
+	    "interleave: %u entr%s (%u PUs);\n",
 	    m->part, m->parts, (m->parts<=1)?"non-":"",
 	    f_map_has_globals(m)?"global":"local",
 	    1U<<m->geometry.intl_factor,
 	    m->geometry.intl_factor?"ies":"y",
 	    1U<<(m->geometry.intl_factor-m->geometry.pu_factor));
-    fprintf(f, "  entry_sz:%u, %u PU per BoS, BoS sz:%lu (%u entries) count:%lu\n",
+    fprintf(f, "  entry size:%u, %u PU per BoS, BoS size:%lu (%u entries);\n",
 	    m->geometry.entry_sz, m->geometry.bosl_pu_count,
-	    m->bosl_sz, m->bosl_entries, m->nr_bosl);
+	    m->bosl_sz, m->bosl_entries);
+    fprintf(f, "  map size:%lu entries, total BoS count:%lu.\n",
+	    map_size(m), m->nr_bosl);
 }
 
