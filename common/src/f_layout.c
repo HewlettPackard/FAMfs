@@ -136,13 +136,13 @@ void f_print_sm(FILE *f, F_MAP_t *sm, uint16_t chunks, uint32_t slab_stripes)
 	assert( len < SPRINT_LINE_MAX );
 	*(line+len++) = '\n';
 	if (!jam)
-	    fputs(line, f);
+	    fwrite(line, len, 1, f);
     }
     f_map_free_iter(sm_it);
 
     /* Always print the bottom entry */
     if (jam)
-	fputs(line, f);
+	fwrite(line, len, 1, f);
 
     fprintf(f, "*** MAP END ***\n");
 }
