@@ -25,7 +25,7 @@ typedef enum {
 } BBIT_VALUE_t;
 #define BBIT_MASK(nr)		BBIT_MASK_VAL(BBIT_11,nr)
 #define BBIT_GET_VAL(buf, nr)	(((unsigned long)BBIT_11) &				\
-				 (buf[BBIT_WORD(nr)] >> (2U*(nr & (BBITS_PER_LONG-1)))))
+				 ((buf)[BBIT_WORD(nr)] >> (2U*((nr)&(BBITS_PER_LONG-1)))))
 
 #define BB_PAT_ZERO	(1UL << BBIT_ZERO)
 #define BB_PAT01	(1UL << BBIT_01)

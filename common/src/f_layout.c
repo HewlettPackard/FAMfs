@@ -143,7 +143,95 @@ void f_print_sm(FILE *f, F_MAP_t *sm, uint16_t chunks, uint32_t slab_stripes)
     /* Always print the bottom entry */
     if (jam)
 	fwrite(line, len, 1, f);
+    free(line);
+    fprintf(f, "*** MAP END ***\n");
+}
 
+#define DEC_31BIT_LEN 10
+/* print entry number and BBITS_PER_LONG bifold bit's values */
+static size_t sprint_claim_packed(char *buf, F_CLAIM_PACKED_t *cvp,
+    uint64_t e)
+{
+    size_t len;
+    unsigned int bit;
+    int v;
+
+    assert( BBIT_NR_IN_LONG(e) == 0 );
+    len = sprintf(buf, "%*lu ", DEC_31BIT_LEN, e);
+    buf += len;
+
+    for (bit = 0; bit < BBITS_PER_LONG; bit++) {
+	v = (int)BBIT_GET_VAL((unsigned long *)cvp, bit);
+	switch (v) {
+	case CVE_PREALLOC:	*buf = 'P'; break;
+	case CVE_ALLOCATED:	*buf = 'A'; break;
+	case CVE_LAMINATED:	*buf = 'L'; break;
+	default:		*buf = (bit%8)?'.':'|';
+	}
+	len++; buf++;
+    }
+    return len;
+}
+
+#define NONFREE_CONDITION	((F_COND_t)(CV_PREALLOC_P|CV_ALLOCATED_P|CV_LAMINATED_P))
+/* Print the whole Claim vector to open FILE stream. */
+void f_print_cv(FILE *f, F_MAP_t *cv)
+{
+    F_CLAIM_PACKED_t *cvp, *old;
+    F_ITER_t *it;
+    size_t len;
+    uint64_t e;
+    unsigned long lh; /* line hash */
+    char *line;
+    bool jam;
+
+    assert( f_map_is_bbitmap(cv) );
+    line = (char*)calloc(SPRINT_LINE_MAX, sizeof(*line));
+    old = NULL;
+    len = 0;
+    lh = 0;
+    jam = false; /* line jamming */
+
+    fprintf(f, "*** CLAIM VECTOR ***\n");
+    /* Generic map description: sizes, flags and so on */
+    f_map_fprint_desc(f, cv);
+
+    /* Ruler */
+    len = sprintf(line, "         # 0       8       16      24");
+
+    /* For all Slab map entries */
+    it = f_map_get_iter(cv, NONFREE_CONDITION, 0);
+    for_each_iter(it) {
+	e = it->entry;
+	cvp = (F_CLAIM_PACKED_t *) it->word_p;
+	if (cvp != old) {
+	    old = cvp;
+	    if (!jam) {
+		/* Print line */
+		assert( len < SPRINT_LINE_MAX );
+		*(line+len++) = '\n';
+		fwrite(line, len, 1, f);
+	    }
+	    /* Skip similar lines */
+	    if (!(jam = (lh == cvp->_v64))) {
+                lh = cvp->_v64;
+		/* Mark last repeated line */
+		*(line+DEC_31BIT_LEN+1) = '*';
+	    }
+	    /* base entry # for this line */
+	    e &= ~(unsigned long)(BBITS_PER_LONG - 1);
+	    /* Format string of BBITS_PER_LONG entries */
+	    len = sprint_claim_packed(line, cvp, e);
+	    /* next line */
+	    it->entry = e | (unsigned long)(BBITS_PER_LONG - 1);
+	}
+    }
+    f_map_free_iter(it);
+
+    /* Always print the bottom entry */
+    if (jam)
+	fwrite(line, len, 1, f);
+    free(line);
     fprintf(f, "*** MAP END ***\n");
 }
 #undef SPRINT_LINE_MAX

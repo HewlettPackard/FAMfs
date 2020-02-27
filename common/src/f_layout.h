@@ -304,6 +304,7 @@ BITOPS(Layout, Quit,		f_layout_, _L_QUIT)
 struct f_map_;
 F_POOLDEV_INDEX_t *f_find_pdi_by_media_id(F_LAYOUT_t *lo, unsigned int media_id);
 void f_print_sm(FILE *f, struct f_map_ *sm, uint16_t chunks, uint32_t slab_stripes);
+void f_print_cv(FILE *f, struct f_map_ *cv);
 
 #endif /* F_LAYOUT_H_ */
 
