@@ -867,7 +867,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     if (!lo->devlist) goto _nomem;
     pdi_max_idx = 0;
     pdi = lo->devlist;
-    for (u = uu = 0; u < info->devnum; u++, pdi++) {
+    for (u = uu = 0; u < info->devnum; u++, uu++, pdi++) {
 	/* find pool device by id */
 	if (all_pdevs) {
 	    pdev = &p->devlist[uu];
