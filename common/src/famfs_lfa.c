@@ -74,6 +74,25 @@ static ssize_t _wait_cq(F_LFA_DESC_t *lfa) {
     return 0;
 }
 
+/*
+   Make LFA-specific fi domain on specified address (name) and port (svc)
+
+*/
+F_LFA_DESC_t *f_lfa_mydom(struct fi_info *fi, char *my_name, char *my_svc) {
+
+    F_LFA_DESC_t *lfa = calloc(1, sizeof(F_LFA_DESC_t));
+    if (!lfa)
+        return NULL;
+
+    struct fi_info *fo;
+    ON_FIERR(fi_getinfo(FI_VERSION(1, 5), my_name, my_svc, FI_SOURCE, fi, &fo), 
+             return NULL, "fi_getinfo failed");
+    ON_FIERR(fi_fabric(fo->fabric_attr, &lfa->fab, NULL), return NULL, "fi_fabric err");
+    ON_FIERR(fi_domain(lfa->fab, fo, &lfa->dom, NULL), return NULL, "fi_domain err");
+
+    lfa->fi = fo; 
+    return lfa;
+}
 
 /*
    Create atomic blob, open new endpoint, translate all addresses etc
@@ -83,6 +102,7 @@ static ssize_t _wait_cq(F_LFA_DESC_t *lfa) {
         fi      fabric info obtained when domain was created
      Out
         plfa    address of a pointer to hold created LFA structure
+                (if *plfa != NULL, the LFA was alredy created by f_lfa_mydom call)
      Return
         0       success
       <>0       error, see errno/fi_errno
@@ -91,19 +111,30 @@ int f_lfa_create(struct fid_domain *dom, struct fid_av *av, struct fi_info *fi, 
     struct fi_cq_attr   cq_attr;
     struct fi_av_attr   av_attr;
     int rc = 0;
+    F_LFA_DESC_t *lfa;
 
-    F_LFA_DESC_t *lfa = calloc(1, sizeof(F_LFA_DESC_t));
-    if (!lfa)
-        return ENOMEM;
+    if (*plfa) {
+        lfa = *plfa;
+    } else {
+        lfa = calloc(1, sizeof(F_LFA_DESC_t));
+        if (!lfa)
+            return -ENOMEM;
+        *plfa = lfa;
+    }
 
     pthread_mutex_init(&lfa->lock, NULL);
-    ON_FIERR(rc = fi_endpoint(dom, fi, &lfa->ep, NULL), goto _clean, "create ep");
+
+    if (dom)
+        lfa->dom = dom;
+    if (fi)
+        lfa->fi = fi;
+    ON_FIERR(rc = fi_endpoint(lfa->dom, lfa->fi, &lfa->ep, NULL), goto _clean, "create ep");
 
     memset(&cq_attr, 0, sizeof(cq_attr));
     cq_attr.format = FI_CQ_FORMAT_CONTEXT;
     cq_attr.wait_obj = FI_WAIT_NONE;
-    cq_attr.size = fi->tx_attr->size;
-    ON_FIERR(rc = fi_cq_open(dom, &cq_attr, &lfa->cq, NULL), goto _clean1, "open cq");
+    cq_attr.size = lfa->fi->tx_attr->size;
+    ON_FIERR(rc = fi_cq_open(lfa->dom, &cq_attr, &lfa->cq, NULL), goto _clean1, "open cq");
     ON_FIERR(rc = fi_ep_bind(lfa->ep, &lfa->cq->fid, FI_RECV | FI_TRANSMIT), goto _clean2, "bind cq");
 
     if (!av) {
@@ -117,8 +148,6 @@ int f_lfa_create(struct fid_domain *dom, struct fid_av *av, struct fi_info *fi, 
 
     ON_FIERR(rc = fi_enable(lfa->ep), goto _clean2, "ep enable");
 
-    lfa->dom = dom;
-    *plfa = lfa;
     return 0;
 
 _clean2:
@@ -280,6 +309,7 @@ int f_lfa_attach(F_LFA_DESC_t *lfa, uint64_t key, F_LFA_SLIST_t *lst, int lcnt, 
     abd->nsrv = lcnt;
     abd->slist = calloc(1, sizeof(F_LFA_SLIST_t)*lcnt);
     for (int i = 0; i < lcnt; i++) {
+printf("av ins: %s : %s\n", lst[i].name, lst[i].service);
         rc = fi_av_insertsvc(lfa->av, lst[i].name, lst[i].service, &abd->tadr[i], 0, NULL);
         ON_FIERR(rc == 1 ? 0 : rc, goto _clean, "av svc insert");
         abd->slist[i].name = strdup(lst[i].name);

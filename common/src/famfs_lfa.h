@@ -34,6 +34,7 @@ typedef uint32_t FI_UINT32_t;
 typedef struct f_lfa_slist_ {
     char    *name;
     char    *service;
+    size_t  bsz;
 } F_LFA_SLIST_t;
 
 //
@@ -82,6 +83,8 @@ typedef struct f_lfa_desc_ {
 
     pthread_mutex_t         lock;           // Big Bad Lock for ABD chain
     F_LFA_ABD_t             *blobs;         // Pointer to the firts blob descriptor in chain (NULL terminated)
+    struct fid_fabric       *fab;           // Fabric (if created by f_lfa_mydom() call)
+    struct fi_info          *fi;            // fi_getinfo output
     struct fid_ep           *ep;            // Libfabric endpoint for atomic TXs
     struct fid_domain       *dom;           // Domain
     struct fid_av           *av;            // AV 
@@ -89,6 +92,11 @@ typedef struct f_lfa_desc_ {
     struct fi_cq_tagged_entry cqe;          // CQ entry
 
 } F_LFA_DESC_t;
+
+//
+// Make LFA-specific fi domain on specified address (name) and port (svc)
+//
+F_LFA_DESC_t * f_lfa_mydom(struct fi_info *fi, char *my_name, char *my_svc);
 
 //
 // Create atomic blob, open new endpoint, translate all addresses etc
