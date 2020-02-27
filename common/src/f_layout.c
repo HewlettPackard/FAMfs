@@ -216,7 +216,7 @@ void f_print_cv(FILE *f, F_MAP_t *cv)
 	    if (!(jam = (lh == cvp->_v64))) {
                 lh = cvp->_v64;
 		/* Mark last repeated line */
-		*(line+DEC_31BIT_LEN+1) = '*';
+		*(line+DEC_31BIT_LEN) = '*';
 	    }
 	    /* base entry # for this line */
 	    e &= ~(unsigned long)(BBITS_PER_LONG - 1);
@@ -229,8 +229,12 @@ void f_print_cv(FILE *f, F_MAP_t *cv)
     f_map_free_iter(it);
 
     /* Always print the bottom entry */
-    if (jam)
+    if (jam) {
+	/* Print line */
+	assert( len < SPRINT_LINE_MAX );
+	*(line+len++) = '\n';
 	fwrite(line, len, 1, f);
+    }
     free(line);
     fprintf(f, "*** MAP END ***\n");
 }
