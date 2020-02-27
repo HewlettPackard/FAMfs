@@ -20,10 +20,125 @@
 #include "f_map.h"
 #include "f_pool.h"
 #include "f_layout.h"
+#include "famfs_lf_connect.h"
 #include "f_allocator.h"
 
 
 static void *f_allocator_thread(void *ctx);
+
+#define F_LFA_PORT "30000"
+#define F_LFA_PDS_KEY 16661
+static void destroy_pds_lfa(F_POOL_t *pool)
+{
+	if (pool->pds_lfa->global_abd) f_lfa_detach(pool->pds_lfa->global_abd, 0);
+	if (pool->pds_lfa->local_abd) f_lfa_deregister(pool->pds_lfa->local_abd, 0);
+	if (pool->pds_lfa->lfa) f_lfa_destroy(pool->pds_lfa->lfa);
+	if (pool->pds_lfa->local) free(pool->pds_lfa->local);
+	if (pool->pds_lfa->global) free(pool->pds_lfa->global);
+	if (pool->pds_lfa) free(pool->pds_lfa);
+}
+
+/*
+ * Create LFA for the shared part of pool devices for that layout
+ */
+static int create_pds_lfa(F_POOL_t *pool)
+{
+	F_IONODE_INFO_t *my_ionode, *ioi;
+	F_LFA_SLIST_t *ionode_lst;
+	F_PDEV_SHA_t *g_sha;
+	int bmap_size = 16; // TODO: determine max dev size
+	int i, si, rc = -ENOMEM;
+
+	ASSERT(pool->mynode.ionode_idx < pool->ionode_count);
+
+	ionode_lst = alloca(sizeof(F_LFA_SLIST_t)*pool->ionode_count);
+	if (!ionode_lst) return -ENOMEM;
+
+	my_ionode = &pool->ionodes[pool->mynode.ionode_idx];
+	pool->pds_lfa = (F_LFA_ATTR_t *) calloc(1, sizeof(F_LFA_ATTR_t));
+	if (!pool->pds_lfa) return -ENOMEM;
+
+	pool->pds_lfa->local_size =  (sizeof(F_PDEV_SHA_t) + bmap_size) * my_ionode->fam_devs;
+	if (posix_memalign((void**)&pool->pds_lfa->local, 4096, pool->pds_lfa->local_size)) {
+		LOG(LOG_ERR, "error allocating global pds");
+		goto _ret;
+	}
+	memset(pool->pds_lfa->local, 0, pool->pds_lfa->local_size);
+
+	pool->pds_lfa->global_size = (sizeof(F_PDEV_SHA_t) + bmap_size) * pool->pool_devs;
+	if (posix_memalign((void**)&pool->pds_lfa->global, 4096, pool->pds_lfa->global_size)) {
+		LOG(LOG_ERR, "error allocating global pds");
+		goto _ret;
+	}		
+	memset(pool->pds_lfa->global, 0, pool->pds_lfa->global_size);
+
+	ioi = pool->ionodes;
+	for (i = 0, si = 0; i < pool->ionode_count; i++, ioi++, si++) {
+		int j;		
+		for (j = 0; j < ioi->fam_devs; j++, si++) {
+			F_POOL_DEV_t *pdev;
+			for_each_pool_dev(pool, pdev) {
+				if (pdev->ionode_idx == i && pdev->idx_in_ion == j) {
+					F_PDEV_SHA_t *sha = pdev->sha;
+					g_sha = pool->pds_lfa->global + si * (sizeof(F_PDEV_SHA_t) + bmap_size);
+					LOG(LOG_DBG2, "pdev @%d:%d sha %p", i, j, g_sha);
+					memcpy(g_sha, sha, sizeof(F_PDEV_SHA_t));
+					pdev->sha = g_sha;
+					free(sha);
+					break;
+				}
+			}
+		}
+	}
+
+	pool->pds_lfa->lfa = f_lfa_mydom(pool->mynode.domain->fi, pool->mynode.hostname, F_LFA_PORT);
+	if (!pool->pds_lfa->lfa) {
+		LOG(LOG_ERR, "error opening domain for pds LFA");
+		goto _ret;
+	}		
+
+//	rc = f_lfa_create(pool->mynode.domain->domain, pool->mynode.domain->av, 
+//		pool->mynode.domain->fi, &pool->pds_lfa->lfa);
+	rc = f_lfa_create(NULL, NULL, NULL, &pool->pds_lfa->lfa);
+	if (rc) {
+		LOG(LOG_ERR, "error %d creating pds LFA", rc);
+		goto _ret;
+	}		
+
+	rc = f_lfa_register(pool->pds_lfa->lfa, F_LFA_PDS_KEY, pool->pds_lfa->local_size, 
+		(void **)&pool->pds_lfa->local, &pool->pds_lfa->local_abd);
+	if (rc) {
+		LOG(LOG_ERR, "error %d registering pds LFA", rc);
+		goto _ret;
+	}		
+
+	for (i = 0, ioi = pool->ionodes; i < pool->ionode_count; i++, ioi++) {
+		char *sbuf = calloc(1, 32);
+		if (!sbuf) { rc = -ENOMEM; goto _ret; }
+		ionode_lst[i].name = strdup(ioi->hostname);
+//		sprintf(sbuf, "%d", pool->lf_info->service);
+		ionode_lst[i].service = strdup(F_LFA_PORT);
+		ionode_lst[i].bsz = ioi->fam_devs*(sizeof(F_PDEV_SHA_t) + bmap_size);
+		LOG(LOG_DBG2, "added server/port: %s/%s/%lu", 
+			ionode_lst[i].name, ionode_lst[i].service, ionode_lst[i].bsz); 
+	}
+
+	rc = f_lfa_attach(pool->pds_lfa->lfa, F_LFA_PDS_KEY, ionode_lst, 1, 
+		pool->pds_lfa->global_size, (void **)&pool->pds_lfa->global, &pool->pds_lfa->global_abd);
+	if (rc) {
+		LOG(LOG_ERR, "error %d attaching pds LFA", rc);
+		goto _ret;
+	}		
+
+	LOG(LOG_DBG, "alocated/initialized LFA global: %p/%lu local: %p/%lu", 
+		pool->pds_lfa->global, pool->pds_lfa->global_size, pool->pds_lfa->local, pool->pds_lfa->local_size);
+
+	return 0;
+_ret:
+	destroy_pds_lfa(pool);
+	return rc;
+}
+
 
 int start_allocator_thread(F_LAYOUT_t *lo)
 {
@@ -77,17 +192,23 @@ int f_start_allocator_threads(void)
 {
 	F_POOL_t *pool = f_get_pool();
 	F_LAYOUT_t *lo;
+	struct list_head *l, *tmp;
 	int rc = 0;
 
-	if (pool) {
-		struct list_head *l, *tmp;
-		list_for_each_safe(l, tmp, &pool->layouts) {
-			lo = container_of(l, struct f_layout_, list);
-			rc = start_allocator_thread(lo);
-			if (rc) {
-				LOG(LOG_ERR, "%s[%d]: error %s starting allocator", 
-					lo->info.name, lo->lp->part_num, strerror(rc));
-			}
+	ASSERT(pool);
+
+	rc = create_pds_lfa(pool);
+	if (rc) {
+		destroy_pds_lfa(pool);
+		return rc;
+	}
+
+	list_for_each_safe(l, tmp, &pool->layouts) {
+		lo = container_of(l, struct f_layout_, list);
+		rc = start_allocator_thread(lo);
+		if (rc) {
+			LOG(LOG_ERR, "%s[%d]: error %s starting allocator", 
+				lo->info.name, lo->lp->part_num, strerror(rc));
 		}
 	}
 	return rc;
@@ -110,6 +231,7 @@ int f_stop_allocator_threads(void)
 			}
 		}
 	}
+	destroy_pds_lfa(pool);
 	return rc;
 }
 
@@ -271,7 +393,7 @@ static inline struct f_stripe_entry *alloc_stripe_entry(F_LO_PART_t *lp)
         struct f_stripe_entry *se;
 	F_LAYOUT_t *lo = lp->layout;
 
-        se = (struct f_stripe_entry *)calloc(sizeof(struct f_stripe_entry), 1);
+        se = (struct f_stripe_entry *)calloc(1, sizeof(struct f_stripe_entry));
 	if (!se) {
 		LOG(LOG_ERR, "%s[%d]:  error allocating stripe entry", lo->info.name, lp->part_num);
 		return ERR_PTR(-ENOMEM);
@@ -302,7 +424,7 @@ static inline struct f_stripe_bucket *alloc_stripe_bucket(F_LO_PART_t *lp)
 	F_LAYOUT_t *lo = lp->layout;
 	F_POOL_t *pool = lo->pool;
 
-        sb = calloc(sizeof(struct f_stripe_bucket), 1);
+        sb = calloc(1, sizeof(struct f_stripe_bucket));
 	if (!sb) {
 		LOG(LOG_ERR, "%s[%d]:  error allocating stripe bucket", lo->info.name, lp->part_num);
 		return ERR_PTR(-ENOMEM);
@@ -551,6 +673,8 @@ static int read_maps(F_LO_PART_t *lp)
 	}
 	LOG(LOG_DBG, "%s[%d]: %u slabs loaded: %d errors", lo->info.name, lp->part_num, cbdata.loaded, cbdata.err);
 
+	f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+
 	LOG(LOG_DBG, "%s[%d]: loading claim vector", lo->info.name, lp->part_num);
 	rc = f_map_init_prt(lo->claimvec, lo->part_count, lp->part_num, 0, 0);
 	if (rc) {
@@ -574,6 +698,8 @@ static int read_maps(F_LO_PART_t *lp)
 	}
 	LOG(LOG_DBG, "%s[%d]: %u stripes loaded: %d errors", 
 		lo->info.name, lp->part_num, cbdata.loaded, cbdata.err);
+
+	f_print_cv(dbg_stream, lo->claimvec);
 
 	if (cbdata.loaded) {
 		rc = f_map_flush(lo->claimvec);
@@ -743,32 +869,12 @@ static int cmp_pdi_by_usage(const void *a, const void *b)
 		return 0;
 	return -1;
 }
-/*
-struct PDI_matrix;
-typedef int (*mx_init_fn) (struct PDI_matrix *mx);
-typedef F_POOLDEV_INDEX_t * (*mx_lookup_fn) (struct PDI_matrix *mx, size_t row, size_t col);
-typedef void (*mx_sort_fn) (struct PDI_matrix *mx);
-typedef void (*mx_resort_fn) (struct PDI_matrix *mx, size_t row);
-typedef int (*mx_gen_devlist_fn) (struct PDI_matrix *mx, F_POOLDEV_INDEX_t *devlist, size_t size);
-typedef void (*mx_release_fn) (struct PDI_matrix *mx);
 
-struct PDI_matrix {
-	F_POOLDEV_INDEX_t	*addr;
-	size_t			rows;
-	size_t			cols;
-	mx_init_fn		init;
-	mx_lookup_fn		lookup;
-	mx_sort_fn		sort;
-	mx_resort_fn		resort;
-	mx_gen_devlist_fn	gen_devlist;
-	mx_release_fn		release;
-};
-*/
 static int pdi_matrix_init(F_PDI_MATRIX_t *mx)
 {
 	int i, j;
 
-	mx->addr = (F_POOLDEV_INDEX_t *) calloc(sizeof(F_POOLDEV_INDEX_t), mx->rows * mx->cols);
+	mx->addr = (F_POOLDEV_INDEX_t *) calloc(mx->rows * mx->cols, sizeof(F_POOLDEV_INDEX_t));
 	if (!mx->addr) return ENOMEM;
 
 	/* Initialize the matrix */
@@ -839,6 +945,8 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 	if (!col0_list) return ENOMEM;
 	if (*size > mx->rows) return EINVAL;
 
+	memset(col0_list, 0, sizeof(F_POOLDEV_INDEX_t)*mx->rows);
+
 	/* Generate a PDI list from the matrix 0 column */
 	for (i = 0, pdi0 = col0_list; i < mx->rows && i < *size; i++) {
 		F_POOL_DEV_t *pdev;
@@ -846,15 +954,15 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 		pdev = f_find_pdev(pdi->pool_index);
 		if (!pdev || DevFailed(pdev->sha) || DevMissing(pdev->sha) || DevDisabled(pdev->sha))
 			continue;
-		pdi0++;
 		memcpy(pdi0, pdi, sizeof(F_POOLDEV_INDEX_t));
+		pdi0++;
 	}
 
 	*size = i;
 
 	/* Sort the resulting list by usage and copy the required number of PDIs to the output list */
-	qsort(pdi0, *size, sizeof(F_POOLDEV_INDEX_t), cmp_pdi_by_usage);
-	memcpy(devlist, pdi0, (*size)*sizeof(F_POOLDEV_INDEX_t));
+	qsort(col0_list, *size, sizeof(F_POOLDEV_INDEX_t), cmp_pdi_by_usage);
+	memcpy(devlist, col0_list, (*size)*sizeof(F_POOLDEV_INDEX_t));
 	return 0;
 }
 
@@ -872,19 +980,8 @@ static int create_lp_dev_matrix(F_LO_PART_t *lp)
 	F_POOL_t *pool = lo->pool;
 	F_POOLDEV_INDEX_t *pdi, *mpdi;
 	int i, rc = ENOMEM;
-/*
-	struct PDI_matrix dev_mx = {
-		.rows	= pool->pool_ags,
-		.cols	= pool->ag_devs,
-		.init	= pdi_matrix_init,
-		.lookup	= pdi_matrix_lookup,
-		.sort	= pdi_matrix_sort,
-		.resort	= pdi_matrix_resort,
-		.gen_devlist = pdi_matrix_gen_devlist_across_AGs,
-		.release= pdi_matrix_release,
-	};
-*/
-	lp->dmx = (F_PDI_MATRIX_t *) calloc(sizeof(F_PDI_MATRIX_t), 1);
+
+	lp->dmx = (F_PDI_MATRIX_t *) calloc(1, sizeof(F_PDI_MATRIX_t));
 	if (lp->dmx) {
 		lp->dmx->rows   = pool->pool_ags;
 		lp->dmx->cols   = pool->ag_devs;
@@ -901,34 +998,15 @@ static int create_lp_dev_matrix(F_LO_PART_t *lp)
 		if (lp->dmx) free(lp->dmx);
 		return rc;
 	}
-#if 0
-	/* Initialize the matrix */
-	for (i = 0; i < pool->pool_ags; i++) {
-		pdi = ((F_POOLDEV_INDEX_t (*)[pool->ag_devs]) lo->dev_matrix)[i];
-		for (j = 0; j < pool->ag_devs; j++, pdi++) {
-//			pdi = &lo->dev_matrix[i][j];
-			pdi->idx_ag = i;
-			pdi->idx_dev = j;
-			pdi->pool_index = F_PDI_NONE;
-			pdi->pl_extents_used = 0;
-		}
-	}
-#endif
+
 	/* Copy PDIs from layout devlist to the allocation matrix */
 	for (i = 0; i < lo->devlist_sz; i++) {
 		pdi = &lo->devlist[i];
 		mpdi = lp->dmx->lookup(lp->dmx, pdi->idx_ag, pdi->idx_dev);
 		mpdi->pool_index = pdi->pool_index;
 		mpdi->pl_extents_used = pdi->pl_extents_used;
-//		(lo->dev_matrix + (pdi->idx_ag * pool->ag_devs + pdi->idx_dev))->pool_index = pdi->pool_index;
 	}
-#if 0
-	/* Sort the matrix rows by extents_used for every AG */
-	for (i = 0; i < pool->pool_ags; i++) {
-		pdi = ((F_POOLDEV_INDEX_t (*)[pool->ag_devs]) lo->dev_matrix)[i];
-		qsort(pdi, pool->ag_devs, sizeof(F_POOLDEV_INDEX_t), cmp_pdi_by_usage);
-	}
-#endif
+
 	lp->dmx->sort(lp->dmx);
 	return 0;
 }
@@ -947,12 +1025,59 @@ static void release_lp_dev_matrix(F_LO_PART_t *lp)
  */
 static inline int alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 {
-	int extent = 0;
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
 	F_POOL_DEV_t *pdev = f_find_pdev(ext->media_id);
-	ASSERT(pdev);
+	F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, ext->media_id);
+	F_POOLDEV_INDEX_t *mpdi;
+	int trg_ix, boff, extent, rc;
+	off_t off, sha_off;
+
+	ASSERT(pdev && pdi);
+	ASSERT(pdev->sha);
+	sha_off = (void *)pdev->sha - pool->pds_lfa->global;
+	ASSERT(sha_off < pool->pds_lfa->global_size);
+
+	mpdi = lp->dmx->lookup(lp->dmx, pdi->idx_ag, 0);
+
+	/*
+	 * We currently don't allow allocation on missing devices
+	 * This is for future extensions
+	 */
+	if (DevMissing(pdev->sha))
+		atomic_inc(&lp->missing_dev_slabs);
+
+	/*
+	 * Find a free extent on that device, we use libfabric atomic operations
+	 * to avoid locking. Access to the extent bitmap is randomized by setting 
+	 * the initial bit offset boff to search from.
+	 */
+	trg_ix = pdev->dev->f.ionode_idx;
+//	boff = (pdev->extent_count - 1)/ (pool->ionode_count - pool->mynode.ionode_idx);
+	boff = rand() % pdev->extent_count;
+	off = sha_off + offsetof(F_PDEV_SHA_t, extent_bmap);
+	extent = f_lfa_bfcs(pool->pds_lfa->global_abd, trg_ix, off, boff, pdev->extent_count);
+	if (extent < 0) {
+		LOG(LOG_WARN, "%s[%d]: allocation failed on device id %d", lo->info.name, lp->part_num, ext->media_id);
+		return extent;
+	}
+
+	off = sha_off + offsetof(F_PDEV_SHA_t, extents_used);
+	rc = f_lfa_incl(pool->pds_lfa->global_abd, trg_ix, off);
+	if (rc) {
+		LOG(LOG_WARN, "%s[%d]: error %d updating device %d usage", 
+			lo->info.name, lp->part_num, rc, ext->media_id);
+	}
+
+	/* Extents used in that partition */
+	pdi->pl_extents_used++;
+	mpdi->pl_extents_used = pdi->pl_extents_used;
 
 	/* Re-sort the matrix row we picked the device from */ 
 	lp->dmx->resort(lp->dmx, pdev->idx_ag);
+
+	LOG(LOG_DBG2, "%s[%d]: extent %u allocated on %d, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
+		extent, ext->media_id, pdev->sha->extents_used, pdi->pl_extents_used, pdev->extent_count);
 	return extent;
 }
 
@@ -962,7 +1087,56 @@ static inline int alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
  */
 static inline void release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 {
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	F_POOL_DEV_t *pdev = f_find_pdev(ext->media_id);
+	F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, ext->media_id);
+	int trg_ix, rc;
+	off_t off, sha_off;
 
+	ASSERT(pdev && pdi);
+	ASSERT(pdev->sha);
+	sha_off = pdev->sha - (F_PDEV_SHA_t *)pool->pds_lfa->global;
+	ASSERT(sha_off < pool->pds_lfa->global_size);
+
+	/* Decerement the missing device slab count if that was a missing device */
+	if (DevMissing(pdev->sha))
+		atomic_dec(&lp->missing_dev_slabs);
+
+	/* Update extent map and decrement counters */
+	trg_ix = pdev->dev->f.ionode_idx;
+	off = sha_off + offsetof(F_PDEV_SHA_t, extent_bmap);
+	rc = f_lfa_bcf(pool->pds_lfa->global_abd, trg_ix, off, ext->extent);
+	if (rc) {
+		LOG(LOG_WARN, "%s[%d]: error %d updating device %d usage", 
+			lo->info.name, lp->part_num, rc, ext->media_id);
+	}
+
+
+	off = sha_off + offsetof(F_PDEV_SHA_t, extents_used);
+	rc = f_lfa_decl(pool->pds_lfa->global_abd, trg_ix, off);
+	if (rc) {
+		LOG(LOG_WARN, "%s[%d]: error %d updating device %d usage", 
+			lo->info.name, lp->part_num, rc, ext->media_id);
+	}
+
+	if (ext->failed) {
+		off = sha_off + offsetof(F_PDEV_SHA_t, failed_extents);
+		rc = f_lfa_decl(pool->pds_lfa->global_abd, trg_ix, off);
+		if (rc) {
+			LOG(LOG_WARN, "%s[%d]: error %d updating device %d failed exts", 
+				lo->info.name, lp->part_num, rc, ext->media_id);
+		}
+	}
+
+	/* Extents used in that partition */
+	pdi->pl_extents_used--;
+
+	/* Re-sort the matrix row we picked the device from */ 
+	lp->dmx->resort(lp->dmx, pdev->idx_ag);
+
+	LOG(LOG_DBG2, "%s[%d]: extent %u released on %d, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
+		ext->extent, ext->media_id, pdev->sha->extents_used, pdi->pl_extents_used, pdev->extent_count);
 }
 
 /* 
@@ -1077,7 +1251,7 @@ static unsigned int alloc_slab_extents(F_LO_PART_t *lp, F_SLABMAP_ENTRY_t *sme)
 	unsigned int n = 0, devnum = pool->pool_ags;
 	int rc;
 
-	sorted_devlist = calloc(sizeof(F_POOLDEV_INDEX_t), pool->pool_ags);
+	sorted_devlist = calloc(pool->pool_ags, sizeof(F_POOLDEV_INDEX_t));
 	if (!sorted_devlist) {
 		LOG(LOG_ERR, "%s[%d]: error allocating device list array", lo->info.name, lp->part_num);
 		return 0;
@@ -1633,8 +1807,11 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 		/* Probe if the entry is in memory and force its creation if not */
 		if (!f_map_probe_iter_at(cv_it, s0 + i, (void*)&v)) {
 			cv_it = f_map_seek_iter(cv_it, s0 + i);
-		} else if (v != CVE_FREE) {
-			LOG(LOG_DBG3, "%s[%d]: stripe %lu in slab %u: %d", lo->info.name, lp->part_num, s0 + i, slab, v);
+		}
+
+		if (v != CVE_FREE) {
+			LOG(LOG_DBG3, "%s[%d]: stripe %lu in slab %u: %d", 
+				lo->info.name, lp->part_num, s0 + i, slab, v);
 			continue;
 		} else {
 			rc = alloc_stripe(lp, s0 + i);
@@ -1734,7 +1911,7 @@ static int prealloc_stripes(F_LO_PART_t *lp, int count)
 			rc = prealloc_stripes_in_slab(lp, slab, per_slab_count - alloced[i]);
 			if (rc < 0) {
 				LOG(LOG_ERR, "%s[%d]: error %d allocating stripes in slab %u", 
-				lo->info.name, lp->part_num, rc, slab);
+					lo->info.name, lp->part_num, rc, slab);
 				continue;
 			} else if (!rc) {
 				LOG(LOG_DBG, "%s[%d]: no stripes allocated in slab %u", 
@@ -1816,6 +1993,7 @@ static int process_degraded_slabs(F_LO_PART_t *lp)
 	return rc;
 }
 
+/* A placeholder for a more accurate calculation */
 static unsigned int get_layout_slab_count(F_LAYOUT_t *lo)
 {
 	F_POOL_DEV_t *pdev;
@@ -1831,19 +2009,45 @@ static unsigned int get_layout_slab_count(F_LAYOUT_t *lo)
 	
 	return DIV_CEIL(pexts, lo->info.chunks);
 }
+
+static int fail_pdev(F_LAYOUT_t *lo, int pool_index)
+{
+//	F_POOL_DEV_t *pdev =  f_find_pdev(pool_index);;
+
+	return 0;
+}
+
+/*
+ * Check if any of the layout devices are marked as failed
+ * and update the affected slabs if any
+ */
+static void check_layout_devices(F_LAYOUT_t *lo)
+{
+	F_POOL_DEV_t *pdev;
+	F_POOLDEV_INDEX_t *pdi;
+	int i;
+
+	for (i = 0; i < lo->devlist_sz; i++) {
+		pdi = &lo->devlist[i];
+		pdev = f_find_pdev(pdi->pool_index);
+		if (pdev && DevFailed(pdev->sha))
+			fail_pdev(lo, pdi->pool_index);
+	}
+}
+
 /*
  * Release the layout partition structure.
  */
 static inline void layout_partition_free(F_LO_PART_t *lp)
 {
 	rcu_unregister_thread();
+	release_lp_dev_matrix(lp);
 	pthread_mutex_destroy(&lp->a_thread_lock);
 	pthread_cond_destroy(&lp->a_thread_cond);
 	if (lp->slab_usage) free(lp->slab_usage);
 	if (lp->slab_bmap) free(lp->slab_bmap);
 	if (lp->sync_bmap) free(lp->sync_bmap);
 	if (lp->cv_bmap) free(lp->cv_bmap);
-	release_lp_dev_matrix(lp);
 }
 
 /*
@@ -1851,8 +2055,8 @@ static inline void layout_partition_free(F_LO_PART_t *lp)
 */
 static inline int layout_partition_init(F_LO_PART_t *lp)
 {
-	F_POOL_t *pool = f_get_pool();
 	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
 	int chunk_size_factor   = F_CHUNK_SIZE_MAX / lo->info.chunk_sz;
 	size_t slab_usage_size, cv_bmap_size;
 
@@ -1891,6 +2095,8 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	if (!lp->slab_bmap) goto _err;
 
 	if (create_lp_dev_matrix(lp)) goto _err;
+
+	srand(pool->mynode.ionode_idx); /* seed rand with my ionode idx */
 
 	LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes", 
 		lo->info.name, lp->part_num, lp->slab_count, lp->stripe_count);
@@ -2066,6 +2272,8 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 		}
 	}
 
+	f_print_cv(dbg_stream, lo->claimvec);
+
 _ret:
 	return rc;
 }
@@ -2100,6 +2308,9 @@ static void *f_allocator_thread(void *ctx)
 
 	/* Load and process this partition of the slab map and the claim vector */
 	if (!rc) rc = read_maps(lp);
+
+	/* Check if all layout devices are present and healthy */
+	check_layout_devices(lo);
 
 	/*
 	 * Synchronize all allocator threads across all IO-nodes and make sure 

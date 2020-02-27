@@ -168,6 +168,18 @@ BITOPS(Node, RunLFSrv,	  f_mynode_, _NODE_RUN_LFSRV)
 BITOPS(Node, HasMDS,	  f_mynode_, _NODE_MDS)
 BITOPS(Node, ForceHelper, f_mynode_, _NODE_FCE_HLPR)
 
+/* Libfabric global area descriptor */
+typedef struct f_lfa_attr_ {
+    F_LFA_DESC_t	*lfa;		/* libfabric atomic area (LFA) descriptor */
+    F_LFA_ABD_t		*local_abd;	/* LFA local (created by this node) atomic blob descriptor */
+    F_LFA_ABD_t		*global_abd;	/* LFA global atomic blob descriptor */
+    void		*local;		/* LFA local buffer */
+    size_t		local_size;	/* LFA local buffer size */
+    void		*global;	/* LFA global buffer */
+    size_t		global_size;	/* LFA global buffer size */
+} F_LFA_ATTR_t;
+
+/* Partition info */
 typedef struct f_pool_ {
     uuid_t		uuid;		/* pool uuid */
     pthread_rwlock_t	lock;		/* pool lock */
@@ -187,6 +199,7 @@ typedef struct f_pool_ {
     uint32_t		ag_devs;	/* size of the pool device array, 2nd dimension */
     uint32_t		pool_devs;	/* size of the pool device array, total */
     uint32_t		ionode_count;	/* number of IO nodes */
+    F_LFA_ATTR_t	*pds_lfa; 	/* device shared LFA */
     F_AG_t		*ags;		/* allocation group array */
     F_POOL_DEV_t	*devlist;	/* two-dimentional array of pool devices */
     F_IONODE_INFO_t	*ionodes;	/* array of IO node info of .ionode_count size */
