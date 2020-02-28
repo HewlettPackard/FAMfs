@@ -210,12 +210,12 @@ int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val);
 //
 int f_lfa_gaddl(F_LFA_ABD_t *abd, off_t goff, long val);
 int f_lfa_gaddw(F_LFA_ABD_t *abd, off_t goff, int val);
-#define f_lfa_gsubw(l, g, v) f_lfa_addw(l, g, -(v))
-#define f_lfa_gsubl(l, g, v) f_lfa_addl(l, g, -(v))
-#define f_lfa_gincw(l, g)    f_lfa_addw(l, g, 1)
-#define f_lfa_gincl(l, g)    f_lfa_addl(l, g, 1)
-#define f_lfa_gdecw(l, g)    f_lfa_addw(l, g, -1)
-#define f_lfa_gdecl(l, g)    f_lfa_addl(l, g, -1)
+#define f_lfa_gsubw(l, g, v) f_lfa_gaddw(l, g, -(v))
+#define f_lfa_gsubl(l, g, v) f_lfa_gaddl(l, g, -(v))
+#define f_lfa_gincw(l, g)    f_lfa_gaddw(l, g, 1)
+#define f_lfa_gincl(l, g)    f_lfa_gaddl(l, g, 1)
+#define f_lfa_gdecw(l, g)    f_lfa_gaddw(l, g, -1)
+#define f_lfa_gdecl(l, g)    f_lfa_gaddl(l, g, -1)
 
 
 //
@@ -307,12 +307,12 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old);
 //
 int f_lfa_gaafw(F_LFA_ABD_t *abd, off_t goff, int val);
 int f_lfa_gaafl(F_LFA_ABD_t *abd, off_t goff, long val);
-#define f_lfa_gsafw(l, g, v) f_lfa_aafw(l, g, -(v))
-#define f_lfa_gsafl(l, g, v) f_lfa_aafl(l, g, -(v))
-#define f_lfa_giafw(l, g)    f_lfa_aafw(l, g, 1)
-#define f_lfa_giafl(l, g)    f_lfa_aafl(l, g, 1)
-#define f_lfa_gdafw(l, g)    f_lfa_aafw(l, g, -1)
-#define f_lfa_gdafl(l, g)    f_lfa_aafl(l, g, -1)
+#define f_lfa_gsafw(l, g, v) f_lfa_gaafw(l, g, -(v))
+#define f_lfa_gsafl(l, g, v) f_lfa_gaafl(l, g, -(v))
+#define f_lfa_giafw(l, g)    f_lfa_gaafw(l, g, 1)
+#define f_lfa_giafl(l, g)    f_lfa_gaafl(l, g, 1)
+#define f_lfa_gdafw(l, g)    f_lfa_gaafw(l, g, -1)
+#define f_lfa_gdafl(l, g)    f_lfa_gaafl(l, g, -1)
 
 //
 // Atomic compare_and_swap: compare expected value with remote, if equal set new else return remote value found
