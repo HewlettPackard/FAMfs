@@ -279,7 +279,7 @@ int f_lfa_attach(F_LFA_DESC_t *lfa, uint64_t key, F_LFA_SLIST_t *lst, int lcnt, 
     abd->in_buf = mem;
     abd->srv_key = key;
     abd->ops_key = key + F_LFA_LK_BASE;
-    ON_FIERR(rc = fi_mr_reg(lfa->dom, abd->ops, sizeof(abd->ops), 
+    ON_FIERR(rc = fi_mr_reg(lfa->dom, &abd->ops, sizeof(abd->ops), 
         FI_READ|FI_WRITE|FI_REMOTE_READ|FI_REMOTE_WRITE, 
         0, abd->ops_key, 0, &abd->ops_mr, NULL), goto _clean, "mr reg");
 
@@ -308,12 +308,15 @@ int f_lfa_attach(F_LFA_DESC_t *lfa, uint64_t key, F_LFA_SLIST_t *lst, int lcnt, 
 
     abd->nsrv = lcnt;
     abd->slist = calloc(1, sizeof(F_LFA_SLIST_t)*lcnt);
+    off_t off = 0;
     for (int i = 0; i < lcnt; i++) {
-printf("av ins: %s : %s\n", lst[i].name, lst[i].service);
         rc = fi_av_insertsvc(lfa->av, lst[i].name, lst[i].service, &abd->tadr[i], 0, NULL);
         ON_FIERR(rc == 1 ? 0 : rc, goto _clean, "av svc insert");
         abd->slist[i].name = strdup(lst[i].name);
         abd->slist[i].service = strdup(lst[i].service);
+        abd->slist[i].bsz = lst[i].bsz;
+        abd->slist[i].bof = off;
+        off += lst[i].bsz;
     }
 
     if ((rc = pthread_mutex_lock(&lfa->lock)))
@@ -342,16 +345,88 @@ _clean:
     }
     return rc;
 }
+
+static inline int find_my_off(off_t myoff, F_LFA_SLIST_t *slist, int num) {
+    int i, base = 0;
+
+    while (num > 0) {
+        i = base  + (num>>1);
+        if (myoff == slist[i].bof)
+            return i;
+        else if (myoff > slist[i].bof) {
+            base = i + 1;
+            num--;
+        }
+        num >>= 1;
+    }
+    return myoff >= slist[i].bof + slist[i].bsz ? -1 : i;
+}
+
+static inline ssize_t get_local_off(F_LFA_ABD_t *abd, off_t goff, int *trg_srv) {
+    int srv = find_my_off(goff, abd->slist, abd->nsrv);
+    if (srv < 0)
+        return -1;
+
+    *trg_srv = srv;
+    return goff - abd->slist[srv].bof;
+}
+
+
+int f_lfa_gaddl(F_LFA_ABD_t *abd, off_t goff, long val) {
+    int ix;
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
+        return -EINVAL;
+    return f_lfa_addl(abd, ix, off, val);
+}
+
+int f_lfa_gaddw(F_LFA_ABD_t *abd, off_t goff, int val) {
+    int ix;
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
+        return -EINVAL;
+    return f_lfa_addw(abd, ix, off, val);
+}
+
+int f_lfa_gaafl(F_LFA_ABD_t *abd, off_t goff, long val) {
+    int ix, rc;
+    long old;
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
+        return -EINVAL;
+    if (rc = f_lfa_aafl(abd, ix, off, val, &old))
+        return rc;
+    if (abd->in_buf)
+        ((long *)abd->in_buf)[goff/sizeof(long)] = old + val;
+    return 0;
+}
+
+int f_lfa_gaafw(F_LFA_ABD_t *abd, off_t goff, int val) {
+    int ix, rc;
+    int old;
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
+        return -EINVAL;
+    if (rc = f_lfa_aafw(abd, ix, off, val, &old))
+        return rc;
+    if (abd->in_buf)
+        ((int *)abd->in_buf)[goff/sizeof(int)] = old + val;
+    return 0;
+}
+
 int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old) {
     int rc;
 
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
     LOCK_LFA(abd);
 
-    abd->ops[0].in32 = val;
+    abd->ops.in32[0] = val;
     rc = fi_fetch_atomic(
             abd->lfa->ep,
-            &abd->ops[0].in32, 1, abd->ops_mr_dsc,
-            &abd->ops[0].out32, abd->ops_mr_dsc,
+            &abd->ops.in32[0], 1, abd->ops_mr_dsc,
+            &abd->ops.out32[0], abd->ops_mr_dsc,
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT32, FI_SUM, NULL);
     if (rc) {
@@ -361,7 +436,7 @@ int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old) {
     }
     ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
     if (old) 
-        *old = abd->ops[0].out32;
+        *old = abd->ops.out32[0];
 
     UNLOCK_LFA(abd);
 
@@ -371,13 +446,16 @@ int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old) {
 int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old) {
     int rc;
 
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
     LOCK_LFA(abd);
 
-    abd->ops[0].in64 = val;
+    abd->ops.in64[0] = val;
     rc = fi_fetch_atomic(
             abd->lfa->ep,
-            &abd->ops[0].in64, 1, abd->ops_mr_dsc,
-            &abd->ops[0].out64, abd->ops_mr_dsc,
+            &abd->ops.in64[0], 1, abd->ops_mr_dsc,
+            &abd->ops.out64[0], abd->ops_mr_dsc,
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT64, FI_SUM, NULL);
     if (rc) {
@@ -387,7 +465,7 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old) {
     }
     ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
     if (old) 
-        *old = abd->ops[0].out64;
+        *old = abd->ops.out64[0];
 
     UNLOCK_LFA(abd);
 
@@ -397,12 +475,15 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old) {
 int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val) {
     int rc;
 
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
     LOCK_LFA(abd);
 
-    abd->ops[0].in32 = val;
+    abd->ops.in32[0] = val;
     rc = fi_atomic(
             abd->lfa->ep,
-            &abd->ops[0].in32, 1, abd->ops_mr_dsc,
+            &abd->ops.in32[0], 1, abd->ops_mr_dsc,
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT32, FI_SUM, NULL);
     if (rc) {
@@ -419,12 +500,15 @@ int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val) {
 int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val) {
     int rc;
 
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
     LOCK_LFA(abd);
 
-    abd->ops[0].in64 = val;
+    abd->ops.in64[0] = val;
     rc = fi_atomic(
             abd->lfa->ep,
-            &abd->ops[0].in64, 1, abd->ops_mr_dsc,
+            &abd->ops.in64[0], 1, abd->ops_mr_dsc,
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT64, FI_SUM, NULL);
     if (rc) {
@@ -438,6 +522,7 @@ int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val) {
 
     return 0;
 }
+
 /*
    Atomic compare_and_swap: compare expected value with remote, if equal set new else return remote value found
     abd:    blob descriptor 
@@ -454,15 +539,18 @@ int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val) {
 int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint32_t val, uint32_t exp, uint32_t *rval) {
     int rc;
 
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
     LOCK_LFA(abd);
 
-    abd->ops[0].in32 = val;
-    abd->ops[1].in32 = exp;
+    abd->ops.in32[0] = val;
+    abd->ops.in32[1] = exp;
     rc = fi_compare_atomic(
             abd->lfa->ep,
-            &abd->ops[0].in32, 1, abd->ops_mr_dsc,
-            &abd->ops[1].in32,  abd->ops_mr_dsc, 
-            &abd->ops[0].out32, abd->ops_mr_dsc,
+            &abd->ops.in32[0], 1, abd->ops_mr_dsc,
+            &abd->ops.in32[1],  abd->ops_mr_dsc, 
+            &abd->ops.out32[0], abd->ops_mr_dsc,
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT32, FI_CSWAP, NULL);
 
@@ -474,8 +562,8 @@ int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint32_t val, uint32_t e
     ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
 
     if (rval)
-        *rval = abd->ops[0].out32;
-    if (abd->ops[0].out32 != exp)
+        *rval = abd->ops.out32[0];
+    if (abd->ops.out32[0] != exp)
         rc = -EAGAIN;
 
     UNLOCK_LFA(abd);
@@ -483,18 +571,40 @@ int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint32_t val, uint32_t e
     return rc;
 }
 
+int f_lfa_gcasw(F_LFA_ABD_t *abd, off_t goff, uint32_t val) {
+    int ix, rc;
+    int actual;
+
+    if (!abd->in_buf)
+        return -EINVAL;
+
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
+        return -EINVAL;
+
+    if (rc = f_lfa_casw(abd, ix, off, val, ((uint32_t *)abd->in_buf)[goff/sizeof(uint32_t)], &actual))
+        return rc;
+
+    ((uint32_t *)abd->in_buf)[goff/sizeof(uint32_t)] = actual;
+    return rc;
+}
+
+
 int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint64_t val, uint64_t exp, uint64_t *rval) {
     int rc;
 
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
     LOCK_LFA(abd);
 
-    abd->ops[0].in64 = val;
-    abd->ops[1].in64 = exp;
+    abd->ops.in64[0] = val;
+    abd->ops.in64[1] = exp;
     rc = fi_compare_atomic(
             abd->lfa->ep,
-            &abd->ops[0].in64, 1, abd->ops_mr_dsc,
-            &abd->ops[1].in64,  abd->ops_mr_dsc, 
-            &abd->ops[0].out64, abd->ops_mr_dsc,
+            &abd->ops.in64[0], 1, abd->ops_mr_dsc,      // value to try to set @remote
+            &abd->ops.in64[1],  abd->ops_mr_dsc,        // value we expect to see @remote
+            &abd->ops.out64[0], abd->ops_mr_dsc,        // actual value retrieved from remote
             abd->tadr[trg_ix], off, abd->srv_key,
             FI_INT64, FI_CSWAP, NULL);
 
@@ -506,14 +616,87 @@ int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint64_t val, uint64_t e
     ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
 
     if (rval)
-        *rval = abd->ops[0].out64;
-    if (abd->ops[0].out64 != exp)
+        *rval = abd->ops.out64[0];
+    if (abd->ops.out64[0] != exp)
         rc = -EAGAIN;
 
     UNLOCK_LFA(abd);
 
     return rc;
 }
+
+int f_lfa_gcasl(F_LFA_ABD_t *abd, off_t goff, uint64_t val) {
+    int ix, rc;
+    int actual;
+
+    if (!abd->in_buf)
+        return -EINVAL;
+
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
+        return -EINVAL;
+
+    if (rc = f_lfa_casw(abd, ix, off, val, ((uint64_t *)abd->in_buf)[goff/sizeof(uint64_t)], &actual))
+        return rc;
+
+    ((uint64_t *)abd->in_buf)[goff/sizeof(uint64_t)] = actual;
+    return rc;
+}
+
+static int _lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
+    int rc, wrap = 0;
+    uint32_t bit = boff%32;
+    off_t bw = boff/32;
+    uint32_t bmask, bn = boff, bmax = bsize;
+
+    while (bn < bmax) {
+        if (bw >= F_LFA_MAX_AVB/sizeof(uint32_t))
+            return -EINVAL;
+
+        abd->ops.in32[bw] = bmask = 1<<bit;
+        rc = fi_fetch_atomic(
+                abd->lfa->ep,
+                &abd->ops.in32[bw], 1, abd->ops_mr_dsc,
+                &abd->ops.out32[bw], abd->ops_mr_dsc,
+                abd->tadr[trg_ix], off + bw*sizeof(uint32_t), abd->srv_key,
+                FI_INT32, FI_BOR, NULL);
+        if (rc) {
+            LOG_FIERR(rc, "fetch_atomic(bor)");
+            return rc;
+        }
+        ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+
+        if (abd->ops.out32[0] & bmask) {
+            // oops, somebody had already set this bit
+            int clear = __builtin_ffs(~abd->ops.out32[bw]);
+            if (!clear) {
+                // no clear bits in this word, go to next
+                bit = 0;
+                bn = ++bw*32;
+            } else {
+                // found clear bit somewhere in current word
+                bit = clear - 1;
+                bn = bw*32 + bit;
+            } 
+        } else {
+            // success, return bit number
+            return bw*32 + bit;
+        }
+        if (bn >= bmax) {
+            if (!wrap) {
+                wrap++;
+                bn = bit = bw = 0;
+                bmax = boff;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // oopsie, didn't fine any clear bit even afet full scan
+    return -ENOSPC;
+}
+
 
 /* 
    Atomic bit_find_clear_and_set: find first clear bit, starting from offset, and set it
@@ -530,63 +713,64 @@ int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint64_t val, uint64_t e
     <0:       - uh-oh.... 
 */
 int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
-    int rc, wrap = 0;
-    uint32_t bit = boff%32;
-    off_t bw = boff/32;
-    uint32_t bmask, bn = boff, bmax = bsize;
+    int rc;
 
-    if (boff >= bsize)
+    if (boff >= bsize || trg_ix >= abd->nsrv || bsize > F_LFA_MAX_BIT)
+        return -EINVAL;
+
+    LOCK_LFA(abd);
+    rc = _lfa_bfcs(abd, trg_ix, off, boff, bsize);
+    UNLOCK_LFA(abd);
+
+    return rc;
+}
+
+int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
+    int rc, ix;
+
+    if (boff >= bsize || bsize > F_LFA_MAX_BIT || !abd->in_buf)
+        return -EINVAL;
+
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
         return -EINVAL;
 
     LOCK_LFA(abd);
 
-    while (bn < bmax) {
-        abd->ops[0].in32 = bmask = 1<<bit;
+    memcpy(abd->ops.in32, (char *)abd->in_buf + goff, bsize/8); // current state of bit map in local mirror
+    rc = _lfa_bfcs(abd, ix, off, boff, bsize);
+    memcpy((char *)abd->in_buf + goff, abd->ops.in32, bsize/8); // get whatever global updates in
 
-        rc = fi_fetch_atomic(
-                abd->lfa->ep,
-                &abd->ops[0].in32, 1, abd->ops_mr_dsc,
-                &abd->ops[0].out32, abd->ops_mr_dsc,
-                abd->tadr[trg_ix], off + bw*sizeof(uint32_t), abd->srv_key,
-                FI_INT32, FI_BOR, NULL);
-        if (rc) {
-            UNLOCK_LFA(abd);
-            LOG_FIERR(rc, "fetch_atomic(bor)");
-            return rc;
-        }
-        ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
-
-        if (abd->ops[0].out32 & bmask) {
-            // oops, somebody had already set this bit
-            int clear = __builtin_ffs(~abd->ops[0].out32);
-            if (!clear) {
-                // no clear bits in this word, go to next
-                bit = 0;
-                bn = ++bw*32;
-            } else {
-                // found clear bit somewhere in current word
-                bit = clear - 1;
-                bn = bw*32 + bit;
-            } 
-        } else {
-            // success, return bit number
-            UNLOCK_LFA(abd);
-            return bw*32 + bit;
-        }
-        if (bn >= bmax) {
-            if (!wrap) {
-                wrap++;
-                bn = bit = bw = 0;
-                bmax = boff;
-            } else {
-                break;
-            }
-        }
-    }
-
-    // oopsie, didn't fine any clear bit even afet full scan
     UNLOCK_LFA(abd);
-    return -ENOSPC;
+
+    return rc;
+}
+
+static int _lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum) {
+    int rc = 0;
+    uint32_t bit = bnum%32, bmask;
+    off_t bw = bnum/32;
+
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
+    abd->ops.in32[0] = ~(bmask = 1<<bit);
+    rc = fi_fetch_atomic(
+            abd->lfa->ep,
+            &abd->ops.in32[0], 1, abd->ops_mr_dsc,
+            &abd->ops.out32[0], abd->ops_mr_dsc,
+            abd->tadr[trg_ix], off + bw*sizeof(uint32_t), abd->srv_key,
+            FI_INT32, FI_BAND, NULL);
+    if (rc) {
+        LOG_FIERR(rc, "fetch_atomic(band)");
+        return rc;
+    }
+    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+
+    if (!(abd->ops.out32[0] & bmask))
+        rc = -EBUSY;
+
+    return rc;
 }
 
 /* 
@@ -603,29 +787,27 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
     <0:       - uh-oh.... 
 */
 int f_lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum) {
-    int rc = 0;
-    uint32_t bit = bnum%32, bmask;
-    off_t bw = bnum/32;
+    int rc;
 
     LOCK_LFA(abd);
+    rc = _lfa_bcf(abd, trg_ix, off, bnum);
+    UNLOCK_LFA(abd);
 
-    abd->ops[0].in32 = ~(bmask = 1<<bit);
-    rc = fi_fetch_atomic(
-            abd->lfa->ep,
-            &abd->ops[0].in32, 1, abd->ops_mr_dsc,
-            &abd->ops[0].out32, abd->ops_mr_dsc,
-            abd->tadr[trg_ix], off + bw*sizeof(uint32_t), abd->srv_key,
-            FI_INT32, FI_BAND, NULL);
-    if (rc) {
-        UNLOCK_LFA(abd);
-        LOG_FIERR(rc, "fetch_atomic(band)");
-        return rc;
-    }
-    ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
+    return rc;
+}
 
-    if (!(abd->ops[0].out32 & bmask))
-        rc = -EBUSY;
+int f_lfa_gbcf(F_LFA_ABD_t *abd, off_t goff, int bnum) {
+    int ix, rc;
+    int old;
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0)
+        return -EINVAL;
 
+    LOCK_LFA(abd);
+    rc = _lfa_bcf(abd, ix, off, bnum);
+    if (!rc || rc == -EBUSY)
+        if (abd->in_buf)
+            ((int *)abd->in_buf)[goff/sizeof(int)] = abd->ops.out32[0];
     UNLOCK_LFA(abd);
 
     return rc;
@@ -659,6 +841,9 @@ int f_lfa_put(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
 
     if (!abd->in_buf)
         return -ENOMEM;
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
 
     LOCK_LFA(abd);
 
@@ -676,11 +861,23 @@ int f_lfa_put(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
     return 0;
 }
 
+int f_lfa_gput(F_LFA_ABD_t *abd, off_t goff, size_t size) {
+    int ix;
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0 || !abd->in_buf)
+        return -EINVAL;
+
+    return f_lfa_put(abd, ix, off, size);
+}
+
 int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
     int rc; 
 
     if (!abd->in_buf)
         return -ENOMEM;
+    if (trg_ix >= abd->nsrv)
+        return -EINVAL;
+
 
     LOCK_LFA(abd);
     rc = fi_read(
@@ -696,4 +893,14 @@ int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
     UNLOCK_LFA(abd);
     return 0;
 }
+
+int f_lfa_gget(F_LFA_ABD_t *abd, off_t goff, size_t size) {
+    int ix;
+    ssize_t off = get_local_off(abd, goff, &ix);
+    if (off < 0 || !abd->in_buf)
+        return -EINVAL;
+
+    return f_lfa_get(abd, ix, off, size);
+}
+
 

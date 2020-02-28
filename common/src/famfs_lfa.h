@@ -24,9 +24,10 @@
 
 //#include "famfs_env.h"
 
-#define F_LFA_MAXV  32                      // max size of atomic vector
-#define F_LFA_MAXB  8                       // max number of atmoic blobs
-#define F_LFA_LK_BASE 100000
+#define F_LFA_MAX_AVB  1024                 // max size of atomic vector (bytes)
+#define F_LFA_MAX_BLOB 8                    // max number of atmoic blobs
+#define F_LFA_MAX_BIT  (F_LFA_MAX_AVB/sizeof(uint32_t)*8) // max bit field length
+#define F_LFA_LK_BASE  100000
 
 typedef uint64_t FI_UINT64_t;
 typedef uint32_t FI_UINT32_t;
@@ -35,6 +36,7 @@ typedef struct f_lfa_slist_ {
     char    *name;
     char    *service;
     size_t  bsz;
+    off_t   bof;
 } F_LFA_SLIST_t;
 
 //
@@ -44,14 +46,14 @@ typedef struct f_lfa_abd_{
 
     struct {
         union {
-            uint64_t            in64;
-            uint32_t            in32;
+            uint64_t            in64[F_LFA_MAX_AVB/sizeof(uint64_t)];
+            uint32_t            in32[F_LFA_MAX_AVB/sizeof(uint32_t)];
         };
         union {
-            uint64_t            out64;
-            uint32_t            out32;
+            uint64_t            out64[F_LFA_MAX_AVB/sizeof(uint64_t)];
+            uint32_t            out32[F_LFA_MAX_AVB/sizeof(uint32_t)];
         };
-    }                       ops[F_LFA_MAXV]; // Local operand buffer
+    }                       ops;            // Atomic functions local operands
     uint64_t                ops_key;        // This blob's local protecion key
     struct fid_mr           *ops_mr;        // Operand buffer MR
     void                    *ops_mr_dsc;    //    and its descriptor
@@ -172,73 +174,109 @@ int f_lfa_deregister(F_LFA_ABD_t *abd, int free);
 int f_lfa_destroy(F_LFA_DESC_t *lfa);
 
 //
-// Get an address of the operand in the atomic blob 
-//  lfa: LFA header
-//  off:   offset of the operand
-// If off is outside of the blob, NULL is returned
-//
-int *f_lfa_getpw(F_LFA_ABD_t *abd, off_t off);
-long *f_lfa_getpl(F_LFA_ABD_t *abd, off_t off);
-
-//
-// Get an index of the operand in the atomic blob 
-//  abd:   blob descriptor
-//  op_p:  address of the operand
-// If op_p is outside of the blob, -1 is returned
-//
-int f_lfa_getiw(F_LFA_ABD_t *abd, int *op_p);
-int f_lfa_getilw(F_LFA_ABD_t *abd, long *op_p);
-
-//
 // Atomic add(w|l), inc(w|l), dec(w|l), no result
-//  abd:    blob descriptor
-//  trg_ix: index of target node
-//  off:   offset of the operand
-//  val:    value to add
+//   abd:    blob descriptor
+//   trg_ix: index of target node
+//   off:    offset of the operand
+//   val:    value to add
 // Return:
 //   0      - Success
 //   !=0    - check errno and fi_errno
 //
-int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val);
 int f_lfa_addl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val);
+int f_lfa_addw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val);
 #define f_lfa_subw(l, t, i,v) f_lfa_addw(l, t, i, -(v))
 #define f_lfa_subl(l, t, i,v) f_lfa_addl(l, t, i, -(v))
-#define f_lfa_incw(l, t, i) f_lfa_addw(l, t, i, 1)
-#define f_lfa_incl(l, t, i) f_lfa_addl(l, t, i, 1)
-#define f_lfa_decw(l, t, i) f_lfa_addw(l, t, i, -1)
-#define f_lfa_decl(l, t, i) f_lfa_addl(l, t, i, -1)
+#define f_lfa_incw(l, t, i)   f_lfa_addw(l, t, i, 1)
+#define f_lfa_incl(l, t, i)   f_lfa_addl(l, t, i, 1)
+#define f_lfa_decw(l, t, i)   f_lfa_addw(l, t, i, -1)
+#define f_lfa_decl(l, t, i)   f_lfa_addl(l, t, i, -1)
+
+//
+// Atomic global-buffer mapped add(w|l), inc(w|l), dec(w|l), no result
+//   abd:    blob descriptor
+//   goff:   offset in the global buffer
+//   val:    value to add
+// Return:
+//   -EINVAL - global offset is beyond all remote buffers
+//   0       - Success
+//   !=0     - check errno and fi_errno
+// Side effects:
+//   NONE: Local input buffer is NOT updated!
+//
+//   Note that this family of atomic calls does not update local buffer
+//   It does not even require one to be allocated - this is purely remote
+//   update operations (like for e.g. counters on a master node)
+//
+int f_lfa_gaddl(F_LFA_ABD_t *abd, off_t goff, long val);
+int f_lfa_gaddw(F_LFA_ABD_t *abd, off_t goff, int val);
+#define f_lfa_gsubw(l, g, v) f_lfa_addw(l, g, -(v))
+#define f_lfa_gsubl(l, g, v) f_lfa_addl(l, g, -(v))
+#define f_lfa_gincw(l, g)    f_lfa_addw(l, g, 1)
+#define f_lfa_gincl(l, g)    f_lfa_addl(l, g, 1)
+#define f_lfa_gdecw(l, g)    f_lfa_addw(l, g, -1)
+#define f_lfa_gdecl(l, g)    f_lfa_addl(l, g, -1)
+
 
 //
 // Write atomic blob to server
-//  abd:    blob descriptor
-//  trg_ix: index of target node
-//  size:   size (in bytes) to transfer
-//  off:    offset from the beginning of server buffer
+//   abd:    blob descriptor
+//   trg_ix: index of target node
+//   size:   size (in bytes) to transfer
+//   off:    offset from the beginning of server buffer
 //
-//  <src>:  data source pointer is in_buf registered in lfa_attach call, if noting 
-//          was registered, -ENOMEM will be returnd
+//   <src>:  data source pointer is in_buf registered in lfa_attach call, if noting 
+//           was registered, -ENOMEM will be returnd
 //
 int f_lfa_put(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size);
 
 //
+// Write atomic blob to server, using global-buffer offset
+//   abd:    blob descriptor
+//   size:   size (in bytes) to transfer
+//   goff:   offset in global buffer
+//
+//   <src>:  data source pointer is in_buf registered in lfa_attach call, if noting 
+//           was registered, -ENOMEM will be returnd
+// NOTE:
+//   <size> cannot span accross multiple servers' buffers, i.e. all data being transfered
+//   must belong to the same server that posesses @goff offset in global buffer
+//
+int f_lfa_gput(F_LFA_ABD_t *abd, off_t goff, size_t size);
+
+//
 // Read atmomic blob from server
-//  abd:    blob descriptor
-//  trg_ix: index of target node
-//  size:   size (in bytes) to transfer
-//  off:    offset from the beginning of server buffer
+//   abd:    blob descriptor
+//   trg_ix: index of target node
+//   size:   size (in bytes) to transfer
+//   off:    offset from the beginning of server buffer
 //
-//  <trg>:  data target pointer is in_buf registered in lfa_attach call, if noting
-//          was registered, -ENOMEM will be returnd
-//
-//
+//   <trg>:  data target pointer is in_buf registered in lfa_attach call, if noting
+//           was registered, -ENOMEM will be returnd
 int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size);
 
-// Atmic add_and_fetch(w|l): add and fetch old (remote) value
-//  abd:    blob descriptor
-//  trg_ix: index of target node
-//  off:    offset of the operand
-//  val:    value to add
-//  old:    pointer to the fetched value
+//
+// Read atmomic blob from server, using global-buffer offset
+//   abd:    blob descriptor
+//   size:   size (in bytes) to transfer
+//   goff:   offset in global buffer
+//
+//   <trg>:  data target pointer is in_buf registered in lfa_attach call, if noting
+//           was registered, -ENOMEM will be returnd
+// NOTE:
+//   <size> cannot span accross multiple servers' buffers, i.e. all data being transfered
+//   must belong to the same server that posesses @goff offset in global buffer
+//
+int f_lfa_gget(F_LFA_ABD_t *abd, off_t goff, size_t size);
+
+//
+// Atomic add_and_fetch(w|l): fetch remote memmory and THEN add value to that remote location
+//   abd:    blob descriptor
+//   trg_ix: index of target node
+//   off:    offset of the operand
+//   val:    value to add
+//   old:    adddress to put the "old" value, fetched from remote
+//
 int f_lfa_aafw(F_LFA_ABD_t *abd, int trg_ix, off_t off, int val, int *old);
 int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old);
 #define f_lfa_safw(l, t, i, v, o) f_lfa_aafw(l, t, i, -(v), o)
@@ -249,51 +287,144 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old);
 #define f_lfa_dafl(l, t ,i, v, o) f_lfa_aafl(l, t, i, -1, o)
 
 //
-// Atomic compare_and_swap: compare expected value with remote, if equal set new else return remote value found
-//  abd:    blob descriptor 
-//  trg_ix: index of target node
-//  off:    offset of the operand
-//  exp:    value to check on remote side
-//  val:    new value to set
-//  rval:   pointer to the fetched value, only valid if EGAIN (see below)
+// Atomic global-buffer mapped add_and_fetch(w|l): fetch remote memmory, add value to that location
+// and update local bufer to reflect that operation (if successfull)
+//   abd:    blob descriptor
+//   goff:   offset in the global buffer
+//   val:    value to add
 // Return:
-//  0       - success
-//  -EAGAIN - remote compare failed, check *rval for the remote value
-//  !=0     - check errno
+//   -EINVAL - global offset is beyond all remote buffers or local buffer
+//   0       - Success
+//   !=0     - check errno and fi_errno
+// Side effects:
+//   Local input buffer IS updated if remote operation was successfull
+//
+//   Note that this family of atomic calls updates local buffer, so it has
+//   to be allocated beforehand in lfa_attach() call. Uponn successfull completion
+//   of fabric atomic operaation, input parameter's value will be added to value 
+//   retrieved from fabric and result written into local buffer @goff. 
+//   No update will be made if fi_atomic call failed.
+//
+int f_lfa_gaafw(F_LFA_ABD_t *abd, off_t goff, int val);
+int f_lfa_gaafl(F_LFA_ABD_t *abd, off_t goff, long val);
+#define f_lfa_gsafw(l, g, v) f_lfa_aafw(l, g, -(v))
+#define f_lfa_gsafl(l, g, v) f_lfa_aafl(l, g, -(v))
+#define f_lfa_giafw(l, g)    f_lfa_aafw(l, g, 1)
+#define f_lfa_giafl(l, g)    f_lfa_aafl(l, g, 1)
+#define f_lfa_gdafw(l, g)    f_lfa_aafw(l, g, -1)
+#define f_lfa_gdafl(l, g)    f_lfa_aafl(l, g, -1)
+
+//
+// Atomic compare_and_swap: compare expected value with remote, if equal set new else return remote value found
+//   abd:    blob descriptor 
+//   trg_ix: index of target node
+//   off:    offset of the operand
+//   exp:    value to check on remote side
+//   val:    new value to set
+//   rval:   pointer to the fetched value, only valid if EGAIN (see below)
+// Return:
+//   0       - success
+//   -EAGAIN - remote compare failed, check *rval for the remote value
+//   !=0     - check errno
 //  
 int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint32_t val, uint32_t exp, uint32_t *rval);
 int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint64_t val, uint64_t exp, uint64_t *rval);
 
-// 
-// Atomic bit_find_clear_and_set: find first clear bit, starting from offset, and set it
-// Note of for the efficiency sake, there's no 64-bit (long) variant of this function.
-// We assume that wotking on words (32-bit) gives us less contention for a given place in memory
-//  abd:    blob descriptor
-//  trg_ix: index of target node
-//  off:    offset of the 1st word of the bit field
-//  boff:   intitial bit offset (hopefully it will be clear!)
-//  bsize:  max number of bits to scan
-// Return:
-//  >= 0:     - offset of the found clear bit
-//  -ENOSPACE - no free bits found
-//  <0:       - uh-oh.... 
 //
-int f_lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum);
+// Atomic global-buffer mapped compare_and_swap: compare expected value with remote, if equal 
+// set new else return remote value found
+// Input:
+//   abd:    blob descriptor 
+//   goff:   offset in global buffer
+//   val:    new value to set
+// Implicit:
+//   exp:    value to check for on remote side must be in local buffer @goff
+// Return:
+//   0       - success
+//   -EINVAL - goff is beyond buffer size or local buffer is not allocated
+//   -EAGAIN - remote compare failed, check *rval for the remote value
+//   !=0     - check errno
+// Side effects:
+//   Local input buffer is updated @goff to the value retrieved from remote
+//  
+int f_lfa_gcasw(F_LFA_ABD_t *abd, off_t goff, uint32_t val);
+int f_lfa_gcasl(F_LFA_ABD_t *abd, off_t goff, uint64_t val);
 
 // 
 // Atomic bit_clear_and_fetch: clear a bit and check if it was set
 // Note of for the efficiency sake, there's no 64-bit (long) variant of this function.
 // We assume that wotking on words (32-bit) gives us less contention for a given place in memory
-//  abd:    blob descriptor
-//  trg_ix: index of target node
-//  off:    offset of the 1st word of the bit field
-//  bnum:   bit to clear
+//   abd:    blob descriptor
+//   trg_ix: index of target node
+//   off:    offset of the 1st word of the bit field
+//   bnum:   bit to clear
 // Return:
-//  = 0:     - offset of the found clear bit
-//  -EBUSY   - the desired bit was already clear
-//  <0:      - uh-oh.... 
+//   = 0:     - offset of the found clear bit
+//   -EBUSY   - the desired bit was already clear
+//   <0:      - uh-oh.... 
+// 
+int f_lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum);
+
+// 
+// Atomic global-buffer mapped bit_clear_and_fetch: clear a bit and check if it was set
+// Note of for the efficiency sake, there's no 64-bit (long) variant of this function.
+// We assume that wotking on words (32-bit) gives us less contention for a given place in memory
+//   abd:    blob descriptor
+//   goff:   global buffer offset of the 1st word of the bit field
+//   bnum:   bit to clear
+// Return:
+//   = 0:     - offset of the found clear bit
+//   -EINVAL - goff is beyond buffer size
+//   -EBUSY   - the desired bit was already clear
+//   <0:      - uh-oh.... 
+// Side effects:
+//   *IF* local buffer exists:
+//      Local buffer @goff is updated with value retrieved from remote, even on -EBUSY
+//   If local buffer wasn't allocated, no side effects
+//
+// 
+int f_lfa_gbcf(F_LFA_ABD_t *abd, off_t goff, int bnum);
+
+// Atomic bit_find_clear_and_set: find first clear bit, starting from offset, and set it
+// Note of for the efficiency sake, there's no 64-bit (long) variant of this function.
+// We assume that wotking on words (32-bit) gives us less contention for a given place in memory
+//   abd:    blob descriptor
+//   trg_ix: index of target node
+//   off:    offset of the 1st word of the bit field
+//   boff:   intitial bit offset (hopefully it will be clear!)
+//   bsize:  max number of bits to scan
+// Return:
+//   >= 0:     - offset of the found clear bit
+//   -ENOSPACE - no free bits found
+//   <0:       - uh-oh.... 
 //
 int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize);
+
+// 
+// Atomic global-buffer mapped bit_find_clear_and_set: find first clear bit, 
+// starting from offset, and set it
+// Note of for the efficiency sake, there's no 64-bit (long) variant of this function.
+// We assume that wotking on words (32-bit) gives us less contention for a given place in memory
+//   abd:    blob descriptor
+//   goff:   offset in global buffer of the 1st word of the bit field
+//   boff:   intitial bit offset (hopefully it will be clear!)
+//   bsize:  max number of bits to scan
+// Implicit:
+//   input buffer: local copy of bitmap being scanned in remote location @goff
+// Return:
+//   0       - success
+//   -EINVAL - goff is beyond buffer size or local buffer is not allocated
+//   -ENOSPACE - no free bits found
+//   !=0     - check errno
+// Side effects:
+//   Local input buffer is updated, but only the words that were actually retrieved by 
+//   fi_atomic operation that set the desired bit. So, if the very first attempt to set the 
+//   bit was successfull, only a word containing it in local buffer will be (resonably)
+//   up-to-date with remote
+//
+int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize);
+
+
 // 
 // Cluster-wide spinlock acquire
 //  abd:    blob descriptor
