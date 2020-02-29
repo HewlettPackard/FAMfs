@@ -347,7 +347,7 @@ _clean:
 }
 
 static inline int find_my_off(off_t myoff, F_LFA_SLIST_t *slist, int num) {
-    int i, base = 0;
+    int i = 0, base = 0;
 
     while (num > 0) {
         i = base  + (num>>1);
@@ -359,7 +359,7 @@ static inline int find_my_off(off_t myoff, F_LFA_SLIST_t *slist, int num) {
         }
         num >>= 1;
     }
-    return myoff >= slist[i].bof + slist[i].bsz ? -1 : i;
+    return (uint64_t)myoff >= slist[i].bof + slist[i].bsz ? -1 : i;
 }
 
 static inline ssize_t get_local_off(F_LFA_ABD_t *abd, off_t goff, int *trg_srv) {
@@ -394,7 +394,7 @@ int f_lfa_gaafl(F_LFA_ABD_t *abd, off_t goff, long val) {
     ssize_t off = get_local_off(abd, goff, &ix);
     if (off < 0)
         return -EINVAL;
-    if (rc = f_lfa_aafl(abd, ix, off, val, &old))
+    if ((rc = f_lfa_aafl(abd, ix, off, val, &old)))
         return rc;
     if (abd->in_buf)
         ((long *)abd->in_buf)[goff/sizeof(long)] = old + val;
@@ -407,7 +407,7 @@ int f_lfa_gaafw(F_LFA_ABD_t *abd, off_t goff, int val) {
     ssize_t off = get_local_off(abd, goff, &ix);
     if (off < 0)
         return -EINVAL;
-    if (rc = f_lfa_aafw(abd, ix, off, val, &old))
+    if ((rc = f_lfa_aafw(abd, ix, off, val, &old)))
         return rc;
     if (abd->in_buf)
         ((int *)abd->in_buf)[goff/sizeof(int)] = old + val;
@@ -573,7 +573,7 @@ int f_lfa_casw(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint32_t val, uint32_t e
 
 int f_lfa_gcasw(F_LFA_ABD_t *abd, off_t goff, uint32_t val) {
     int ix, rc;
-    int actual;
+    uint32_t actual;
 
     if (!abd->in_buf)
         return -EINVAL;
@@ -582,7 +582,7 @@ int f_lfa_gcasw(F_LFA_ABD_t *abd, off_t goff, uint32_t val) {
     if (off < 0)
         return -EINVAL;
 
-    if (rc = f_lfa_casw(abd, ix, off, val, ((uint32_t *)abd->in_buf)[goff/sizeof(uint32_t)], &actual))
+    if ((rc = f_lfa_casw(abd, ix, off, val, ((uint32_t *)abd->in_buf)[goff/sizeof(uint32_t)], &actual)))
         return rc;
 
     ((uint32_t *)abd->in_buf)[goff/sizeof(uint32_t)] = actual;
@@ -627,7 +627,7 @@ int f_lfa_casl(F_LFA_ABD_t *abd, int trg_ix, off_t off, uint64_t val, uint64_t e
 
 int f_lfa_gcasl(F_LFA_ABD_t *abd, off_t goff, uint64_t val) {
     int ix, rc;
-    int actual;
+    uint64_t actual;
 
     if (!abd->in_buf)
         return -EINVAL;
@@ -636,7 +636,7 @@ int f_lfa_gcasl(F_LFA_ABD_t *abd, off_t goff, uint64_t val) {
     if (off < 0)
         return -EINVAL;
 
-    if (rc = f_lfa_casw(abd, ix, off, val, ((uint64_t *)abd->in_buf)[goff/sizeof(uint64_t)], &actual))
+    if ((rc = f_lfa_casl(abd, ix, off, val, ((uint64_t *)abd->in_buf)[goff/sizeof(uint64_t)], &actual)))
         return rc;
 
     ((uint64_t *)abd->in_buf)[goff/sizeof(uint64_t)] = actual;
@@ -650,7 +650,7 @@ static int _lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsiz
     uint32_t bmask, bn = boff, bmax = bsize;
 
     while (bn < bmax) {
-        if (bw >= F_LFA_MAX_AVB/sizeof(uint32_t))
+        if ((uint64_t)bw >= F_LFA_MAX_AVB/sizeof(uint32_t))
             return -EINVAL;
 
         abd->ops.in32[bw] = bmask = 1<<bit;
@@ -715,7 +715,7 @@ static int _lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsiz
 int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
     int rc;
 
-    if (boff >= bsize || trg_ix >= abd->nsrv || bsize > F_LFA_MAX_BIT)
+    if (boff >= bsize || trg_ix >= abd->nsrv || (unsigned)bsize > F_LFA_MAX_BIT)
         return -EINVAL;
 
     LOCK_LFA(abd);
@@ -728,7 +728,7 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
 int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
     int rc, ix;
 
-    if (boff >= bsize || bsize > F_LFA_MAX_BIT || !abd->in_buf)
+    if (boff >= bsize || (unsigned)bsize > F_LFA_MAX_BIT || !abd->in_buf)
         return -EINVAL;
 
     ssize_t off = get_local_off(abd, goff, &ix);
@@ -798,7 +798,6 @@ int f_lfa_bcf(F_LFA_ABD_t *abd, int trg_ix, off_t off, int bnum) {
 
 int f_lfa_gbcf(F_LFA_ABD_t *abd, off_t goff, int bnum) {
     int ix, rc;
-    int old;
     ssize_t off = get_local_off(abd, goff, &ix);
     if (off < 0)
         return -EINVAL;
@@ -818,6 +817,7 @@ int f_lfa_gbcf(F_LFA_ABD_t *abd, off_t goff, int bnum) {
     If free != 0, free all memory buffers 
 */
 int f_lfa_detach(F_LFA_ABD_t *abd, int free) {
+    if (!abd && free) return 1;
     return 0;
 }
 
@@ -826,6 +826,7 @@ int f_lfa_detach(F_LFA_ABD_t *abd, int free) {
     If free != 0, free all memory buffers 
 */
 int f_lfa_deregister(F_LFA_ABD_t *abd, int free) {
+    if (!abd && free) return 1;
     return 0;
 }
 
@@ -833,6 +834,7 @@ int f_lfa_deregister(F_LFA_ABD_t *abd, int free) {
    Close evrything lf-related, free memory 
 */
 int f_lfa_destroy(F_LFA_DESC_t *lfa) {
+    if (!lfa) return 1;
     return 0;
 }
 

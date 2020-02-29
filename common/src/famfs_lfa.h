@@ -24,8 +24,8 @@
 
 //#include "famfs_env.h"
 
-#define F_LFA_MAX_AVB  1024                 // max size of atomic vector (bytes)
-#define F_LFA_MAX_BLOB 8                    // max number of atmoic blobs
+#define F_LFA_MAX_AVB  1024UL               // max size of atomic vector (bytes)
+#define F_LFA_MAX_BLOB 8UL                  // max number of atmoic blobs
 #define F_LFA_MAX_BIT  (F_LFA_MAX_AVB/sizeof(uint32_t)*8) // max bit field length
 #define F_LFA_LK_BASE  100000
 
