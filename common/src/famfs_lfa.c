@@ -1,5 +1,6 @@
 #include <sched.h>
 #include "famfs_lfa.h"
+#include "famfs_bitops.h"
 
 #define ON_FIERR(action, onerr, msg, ...)   \
     do {                                    \
@@ -726,10 +727,17 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize) {
 }
 
 int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
-    int rc, ix;
+    int rc, ix, bit;
 
     if (boff >= bsize || (unsigned)bsize > F_LFA_MAX_BIT || !abd->in_buf)
         return -EINVAL;
+
+    bit = find_next_zero_bit(abd->in_buf, bsize, boff);         // first try to find bit >= boff
+    if (bit >= bsize) {
+        bit = find_first_zero_bit(abd->in_buf, boff);           // now chekck bit from 0 to boff
+        if(bit >= bsize - boff)
+            return -ENOSPC;
+    }
 
     ssize_t off = get_local_off(abd, goff, &ix);
     if (off < 0)
