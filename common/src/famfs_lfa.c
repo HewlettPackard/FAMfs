@@ -667,7 +667,8 @@ static int _lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsiz
         }
         ON_FIERR(rc = _wait_cq(abd->lfa), UNLOCK_LFA(abd); return rc, "atomiq cq");
 
-        if (abd->ops.out32[0] & bmask) {
+        abd->ops.in32[bw] = abd->ops.out32[bw] | bmask; // update input buffer with latest global value
+        if (abd->ops.out32[bw] & bmask) {
             // oops, somebody had already set this bit
             int clear = __builtin_ffs(~abd->ops.out32[bw]);
             if (!clear) {
@@ -694,7 +695,7 @@ static int _lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsiz
         }
     }
 
-    // oopsie, didn't fine any clear bit even afet full scan
+    // oopsie, didn't fine any clear bits even afeter full wrap-around scan
     return -ENOSPC;
 }
 
@@ -732,9 +733,11 @@ int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
     if (boff >= bsize || (unsigned)bsize > F_LFA_MAX_BIT || !abd->in_buf)
         return -EINVAL;
 
-    bit = find_next_zero_bit((char *)abd->in_buf + goff, bsize, boff);         // first try to find bit >= boff
+    // first try to find bit >= boff
+    bit = find_next_zero_bit((uint64_t*)((char *)abd->in_buf + goff), bsize, boff);
     if (bit >= bsize) {
-        bit = find_first_zero_bit((char *)abd->in_buf + goff, boff);           // now chekck bit from 0 to boff
+        // no luck in the tail, now chekck bits from 0 to boff
+        bit = find_first_zero_bit((uint64_t *)((char *)abd->in_buf + goff), boff);
         if(bit >= bsize - boff)
             return -ENOSPC;
     }
@@ -745,9 +748,11 @@ int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
 
     LOCK_LFA(abd);
 
-    memcpy(abd->ops.in32, (char *)abd->in_buf + goff, bsize/8); // current state of bit map in local mirror
+    // copy current state of bit map in local mirror 
+    memcpy(abd->ops.in32, (char *)abd->in_buf + goff, bsize/8); 
     rc = _lfa_bfcs(abd, ix, off, bit, bsize);
-    memcpy((char *)abd->in_buf + goff, abd->ops.in32, bsize/8); // get whatever global updates in
+    // get whatever global updates in
+    memcpy((char *)abd->in_buf + goff, abd->ops.in32, bsize/8);
 
     UNLOCK_LFA(abd);
 
