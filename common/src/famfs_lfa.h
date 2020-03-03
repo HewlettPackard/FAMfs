@@ -407,7 +407,8 @@ int f_lfa_bfcs(F_LFA_ABD_t *abd, int trg_ix, off_t off, int boff, int bsize);
 // We assume that wotking on words (32-bit) gives us less contention for a given place in memory
 //   abd:    blob descriptor
 //   goff:   offset in global buffer of the 1st word of the bit field
-//   boff:   intitial bit offset (hopefully it will be clear!)
+//   boff:   bit number to start looking for clear from. We will perform local ffc first, before
+//           trying to set a bit globaly, so this is just a hint
 //   bsize:  max number of bits to scan
 // Implicit:
 //   input buffer: local copy of bitmap being scanned in remote location @goff

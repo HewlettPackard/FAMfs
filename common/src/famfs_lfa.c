@@ -732,9 +732,9 @@ int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
     if (boff >= bsize || (unsigned)bsize > F_LFA_MAX_BIT || !abd->in_buf)
         return -EINVAL;
 
-    bit = find_next_zero_bit(abd->in_buf, bsize, boff);         // first try to find bit >= boff
+    bit = find_next_zero_bit((char *)abd->in_buf + goff, bsize, boff);         // first try to find bit >= boff
     if (bit >= bsize) {
-        bit = find_first_zero_bit(abd->in_buf, boff);           // now chekck bit from 0 to boff
+        bit = find_first_zero_bit((char *)abd->in_buf + goff, boff);           // now chekck bit from 0 to boff
         if(bit >= bsize - boff)
             return -ENOSPC;
     }
@@ -746,7 +746,7 @@ int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
     LOCK_LFA(abd);
 
     memcpy(abd->ops.in32, (char *)abd->in_buf + goff, bsize/8); // current state of bit map in local mirror
-    rc = _lfa_bfcs(abd, ix, off, boff, bsize);
+    rc = _lfa_bfcs(abd, ix, off, bit, bsize);
     memcpy((char *)abd->in_buf + goff, abd->ops.in32, bsize/8); // get whatever global updates in
 
     UNLOCK_LFA(abd);
