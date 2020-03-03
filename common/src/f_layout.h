@@ -192,10 +192,8 @@ typedef struct f_layout_partition_ {
     struct list_head	claimdecq;	/* claim decrement queue */
     pthread_rwlock_t	claimdec_lock;	/* claim decrement queue lock */
     pthread_spinlock_t	alloc_lock;	/* stripe allocation lock */
-#if 0
     struct list_head	releaseq;	/* stripe release queue */
     pthread_spinlock_t	releaseq_lock;	/* stripe release queue lock */
-#endif
 
     atomic_t	slabmap_version;	/* partition slabmap version */
     atomic_t	allocated_slabs;	/* partition allocated slabs counter */
@@ -273,6 +271,9 @@ typedef struct f_layout_ {
     struct f_map_	*claimvec;	/* claim vector map */
 
     F_SLAB_ALLOC_TYPE_t	slab_alloc_type;/* layout slab allocation type */
+
+    /* REMOVEME: devel stats counters. */
+    atomic_t 	stats[FL_NR_STATS];
 
     struct {
 	unsigned long	    flags;	/* layout flags: f_layout_flags */

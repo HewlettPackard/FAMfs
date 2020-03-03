@@ -358,14 +358,7 @@ int main(int argc, char *argv[])
 	goto _err;
     }
 
-    {
-        char fname[256];
-        sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
-        int flag = open(fname, O_RDWR | O_CREAT, 0644);
-        close(flag);
-    }
-
-    /* Start allocator threads on IO nodes only */
+   /* Start allocator threads on IO nodes only */
     if (NodeIsIOnode(&pool->mynode)) {
 	rc = f_start_allocator_threads();
     	if (rc != ULFS_SUCCESS) {
@@ -373,7 +366,14 @@ int main(int argc, char *argv[])
     	}
     }
 
-    while (1) {
+    {
+        char fname[256];
+        sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
+        int flag = open(fname, O_RDWR | O_CREAT, 0644);
+        close(flag);
+    }
+
+     while (1) {
         if (exit_flag) {
             LOG(LOG_INFO, "exit flag set");
             break;
