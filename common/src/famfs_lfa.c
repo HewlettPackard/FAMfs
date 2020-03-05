@@ -738,7 +738,7 @@ int f_lfa_gbfcs(F_LFA_ABD_t *abd, off_t goff, int boff, int bsize) {
     if (bit >= bsize) {
         // no luck in the tail, now chekck bits from 0 to boff
         bit = find_first_zero_bit((uint64_t *)((char *)abd->in_buf + goff), boff);
-        if(bit >= bsize - boff)
+        if(bit >= bsize)
             return -ENOSPC;
     }
 
