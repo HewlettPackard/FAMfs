@@ -620,6 +620,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 
     /* Devices */
     pool_info->pdev_max_idx = 0;
+    pool_info->max_extents = 0;
     p->pool_devs = ag_maxlen * p->pool_ags;
     p->devlist = (F_POOL_DEV_t*) calloc(sizeof(F_POOL_DEV_t), p->pool_devs);
     if (!p->devlist) goto _nomem;
@@ -686,8 +687,9 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	    fam->pkey = pool_info->pkey_def;
 	else
 	    fam->pkey = (uint64_t)l;
-	if (pool_info->pdev_max_idx < pool_index)
-	    pool_info->pdev_max_idx = pool_index;
+	/* Set max device media_id, extent_count in the pool */
+	pool_info->pdev_max_idx = max(pool_info->pdev_max_idx, pool_index);
+	pool_info->max_extents = max(pool_info->max_extents, pdev->extent_count);
 
 	if (pthread_rwlock_init(&pdev->rwlock, NULL)) goto _nomem;
 	pdev->pool = p;
@@ -1024,6 +1026,7 @@ void f_print_layouts(void) {
     F_LAYOUT_t *lo;
     char pr_uuid[F_UUID_BUF_SIZE];
     struct list_head *l, *tmp;
+    uint16_t *pdi_by_media_id;
     unsigned int u, uu;
 
     if (p == NULL)
@@ -1052,6 +1055,13 @@ void f_print_layouts(void) {
 		p->ionodes[pdev->dev->f.ionode_idx].conf_id);
 	}
     }
+    /* report min, max device media_id and max extents */
+    pdi_by_media_id = pool_info->pdi_by_media;
+    for (u = 0; u <= pool_info->pdev_max_idx; u++, pdi_by_media_id++)
+	if (*pdi_by_media_id != F_PDI_NONE)
+	    break;
+    printf("  pool media_id range is %u to %u, of %u extents at most.",
+	   u, pool_info->pdev_max_idx, pool_info->max_extents);
 
     /* IO nodes */
     printf("\nConfiguration has %u IO nodes:\n", p->ionode_count);
@@ -1088,8 +1098,10 @@ void f_print_layouts(void) {
 	    if (pdi->pool_index == F_PDI_NONE)
 		continue;
 	    //assert( pdi == f_find_pdi_by_media_id(lo, pdi->pool_index) );
-	    printf("  dev#%u media id:%u [%u,%u] ext used/failed:%u/%u\n",
+	    printf("  dev#%u media id:%u [%u,%u] ext size/used/failed:%u/%u/%u\n",
 		u, pdi->pool_index, pdi->idx_ag, pdi->idx_dev,
+		((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)
+			[pdi->idx_ag][pdi->idx_dev].extent_count,
 		pdi->sha->extents_used, pdi->sha->failed_extents);
 	}
 	printf("  Layout partition:%u\n", lo->lp->part_num);
