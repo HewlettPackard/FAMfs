@@ -287,8 +287,9 @@ int f_lfa_aafl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long *old);
 #define f_lfa_dafl(l, t ,i, v, o) f_lfa_aafl(l, t, i, -1, o)
 
 //
-// Atomic global-buffer mapped add_and_fetch(w|l): fetch remote memmory, add value to that location
+// Atomic global-buffer mapped add(bit-or|bit-and)_and_fetch(w|l): fetch remote memmory, add value to that location
 // and update local bufer to reflect that operation (if successfull)
+// NOTE: bitwise and/or are only defined for longs (no word equivalent)
 //   abd:    blob descriptor
 //   goff:   offset in the global buffer
 //   val:    value to add
@@ -313,6 +314,8 @@ int f_lfa_gaafl(F_LFA_ABD_t *abd, off_t goff, long val);
 #define f_lfa_giafl(l, g)    f_lfa_gaafl(l, g, 1)
 #define f_lfa_gdafw(l, g)    f_lfa_gaafw(l, g, -1)
 #define f_lfa_gdafl(l, g)    f_lfa_gaafl(l, g, -1)
+int f_lfa_gbandfl(F_LFA_ABD_t *abd, off_t goff, uint64_t val);
+int f_lfa_gborfl(F_LFA_ABD_t *abd, off_t goff, uint64_t val);
 
 //
 // Atomic compare_and_swap: compare expected value with remote, if equal set new else return remote value found
