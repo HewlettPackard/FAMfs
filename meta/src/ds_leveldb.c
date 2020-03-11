@@ -55,7 +55,7 @@ struct timeval dbbputstart, dbbputend;
 double dbbputtime=0;
 
 extern int dbg_rank;
-static void cmp_destroy(void* arg) { }
+static void cmp_destroy(void* arg __attribute__((unused))) { }
 
 static int cmp_empty(const char* a, size_t alen,
 		     const char* b, size_t blen) {
@@ -77,7 +77,7 @@ static int cmp_empty(const char* a, size_t alen,
 	return ret;
 }
 
-int cmp_int_compare(void* arg, const char* a, size_t alen,
+int cmp_int_compare(void* arg __attribute__((unused)), const char* a, size_t alen,
 			   const char* b, size_t blen) {
 	int ret;
 
@@ -96,7 +96,7 @@ int cmp_int_compare(void* arg, const char* a, size_t alen,
 	return ret;
 }
 
-int cmp_lint_compare(void* arg, const char* a, size_t alen,
+int cmp_lint_compare(void* arg __attribute__((unused)), const char* a, size_t alen,
 			   const char* b, size_t blen) {
 	int ret;
 
@@ -115,7 +115,7 @@ int cmp_lint_compare(void* arg, const char* a, size_t alen,
 	return ret;
 }
 
-static int cmp_double_compare(void* arg, const char* a, size_t alen,
+static int cmp_double_compare(void* arg __attribute__((unused)), const char* a, size_t alen,
 			      const char* b, size_t blen) {
 	int ret;
 
@@ -134,7 +134,7 @@ static int cmp_double_compare(void* arg, const char* a, size_t alen,
 	return ret;
 }
 
-static int cmp_float_compare(void* arg, const char* a, size_t alen,
+static int cmp_float_compare(void* arg __attribute__((unused)), const char* a, size_t alen,
 			   const char* b, size_t blen) {
 	int ret;
 
@@ -156,9 +156,9 @@ static int cmp_float_compare(void* arg, const char* a, size_t alen,
 
 // For string, first compare for null pointers, then for order
 // up to a null character or the given lengths.
-static int cmp_string_compare(void* arg, const char* a, size_t alen,
+static int cmp_string_compare(void* arg __attribute__((unused)), const char* a, size_t alen,
 			   const char* b, size_t blen) {
-    int idx;
+    size_t idx;
 
     if (a && !b) {
             return 1;
@@ -190,8 +190,9 @@ static int cmp_string_compare(void* arg, const char* a, size_t alen,
     return -1;
 }
 
-static int cmp_byte_compare(void* arg, const char* a, size_t alen,
-			    const char* b, size_t blen) {
+static int cmp_byte_compare(void* arg __attribute__((unused)),
+			    const char* a, size_t alen __attribute__((unused)),
+			    const char* b, size_t blen __attribute__((unused))) {
 	int ret;
 
 	long offset, old_offset;
@@ -213,15 +214,16 @@ static int cmp_byte_compare(void* arg, const char* a, size_t alen,
 		else if(offset -old_offset < 0)
 				return -1;
 		else
-				return 0;	
-	}	
+				return 0;
+	}
 
 //	ret = memcmp(a, b, alen);
 	return ret;
 }
 
-static int cmp_unifycr_compare(void* arg, const char* a, size_t alen,
-			    const char* b, size_t blen) {
+static int cmp_unifycr_compare(void* arg __attribute__((unused)),
+			       const char* a, size_t alen __attribute__((unused)),
+			       const char* b, size_t blen __attribute__((unused))) {
 	int ret;
 
 	long offset, old_offset;
@@ -250,7 +252,7 @@ static int cmp_unifycr_compare(void* arg, const char* a, size_t alen,
 	return ret;
 }
 
-static const char* cmp_name(void* arg) {
+static const char* cmp_name(void* arg __attribute__((unused))) {
 	return "mdhim_cmp";
 }
 
@@ -267,7 +269,9 @@ static const char* cmp_name(void* arg) {
  * @return MDHIM_SUCCESS on success or MDHIM_DB_ERROR on failure
  */
 
-int mdhim_leveldb_open(void **dbh, void **dbs, char *path, int flags, int key_type, struct mdhim_options_t *opts) {
+int mdhim_leveldb_open(void **dbh, void **dbs, char *path,
+		       int flags __attribute__((unused)), int key_type,
+		       struct mdhim_options_t *opts __attribute__((unused))) {
 	struct mdhim_leveldb_t *mdhimdb;
 	struct mdhim_leveldb_t *statsdb;
 	leveldb_t *db;
@@ -812,7 +816,7 @@ int mdhim_leveldb_del(void *dbh, void *key, int key_len) {
  * 
  * @return MDHIM_SUCCESS on success or MDHIM_DB_ERROR on failure
  */
-int mdhim_leveldb_commit(void *dbh) {
+int mdhim_leveldb_commit(void *dbh __attribute__((unused))) {
 	return MDHIM_SUCCESS;
 }
 
