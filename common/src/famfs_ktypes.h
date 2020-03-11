@@ -367,6 +367,15 @@ typedef struct { int32_t counter; } atomic_t;
 #define atomic_inc_and_test(a) (atomic_inc_return(a) == 0)
 #define atomic_dec_and_test(a) (atomic_dec_return(a) == 0)
 
+/* Memory and compiler barriers */
+#ifndef cmm_barrier
+#define cmm_barrier()   __asm__ __volatile__ ("" : : : "memory")
+#endif
+
+#ifndef cmm_mb
+#define cmm_mb()    __asm__ __volatile__ ("mfence":::"memory")
+#endif
+
 #if 0  //-------------------------------------------
 
 #define atomic_cmpset(a,b,c) rte_atomic32_cmpset(a,b,c)

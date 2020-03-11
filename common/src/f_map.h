@@ -69,7 +69,8 @@
  * PU_FACTOR - the shift factor to convert entry number to a key of the
  * persistent unit (PU).
  * Default PU_FACTOR is eight which means the KV has 2^8 = 256 entries.
- * The minimum PU_FACTOR is F_MAP_KEY_FACTOR_MIN (8).
+ * The minimum PU_FACTOR is F_MAP_KEY_FACTOR_MIN (8) for bitmaps and
+ * zero for structured maps.
  * PU_COUNT - theumber of map entries in PU, 1 << PU_FACTOR.
  * BOS_PU_COUNT - block of slabs (BoS) size in PUs, (1..F_MAP_MAX_BOS_PUS)
  */
@@ -100,7 +101,6 @@ typedef enum {
     F_MAPLOCKING_BOSL,		/* pthread_rwlock protected BoS access */
     F_MAPLOCKING_END,
 } F_MAPLOCKING_t;
-
 
 /*
  * Iterators.
@@ -145,13 +145,11 @@ typedef struct {
     unsigned int		pu_factor;	/* number of entries per persistent unit */
     unsigned int		intl_factor;	/* PU interleave factor >= pu_factor */
     unsigned int		bosl_pu_count;	/* number of persistent units in BoS */
-
-    //unsigned int		slab_entries;	/* number of entries in one slab */
 } F_MAP_GEO_t;
 
 /* F_MAP */
 typedef struct f_map_ {
-    pthread_mutex_t		pu_lock;	/* persistent KV store access lock */
+//    pthread_mutex_t		pu_lock;	/* persistent KV store access lock */
     size_t			bosl_sz;	/* BoS data size, bytes */
     uint64_t			nr_bosl;	/* number of allocated BoSses */
     F_JUDY_t			*bosses;	/* Judy sparse array of BoSses */
@@ -171,8 +169,11 @@ typedef struct f_map_ {
 						   map, all from partition 'part' */
 	    unsigned int	ronly:1;	/* 1: read-only flag: there isn't any
 						   partition on this node */
+	    unsigned int	shm:2;		/* memory model(F_MAPMEM_t): private/shared */
 	};
     };
+    /* Shared maps only: supermap (shm:F_MAPMEM_SHARED_S) pointers to SHMEM */
+    struct f_shmap_sb_		*shmap_sb;	/* shared map superblock */
 } F_MAP_t;
 
 #define f_map_is_partitioned(map_p)	(map_p->parts > 1U)
@@ -189,19 +190,67 @@ typedef struct f_bosl_ {
     struct cds_ja_node		node;
     struct rcu_head		head;		/* RCU delayed reclaim */
     uint64_t			entry0;		/* number of the first entry in BoS */
-    unsigned long		*page;		/* data page with map entries */
+    unsigned long		*page;		/* data page with map entries;
+						shared map data (f_shmap_data_) */
     F_MAP_t			*map;		/* backreference to map */
     pthread_rwlock_t		rwlock;		/* protect iterators on BoS deletion */
     pthread_spinlock_t		dirty_lock;	/* dirty bitmap lock */
     unsigned long		dirty[F_BOSL_DIRTY_SZ];	/* dirty bitmap */
+#if 0
     union {
 	uint32_t		_flags;
 	struct {
 	    unsigned int	loaded:1;	/* 1: loaded from persistent storage */
 	};
     };
+#endif
     atomic_t			claimed;	/* atomic count of being used by iterators */
 } F_BOSL_t;
+
+
+/*
+ * Map in shared memory
+ */
+
+/*
+ * Map shm flag: kepp map in the process' private (default) or shared memory.
+ * SHMEM mode supports single writer, multiple readers.
+ * Allocate F_MAP_t, F_BOSL_t and BoS data pages in shared memory.
+ */
+typedef enum {
+    F_MAPMEM_PRIVATE = 0,	/* Map structures belongs to a process */
+    F_MAPMEM_SHARED_WR,		/* Owner of shared map structures */
+    F_MAPMEM_SHARED_RD,		/* Reader of shared map: should not parse any pointer */
+    F_MAPMEM_SHARED_S,		/* Supermap that describes the collection of SHMEM regions */
+} F_MAPMEM_t;
+#define f_map_in_shmem(m) ((m)->shm != F_MAPMEM_PRIVATE)
+#define f_shmap_owner(m) ((m)->shm == F_MAPMEM_SHARED_WR)
+#define f_shmap_reader(m) ((m)->shm == F_MAPMEM_SHARED_RD)
+
+/*
+ * Superblock of shared map: the writer is the owner of this structure.
+ * Super map has one or more super BoS. Each super BoS (SBoS) contains the shared
+ * map's BoSses as own PUs, so its PU size is equal to the shared map BoS page size
+ * and the number of PUs is limited to F_MAP_MAX_BOS_PUS (512).
+ */
+#define F_SHMAP_NAME_PREFIX	"shm_sb"
+#define F_SHMAP_NAME_LEN	ROUND_UP(FVAR_MONIKER_MAX+8, 8)
+typedef struct f_shmap_sb_ {
+    char		name[F_SHMAP_NAME_LEN];	/* SHMEM file name */
+//    F_MAP_t		shmap;		/* F_MAP_t in shared memory */
+    pthread_rwlock_t	sb_rwlock;	/* "add new SB" mutual exclusion */
+    F_MAP_t		super_map;	/* collection of super BoSses */
+} __attribute__((aligned(PAGE_SIZE))) F_SHMAP_SB_t;
+
+#define F_SHMAP_DATA_NAME	"shmdat"
+typedef struct f_shmap_data_ {
+    char		name[F_SHMAP_NAME_LEN];	/* SHMEM file name */
+    F_BOSL_t		super_bosl;	/* super BoS */
+    uint64_t __attribute__((aligned(PAGE_SIZE)))
+			e0[F_MAP_MAX_BOS_PUS];
+    unsigned long	pages[];	/* BoS data pages */
+} __attribute__((aligned(PAGE_SIZE))) F_SHMAP_DATA_t;
+#define F_SHMAP_DATA_SZ(bosl_sz)	(sizeof(F_SHMAP_DATA_t)+(bosl_sz)*F_MAP_MAX_BOS_PUS)
 
 
 /*
@@ -278,6 +327,10 @@ int f_map_reshape(F_MAP_t **new, F_SETTER_t setter, F_MAP_t *origin, F_COND_t co
 F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg);
 /* Print map description: KV size, in-memory size and so on */
 void f_map_fprint_desc(FILE *f, F_MAP_t *map);
+/* Share the map in SHMEM */
+int f_map_shm_attach(F_MAP_t *map, const char* name, F_MAPMEM_t rw);
+/* Unmap the shared map (optional; f_map_exit() detaches the map */
+int f_map_shm_detach(F_MAP_t *map);
 
 /*
  * Persistent map backend: the KV store
@@ -315,7 +368,8 @@ F_BOSL_t *f_map_new_bosl(F_MAP_t *map, uint64_t entry); /* if no BoS, create it 
 int f_map_put_bosl(F_BOSL_t *bosl);
 int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl); /* remove all BoS entries from online map */
 void f_map_mark_dirty_bosl(F_BOSL_t *bosl, uint64_t entry); /* mark KV dirty in BoS PU bitmap */
-uint64_t f_map_max_bosl(F_MAP_t *map);
+uint64_t f_map_max_bosl(F_MAP_t *map); /* max BoS number */
+static inline F_SHMAP_SB_t *f_map_get_sb(F_MAP_t *map) { return map->shmap_sb; }
 
 /* Check if the entry belongs to this BoS */
 static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)
@@ -515,5 +569,10 @@ static inline size_t f_map_value_off(F_MAP_t *map, uint64_t n)
 		  (unsigned long)n << map->geometry.pu_factor),	\
 	sizeof(*p)))
 
+/* Validate structure's size and/or alignment */
+    _Static_assert( TYPE_ALINGMENT(F_SHMAP_DATA_t) == PAGE_SIZE,
+		   "F_SHMAP_DATA_t alignment");
+    _Static_assert( offsetof(struct f_shmap_data_, pages[0]) % PAGE_SIZE == 0,
+		   "F_SHMAP_DATA_t pages[] alignment");
 
 #endif /* F_MAP_H_ */

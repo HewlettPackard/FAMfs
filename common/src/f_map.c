@@ -4,10 +4,18 @@
  * Written by: Dmitry Ivanov
  */
 #include <assert.h>
+#include <fcntl.h> /* For O_* constants */
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include "f_map.h"
 #include "famfs_bitmap.h"
+#include "famfs_error.h"
+
 
 #define e_to_bosl(bosl, e)	((e) - (bosl)->entry0)
 #define is_iter_reset(it)	(it->entry == ~0LU)
@@ -23,7 +31,7 @@ static inline unsigned long *bosl_page_alloc(size_t size)
 	return p;
 }
 
-static F_BOSL_t *bosl_alloc(size_t size)
+static F_BOSL_t *bosl_alloc(size_t size, int shared)
 {
 	F_BOSL_t *bosl;
 
@@ -33,7 +41,8 @@ static F_BOSL_t *bosl_alloc(size_t size)
 			free(bosl);
 			return NULL;
 		}
-		pthread_spin_init(&bosl->dirty_lock, PTHREAD_PROCESS_PRIVATE);
+		pthread_spin_init(&bosl->dirty_lock,
+		    shared?PTHREAD_PROCESS_SHARED:PTHREAD_PROCESS_PRIVATE);
 		pthread_rwlock_init(&bosl->rwlock, NULL);
 		atomic_inc(&bosl->claimed);
 	}
@@ -133,7 +142,7 @@ static F_MAP_t *map_alloc(void)
 	if (map) {
 		map->bosses = cds_ja_new(64); /* 64-bit key */
 		pthread_spin_init(&map->bosl_lock, PTHREAD_PROCESS_PRIVATE);
-		pthread_mutex_init(&map->pu_lock, NULL);
+		//pthread_mutex_init(&map->pu_lock, NULL);
 	}
 	return map;
 }
@@ -145,14 +154,17 @@ static int map_free(F_MAP_t *map)
 {
 	int ret;
 
-	if ((ret = map_free_all_nodes(map->bosses)))
-		return ret;
-	if ((ret = cds_ja_destroy(map->bosses)))
-		return ret;
+	if (map->bosses) {
+		if ((ret = map_free_all_nodes(map->bosses)))
+			return ret;
+		if ((ret = cds_ja_destroy(map->bosses)))
+			return ret;
+		rcu_quiescent_state();
+	}
 	pthread_spin_destroy(&map->bosl_lock);
-	pthread_mutex_destroy(&map->pu_lock);
-	free(map);
-	rcu_quiescent_state();
+	//pthread_mutex_destroy(&map->pu_lock);
+	if (map->shm != F_MAPMEM_SHARED_S)
+		free(map);
 	return 0;
 }
 
@@ -163,12 +175,12 @@ static int _map_insert_bosl(F_MAP_t *map, uint64_t entry, F_BOSL_t **bosl_p)
 	uint64_t node_idx, length;
 	int ret = 0;
 
-	bosl = bosl_alloc(map->bosl_sz);
+	bosl = bosl_alloc(map->bosl_sz, f_shmap_owner(map));
 	if (!bosl)
 		return -ENOMEM;
 
 	length = map->bosl_entries;
-	bosl->loaded = map->loaded;
+	//bosl->loaded = map->loaded;
 	node_idx = entry / length;
 	bosl->entry0 = node_idx * length;
 
@@ -239,7 +251,7 @@ static void copy_pu_to_bosl(F_BOSL_t *bosl_to, uint64_t pu_to,
 
 	/* No lock! */
 	memcpy(to, from, size);
-	bosl_to->loaded = 1;
+	//bosl_to->loaded = 1;
 }
 
 /* Copy one PU from BoS @pu_from to 'buf' @pu_to.
@@ -282,16 +294,10 @@ static int bosl_is_pu_clean(F_BOSL_t *bosl, unsigned int pu)
 	return 1;
 }
 
-
-/*
- * API
- */
-
-/* f_map_init - Create map in memory */
-F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
+static int _map_init(F_MAP_t **map_p, F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
     F_MAPLOCKING_t locking)
 {
-	F_MAP_t *map;
+	F_MAP_t *map = *map_p;
 	size_t psize = getpagesize();
 
 	/* Safe defaults */
@@ -302,9 +308,9 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
 		break;
 	case F_MAPTYPE_STRUCTURED:
 		if (entry_sz <= 0 || (entry_sz % 8))
-			return NULL;
+			goto _err;
 		break;
-	default: return NULL;
+	default: goto _err;
 	}
 	if (bosl_sz == 0)
 		bosl_sz = psize;
@@ -313,7 +319,15 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
 	/* 0: F_MAPLOCKING_DEFAULT */
 	assert (IN_RANGE(locking, 0, F_MAPLOCKING_END-1));
 
-	map = map_alloc();
+	if (map == NULL) {
+		map = map_alloc();
+	} else {
+		map->bosses = cds_ja_new(64); /* 64-bit key */
+		pthread_spin_init(&map->bosl_lock, PTHREAD_PROCESS_PRIVATE);
+	}
+	if (map == NULL)
+		return -ENOMEM;
+
 	map->type = type;
 	map->parts = 1;
 	map->id = -1; /* In-memory map: detached from KV store */
@@ -341,8 +355,28 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
 		map->geometry.pu_factor);
 	assert (IN_RANGE(map->geometry.bosl_pu_count,
 			 1, F_MAP_MAX_BOS_PUS));
+	*map_p = map;
+	return 0;
 
-	return map;
+_err:
+	if (map)
+		map_free(map);
+	return -1;
+}
+
+
+/*
+ * API
+ */
+
+/* f_map_init - Create map in memory */
+F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
+    F_MAPLOCKING_t locking)
+{
+	F_MAP_t *m = NULL;
+
+	_map_init(&m, type, entry_sz, bosl_sz, locking);
+	return m;
 }
 
 /**
@@ -371,6 +405,9 @@ int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global)
 /* Free map */
 void f_map_exit(F_MAP_t *map)
 {
+	if (f_map_get_sb(map)) {
+	    assert( !f_map_shm_detach(map) );
+	}
 	map_free(map);
 }
 
@@ -759,7 +796,7 @@ int f_map_flush(F_MAP_t *map)
 	parts = map->parts;
 
 	/* Allocate I/O buffer */
-	bos_buf = bosl_alloc(map->bosl_sz);
+	bos_buf = bosl_alloc(map->bosl_sz, 0);
 	if (!bos_buf)
 	    goto _err;
 	bos_buf->map = map; /* map reference for bosl_is_pu_clean() */
@@ -898,7 +935,7 @@ unsigned long *f_map_get_p(F_MAP_t *map, uint64_t entry)
 	F_BOSL_t *bosl;
 
 	if ((bosl = f_map_get_bosl(map, entry)))
-		p = bosl_ffind(bosl, entry);
+		p = _bosl_ffind(bosl, e_to_bosl(bosl, entry));
 	return p;
 }
 
@@ -914,7 +951,7 @@ unsigned long *f_map_new_p(F_MAP_t *map, uint64_t entry)
 		F_BOSL_t *bosl;
 
 		if ((bosl = map_insert_bosl(map, entry)))
-			p = bosl_ffind(bosl, entry);
+			p = _bosl_ffind(bosl, e_to_bosl(bosl, entry));
 	}
 	//assert(p);
 	return p;
@@ -989,7 +1026,6 @@ int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl)
 	return ret;
 }
 
-/* Return the current map size, entries */
 static uint64_t max_bosl(F_MAP_t *map)
 {
 	uint64_t idx = 0;
@@ -1236,7 +1272,7 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
 			return NULL;
 		}
 		it->bosl = bosl;
-		p = bosl_ffind(bosl, entry);
+		p = _bosl_ffind(bosl, e_to_bosl(bosl, entry));
 	}
 	assert(p);
 	it->word_p = p;
@@ -1509,6 +1545,7 @@ uint64_t f_map_weight(const F_ITER_t *iter, size_t size)
 	return weight;
 }
 
+/* Return the current map size, entries */
 static uint64_t map_size(F_MAP_t *map)
 {
 	return max_bosl(map)*map->bosl_entries;
@@ -1798,5 +1835,148 @@ void f_map_fprint_desc(FILE *f, F_MAP_t *m)
 	    m->bosl_sz, m->bosl_entries);
     fprintf(f, "  map size:%lu entries, total BoS count:%lu.\n",
 	    map_size(m), m->nr_bosl);
+}
+
+
+/*
+ * Map in shared memory
+ */
+static int sb_create(F_SHMAP_SB_t **sb_p, const char* name,
+    size_t size, int force)
+{
+    F_SHMAP_SB_t *sb;
+    int fd;
+    int flags = O_RDWR|O_CREAT;
+
+    assert( strlen(name) <= F_SHMAP_NAME_LEN);
+    if (!force)
+	flags |= O_EXCL;
+
+    if (-1 == (fd = shm_open(name, flags, 0777)))
+	return errno == EEXIST && !force ? EEXIST : -1;
+
+    if (-1 == ftruncate(fd, size))
+	return -1;
+
+    if (NULL == (sb = mmap(NULL, size,
+			   PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET)))
+	return -1;
+
+    bzero(sb, size);
+    strncpy(sb->name, name, F_SHMAP_NAME_LEN);
+    *sb_p = sb;
+    return 0;
+}
+
+static int sb_open(F_SHMAP_SB_t **sb_p, const char* name,
+    size_t size, int ro)
+{
+    F_SHMAP_SB_t *sb;
+    int fd;
+    int flags = ro?O_RDONLY:O_RDWR;
+
+    if (-1 == (fd = shm_open(name, flags, 0)))
+	return (errno == ENOENT)?-ENOENT:-1;
+
+    if (NULL == (sb = mmap(NULL, size,
+			   PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET)))
+	return -1;
+
+    strncpy(sb->name, name, F_SHMAP_NAME_LEN);
+    *sb_p = sb;
+    return 0;
+}
+
+/* Share the map in SHMEM */
+#define F_SHM_RD_ATTACH_TMO 1000000 /* reader attach timeout, usec: 1 sec */
+int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
+{
+    F_SHMAP_SB_t *sb = NULL;
+    F_MAP_t *sm;
+    pthread_rwlockattr_t attr;
+    char sb_name[F_SHMAP_NAME_LEN+1] = { 0 };
+    size_t l, size;
+    unsigned int tmo, slp;
+    int rc = 0;
+
+    if (m->shmap_sb)
+	return -1; /* already attached */
+
+    l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%03d",
+		 F_SHMAP_NAME_PREFIX, m->id);
+    if (name)
+	strncpy(sb_name+l, name, F_SHMAP_NAME_LEN-l);
+
+    size = sizeof(F_SHMAP_SB_t);
+    switch (rw) {
+    case F_MAPMEM_SHARED_WR:
+	/* create new object if existing */
+	if ((rc = sb_create(&sb, sb_name, size, 1)))
+	    goto _err;
+	pthread_rwlockattr_init(&attr);
+	pthread_rwlockattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+	pthread_rwlock_init(&sb->sb_rwlock, &attr);
+
+	break;
+    case F_MAPMEM_SHARED_RD:
+	tmo = 0;
+	slp = F_SHM_RD_ATTACH_TMO/8;
+	do {
+	    /* open object as read-only */
+	    if ((rc = sb_open(&sb, sb_name, size, 1))) {
+		if (rc == -ENOENT)
+		    usleep(slp);
+		else
+		    goto _err;
+	    } else
+		break;
+	    tmo += slp;
+	} while (tmo <= F_SHM_RD_ATTACH_TMO);
+	break;
+    case F_MAPMEM_PRIVATE: return 0;
+    default: err("shm_attach: op not supported"); return 1;
+    }
+
+    /* Init super map which contains one or more super BoSses */
+    size = F_SHMAP_DATA_SZ(m->bosl_sz);
+    sm = &sb->super_map;
+    rc = _map_init(&sm, F_MAPTYPE_STRUCTURED, size, size, 0);
+    if (rc)
+	goto _err;
+
+    m->shm = rw;
+    m->shmap_sb = sb;
+
+_err:
+    if (sb)
+	munmap(sb, sizeof(F_SHMAP_SB_t));
+    return rc;
+}
+#undef F_SHM_RD_ATTACH_TMO
+
+/* Unmap the shared map */
+int f_map_shm_detach(F_MAP_t *m)
+{
+    F_SHMAP_SB_t *sb = m->shmap_sb;
+    F_MAP_t *sm = &sb->super_map;
+    int rc = 0;
+
+    if (sm)
+	f_map_exit(sm);
+
+    switch (m->shm) {
+    case F_MAPMEM_SHARED_WR:
+	pthread_rwlock_destroy(&sb->sb_rwlock);
+	break;
+    case F_MAPMEM_SHARED_RD:
+	break;
+    case F_MAPMEM_PRIVATE: return 0;
+    default: err("shm_attach: op not supported"); return 1;
+    }
+    munmap(sb, sizeof(F_SHMAP_SB_t));
+    m->shmap_sb = NULL;
+
+
+    return rc;
 }
 

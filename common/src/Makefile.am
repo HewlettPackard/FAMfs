@@ -48,8 +48,11 @@ f_map_test_CPPFLAGS =	-D_GNU_SOURCE=1 $(AM_CPPFLAGS) \
 			-I$(top_srcdir)/userspace-rcu/src
 f_map_test_LDADD = libfamfs_common.la libfamfs_meta.la -lurcu-qsbr -lurcu-cds
 
+f_shmap_test_CPPFLAGS = $(f_map_test_CPPFLAGS) $(MPI_CFLAGS)
+f_shmap_test_LDADD = $(f_map_test_LDADD) $(MPI_CLDFLAGS)
+
 check_tests = famfs_bbitops_test f_map_test
-unit_tests = famfs_bbitops_test famfs_bitops_test f_map_test
+unit_tests = famfs_bbitops_test famfs_bitops_test f_map_test f_shmap_test
 
 check_PROGRAMS = ${check_tests}
 TESTS = ${check_tests}
@@ -63,6 +66,10 @@ tests: ${unit_tests}
 test: $(addsuffix .run,$(unit_tests))
 
 # Build rule to run tests
+f_shmap_test.run: f_shmap_test
+	mpirun ./$<
+	@echo Completed run: $<
+
 %.run: %
 	./$<
 	@echo Completed run: $<

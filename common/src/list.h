@@ -4,8 +4,8 @@
  *  Created on: Jun 24, 2015
  *      Author: leeopop
  */
-#ifndef _LINUX_LIST_H
-#define _LINUX_LIST_H
+#ifndef _LIST_H
+#define _LIST_H
 
 #include <stddef.h>
 
