@@ -20,6 +20,7 @@
 
 /* TEST options */
 #define TEST_MDHIM_DBG	0	/* 1: MDHIM debug enabled */
+#define TEST_DO_RELOAD	1	/* 1: Close MDHIM after FLUSH and re-load map */
 #define RND_REPS	1000	/* number of passes for random test */
 #define SQ_REPS		1000	/* number of passes for sequential test */
 #define BOS_PAGE_MAX	4	/* max BoS page size, in kernel pages */
@@ -186,6 +187,7 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
 	if (unifycr_indexes[id] == NULL)
 		return -1;
+	unifycr_indexes[id]->has_stats = 0;
 
 	printf("%d: create_persistent_map:%d %s index[%u] interleave:%d\n",
 	       md->mdhim_rank, info->map_id, name, id, intl);
@@ -329,7 +331,7 @@ int main (int argc, char *argv[]) {
     pass = rc = v = 0;
     e = ul = 0;
     ui = ext = 0;
-    p = NULL; it = NULL;
+    p = NULL; it = NULL; bosl = NULL;
 
 
     /*
@@ -1502,7 +1504,33 @@ int main (int argc, char *argv[]) {
 		if (ul != SQ_REPS) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 16; /* Check all log entries are in loaded map */
+#if TEST_DO_RELOAD > 1
+		t = 16; /* Re-load map from MDHIM */
+		f_map_exit(map); m = map = NULL;
+		rcu_unregister_thread();
+
+		db_opts=md->db_opts;
+		mdhimClose(md); md = NULL;
+		//mdhim_options_destroy(db_opts);
+		//rc = mdhim_options_cfg(&md_cfg, &db_opts);
+		//assert( rc == 0 );
+		meta_init_store(db_opts);
+		if (md == NULL) goto err0;
+
+		rcu_register_thread();
+		map = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, (pages==1)?0:page_sz,
+				 F_MAPLOCKING_DEFAULT);
+		assert( mlog && map );
+		rc = f_map_init_prt(map, node_size, my_node, 0, global);
+		assert( rc == 0 );
+		rc = f_map_register(map, layout_id);
+		if (rc) { printf("MAP register error:%d\n", rc); goto err0; }
+		rc = f_map_load(map);
+		if (rc) { printf("MAP re-load error:%d\n", rc); goto err0; }
+		//MPI_BARRIER;
+#endif
+
+		t = 17; /* Check all log entries are in loaded map */
 		ul = 0;
 		it = f_map_get_iter(mlog, F_BIT_CONDITION, 0);
 		for_each_iter(it) {
@@ -1516,11 +1544,11 @@ int main (int argc, char *argv[]) {
 		    if (v != 2) goto err3;
 		    ul++;
 		}
-		t = 17; /* Check number of entries in log */
+		t = 18; /* Check number of entries in log */
 		if (ul != SQ_REPS) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 18; /* Clear all PUs in DB */
+		t = 19; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(map);
 		it = f_map_get_iter(map, sm_extent_failed, iext);
 		for_each_iter(it) {
@@ -1538,7 +1566,7 @@ int main (int argc, char *argv[]) {
 		rc = f_map_flush(map);
 		if (rc != 0) goto err2;
 
-		t = 19; /* Delete all BoS entries */
+		t = 20; /* Delete all BoS entries */
 		it = f_map_get_iter(map, F_NO_CONDITION, 0);
 		ui = map->nr_bosl;
 		if (ui > SQ_REPS) goto err1; /* +1 for BoS #0 */
@@ -1561,7 +1589,7 @@ int main (int argc, char *argv[]) {
 		    it->bosl = NULL; /* make for_each_iter() go next BoS */
 		    ul++;
 		}
-		t = 20; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 21; /* Extra check: map BoS accounting (nr_bosl) */
 		if (ul != ui) goto err1;
 		v = f_map_max_bosl(map);
 		if (map->nr_bosl) {
@@ -1575,7 +1603,7 @@ int main (int argc, char *argv[]) {
 
 		MPI_BARRIER;
 
-		t = 21; /* Count foreign entries in loaded map */
+		t = 22; /* Count foreign entries in loaded map */
 		/* load all map partitions */
 		rc = f_map_init_prt(map, node_size, my_node, 0, 1);
 		if (rc != 0) goto err1;
@@ -1591,7 +1619,7 @@ int main (int argc, char *argv[]) {
 		if (ul) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 22; /* Delete all map BoSses */
+		t = 23; /* Delete all map BoSses */
 		it = f_map_new_iter(map, F_NO_CONDITION, 0);
 		it = f_map_next_bosl(it);
 		for_each_bosl(it)
@@ -1599,7 +1627,7 @@ int main (int argc, char *argv[]) {
 		if (map->nr_bosl) goto err1;
 		f_map_free_iter(it); it = NULL;
 
-		t = 23; /* Delete all log entries */
+		t = 24; /* Delete all log entries */
 		m = mlog; /* for error print */
 		ul = mlog->nr_bosl;
 		it = f_map_new_iter(mlog, F_BIT_CONDITION, 0);
@@ -1610,7 +1638,7 @@ int main (int argc, char *argv[]) {
 		    if (v != 2) goto err3;
 		    if ((rc = f_map_delete_bosl(mlog, bosl))) goto err3;
 		}
-		t = 24; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 25; /* Extra check: map BoS accounting (nr_bosl) */
 		if ((ul = mlog->nr_bosl)) goto err1;
 		if ((v = f_map_max_bosl(mlog))) goto err2;
 		f_map_free_iter(it); it = NULL;
@@ -1621,7 +1649,7 @@ int main (int argc, char *argv[]) {
 
 		MPI_BARRIER;
 	    }
-	    t = 25; /* map exit: must survive */
+	    t = 26; /* map exit: must survive */
 	    f_map_exit(map);
 	    f_map_exit(mlog);
 	    m = mlog = map = NULL;
@@ -1629,7 +1657,7 @@ int main (int argc, char *argv[]) {
     }
     rcu_unregister_thread();
 
-    t = 26;
+    t = 27;
     rc = meta_sanitize();
     if (rc) goto err1;
     f_free_layouts_info();

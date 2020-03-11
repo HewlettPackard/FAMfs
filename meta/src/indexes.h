@@ -106,6 +106,7 @@ struct index_t {
 
 	//Statistics retrieved from the mdhimStatFlush operation
 	struct mdhim_stat *stats;
+	int has_stats;		/* true: index needs stats */
 
 	UT_hash_handle hh;         /* makes this structure hashable */
 	UT_hash_handle hh_name;    /* makes this structure hashable by name */

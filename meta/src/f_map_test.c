@@ -150,6 +150,7 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
 	if (unifycr_indexes[id] == NULL)
 		return -1;
+	unifycr_indexes[id]->has_stats = 0;
  /*
 	printf(" create_persistent_map:%d %s index[%u] interleave:%d\n",
 	       info->map_id, name, id, intl);

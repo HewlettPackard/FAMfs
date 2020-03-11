@@ -238,6 +238,9 @@ int update_stat(struct mdhim_t *md, struct index_t *index, void *key, uint32_t k
 	int float_type = 0;
 	struct mdhim_stat *os, *stat;
 
+	if (!index->has_stats)
+		return MDHIM_SUCCESS;
+
 	//Acquire the lock to update the stats
 	gettimeofday(&sleepstart, NULL);
 	while (pthread_rwlock_wrlock(index->mdhim_store->mdhim_store_stats_lock) == EBUSY) {
@@ -728,6 +731,7 @@ struct index_t *create_local_index(struct mdhim_t *md, int db_type, int key_type
 	li->myinfo.rank = md->mdhim_rank;
 	li->primary_id = md->primary_index->id;
 	li->stats = NULL;
+	li->has_stats = 1;
 
     if (index_name != NULL) {
         size_t name_len = strlen(index_name)+1;
@@ -875,6 +879,7 @@ struct index_t *create_global_index(struct mdhim_t *md, int server_factor,
 	gi->myinfo.rank = md->mdhim_rank;
 	gi->primary_id = gi->type == SECONDARY_INDEX ? md->primary_index->id : -1;
 	gi->stats = NULL;
+	gi->has_stats = 1;
 
     if (gi->id > 0) {
 

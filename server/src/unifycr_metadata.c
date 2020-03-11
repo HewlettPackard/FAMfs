@@ -130,6 +130,8 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
 	if (unifycr_indexes[id] == NULL)
 		return -1;
+	/* don't use stats */
+	unifycr_indexes[id]->has_stats = 0;
     }
 
     /* If no range server running, set RO flag to protect persistent map */
