@@ -122,7 +122,7 @@ typedef struct f_pooldev_index_ {
     uint16_t		idx_ag;		/* 1st index: AG */
     uint16_t		idx_dev;	/* 2nd index: pool device */
 
-    uint32_t		pl_extents_used;
+    uint32_t		prt_extents_used;/* per layout partition usage */
     F_PDI_SHA_t		*sha;
 } F_POOLDEV_INDEX_t;
 
@@ -130,6 +130,7 @@ typedef struct f_pooldev_index_ {
 struct f_pdi_matrix_;
 typedef int (*mx_init_fn) (struct f_pdi_matrix_ *mx);
 typedef F_POOLDEV_INDEX_t * (*mx_lookup_fn) (struct f_pdi_matrix_ *mx, size_t row, size_t col);
+typedef F_POOLDEV_INDEX_t * (*mx_lookup_by_id_fn) (struct f_pdi_matrix_ *mx, size_t row, unsigned int id);
 typedef void (*mx_sort_fn) (struct f_pdi_matrix_ *mx);
 typedef void (*mx_resort_fn) (struct f_pdi_matrix_ *mx, size_t row);
 typedef int (*mx_gen_devlist_fn) (struct f_pdi_matrix_ *mx, F_POOLDEV_INDEX_t *devlist, unsigned int *size);
@@ -142,6 +143,7 @@ typedef struct f_pdi_matrix_ {
     /* Matrix operations */
     mx_init_fn		init;
     mx_lookup_fn	lookup;
+    mx_lookup_by_id_fn	lookup_by_id;
     mx_sort_fn		sort;
     mx_resort_fn	resort;
     mx_gen_devlist_fn	gen_devlist;
@@ -157,9 +159,11 @@ typedef struct f_layout_partition_ {
     int			thread_res;	/* allocator thread exit code */
     pthread_mutex_t	lock_ready;	/* allocator thread ready condition mutex */
     pthread_cond_t	cond_ready;	/* allocator thread condition ready */
+    int			ready;		/* allocator thread ready flag */
     pthread_mutex_t	a_thread_lock;	/* allocator thread wait condition mutex */
     pthread_cond_t	a_thread_cond;	/* allocator thread wait condition */
-    int			ready;		/* allocator thread ready flag */
+    pthread_mutex_t	stripes_wait_lock;/* stripes wait condition mutex */
+    pthread_cond_t	stripes_wait_cond;/* stripes wait condition */
 
     uint32_t		slab0;		/* first slab in this partition */
     uint32_t		slab_count;	/* total number of slabs in this partition */

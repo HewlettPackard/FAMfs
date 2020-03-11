@@ -46,7 +46,7 @@ static int create_pds_lfa(F_POOL_t *pool)
 	F_IONODE_INFO_t *my_ionode, *ioi;
 	F_LFA_SLIST_t *ionode_lst;
 	F_PDEV_SHA_t *g_sha;
-	int bmap_size = 16; // TODO: determine max dev size
+	int bmap_size = max(sizeof(long), BITS_TO_BYTES(pool->info.max_extents)); // size extent map by the max dev size
 	int i, si, rc = -ENOMEM;
 
 	ASSERT(pool->mynode.ionode_idx < pool->ionode_count);
@@ -188,6 +188,7 @@ int stop_allocator_thread(F_LAYOUT_t *lo)
 	return lp->thread_res;
 }
 
+static inline f_slab_t stripe_to_slab(F_LAYOUT_t *lo, f_stripe_t stripe);
 static inline void test_get_stripe()
 {
 	F_POOL_t *pool = f_get_pool();
@@ -200,21 +201,29 @@ static inline void test_get_stripe()
 		int i;
 
 		lo = container_of(l, struct f_layout_, list);
-		if (!LayoutActive(lo)) continue;
 
-		sleep(2);
 		memset(&ss, 0, sizeof(ss));
-		ss.count = 512;
+		ss.count = 4096;
 		ss.stripes = alloca(sizeof(f_stripe_t) * ss.count);
 		memset(ss.stripes, 0, sizeof(f_stripe_t) * ss.count);
-
+/*
+		while (atomic_read(&lo->lp->prealloced_stripes) < ss.count) { 
+			printf("%d\n", atomic_read(&lo->lp->prealloced_stripes)); 
+			sleep(1); 
+		}
+*/
 		rc = f_get_stripe(lo, F_STRIPE_INVALID, &ss);
-		if (rc)
+		if (rc < 0) {
 			LOG(LOG_ERR, "%s[%d]: error %d in f_get_stripe", lo->info.name, lo->lp->part_num, rc);
-
+			return;
+		} else {
+			LOG(LOG_DBG, "%s[%d]: allocated %d stripes", lo->info.name, lo->lp->part_num, rc);
+		}
 		printf("ss: %u", ss.count);
-		for (i = 0; i < ss.count; i++)
-			printf(" %lu", ss.stripes[i]);
+		for (i = 0; i < ss.count; i++) {
+			f_slab_t slab = stripe_to_slab(lo, ss.stripes[i]);
+			printf(" %u:%lu", slab, ss.stripes[i]);
+		}
 		printf("\n");
 
 		rc = f_put_stripe(lo, &ss);
@@ -558,7 +567,7 @@ static struct f_stripe_bucket *find_stripe_bucket(F_LO_PART_t *lp, unsigned long
 
 		/* match them against the devmap */
 		if (bitmap_equal(sb->devmap, devmap, pool->info.pdev_max_idx+1)) {
-			LOG(LOG_DBG, "%s[%d]: found bucket %d", lo->info.name, lp->part_num, i);
+			LOG(LOG_DBG3, "%s[%d]: found bucket %d", lo->info.name, lp->part_num, i);
 			return sb;
 		}
 		i++;
@@ -644,7 +653,75 @@ struct cb_data {
 	F_LO_PART_t 	*lp;
 	int		loaded;
 	int		err;
+	size_t		dsize;
+	void		*data;
 };
+
+/*
+ * Apply this layout partition extent map and counters accumulated while 
+ * loading slab map to the global area
+ */
+static inline int apply_counters_to_devices(F_LO_PART_t *lp, struct cb_data *cbdata)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	int bmap_size = max(sizeof(long), BITS_TO_BYTES(pool->info.max_extents)); 
+	int sha_size = sizeof(F_PDEV_SHA_t) + bmap_size;
+	int dev0 =  pool->info.pdev_max_idx + 1 - pool->pool_devs;
+	int i, n, rc, r = 0;
+
+	for (i = 0; i <= pool->info.pdev_max_idx; i++) {
+		F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, i+dev0);
+		F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, i+dev0);
+		F_PDEV_SHA_t *p_sha = (F_PDEV_SHA_t *) (cbdata->data + sha_size*i);
+		off_t off, sha_off;
+		int used;
+
+		if (!pdev) continue;
+
+		LOG(LOG_DBG, "%s[%d]: dev %d: used/failed exts: %lu/%u/%lu extmap: 0x%lx",
+			lo->info.name, lp->part_num, i+dev0, p_sha->extents_used, 
+			pdi->prt_extents_used, p_sha->failed_extents, p_sha->extent_bmap[0]);
+
+		ASSERT(pdev->sha);
+		sha_off = (void *)pdev->sha - pool->pds_lfa->global;
+		ASSERT(sha_off < pool->pds_lfa->global_size);
+
+		used = bitmap_weight(p_sha->extent_bmap, bmap_size*BITS_PER_BYTE);
+		ASSERT(used == p_sha->extents_used);
+
+		if (p_sha->extent_bmap) {
+			for (n = 0; n < BITS_TO_LONGS(bmap_size); n++) {
+				off = sha_off + offsetof(F_PDEV_SHA_t, extent_bmap) + n*sizeof(long);
+				rc = f_lfa_gborfl(pool->pds_lfa->global_abd, off, *(p_sha->extent_bmap + n));
+				if (rc) {
+					LOG(LOG_WARN, "%s[%d]: error %d updating device %d extent map", 
+						lo->info.name, lp->part_num, rc, i);
+					r = rc;
+				}
+			}
+		}
+		if (p_sha->extents_used) {
+			off = sha_off + offsetof(F_PDEV_SHA_t, extents_used);
+			rc = f_lfa_gaafl(pool->pds_lfa->global_abd, off, p_sha->extents_used);
+			if (rc) {
+				LOG(LOG_WARN, "%s[%d]: error %d updating device %d usage", 
+					lo->info.name, lp->part_num, rc, i);
+				r = rc;
+			}
+		}
+		if (p_sha->failed_extents) {
+			off = sha_off + offsetof(F_PDEV_SHA_t, failed_extents);
+			rc = f_lfa_gaafl(pool->pds_lfa->global_abd, off, p_sha->failed_extents);
+			if (rc) {
+				LOG(LOG_WARN, "%s[%d]: error %d updating device %d failed extents", 
+					lo->info.name, lp->part_num, rc, i);
+				r = rc;
+			}
+		}
+	}
+	return r;
+}
 
 /*
  * Slab map load callback function. Called on each slab map PU load
@@ -654,10 +731,13 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 	struct cb_data *data = (struct cb_data *) arg;
 	F_LO_PART_t *lp = data->lp;
 	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
 	F_SLABMAP_ENTRY_t *sme;
 	f_slab_t slab = e;
+	int bmap_size =max(sizeof(long), BITS_TO_BYTES(pool->info.max_extents)); 
 	unsigned int pu_entries = 1U << lo->slabmap->geometry.pu_factor;
 	unsigned int e_sz = lo->slabmap->geometry.entry_sz;
+	int dev0 =  pool->info.pdev_max_idx + 1 - pool->pool_devs;
 	unsigned int i;
 
 	for(i = 0; i < pu_entries; i++, slab++) {
@@ -699,7 +779,11 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 
 		/* Process this slab map entry */
 		for (n = 0;  n < lo->info.chunks; n++) {
-			F_POOL_DEV_t *pdev = f_find_pdev(sme->extent_rec[n].media_id);	
+			unsigned int dev_id = sme->extent_rec[n].media_id;
+			F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, dev_id);
+			F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, dev_id);
+			F_PDEV_SHA_t *p_sha;	
+			int sha_size = sizeof(F_PDEV_SHA_t) + bmap_size;
 			
 			if (!pdev) {
 				LOG(LOG_ERR, "%s[%d]: slab %u ext %u invalid dev idx %u", 
@@ -726,8 +810,18 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 				continue;
 			}
 				
-			/* Populate device extent map */
+			/* Populate device extent map (temporary per layout/partition version) */
+			p_sha = (F_PDEV_SHA_t *) (data->data + sha_size*(dev_id-dev0));
+			set_bit(sme->extent_rec[n].extent, p_sha->extent_bmap);
 
+			p_sha->extents_used++;
+			pdi->prt_extents_used++;
+
+			if (sme->extent_rec[n].failed) {
+				p_sha->failed_extents++;
+				LOG(LOG_DBG2, "%s[%d]: slab %u ext %u failed", 
+					lo->info.name, lp->part_num, slab, n);
+			}
 		}
 
 		data->loaded++;
@@ -787,6 +881,7 @@ static void claimvec_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 static int read_maps(F_LO_PART_t *lp)
 {
 	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
 	struct cb_data cbdata;
 	int rc;
 
@@ -808,13 +903,33 @@ static int read_maps(F_LO_PART_t *lp)
 	cbdata.lp = lp;
 	cbdata.err = 0;
 	cbdata.loaded = 0;
+	cbdata.dsize = pool->pds_lfa->global_size; 
+	cbdata.data = calloc(1, cbdata.dsize);
+	if (!cbdata.data) {
+		LOG(LOG_ERR, "%s[%d]: error allocating data area", lo->info.name, lp->part_num);
+		return  -ENOMEM;
+	}		
+	memset(pool->pds_lfa->global, 0, pool->pds_lfa->global_size);
 	rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
 		LOG(LOG_ERR, "%s[%d]: error %d loading SM, %d load errors", 
 			lo->info.name, lp->part_num, rc, cbdata.err);
+		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 		return rc ? rc : cbdata.err;
 	}
+
+	if (cbdata.loaded) {
+		rc = apply_counters_to_devices(lp, &cbdata);
+		if (rc) {
+			LOG(LOG_ERR, "%s[%d]: error %d propagating counters to global map", 
+				lo->info.name, lp->part_num, rc);
+			return rc;
+		}
+	}
+
 	LOG(LOG_DBG, "%s[%d]: %u slabs loaded: %d errors", lo->info.name, lp->part_num, cbdata.loaded, cbdata.err);
+	free(cbdata.data);
+	cbdata.dsize = 0;
 
 	if (log_print_level > 0)
 		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
@@ -853,89 +968,6 @@ static int read_maps(F_LO_PART_t *lp)
 			return rc;
 		}
 	}
-#if 0
-	/* Scan this slab map partition and set the devices extents bitmaps, etc. */
-	F_ITER_t *sm_iter;
-	LOG(LOG_DBG, "%s[%d]: scanning slabmap", lo->info.name, lp->part_num);
-	sm_iter = f_map_new_iter(lo->slabmap, F_NO_CONDITION, 0);
-	sm_iter = f_map_seek_iter(sm_iter, 0);
-	assert(sm_iter);
-	for_each_iter(sm_iter) {
-		F_SLABMAP_ENTRY_t *sme;
-		unsigned int e = sm_iter->entry;
-		f_stripe_t s0 = slab_to_stripe0(lo, e);;
-		int n;
-
-		rc = EINVAL;
-		sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, sm_iter->entry);
-		if (!sme) {
-			LOG(LOG_ERR, "%s[%d]: error on SM entry %u", lo->info.name, lp->part_num, e);
-			goto _ret;
-		}
-	
-		/* Check slab map entry CRC */
-		if (f_crc4_sm_chk(&sme->slab_rec)) {
-			LOG(LOG_ERR, "%s[%d]: slab %u CRC error", lo->info.name, lp->part_num, e);
-			goto _ret;
-		}
-
-		if (sme->slab_rec.mapped) {
-			set_slab_allocated(lp, e);
-		} else { /* Unmapped slabs are considered in sync */
-			set_slab_in_sync(lp, e);
-			lp->sync_count++;
-			continue;
-		} 
-		
-		if (sme->slab_rec.stripe_0 != s0) {
-			LOG(LOG_ERR, "%s[%d]: slab %u s0 mismatch", lo->info.name, lp->part_num, e);
-			goto _ret;
-		}
-	
-		if (!sme->slab_rec.failed && !sme->slab_rec.degraded) {
-			set_slab_in_sync(lp, e);
-			lp->sync_count++;
-		} else if (sme->slab_rec.degraded) {
-			atomic_inc(&lp->degraded_slabs);
-		}  else if (sme->slab_rec.failed) {
-			atomic_inc(&lp->failed_slabs);	
-		}
-
-		/* Process this slab map entry */
-		for (n = 0;  n < lo->info.chunks; n++) {
-			F_POOL_DEV_t *pdev = f_find_pdev(sme->extent_rec[n].media_id);	
-			
-			if (!pdev) {
-				LOG(LOG_ERR, "%s[%d]: slab %u ext %u invalid dev idx %u", 
-					lo->info.name, lp->part_num, e, n, sme->extent_rec[n].media_id);
-				goto _ret;
-			}
-
-			if (f_crc4_fast_chk(&sme->extent_rec[n], sizeof(F_EXTENT_ENTRY_t))) {
-				LOG(LOG_ERR, "%s[%d]: slab %u ext %u CRC err", lo->info.name, lp->part_num, e, n);
-				goto _ret;
-			}
-
-			if (DevMissing(pdev->sha)) {
-				LOG(LOG_INFO, "%s[%d]: missing dev in slab %u ext %u", 
-					lo->info.name, lp->part_num, e, n); 
-				atomic_inc(&lp->missing_dev_slabs);
-			}
-
-			/* All chunk extents have to be mapped */
-			if (!sme->extent_rec[n].mapped) {
-				LOG(LOG_ERR, "%s[%d]: slab %u ext %u not mapped", lo->info.name, lp->part_num, e, n);
-				goto _ret;
-			}
-				
-			/* Populate device extent map */
-		}
-	}
-	return 0;
-
-_ret:
-	if (sm_iter ) {f_map_free_iter(sm_iter); sm_iter = NULL;}
-#endif
 	return rc;
 }
 	
@@ -1006,8 +1038,8 @@ static int cmp_pdi_by_usage(const void *a, const void *b)
 {
 	F_POOLDEV_INDEX_t *pdia = (F_POOLDEV_INDEX_t *)a;
 	F_POOLDEV_INDEX_t *pdib = (F_POOLDEV_INDEX_t *)b;
-	unsigned int ua = pdia->pool_index == F_PDI_NONE ? UINT_MAX : pdia->pl_extents_used;
-	unsigned int ub = pdib->pool_index == F_PDI_NONE ? UINT_MAX : pdib->pl_extents_used;
+	unsigned int ua = pdia->pool_index == F_PDI_NONE ? UINT_MAX : pdia->prt_extents_used;
+	unsigned int ub = pdib->pool_index == F_PDI_NONE ? UINT_MAX : pdib->prt_extents_used;
 	if (ua > ub)
 		return 1;
 	else if (ua == ub)
@@ -1029,7 +1061,7 @@ static int pdi_matrix_init(F_PDI_MATRIX_t *mx)
 			pdi->idx_ag = i;
 			pdi->idx_dev = j;
 			pdi->pool_index = F_PDI_NONE;
-			pdi->pl_extents_used = 0;
+			pdi->prt_extents_used = 0;
 		}
 	}
 
@@ -1040,6 +1072,20 @@ static F_POOLDEV_INDEX_t *pdi_matrix_lookup(F_PDI_MATRIX_t *mx, size_t row, size
 {
 	ASSERT(mx->addr && col < mx->cols && row < mx->rows);
 	return mx->addr + (row * mx->cols + col);
+}
+
+/* Lookup by pool index in a particular matrix row */
+static F_POOLDEV_INDEX_t *pdi_matrix_lookup_by_id(F_PDI_MATRIX_t *mx, size_t row, unsigned int id)
+{
+	F_POOLDEV_INDEX_t *pdi;
+	int i;
+
+	pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[row];
+	for (i = 0; i < mx->cols; i++, pdi++) {
+		if (pdi->pool_index == id)
+			return pdi;
+	}
+	return NULL;
 }
 
 /* Sort the matrix rows by extents_used for every row */
@@ -1062,7 +1108,7 @@ static void pdi_matrix_resort(F_PDI_MATRIX_t *mx, size_t row)
 	pdi0 = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[row];
 	for (i = 1; i < mx->cols; i++) {
 		pdi = pdi0 + i;
-		if (pdi->pl_extents_used >= pdi0->pl_extents_used || pdi->pool_index == F_PDI_NONE)
+		if (pdi->prt_extents_used >= pdi0->prt_extents_used || pdi->pool_index == F_PDI_NONE)
 			break;
 	}
 	/* i now reflects the position to move 0 element */
@@ -1085,6 +1131,7 @@ static void pdi_matrix_resort(F_PDI_MATRIX_t *mx, size_t row)
  */
 static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX_t *devlist, unsigned int *size)
 {
+	F_POOL_t *pool = f_get_pool();
 	F_POOLDEV_INDEX_t *pdi, *pdi0;
 	F_POOLDEV_INDEX_t *col0_list = (F_POOLDEV_INDEX_t *) alloca(sizeof(F_POOLDEV_INDEX_t)*mx->rows);
 	unsigned int i;
@@ -1098,7 +1145,7 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 	for (i = 0, pdi0 = col0_list; i < mx->rows && i < *size; i++) {
 		F_POOL_DEV_t *pdev;
 		pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[i];
-		pdev = f_find_pdev(pdi->pool_index);
+		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
 		if (!pdev || DevFailed(pdev->sha) || DevMissing(pdev->sha) || DevDisabled(pdev->sha))
 			continue;
 		memcpy(pdi0, pdi, sizeof(F_POOLDEV_INDEX_t));
@@ -1134,6 +1181,7 @@ static int create_lp_dev_matrix(F_LO_PART_t *lp)
 		lp->dmx->cols   = pool->ag_devs;
 		lp->dmx->init   = pdi_matrix_init;
 		lp->dmx->lookup = pdi_matrix_lookup;
+		lp->dmx->lookup_by_id = pdi_matrix_lookup_by_id;
 		lp->dmx->sort   = pdi_matrix_sort;
 		lp->dmx->resort = pdi_matrix_resort;
 		lp->dmx->gen_devlist = pdi_matrix_gen_devlist_across_AGs;
@@ -1151,7 +1199,7 @@ static int create_lp_dev_matrix(F_LO_PART_t *lp)
 		pdi = &lo->devlist[i];
 		mpdi = lp->dmx->lookup(lp->dmx, pdi->idx_ag, pdi->idx_dev);
 		mpdi->pool_index = pdi->pool_index;
-		mpdi->pl_extents_used = pdi->pl_extents_used;
+		mpdi->prt_extents_used = pdi->prt_extents_used;
 	}
 
 	lp->dmx->sort(lp->dmx);
@@ -1174,7 +1222,7 @@ static inline int alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_POOL_t *pool = lo->pool;
-	F_POOL_DEV_t *pdev = f_find_pdev(ext->media_id);
+	F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, ext->media_id);
 	F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, ext->media_id);
 	F_POOLDEV_INDEX_t *mpdi;
 //	int trg_ix;
@@ -1187,6 +1235,7 @@ static inline int alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 	ASSERT(sha_off < pool->pds_lfa->global_size);
 
 	mpdi = lp->dmx->lookup(lp->dmx, pdi->idx_ag, 0);
+	ASSERT(pdi->pool_index == mpdi->pool_index);
 
 	/*
 	 * We currently don't allow allocation on missing devices
@@ -1220,14 +1269,14 @@ static inline int alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 	}
 
 	/* Extents used in that partition */
-	pdi->pl_extents_used++;
-	mpdi->pl_extents_used = pdi->pl_extents_used;
+	pdi->prt_extents_used++;
+	mpdi->prt_extents_used = pdi->prt_extents_used;
 
 	/* Re-sort the matrix row we picked the device from */ 
 	lp->dmx->resort(lp->dmx, pdev->idx_ag);
 
 	LOG(LOG_DBG2, "%s[%d]: extent %u allocated on %d, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
-		extent, ext->media_id, pdev->sha->extents_used, pdi->pl_extents_used, pdev->extent_count);
+		extent, ext->media_id, pdev->sha->extents_used, pdi->prt_extents_used, pdev->extent_count);
 	return extent;
 }
 
@@ -1239,8 +1288,9 @@ static inline void release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_POOL_t *pool = lo->pool;
-	F_POOL_DEV_t *pdev = f_find_pdev(ext->media_id);
+	F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, ext->media_id);
 	F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, ext->media_id);
+	F_POOLDEV_INDEX_t *mpdi;
 //	int trg_ix;
 	int  rc;
 	off_t off, sha_off;
@@ -1249,6 +1299,9 @@ static inline void release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 	ASSERT(pdev->sha);
 	sha_off = (void *)pdev->sha - pool->pds_lfa->global;
 	ASSERT(sha_off < pool->pds_lfa->global_size);
+
+	mpdi = lp->dmx->lookup_by_id(lp->dmx, pdi->idx_ag, pdi->pool_index);
+	ASSERT(mpdi);
 
 	/* Decerement the missing device slab count if that was a missing device */
 	if (DevMissing(pdev->sha))
@@ -1281,13 +1334,14 @@ static inline void release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 	}
 
 	/* Extents used in that partition */
-	pdi->pl_extents_used--;
+	pdi->prt_extents_used--;
+	mpdi->prt_extents_used = pdi->prt_extents_used;
 
 	/* Re-sort the matrix row we picked the device from */ 
 	lp->dmx->resort(lp->dmx, pdev->idx_ag);
 
 	LOG(LOG_DBG2, "%s[%d]: extent %u released on %d, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
-		ext->extent, ext->media_id, pdev->sha->extents_used, pdi->pl_extents_used, pdev->extent_count);
+		ext->extent, ext->media_id, pdev->sha->extents_used, pdi->prt_extents_used, pdev->extent_count);
 }
 
 /* 
@@ -2190,7 +2244,7 @@ got_stripe:
 	}
 
 
-	LOG(LOG_ERR,"%s[%d]: stripe %lu slab %u w %u", lo->info.name, lp->part_num, best_se->stripe, best_se->slab, best_w);
+	LOG(LOG_DBG3,"%s[%d]: stripe %lu slab %u w %u", lo->info.name, lp->part_num, best_se->stripe, best_se->slab, best_w);
 	free_stripe_entry(best_se);
 
 	return 0;
@@ -2240,9 +2294,44 @@ err:
 	return rc;
 }
 
+ /* ms to timespec */
+static inline void  msec2timespec(struct timespec *ts,uint64_t msec)
+{
+	ts->tv_sec = msec / 1000;
+	ts->tv_nsec = (msec % 1000U) * 1000000U;
+}
+
+/*
+ * No stripes allocated, wait for the allocator to signal that stripes have been allocated.
+ * Returns -ETIMEDOUT if no signal was received during 3 allocator runs
+ */
+static inline int wait_stripes(F_LO_PART_t *lp)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	struct timespec to, wait;
+	long wintl = 3 * lo->thread_run_intl;
+	int rc;
+	
+	msec2timespec(&wait, wintl); /* ms to timespec */
+
+	LOG(LOG_DBG, "%s[%d]: waiting %ld sec for stripes to be allocated", 
+		lo->info.name, lp->part_num, wait.tv_sec);
+	clock_gettime(CLOCK_REALTIME, &to);
+	timespecadd(&to, &wait);
+
+	pthread_mutex_lock(&lp->stripes_wait_lock);
+	rc = pthread_cond_timedwait(&lp->stripes_wait_cond, &lp->stripes_wait_lock, &to);
+	pthread_mutex_unlock(&lp->stripes_wait_lock);
+
+	return -rc;
+}
+
 /*
  * Get a set of preallocated stripes.
- * ss->count should be set by the caller
+ * ss->count should be set by the caller but could be adjusted down if there is not enough stripes.
+ * It is expected that the caller will retry the call for the remainder.
+ * If no stripes available but no out_of_space condition exists will wait for stripes to be allocated.
+ * Returns # of stripes allocated or error
  */
 int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *ss)
 {
@@ -2252,6 +2341,7 @@ int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *s
 	ASSERT(lp);
 	atomic_inc(lo->stats + FL_STRIPE_GET_REQ);
 
+_retry:
 	pthread_spin_lock(&lp->alloc_lock);
 	if (atomic_read(&lp->prealloced_stripes) < ss->count) {
 		pthread_spin_unlock(&lp->alloc_lock);
@@ -2267,7 +2357,14 @@ int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *s
 			
 		pthread_cond_signal(&lp->a_thread_cond);
 		atomic_inc(lo->stats + FL_STRIPE_GET_ERR);
-		return -ENOMEM;
+
+		if (!atomic_read(&lp->prealloced_stripes)) {
+			rc = wait_stripes(lp);
+			if (rc == -ETIMEDOUT) return -ENOMEM;
+		} else { /* Return what we have for now */
+			ss->count = atomic_read(&lp->prealloced_stripes);
+		}
+		goto _retry;
 	}
 
 	for (i = 0; i < ss->count; i++) {
@@ -2275,16 +2372,16 @@ int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *s
 
 		ss->stripes[i] = F_STRIPE_INVALID;
 		rc = __get_stripe(lp, match_stripe, &stripe);
-		if (rc) goto err;
+		if (rc) goto _err;
 
 		ss->stripes[i] = match_stripe = stripe;
 	}
 	pthread_spin_unlock(&lp->alloc_lock);
 	atomic_inc(lo->stats + FL_STRIPE_GET);
 
-	return 0;
+	return i;
 
-err:
+_err:
 	pthread_spin_unlock(&lp->alloc_lock);
 	atomic_inc(lo->stats + FL_STRIPE_GET_ERR);
 	while (i--) {
@@ -2421,6 +2518,7 @@ static int process_degraded_slabs(F_LO_PART_t *lp)
 /* A placeholder for a more accurate calculation */
 static unsigned int get_layout_slab_count(F_LAYOUT_t *lo)
 {
+	F_POOL_t *pool = lo->pool;
 	F_POOL_DEV_t *pdev;
 	F_POOLDEV_INDEX_t *pdi;
 	unsigned long pexts = 0;
@@ -2428,7 +2526,7 @@ static unsigned int get_layout_slab_count(F_LAYOUT_t *lo)
 
 	for (i = 0; i < lo->devlist_sz; i++) {
 		pdi = &lo->devlist[i];
-		pdev = f_find_pdev(pdi->pool_index);	
+		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);	
 		pexts += pdev->extent_count;
 	}
 	
@@ -2448,13 +2546,14 @@ static int fail_pdev(F_LAYOUT_t *lo, int pool_index)
  */
 static void check_layout_devices(F_LAYOUT_t *lo)
 {
+	F_POOL_t *pool = lo->pool;
 	F_POOL_DEV_t *pdev;
 	F_POOLDEV_INDEX_t *pdi;
 	int i;
 
 	for (i = 0; i < lo->devlist_sz; i++) {
 		pdi = &lo->devlist[i];
-		pdev = f_find_pdev(pdi->pool_index);
+		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
 		if (pdev && DevFailed(pdev->sha))
 			fail_pdev(lo, pdi->pool_index);
 	}
@@ -2469,6 +2568,8 @@ static inline void layout_partition_free(F_LO_PART_t *lp)
 	release_lp_dev_matrix(lp);
 	pthread_mutex_destroy(&lp->a_thread_lock);
 	pthread_cond_destroy(&lp->a_thread_cond);
+	pthread_mutex_destroy(&lp->stripes_wait_lock);
+	pthread_cond_destroy(&lp->stripes_wait_cond);
 	pthread_spin_destroy(&lp->releaseq_lock);
 	if (lp->slab_usage) free(lp->slab_usage);
 	if (lp->slab_bmap) free(lp->slab_bmap);
@@ -2489,6 +2590,8 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	rcu_register_thread();
 	if (pthread_mutex_init(&lp->a_thread_lock, NULL)) goto _err;
 	if (pthread_cond_init(&lp->a_thread_cond, NULL)) goto _err;
+	if (pthread_mutex_init(&lp->stripes_wait_lock, NULL)) goto _err;
+	if (pthread_cond_init(&lp->stripes_wait_cond, NULL)) goto _err;
 	if (pthread_spin_init(&lp->releaseq_lock, PTHREAD_PROCESS_PRIVATE)) goto _err;
 	INIT_LIST_HEAD(&lp->releaseq);
 	atomic_set(&lp->allocated_slabs, 0);
@@ -2521,10 +2624,6 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	cv_bmap_size = DIV_CEIL(lp->stripe_count, BITS_PER_LONG) * sizeof(*lp->cv_bmap);
 	lp->cv_bmap = calloc(1, cv_bmap_size);
 	if (!lp->slab_bmap) goto _err;
-
-	if (create_lp_dev_matrix(lp)) goto _err;
-
-	srand(pool->mynode.ionode_idx); /* seed rand with my ionode idx */
 
 	LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes", 
 		lo->info.name, lp->part_num, lp->slab_count, lp->stripe_count);
@@ -2700,9 +2799,14 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 		}
 	}
 
-	if (log_print_level > 0)
+	/* Signal threads waiting on stripes */
+	if (allocated) 
+		pthread_cond_signal(&lp->stripes_wait_cond);
+		
+	if (log_print_level > 0) {
+		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 		f_print_cv(dbg_stream, lo->claimvec);
-
+	}
 _ret:
 	return rc;
 }
@@ -2712,8 +2816,8 @@ _ret:
  */
 static void *f_allocator_thread(void *ctx)
 {
-	F_POOL_t *pool = f_get_pool();
 	F_LAYOUT_t *lo = (F_LAYOUT_t *)ctx;
+	F_POOL_t *pool = lo->pool;
 	F_LO_PART_t *lp = lo->lp;
 	int *rcbuf;
 	int thr_cnt, thr_rank, i;
@@ -2738,6 +2842,8 @@ static void *f_allocator_thread(void *ctx)
 	/* Load and process this partition of the slab map and the claim vector */
 	if (!rc) rc = read_maps(lp);
 
+	if (!rc) rc = create_lp_dev_matrix(lp);
+
 	/* Check if all layout devices are present and healthy */
 	check_layout_devices(lo);
 
@@ -2760,6 +2866,12 @@ static void *f_allocator_thread(void *ctx)
 		}
 	}
 	
+	/* Load global PDS LFA */
+	if (!rc) {
+		rc = f_lfa_gget(pool->pds_lfa->global_abd, 0, pool->pds_lfa->global_size);
+		if (rc) LOG(LOG_WARN, "%s[%d]: error %d loading global PDS LFA", lo->info.name, lp->part_num, rc);
+	}
+
 	/* All is well, signal the parent thread */
 	if (!rc) {
 		pthread_mutex_lock(&lp->lock_ready);
@@ -2773,10 +2885,7 @@ static void *f_allocator_thread(void *ctx)
 	while (!LayoutQuit(lo) && !rc) {
 		struct timespec to, wait;
 		
-		 /* ms to timespec */
-		wait.tv_sec = lo->thread_run_intl / 1000;
-		wait.tv_nsec = (lo->thread_run_intl % 1000U) * 1000000U;
-
+		msec2timespec(&wait, lo->thread_run_intl); /* ms to timespec */
 		clock_gettime(CLOCK_REALTIME, &to);
 		timespecadd(&to, &wait);
 
