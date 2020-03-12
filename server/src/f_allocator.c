@@ -73,9 +73,9 @@ static int create_pds_lfa(F_POOL_t *pool)
 	memset(pool->pds_lfa->global, 0, pool->pds_lfa->global_size);
 
 	ioi = pool->ionodes;
-	for (i = 0, si = 0; i < pool->ionode_count; i++, ioi++, si++) {
+	for (i = 0, si = 0; i < pool->ionode_count; i++, ioi++) {
 		int j;		
-		for (j = 0; j < ioi->fam_devs; j++, si++) {
+		for (j = 0; j < ioi->fam_devs; j++) {
 			F_POOL_DEV_t *pdev;
 			for_each_pool_dev(pool, pdev) {
 				if (pdev->ionode_idx == i && pdev->idx_in_ion == j) {
@@ -85,6 +85,7 @@ static int create_pds_lfa(F_POOL_t *pool)
 					memcpy(g_sha, sha, sizeof(F_PDEV_SHA_t));
 					pdev->sha = g_sha;
 					free(sha);
+					si++;
 					break;
 				}
 			}
@@ -123,7 +124,7 @@ static int create_pds_lfa(F_POOL_t *pool)
 			ionode_lst[i].name, ionode_lst[i].service, ionode_lst[i].bsz); 
 	}
 
-	rc = f_lfa_attach(pool->pds_lfa->lfa, F_LFA_PDS_KEY, ionode_lst, 1, 
+	rc = f_lfa_attach(pool->pds_lfa->lfa, F_LFA_PDS_KEY, ionode_lst, i, 
 		pool->pds_lfa->global_size, (void **)&pool->pds_lfa->global, &pool->pds_lfa->global_abd);
 	if (rc) {
 		LOG(LOG_ERR, "error %d attaching pds LFA", rc);
@@ -1256,7 +1257,8 @@ static inline int alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 //	extent = f_lfa_bfcs(pool->pds_lfa->global_abd, trg_ix, off, boff, pdev->extent_count);
 	extent = f_lfa_gbfcs(pool->pds_lfa->global_abd, off, boff, pdev->extent_count);
 	if (extent < 0) {
-		LOG(LOG_WARN, "%s[%d]: allocation failed on device id %d", lo->info.name, lp->part_num, ext->media_id);
+		LOG(LOG_WARN, "%s[%d]: allocation failed on device id %d, err %d", 
+			lo->info.name, lp->part_num, ext->media_id, extent);
 		return extent;
 	}
 
@@ -2858,6 +2860,7 @@ static void *f_allocator_thread(void *ctx)
 
 	for (i = 0; i < thr_cnt; i++) {
 		/* Bring down all allocators if any of them failed */
+		LOG(LOG_DBG, "%s[%d]: loaded slab map part %d rc: %d", lo->info.name, lp->part_num, i, rcbuf[i]);
 		if (rcbuf[i] !=0) {
 			if (!thr_rank) LOG(LOG_ERR, "%s[%d]: error %d loading slab map part %d", 
 				lo->info.name, lp->part_num, rcbuf[i], i);
