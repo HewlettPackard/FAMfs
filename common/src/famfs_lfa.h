@@ -39,6 +39,10 @@ typedef struct f_lfa_slist_ {
     off_t   bof;
 } F_LFA_SLIST_t;
 
+#ifndef min
+#define min(a,b) ((a) <= (b) ? (a) : (b))
+#endif
+
 //
 // Atomic (data) Blob Descriptor
 //

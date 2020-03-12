@@ -964,12 +964,20 @@ int f_lfa_put(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
 }
 
 int f_lfa_gput(F_LFA_ABD_t *abd, off_t goff, size_t size) {
-    int ix;
-    ssize_t off = get_local_off(abd, goff, &ix);
+    int ix, rc = 0;
+    ssize_t tx_sz, off = get_local_off(abd, goff, &ix);
     if (off < 0 || !abd->in_buf)
         return -EINVAL;
-
-    return f_lfa_put(abd, ix, off, size);
+    for (; ix < abd->nsrv; ix++) {
+        tx_sz = min(abd->slist[ix].bsz - off, size);
+        ON_FIERR(rc = f_lfa_put(abd, ix, off, tx_sz), break, "lfa put %s\n", abd->slist[ix].name);
+        size -= tx_sz;
+        if (!size)
+            break;
+        off = 0;
+        
+    }
+    return rc;
 }
 
 int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
@@ -997,12 +1005,20 @@ int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
 }
 
 int f_lfa_gget(F_LFA_ABD_t *abd, off_t goff, size_t size) {
-    int ix;
-    ssize_t off = get_local_off(abd, goff, &ix);
+    int ix, rc = 0;
+    ssize_t tx_sz, off = get_local_off(abd, goff, &ix);
     if (off < 0 || !abd->in_buf)
         return -EINVAL;
-
-    return f_lfa_get(abd, ix, off, size);
+    for (; ix < abd->nsrv; ix++) {
+        tx_sz = min(abd->slist[ix].bsz - off, size);
+        ON_FIERR(rc = f_lfa_get(abd, ix, off, tx_sz), break, "lfa get %s\n", abd->slist[ix].name);
+        size -= tx_sz;
+        if (!size)
+            break;
+        off = 0;
+        
+    }
+    return rc;
 }
 
 
