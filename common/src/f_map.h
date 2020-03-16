@@ -13,6 +13,7 @@
 
 #include "famfs_global.h"
 #include "famfs_maps.h"
+#include "list.h"
 
 #include <urcu-qsbr.h>
 //#include <urcu-call-rcu.h>
@@ -172,8 +173,8 @@ typedef struct f_map_ {
 	    unsigned int	shm:2;		/* memory model(F_MAPMEM_t): private/shared */
 	};
     };
-    /* Shared maps only: supermap (shm:F_MAPMEM_SHARED_S) pointers to SHMEM */
-    struct f_shmap_sb_		*shmap_sb;	/* shared map superblock */
+    /* Shared map only */
+    struct f_map_sb_		*shm_sb;	/* shared map superblock */
 } F_MAP_t;
 
 #define f_map_is_partitioned(map_p)	(map_p->parts > 1U)
@@ -196,14 +197,13 @@ typedef struct f_bosl_ {
     pthread_rwlock_t		rwlock;		/* protect iterators on BoS deletion */
     pthread_spinlock_t		dirty_lock;	/* dirty bitmap lock */
     unsigned long		dirty[F_BOSL_DIRTY_SZ];	/* dirty bitmap */
-#if 0
     union {
 	uint32_t		_flags;
 	struct {
-	    unsigned int	loaded:1;	/* 1: loaded from persistent storage */
+	    unsigned int	shm:2;		/* map memory model */
+	    //unsigned int	loaded:1;	/* 1: loaded from persistent storage */
 	};
     };
-#endif
     atomic_t			claimed;	/* atomic count of being used by iterators */
 } F_BOSL_t;
 
@@ -228,29 +228,63 @@ typedef enum {
 #define f_shmap_reader(m) ((m)->shm == F_MAPMEM_SHARED_RD)
 
 /*
- * Superblock of shared map: the writer is the owner of this structure.
- * Super map has one or more super BoS. Each super BoS (SBoS) contains the shared
+ * Supermap has one or more super BoS. Each super BoS (SBoS) contains the shared
  * map's BoSses as own PUs, so its PU size is equal to the shared map BoS page size
  * and the number of PUs is limited to F_MAP_MAX_BOS_PUS (512).
+ * Supermap describes the collection of shared memory regions,
+ * one per SBoS.
+ * Supermap can only grow and total_bosl keeps record of total number
+ * of allocated BoSses i.e. total_bosl followes map->nr_bosl.
+ * That means it gets incremented on every new BoS allocation in shared map.
+ * On reader side f_map_get_bosl() will check total_bosl if no BoS found and,
+ * if total_bosl has changed, this function will add new Bos[ses] to map Judy array.
+ */
+
+/*
+ * Superblock of shared map - private structure of the map writer or
+ * reader process. This structure is intended for single thread use.
+ */
+typedef struct f_map_sb_ {
+    struct f_shmap_sb_	*shmap_sb;	/* shared map superblock in SHMEM */
+    struct list_head	shmap_data;	/* list of SBoSses */
+    F_MAP_t		*super_map;	/* supermap */
+    int			id;		/* map id (if registered) or zero */
+    int			shm;		/* shared map 'shm' memory model */
+    char		*name;		/* SHMEM SB file name */
+} F_MAP_SB_t;
+
+/* Superblock of shared map - in shared memory.
+ * The writer is the owner of this structure, protected by R/W lock.
+ * Readers should hold the lock while reading SB and
+ * should never dereference super_bosl->bosses.
  */
 #define F_SHMAP_NAME_PREFIX	"shm_sb"
 #define F_SHMAP_NAME_LEN	ROUND_UP(FVAR_MONIKER_MAX+8, 8)
 typedef struct f_shmap_sb_ {
-    char		name[F_SHMAP_NAME_LEN];	/* SHMEM file name */
-//    F_MAP_t		shmap;		/* F_MAP_t in shared memory */
-    pthread_rwlock_t	sb_rwlock;	/* "add new SB" mutual exclusion */
+    char		name[F_SHMAP_NAME_LEN];	/* SHMEM SB file name */
+    pthread_rwlock_t	sb_rwlock;	/* SB mutual exclusion */
+    uint64_t		total_bosl;	/* total number of BoSses in supermap */
     F_MAP_t		super_map;	/* collection of super BoSses */
 } __attribute__((aligned(PAGE_SIZE))) F_SHMAP_SB_t;
 
-#define F_SHMAP_DATA_NAME	"shmdat"
+#define F_SHMAP_DATA_NAME	"shm_"
 typedef struct f_shmap_data_ {
-    char		name[F_SHMAP_NAME_LEN];	/* SHMEM file name */
+    char		name[F_SHMAP_NAME_LEN];	/* SHMEM data file name */
     F_BOSL_t		super_bosl;	/* super BoS */
     uint64_t __attribute__((aligned(PAGE_SIZE)))
 			e0[F_MAP_MAX_BOS_PUS];
     unsigned long	pages[];	/* BoS data pages */
 } __attribute__((aligned(PAGE_SIZE))) F_SHMAP_DATA_t;
-#define F_SHMAP_DATA_SZ(bosl_sz)	(sizeof(F_SHMAP_DATA_t)+(bosl_sz)*F_MAP_MAX_BOS_PUS)
+#define F_SHMAP_SZ(bosl_sz)		((bosl_sz)*F_MAP_MAX_BOS_PUS)
+#define F_SHMAP_DATA_SZ(bosl_sz)	(sizeof(F_SHMAP_DATA_t)+F_SHMAP_SZ(bosl_sz))
+
+/* SBoS list entry */
+typedef struct f_map_sboss_ {
+    struct list_head	node;		/* SBoS node in shmap_data list */
+    F_SHMAP_DATA_t	*data;		/* SBoS data page in SHMEM */
+    char		*dname;		/* SHMEM data file name */
+    size_t		size;
+} F_MAP_SBOSS_t;
 
 
 /*
@@ -329,8 +363,6 @@ F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg
 void f_map_fprint_desc(FILE *f, F_MAP_t *map);
 /* Share the map in SHMEM */
 int f_map_shm_attach(F_MAP_t *map, const char* name, F_MAPMEM_t rw);
-/* Unmap the shared map (optional; f_map_exit() detaches the map */
-int f_map_shm_detach(F_MAP_t *map);
 
 /*
  * Persistent map backend: the KV store
@@ -369,7 +401,10 @@ int f_map_put_bosl(F_BOSL_t *bosl);
 int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl); /* remove all BoS entries from online map */
 void f_map_mark_dirty_bosl(F_BOSL_t *bosl, uint64_t entry); /* mark KV dirty in BoS PU bitmap */
 uint64_t f_map_max_bosl(F_MAP_t *map); /* max BoS number */
-static inline F_SHMAP_SB_t *f_map_get_sb(F_MAP_t *map) { return map->shmap_sb; }
+static inline F_SHMAP_SB_t *f_map_get_sb(F_MAP_t *map)
+{
+    return (map->shm_sb)?(map->shm_sb->shmap_sb):NULL;
+}
 
 /* Check if the entry belongs to this BoS */
 static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)

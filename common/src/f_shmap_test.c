@@ -21,7 +21,7 @@
 #define BOS_PAGE_MAX	4	/* max BoS page size, in kernel pages */
 #define MEM_KEY_BITS	64	/* in-memory maps: max global entry bits */
 
-#define NR_READERS 3	/* number of readers */
+#define NR_READERS	3	/* number of readers */
 #define NR_SPAWNS (NR_READERS+1)
 
 #define e_to_bosl(bosl, e)	(e - bosl->entry0)
@@ -122,7 +122,12 @@ int main(int argc, char *argv[])
   MPI_Comm_get_parent(&parentcomm);
   if (parentcomm == MPI_COMM_NULL) {
     /* Create MPI processes: NR_READERS plus one writer */
+#if 0
+    char *av[] = {"-x", "gdb", NULL};
+    rc = MPI_Comm_spawn("/usr/bin/gdb", av, np,
+#else
     rc = MPI_Comm_spawn("./f_shmap_test", MPI_ARGV_NULL, np,
+#endif
 			MPI_INFO_NULL, 0,
 			MPI_COMM_WORLD, &intercomm, errcodes /* MPI_ERRCODES_IGNORE */);
     if (rc != MPI_SUCCESS) {
@@ -162,7 +167,7 @@ int main(int argc, char *argv[])
      */
     MPI_Barrier(MPI_COMM_WORLD);
     tg = 1;
-    msg0("Running group %d tests: bitmaps and bifold bitmaps\n", tg);
+    msg0("Running group %d tests: bitmaps and bifold bitmaps", tg);
 
     rcu_register_thread();
     /* For dofferent BoS page size */
@@ -174,11 +179,10 @@ int main(int argc, char *argv[])
 	    t = 0; /* create bifold map */
 	    m = f_map_init(F_MAPTYPE_BITMAP, e_sz, (pages==1)?0:page_sz,
 			   F_MAPLOCKING_DEFAULT);
-	    if (!m || m->geometry.pu_factor != F_MAP_KEY_FACTOR_MIN) goto err0;
-	    if (f_map_is_partitioned(m) || f_map_is_structured(m)) goto err0;
-	    if (f_map_is_bbitmap(m) != (e_sz == 2)) goto err0;
-	    if (m->type != F_MAPTYPE_BITMAP) goto err0;
-	    if (e_sz != m->geometry.entry_sz) goto err1;
+	    if (!m) goto err0;
+	    rc = f_map_shm_attach(m, NULL,
+				  rank? F_MAPMEM_SHARED_RD : F_MAPMEM_SHARED_WR);
+	    if (rc) goto err0;
 	    /* check BoS size */
 	    if (m->bosl_entries != (unsigned int)(m->bosl_sz*8/e_sz)) goto err1;
 
@@ -232,7 +236,8 @@ int main(int argc, char *argv[])
 
 		t = 6; /* Iterate the map */
 		it = bitmap_new_iter(m, (e_sz==1)?laminated:cv_laminated);
-		if (!f_map_seek_iter(it, bosl->entry0)) goto err2; /* ENOMEM */
+		if (!rank &&
+		    !f_map_seek_iter(it, bosl->entry0)) goto err2; /* ENOMEM */
 		/* @e? */
 		if (f_map_check_iter(it)) {
 			if (e != bosl->entry0) goto err3;
@@ -257,7 +262,17 @@ int main(int argc, char *argv[])
 		if ((p = f_map_get_p(m, 0))) goto err2;
 	    }
 	    t = 10; /* map exit: must survive */
-	    f_map_exit(m); m = NULL; bosl = NULL; p = NULL;
+	    if (rank>0) {
+		f_map_exit(m);
+		//msg("RD map_exit");
+	    }
+	    MPI_Barrier(MPI_COMM_WORLD);
+	    if (rank==0) {
+		f_map_exit(m);
+		//msg("WR map_exit");
+	    }
+	    MPI_Barrier(MPI_COMM_WORLD);
+	    m = NULL; bosl = NULL; p = NULL;
 	    //rcu_quiescent_state();
 	}
     }
@@ -267,7 +282,7 @@ int main(int argc, char *argv[])
      */
     MPI_Barrier(MPI_COMM_WORLD);
     tg = 2;
-    msg0("Running group %d tests: structured map in SHMEM\n", tg);
+    msg0("Running group %d tests: structured map in SHMEM", tg);
 
     /* For dofferent BoS page size */
     for (pages = 1; pages < BOS_PAGE_MAX; pages++) {
@@ -368,13 +383,21 @@ int main(int argc, char *argv[])
 		if (m->nr_bosl) goto err2;
 	    }
 	    t = 13; /* Must survive map exit */
-	    rc = f_map_shm_detach(m);
-	    if (rc) goto err0;
-	    f_map_exit(m); m = NULL; bosl = NULL; p = NULL;
+	    if (rank>0) {
+		f_map_exit(m);
+		//msg("RD map_exit");
+	    }
+	    MPI_Barrier(MPI_COMM_WORLD);
+	    if (rank==0) {
+		f_map_exit(m);
+		//msg("WR map_exit");
+	    }
+	    MPI_Barrier(MPI_COMM_WORLD);
+	    m = NULL; bosl = NULL; p = NULL;
 	}
     }
     rcu_unregister_thread();
-    msg("SUCCESS\n");
+    msg("SUCCESS");
 
   }
   fflush(stdout);
@@ -382,26 +405,26 @@ int main(int argc, char *argv[])
   return 0;
 
 err3:
-    msg("  Iterator @%s%lu BoS#%lu PU:%lu p:%p\n",
+    msg("  Iterator @%s%lu BoS#%lu PU:%lu p:%p",
 	f_map_iter_depleted(it)?" END ":"", it->entry,
 	it->bosl->entry0/it->map->bosl_entries,
 	(it->entry - it->bosl->entry0)/(1U << it->map->geometry.pu_factor),
 	(f_map_is_structured(it->map)?NULL:it->word_p));
 err2:
-    msg("  BoS #%lu starts @%lu page:%p p:%p e:%lu @%lu PU:%lu\n",
+    msg("  BoS #%lu starts @%lu page:%p p:%p e:%lu @%lu PU:%lu",
 	e/m->bosl_entries, bosl->entry0,
 	bosl->page, p,
 	e, (e - bosl->entry0),
 	(e - bosl->entry0)/(1U << m->geometry.pu_factor));
 err1:
     f_map_fprint_desc(stdout, m);
-    msg("/n  Test variables: var=%d ul=%lu ui=%u\n",
+    msg("  Test variables: var=%d ul=%lu ui=%u",
 	v, ul, ui);
 err0:
-    msg("/n  Test params: entry_size:%u, %u pages per BoS\n", e_sz, pages);
+    msg("  Test params: entry_size:%u, %u pages per BoS", e_sz, pages);
     if (tg==2)
-	msg("  slab map has %d extent(s)\n", ext);
-    msg("Test %d.%d (pass %d) FAILED rc:%d\n", tg, t, pass, rc);
+	msg("  slab map has %d extent(s)", ext);
+    msg("Test %d.%d (pass %d) FAILED rc:%d", tg, t, pass, rc);
 
     MPI_Abort(MPI_COMM_WORLD, 1);
     return 1;

@@ -591,7 +591,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     count = configurator_get_sec_size(c, "ag");
     p->ags = (F_AG_t *) calloc(sizeof(F_AG_t), count);
     if (!p->ags) goto _nomem;
-    if (!IN_RANGE(count, 1, F_DEVICES_MAX)) goto _noarg;
+    if (!IN_RANGE(count, 1, F_AG_CNT_MAX)) goto _noarg;
     p->pool_ags = (uint32_t)count;
     ag = p->ags;
     ag_maxlen = 0;

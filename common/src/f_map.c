@@ -15,6 +15,7 @@
 #include "f_map.h"
 #include "famfs_bitmap.h"
 #include "famfs_error.h"
+#include "list.h"
 
 
 #define e_to_bosl(bosl, e)	((e) - (bosl)->entry0)
@@ -31,21 +32,31 @@ static inline unsigned long *bosl_page_alloc(size_t size)
 	return p;
 }
 
-static F_BOSL_t *bosl_alloc(size_t size, int shared)
+static F_BOSL_t *_bosl_alloc(unsigned long *page, unsigned int map_shm)
 {
 	F_BOSL_t *bosl;
 
 	bosl = (F_BOSL_t *) calloc(sizeof(F_BOSL_t), 1);
 	if (bosl) {
-		if (!(bosl->page = bosl_page_alloc(size))) {
-			free(bosl);
-			return NULL;
-		}
-		pthread_spin_init(&bosl->dirty_lock,
-		    shared?PTHREAD_PROCESS_SHARED:PTHREAD_PROCESS_PRIVATE);
+		bosl->page = page;
+		pthread_spin_init(&bosl->dirty_lock, PTHREAD_PROCESS_PRIVATE);
 		pthread_rwlock_init(&bosl->rwlock, NULL);
+		bosl->shm = map_shm;
 		atomic_inc(&bosl->claimed);
 	}
+	return bosl;
+}
+
+static F_BOSL_t *bosl_alloc(size_t size, unsigned int map_shm)
+{
+	F_BOSL_t *bosl;
+	unsigned long *page;
+
+	if ((page = bosl_page_alloc(size)) == NULL)
+		return NULL;
+	bosl = _bosl_alloc(page, map_shm);
+	if (bosl == NULL)
+		free(page);
 	return bosl;
 }
 
@@ -63,7 +74,8 @@ static void bosl_free(F_BOSL_t *bosl)
 
 	pthread_rwlock_destroy(&bosl->rwlock);
 	pthread_spin_destroy(&bosl->dirty_lock);
-	free(bosl->page);
+	if (bosl->shm == F_MAPMEM_PRIVATE)
+		free(bosl->page);
 	free(bosl);
 }
 
@@ -154,13 +166,11 @@ static int map_free(F_MAP_t *map)
 {
 	int ret;
 
-	if (map->bosses) {
-		if ((ret = map_free_all_nodes(map->bosses)))
-			return ret;
-		if ((ret = cds_ja_destroy(map->bosses)))
-			return ret;
-		rcu_quiescent_state();
-	}
+	if ((ret = map_free_all_nodes(map->bosses)))
+		return ret;
+	if ((ret = cds_ja_destroy(map->bosses)))
+		return ret;
+	rcu_quiescent_state();
 	pthread_spin_destroy(&map->bosl_lock);
 	//pthread_mutex_destroy(&map->pu_lock);
 	if (map->shm != F_MAPMEM_SHARED_S)
@@ -168,14 +178,18 @@ static int map_free(F_MAP_t *map)
 	return 0;
 }
 
-static int _map_insert_bosl(F_MAP_t *map, uint64_t entry, F_BOSL_t **bosl_p)
+static int _map_insert_bosl(F_MAP_t *map, uint64_t entry, F_BOSL_t **bosl_p,
+    unsigned long *page)
 {
 	F_BOSL_t *bosl;
 	struct cds_ja_node *node;
 	uint64_t node_idx, length;
 	int ret = 0;
 
-	bosl = bosl_alloc(map->bosl_sz, f_shmap_owner(map));
+	if (page)
+		bosl = _bosl_alloc(page, map->shm);
+	else
+		bosl = bosl_alloc(map->bosl_sz, map->shm);
 	if (!bosl)
 		return -ENOMEM;
 
@@ -214,7 +228,7 @@ static inline F_BOSL_t *map_insert_bosl(F_MAP_t *map, uint64_t entry)
 {
 	F_BOSL_t *bosl;
 
-	assert(_map_insert_bosl(map, entry, &bosl) == 0);
+	assert(_map_insert_bosl(map, entry, &bosl, NULL) == 0);
 	return bosl;
 }
 
@@ -335,7 +349,8 @@ static int _map_init(F_MAP_t **map_p, F_MAPTYPE_t type, int entry_sz, size_t bos
 	map->geometry.entry_sz = entry_sz;
 	/* Map defaults */
 	if (f_map_is_structured(map)) {
-		map->geometry.pu_factor = 0;
+		map->geometry.pu_factor = (entry_sz < 4096)? 0:		\
+					const_ilog2(F_MAP_MAX_BOS_PUS);
 		map->geometry.bosl_pu_count = bosl_sz /			\
 				((1 << map->geometry.pu_factor)*entry_sz);
 	} else {
@@ -402,13 +417,17 @@ int f_map_init_prt(F_MAP_t *map, int parts, int node, int part_0, int global)
 	return 0;
 }
 
+static int shmap_detach(F_MAP_t **m_p);
 /* Free map */
 void f_map_exit(F_MAP_t *map)
 {
-	if (f_map_get_sb(map)) {
-	    assert( !f_map_shm_detach(map) );
+	F_MAP_t *m = map;
+
+	if (f_map_get_sb(m)) {
+		assert( !shmap_detach(&m) );
 	}
-	map_free(map);
+	if (m)
+		map_free(m);
 }
 
 /*
@@ -1264,7 +1283,7 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry)
 		int rc;
 
 		/* update BoS pointer; create a new BoS on demand */
-		rc = _map_insert_bosl(map, entry, &bosl);
+		rc = _map_insert_bosl(map, entry, &bosl, NULL);
 
 		if (rc && rc != -EEXIST) {
 			assert(rc == ENOMEM);
@@ -1841,14 +1860,13 @@ void f_map_fprint_desc(FILE *f, F_MAP_t *m)
 /*
  * Map in shared memory
  */
-static int sb_create(F_SHMAP_SB_t **sb_p, const char* name,
+static int shmem_create(void **shm_p, const char *name,
     size_t size, int force)
 {
-    F_SHMAP_SB_t *sb;
+    void *shm;
     int fd;
     int flags = O_RDWR|O_CREAT;
 
-    assert( strlen(name) <= F_SHMAP_NAME_LEN);
     if (!force)
 	flags |= O_EXCL;
 
@@ -1858,72 +1876,211 @@ static int sb_create(F_SHMAP_SB_t **sb_p, const char* name,
     if (-1 == ftruncate(fd, size))
 	return -1;
 
-    if (NULL == (sb = mmap(NULL, size,
-			   PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET)))
+    if (NULL == (shm = mmap(NULL, size,
+			    PROT_WRITE|PROT_READ, MAP_SHARED, fd, SEEK_SET)))
 	return -1;
 
-    bzero(sb, size);
-    strncpy(sb->name, name, F_SHMAP_NAME_LEN);
-    *sb_p = sb;
+    bzero(shm, size);
+    *shm_p = shm;
     return 0;
 }
 
-static int sb_open(F_SHMAP_SB_t **sb_p, const char* name,
+static int shmem_open(void **shm_p, const char *name,
     size_t size, int ro)
 {
-    F_SHMAP_SB_t *sb;
-    int fd;
-    int flags = ro?O_RDONLY:O_RDWR;
+    F_SHMAP_SB_t *shm;
+    int fd, flags;
 
+    flags = ro? O_RDONLY:O_RDWR;
     if (-1 == (fd = shm_open(name, flags, 0)))
 	return (errno == ENOENT)?-ENOENT:-1;
 
-    if (NULL == (sb = mmap(NULL, size,
-			   PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET)))
+    flags = ro? PROT_READ : PROT_WRITE|PROT_READ;
+    if (NULL == (shm = mmap(NULL, size, flags, MAP_SHARED, fd, SEEK_SET)))
 	return -1;
 
-    strncpy(sb->name, name, F_SHMAP_NAME_LEN);
-    *sb_p = sb;
+    *shm_p = shm;
     return 0;
 }
 
+static void sboss_free(F_MAP_SBOSS_t *sboss, int unlink)
+{
+    if (sboss->size)
+	munmap(sboss->data, sboss->size);
+	if (unlink && shm_unlink(sboss->dname))
+	    ioerr("shm_detach: shm_unlink '%s'", sboss->data->name);
+	free(sboss->dname);
+	free(sboss);
+}
+
+static int sbosl_add_page(F_MAP_t *m)
+{
+    F_MAP_SB_t *priv_sb = m->shm_sb;
+    F_SHMAP_SB_t *sb = priv_sb->shmap_sb;
+    F_SHMAP_DATA_t *sdata;
+    F_MAP_t *sm = priv_sb->super_map;
+    F_BOSL_t *bosl;
+    F_MAP_SBOSS_t *sboss;
+    char sb_name[F_SHMAP_NAME_LEN+1] = { 0 };
+    size_t l, size;
+    uint64_t entry, id;
+    int rc = 0;
+
+    /* TODO: Add next page */
+    sboss = (F_MAP_SBOSS_t *) calloc(1, sizeof(F_MAP_SBOSS_t));
+    if (!sboss)
+	return -ENOMEM;
+    INIT_LIST_HEAD(&sboss->node);
+
+    /* new mapping */
+    if (f_shmap_owner(m)) {
+	rc = pthread_rwlock_wrlock(&sb->sb_rwlock);
+	id = sb->super_map.nr_bosl;
+    } else {
+	rc = pthread_rwlock_rdlock(&sb->sb_rwlock);
+	id = sb->super_map.nr_bosl;
+	if (rc == 0 && id == 0) {
+	    pthread_rwlock_unlock(&sb->sb_rwlock);
+	    rc = -ESRCH; /* WR is not ready yet */
+	}
+	id--; /* SBoS IDs starts with zero */
+    }
+    if (rc)
+	goto _free;
+
+    /* memory region name */
+    entry = id*F_SHMAP_SZ(1);
+    l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%01d_%01lu",
+		 F_SHMAP_DATA_NAME, priv_sb->id, id);
+    strncpy(sb_name+l, sb->name+l, F_SHMAP_NAME_LEN-l);
+
+    size = F_SHMAP_DATA_SZ(m->bosl_sz);
+    if (f_shmap_owner(m)) {
+	/* Create SBoS */
+	rc = shmem_create((void**)&sdata, sb_name, size, 1);
+	if (rc)
+	    goto _err;
+	strncpy(sdata->name, sb_name, F_SHMAP_NAME_LEN);
+
+	/* Add SBoS to supermap */
+	rc = _map_insert_bosl(sm, entry, &bosl, sdata->pages);
+	if (rc == 0)
+	    sb->total_bosl++;
+    } else {
+	/* Open SBoS read-only */
+	rc = shmem_open((void**)&sdata, sb_name, size, 1);
+	if (rc)
+	    goto _err;
+
+	/* Add SBoS to supermap */
+	rc = _map_insert_bosl(sm, entry, &bosl, sdata->pages);
+    }
+    sboss->size = size;
+    if (rc)
+	goto _err;
+
+    /* add to SBoS list */
+    sboss->data = sdata;
+    sboss->dname = strdup(sb_name);
+    list_add_tail(&priv_sb->shmap_data, &sboss->node);
+    rc = pthread_rwlock_unlock(&sb->sb_rwlock);
+    if (rc)
+	err("shmap add_page unlock error:%d", rc);
+    return 0;
+
+_err:
+    pthread_rwlock_unlock(&sb->sb_rwlock);
+_free:
+    sboss_free(sboss, f_shmap_owner(m));
+    return rc;
+}
+
+static void shmap_free(F_MAP_SB_t *priv_sb)
+{
+    F_SHMAP_SB_t *sb = priv_sb->shmap_sb;
+    F_MAP_t *sm = priv_sb->super_map;
+
+    /* f_map_exit(priv_sb->super_map) */
+    if (sm)
+	map_free(sm);
+
+    /* unmap SB and free supermap */
+    switch (priv_sb->shm) {
+    case F_MAPMEM_SHARED_WR:
+	pthread_rwlock_destroy(&sb->sb_rwlock);
+	break;
+    case F_MAPMEM_SHARED_RD:
+	free(sm);
+	break;
+    default: err("shm_detach: op not supported");
+    }
+    if (sb)
+	munmap(sb, sizeof(F_SHMAP_SB_t));
+
+    if ((priv_sb->shm == F_MAPMEM_SHARED_WR) &&
+	 shm_unlink(priv_sb->name))
+	ioerr("shm_detach: shm_unlink");
+    free(priv_sb->name);
+    free(priv_sb);
+}
+
 /* Share the map in SHMEM */
-#define F_SHM_RD_ATTACH_TMO 1000000 /* reader attach timeout, usec: 1 sec */
+#define F_SHM_RD_ATTACH_TMO 2000000 /* reader attach timeout, usec: 1 sec */
 int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
 {
+    F_MAP_SB_t *priv_sb;
     F_SHMAP_SB_t *sb = NULL;
-    F_MAP_t *sm;
+    F_MAP_t *sm = NULL;
     pthread_rwlockattr_t attr;
     char sb_name[F_SHMAP_NAME_LEN+1] = { 0 };
     size_t l, size;
     unsigned int tmo, slp;
     int rc = 0;
 
-    if (m->shmap_sb)
-	return -1; /* already attached */
+    if (m->shm_sb)
+	return -EINVAL; /* already attached */
+    if (m->nr_bosl || m->loaded)
+	return -EADDRINUSE; /* already in use */
 
-    l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%03d",
-		 F_SHMAP_NAME_PREFIX, m->id);
+    priv_sb = (F_MAP_SB_t *) calloc(1, sizeof(F_MAP_SB_t));
+    if (!priv_sb)
+	return -ENOMEM;
+    INIT_LIST_HEAD(&priv_sb->shmap_data);
+    priv_sb->id = (m->id>=0)? m->id:0;
+
+    l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%01d",
+		 F_SHMAP_NAME_PREFIX, priv_sb->id);
     if (name)
 	strncpy(sb_name+l, name, F_SHMAP_NAME_LEN-l);
 
     size = sizeof(F_SHMAP_SB_t);
     switch (rw) {
     case F_MAPMEM_SHARED_WR:
-	/* create new object if existing */
-	if ((rc = sb_create(&sb, sb_name, size, 1)))
+	/* create new SB object if existing */
+	if ((rc = shmem_create((void**)&sb, sb_name, size, 1)))
 	    goto _err;
+	strncpy(sb->name, sb_name, F_SHMAP_NAME_LEN);
+
 	pthread_rwlockattr_init(&attr);
 	pthread_rwlockattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
 	pthread_rwlock_init(&sb->sb_rwlock, &attr);
 
+	/* create supermap */
+	sm = &sb->super_map;
+	rc = _map_init(&sm, F_MAPTYPE_STRUCTURED, m->bosl_sz,
+			F_SHMAP_SZ(m->bosl_sz), 0);
+	if (rc)
+		goto _err;
 	break;
+
     case F_MAPMEM_SHARED_RD:
+	/* we can wait a little till writer */
 	tmo = 0;
 	slp = F_SHM_RD_ATTACH_TMO/8;
 	do {
-	    /* open object as read-only */
-	    if ((rc = sb_open(&sb, sb_name, size, 1))) {
+	    /* open SB R/W */
+	    if ((rc = shmem_open((void**)&sb, sb_name, size, 0)))
+	    {
 		if (rc == -ENOENT)
 		    usleep(slp);
 		else
@@ -1932,51 +2089,92 @@ int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
 		break;
 	    tmo += slp;
 	} while (tmo <= F_SHM_RD_ATTACH_TMO);
-	break;
-    case F_MAPMEM_PRIVATE: return 0;
-    default: err("shm_attach: op not supported"); return 1;
-    }
+	if (rc) {
+		err("shm_attach: %s TMO\n", sb_name);
+		goto _err;
+	}
+	tmo = 0;
+	slp = F_SHM_RD_ATTACH_TMO/8;
+	rc = -ENOENT;
+	do {
+	    /* WR ready? */
+	    if (sb->total_bosl) {
+		rc = 0;
+		break;
+	    }
+	    usleep(slp);
+	    tmo += slp;
+	} while (tmo <= F_SHM_RD_ATTACH_TMO);
+	if (rc) {
+		err("shm_attach: %s TMO\n", sb_name);
+		goto _err;
+	}
 
-    /* Init super map which contains one or more super BoSses */
-    size = F_SHMAP_DATA_SZ(m->bosl_sz);
-    sm = &sb->super_map;
-    rc = _map_init(&sm, F_MAPTYPE_STRUCTURED, size, size, 0);
-    if (rc)
-	goto _err;
+	rc = pthread_rwlock_rdlock(&sb->sb_rwlock);
+	if (rc)
+	    goto _err;
+	/* create supermap */
+	sm = f_map_init(F_MAPTYPE_STRUCTURED, m->bosl_sz,
+			F_SHMAP_SZ(m->bosl_sz), 0);
+	if (sm == NULL) {
+	    pthread_rwlock_unlock(&sb->sb_rwlock);
+	    rc = -ENOMEM;
+	    goto _err;
+	}
+	/* TODO: Clone SB */
+	rc = pthread_rwlock_unlock(&sb->sb_rwlock);
+	if (rc)
+	    goto _err;
+
+	m->ronly = 1;
+	break;
+
+    case F_MAPMEM_PRIVATE: return 0;
+    default: err("shm_attach: op not supported"); return -EINVAL;
+    }
+    sm->shm = F_MAPMEM_SHARED_S;
+
+    priv_sb->name = strdup(sb_name);
+    priv_sb->super_map = sm;
+    priv_sb->shmap_sb = sb;
+    priv_sb->shm = rw;
 
     m->shm = rw;
-    m->shmap_sb = sb;
+    m->shm_sb = priv_sb;
+    rc = sbosl_add_page(m);
+    if (rc)
+	goto _err;
+    return 0;
 
 _err:
-    if (sb)
-	munmap(sb, sizeof(F_SHMAP_SB_t));
+    shmap_free(priv_sb);
     return rc;
 }
 #undef F_SHM_RD_ATTACH_TMO
 
 /* Unmap the shared map */
-int f_map_shm_detach(F_MAP_t *m)
+static int shmap_detach(F_MAP_t **m_p)
 {
-    F_SHMAP_SB_t *sb = m->shmap_sb;
-    F_MAP_t *sm = &sb->super_map;
-    int rc = 0;
+    F_MAP_t *m = *m_p;
+    F_MAP_SB_t *priv_sb = m->shm_sb;
+    struct list_head *pos, *tmp;
 
-    if (sm)
-	f_map_exit(sm);
+    if (!f_map_in_shmem(m))
+	return 0; /* do nothing */
+    if (!priv_sb)
+	return -ENOENT;
 
-    switch (m->shm) {
-    case F_MAPMEM_SHARED_WR:
-	pthread_rwlock_destroy(&sb->sb_rwlock);
-	break;
-    case F_MAPMEM_SHARED_RD:
-	break;
-    case F_MAPMEM_PRIVATE: return 0;
-    default: err("shm_attach: op not supported"); return 1;
+    /* Unmap SBoS data pages */
+    list_for_each_prev_safe(pos, tmp, &priv_sb->shmap_data) {
+	F_MAP_SBOSS_t *sboss = container_of(pos, struct f_map_sboss_, node);
+
+	list_del(pos);
+	sboss_free(sboss, f_shmap_owner(m));
     }
-    munmap(sb, sizeof(F_SHMAP_SB_t));
-    m->shmap_sb = NULL;
 
-
-    return rc;
+    shmap_free(priv_sb);
+    if (f_shmap_owner(m))
+	*m_p = NULL;
+    return 0;
 }
 
