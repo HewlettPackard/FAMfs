@@ -1758,6 +1758,31 @@ static int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
 	return 0;
 }
 
+/* 
+ * Commit stripe (set CVE_ALLOCATED) 
+ */
+static int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	unsigned long old;
+	void *p = f_map_get_p(lo->claimvec, s);
+
+	if (!p) {
+		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
+		return -ENOENT;
+	}
+
+	/* Set the stripe preallocated */
+	old = atomic_test_and_set_bbit(BBIT_NR_IN_LONG(s), CVE_ALLOCATED, p);
+
+	/* Check the previous state */
+	ASSERT(old == CVE_PREALLOC || old == CVE_ALLOCATED);
+
+	/* Set the dirty bit */
+	f_map_mark_dirty(lo->claimvec, s);
+	return 0;
+}
+
 /*
  * Release a stripe by clearing its claim vector
  * Set drop_slab to false to prevent releasing empty slabs.
@@ -2409,6 +2434,27 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 
 		rc += __put_stripe(lp, ss->stripes[i]);
 	}
+
+	return rc;
+}
+
+/*
+ * Commit a set of preallocated stripes (set claim vector to ALLOCATED).
+ * Returns 0 or error
+ */
+int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
+{
+	F_LO_PART_t *lp = lo->lp;
+	int i, rc = 0;
+
+	ASSERT(lp);
+	atomic_inc(lo->stats + FL_STRIPE_COMMIT_REQ);
+
+	for (i = 0; i < ss->count; i++) {
+		rc += commit_stripe(lp, ss->stripes[i]);
+	}
+	
+	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 
 
 	return rc;
 }
