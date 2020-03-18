@@ -355,6 +355,8 @@ static inline int find_my_off(off_t myoff, F_LFA_SLIST_t *slist, int num) {
         if (myoff == slist[i].bof)
             return i;
         else if (myoff > slist[i].bof) {
+            if ((uint64_t)myoff < slist[i].bof + slist[i].bsz)
+                break;
             base = i + 1;
             num--;
         }
