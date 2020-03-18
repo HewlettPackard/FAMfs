@@ -976,6 +976,7 @@ static void flush_maps(F_LO_PART_t *lp)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	int rc;
+	LOG(LOG_DBG2, "%s[%d]: flushing maps", lo->info.name, lp->part_num);
 	rc = f_map_flush(lo->slabmap);
 	if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing slab map", lo->info.name, lp->part_num, rc);
 	rc = f_map_flush(lo->claimvec);
@@ -1163,7 +1164,7 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 
 static void pdi_matrix_release(F_PDI_MATRIX_t *mx)
 {
-	if (mx->addr) free(mx->addr);
+	if (mx && mx->addr) free(mx->addr);
 }
 
 /*
@@ -1207,10 +1208,13 @@ static int create_lp_dev_matrix(F_LO_PART_t *lp)
 	return 0;
 }
 
+/* Release device allocation matrix */
 static void release_lp_dev_matrix(F_LO_PART_t *lp)
 {
-	lp->dmx->release(lp->dmx);
-	free(lp->dmx);
+	if (lp->dmx) {
+		lp->dmx->release(lp->dmx);
+		free(lp->dmx);
+	}
 }
 
 /*
@@ -1570,6 +1574,7 @@ static int release_slab(F_LO_PART_t *lp, f_slab_t slab)
 
 	/* Flush the slab map before releasing device extents */
 	f_map_mark_dirty(lo->slabmap, slab);
+	LOG(LOG_DBG2, "%s[%d]: flushing slabmap for slab %u", lo->info.name, lp->part_num, slab);
 	rc = f_map_flush(lo->slabmap);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing slabmap for slab %u",
@@ -1658,6 +1663,7 @@ static int __alloc_new_slab(F_LO_PART_t *lp, f_slab_t *slabp)
 	lp->sync_count++;
 
 	f_map_mark_dirty(lo->slabmap, s);
+	LOG(LOG_DBG2, "%s[%d]: flushing slabmap for slab %u", lo->info.name, lp->part_num, s);
 	rc = f_map_flush(lo->slabmap);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing slabmap for slab %u",
@@ -2418,6 +2424,10 @@ _err:
 	return rc;
 }
 
+/*
+ * Release a set of stripes (set claim vector to FREE).
+ * Returns 0 or error
+ */
 int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 {
 	F_LO_PART_t *lp = lo->lp;
@@ -2881,8 +2891,8 @@ static void *f_allocator_thread(void *ctx)
 	memset(rcbuf, 0, thr_cnt*sizeof(rc));
 
 	lp->part_num = thr_rank;
-	lo->part_count = thr_cnt;
-	
+	lo->part_count = pool->ionode_count;
+
 	LOG(LOG_INFO, "%s[%d]: starting allocator on %s", lo->info.name, lp->part_num, pool->mynode.hostname);
 
 	rc = layout_partition_init(lp);
@@ -2895,7 +2905,14 @@ static void *f_allocator_thread(void *ctx)
 	/* Check if all layout devices are present and healthy */
 	check_layout_devices(lo);
 
-	/*
+	if (rc) goto _ret;
+
+	if (thr_cnt != lo->part_count) {
+		LOG(LOG_WARN, "%s[%d]: allocator on %s started in partial config: %d of %d parts", 
+			lo->info.name, lp->part_num, pool->mynode.hostname, thr_cnt, lo->part_count);
+		goto _ret;
+	}
+		/*
 	 * Synchronize all allocator threads across all IO-nodes and make sure 
 	 * all slab map partitions were successfully loaded
 	 */ 
@@ -2964,6 +2981,7 @@ static void *f_allocator_thread(void *ctx)
 //		SetLayoutQuit(lo);
 	}
 
+_ret:
 	ClearLayoutActive(lo);
 
 	ASSERT(!release_prealloc_stripes(lp, 0));
