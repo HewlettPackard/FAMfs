@@ -117,7 +117,6 @@ static int create_pds_lfa(F_POOL_t *pool)
 		char *sbuf = calloc(1, 32);
 		if (!sbuf) { rc = -ENOMEM; goto _ret; }
 		ionode_lst[i].name = strdup(ioi->hostname);
-//		sprintf(sbuf, "%d", pool->lf_info->service);
 		ionode_lst[i].service = strdup(F_LFA_PORT);
 		ionode_lst[i].bsz = ioi->fam_devs*(sizeof(F_PDEV_SHA_t) + bmap_size);
 		LOG(LOG_DBG2, "added server/port: %s/%s/%lu", 
@@ -248,6 +247,7 @@ int f_start_allocator_threads(void)
 		return rc;
 	}
 
+	sleep(1);
 	list_for_each_safe(l, tmp, &pool->layouts) {
 		lo = container_of(l, struct f_layout_, list);
 		rc = start_allocator_thread(lo);
@@ -2886,11 +2886,10 @@ static void *f_allocator_thread(void *ctx)
 	ON_ERROR((MPI_Comm_rank(pool->ionode_comm, &thr_rank)), "MPI_Comm_rank");
 	ON_ERROR((MPI_Comm_size(pool->ionode_comm, &thr_cnt)), "MPI_Comm_size");
 	rcbuf = alloca(thr_cnt*sizeof(rc));
-
 	ASSERT(rcbuf);
 	memset(rcbuf, 0, thr_cnt*sizeof(rc));
 
-	lp->part_num = thr_rank;
+	lp->part_num = pool->mynode.ionode_idx;
 	lo->part_count = pool->ionode_count;
 
 	LOG(LOG_INFO, "%s[%d]: starting allocator on %s", lo->info.name, lp->part_num, pool->mynode.hostname);
@@ -2912,7 +2911,8 @@ static void *f_allocator_thread(void *ctx)
 			lo->info.name, lp->part_num, pool->mynode.hostname, thr_cnt, lo->part_count);
 		goto _ret;
 	}
-		/*
+
+	/*
 	 * Synchronize all allocator threads across all IO-nodes and make sure 
 	 * all slab map partitions were successfully loaded
 	 */ 
