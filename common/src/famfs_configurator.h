@@ -43,7 +43,7 @@
 #define LOGDIR TMPDIR
 #endif
 
-#define F_CFG_MSEC_MAX	10	/* max number of multi-section repeatition */
+#define F_CFG_MSEC_MAX	64	/* max number of multi-section repeatition */
 #define F_CFG_MSKEY_MAX	64	/* max number of key instances in multi-section */
 
 // NOTE: NULLSTRING is a sentinel token meaning "no default string value"
