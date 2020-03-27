@@ -1989,7 +1989,9 @@ void f_map_fprint_desc(FILE *f, F_MAP_t *m)
 /*
  * Map in shared memory
  */
-#define F_SHM_RD_ATTACH_TMO 1000000U /* reader attach timeout, usec: 1 sec */
+#define F_SHM_ATTACH_TMO 1000000U /* shared segment attach timeout, usec: 1 sec */
+#define F_SHM_INODE	"/dev/shm" /* IPC shared segment key base inode */
+
 #ifdef F_SHM_OPEN
 static int shmem_open(void **shm_p, const char *name,
     size_t size, int ro, int *shm_id_p)
@@ -2084,7 +2086,7 @@ static int shmem_open(void **shm_p, const char *name,
 
     assert(p && *p);
     id = *(p+strlen(p)-1);
-    key = ftok(".", id);
+    key = ftok(F_SHM_INODE, id);
     if (key == -1) {
 	err("ftok - %m");
 	goto _err;
@@ -2092,7 +2094,7 @@ static int shmem_open(void **shm_p, const char *name,
 
     do {
 	/* sleep 1 sec if segment in use */
-	slp = w_f? F_SHM_RD_ATTACH_TMO:F_SHM_RD_ATTACH_TMO>>6;
+	slp = w_f? F_SHM_ATTACH_TMO:F_SHM_ATTACH_TMO>>6;
 
 	/* quiry identifier of the shared memory segment */
 	if (-1 == (shm_id = shmget(key, size, flags | 0666))) {
@@ -2116,7 +2118,7 @@ static int shmem_open(void **shm_p, const char *name,
 	    rc = errno;
 	    if (rc == EINVAL || rc == EIDRM) {
 		dbg_printf("shmem_open %s shmctl STAT WARNING - %m\n", name);
-		slp = F_SHM_RD_ATTACH_TMO >> 6;
+		slp = F_SHM_ATTACH_TMO >> 6;
 		goto _retry;
 	    }
 	    err("shmem_open %s shmctl error - %m", name);
@@ -2131,7 +2133,7 @@ static int shmem_open(void **shm_p, const char *name,
 		break; /* RD: ready to attach the segment */
 	/*  only for map owner: segment to be destroyed soon */
 	} else if (!rd && sbuf.shm_nattch == 0)
-	    slp = F_SHM_RD_ATTACH_TMO >> 6;
+	    slp = F_SHM_ATTACH_TMO >> 6;
 
 _retry:
 	if (w_f == 0)
@@ -2178,7 +2180,7 @@ static int shmem_create(void **shm_p, const char *name,
 
     assert(p && *p);
     id = *(p+strlen(p)-1);
-    key = ftok(".", id);
+    key = ftok(F_SHM_INODE, id);
     if (key == -1) {
 	err("ftok - %m\n");
 	goto _err;
@@ -2605,7 +2607,7 @@ int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
     case F_MAPMEM_SHARED_RD:
 	/* we can wait a little till writer */
 	tmo = 0;
-	slp = F_SHM_RD_ATTACH_TMO/8;
+	slp = F_SHM_ATTACH_TMO/8;
 	do {
 	    /* open SB R/W */
 	    if ((rc = shmem_open((void**)&sb, sb_name, size, 0, &priv_sb->shm_id)))
@@ -2617,7 +2619,7 @@ int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
 	    } else
 		break;
 	    tmo += slp;
-	} while (tmo <= F_SHM_RD_ATTACH_TMO);
+	} while (tmo <= F_SHM_ATTACH_TMO);
 	if (rc) {
 		err("shm_attach: %s TMO", sb_name);
 		goto _err;
@@ -2625,7 +2627,7 @@ int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
 	priv_sb->shmap_sb = sb;
 
 	tmo = 0;
-	slp = F_SHM_RD_ATTACH_TMO/8;
+	slp = F_SHM_ATTACH_TMO/8;
 	rc = -ENOENT;
 	do {
 	    /* WR ready? */
@@ -2635,7 +2637,7 @@ int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
 	    }
 	    usleep(slp);
 	    tmo += slp;
-	} while (tmo <= F_SHM_RD_ATTACH_TMO);
+	} while (tmo <= F_SHM_ATTACH_TMO);
 	if (rc) {
 		err("shm_attach: %s not ready\n", sb_name);
 		goto _err;
@@ -2682,6 +2684,6 @@ _err:
     shmap_free(priv_sb);
     return rc;
 }
-#undef F_SHM_RD_ATTACH_TMO
-
+#undef F_SHM_ATTACH_TMO
+#undef F_SHM_INODE
 
