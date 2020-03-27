@@ -23,6 +23,9 @@
 #pragma GCC diagnostic pop
 #define F_JA_MAX_KEY64	(UINT64_MAX-1)
 
+//#define DEBUG_MAP	/* dbg_printf */
+
+
 /*
  * Maps are persistent and kept in distributed KV store.
  * Map in memory is a collection of blocks of slabs (BoS) where
@@ -250,6 +253,7 @@ typedef struct f_map_sb_ {
     F_MAP_t		*super_map;	/* supermap */
     int			id;		/* map id (if registered) or zero */
     int			shm;		/* shared map 'shm' memory model */
+    int			shm_id;		/* IPC shared memory segment ID */
     char		*name;		/* SHMEM SB file name */
 } F_MAP_SB_t;
 
@@ -263,7 +267,7 @@ typedef struct f_map_sb_ {
 typedef struct f_shmap_sb_ {
     char		name[F_SHMAP_NAME_LEN];	/* SHMEM SB file name */
     pthread_rwlock_t	sb_rwlock;	/* SB mutual exclusion */
-    uint64_t		total_bosl;	/* total number of BoSses in supermap */
+//    uint64_t		total_bosl;	/* total number of BoSses in supermap */
     F_MAP_t		super_map;	/* collection of super BoSses */
 } __attribute__((aligned(PAGE_SIZE))) F_SHMAP_SB_t;
 
@@ -273,7 +277,7 @@ typedef struct f_shmap_data_ {
     F_BOSL_t		super_bosl;	/* super BoS */
     uint64_t __attribute__((aligned(PAGE_SIZE)))
 			e0[F_MAP_MAX_BOS_PUS];
-    unsigned long	pages[];	/* BoS data pages */
+    unsigned long	pages[];		/* BoS data pages */
 } __attribute__((aligned(PAGE_SIZE))) F_SHMAP_DATA_t;
 #define F_SHMAP_SZ(bosl_sz)		((bosl_sz)*F_MAP_MAX_BOS_PUS)
 #define F_SHMAP_DATA_SZ(bosl_sz)	(sizeof(F_SHMAP_DATA_t)+F_SHMAP_SZ(bosl_sz))
@@ -284,6 +288,7 @@ typedef struct f_map_sboss_ {
     F_SHMAP_DATA_t	*data;		/* SBoS data page in SHMEM */
     char		*dname;		/* SHMEM data file name */
     size_t		size;
+    int			shm_id;		/* IPC shared memory segment ID */
 } F_MAP_SBOSS_t;
 
 
@@ -401,10 +406,6 @@ int f_map_put_bosl(F_BOSL_t *bosl);
 int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl); /* remove all BoS entries from online map */
 void f_map_mark_dirty_bosl(F_BOSL_t *bosl, uint64_t entry); /* mark KV dirty in BoS PU bitmap */
 uint64_t f_map_max_bosl(F_MAP_t *map); /* max BoS number */
-static inline F_SHMAP_SB_t *f_map_get_sb(F_MAP_t *map)
-{
-    return (map->shm_sb)?(map->shm_sb->shmap_sb):NULL;
-}
 
 /* Check if the entry belongs to this BoS */
 static inline int f_map_entry_in_bosl(F_BOSL_t *bosl, uint64_t entry)
@@ -603,6 +604,24 @@ static inline size_t f_map_value_off(F_MAP_t *map, uint64_t n)
 	f_map_value_off(map,					\
 		  (unsigned long)n << map->geometry.pu_factor),	\
 	sizeof(*p)))
+
+/*
+ * DEBUG
+ */
+#ifdef DEBUG_MAP
+#define dbg_printf(fmt, args...)				\
+	fprintf(stderr, "[debug map %d %s()@%s:%u] " fmt,	\
+		getpid(),__func__,__FILE__,__LINE__, ## args)
+
+#else
+#define dbg_printf(fmt, args...)				\
+do {								\
+    /* do nothing but check printf format */			\
+    if (0)							\
+	fprintf(stderr, "[debug map %d %s()@%s:%u] " fmt,	\
+		getpid(),__func__,__FILE__,__LINE__, ## args);	\
+} while (0)
+#endif
 
 /* Validate structure's size and/or alignment */
     _Static_assert( TYPE_ALINGMENT(F_SHMAP_DATA_t) == PAGE_SIZE,
