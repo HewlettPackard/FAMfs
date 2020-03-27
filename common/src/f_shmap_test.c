@@ -425,19 +425,12 @@ int main(int argc, char *argv[])
 		}
 		if (v != RND_REPS) goto err3;
 		f_map_free_iter(it); it = NULL;
-
-	        t = 19; /* map exit: must survive */
-		f_map_exit(m);
-		//msg("RD map_exit");
 	    }
-	    MPI_Barrier(MPI_COMM_WORLD);
-	    if (rank == 0) {
-		f_map_exit(m);
-		//msg("WR map_exit");
-	    }
-	    rcu_quiescent_state();
-	    MPI_Barrier(MPI_COMM_WORLD);
+	    t = 19; /* map exit: must survive */
+	    f_map_exit(m);
 	    m = NULL; bosl = NULL; p = NULL;
+
+	    MPI_Barrier(MPI_COMM_WORLD);
 	}
     }
 
@@ -688,18 +681,12 @@ int main(int argc, char *argv[])
 		f_map_next(it); /*  the first entry */
 		v = f_map_weight(it, F_MAP_WHOLE);
 		if (v != RND_REPS) goto err2;
-
-		t = 19; /* Must survive map exit */
-		f_map_exit(m);
-		//msg("RD map_exit");
 	    }
-	    MPI_Barrier(MPI_COMM_WORLD);
-	    if (rank == 0) {
-		f_map_exit(m);
-		//msg("WR map_exit");
-	    }
-	    MPI_Barrier(MPI_COMM_WORLD);
+	    t = 19; /* Must survive map exit */
+	    f_map_exit(m);
 	    m = NULL; bosl = NULL; p = NULL;
+
+	    MPI_Barrier(MPI_COMM_WORLD);
 	}
     }
     rcu_unregister_thread();
