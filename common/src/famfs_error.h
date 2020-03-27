@@ -55,10 +55,10 @@
         }                                   \
     } while (0);
 
-#define err(str, ...) fprintf(stderr, #str "\n", ## __VA_ARGS__)
-#define ioerr(str, ...) fprintf(stderr, "%s: " #str " - %m\n", __FUNCTION__, ## __VA_ARGS__)
+#define err(str, ...) fprintf(stderr, str "\n", ## __VA_ARGS__)
+#define ioerr(str, ...) fprintf(stderr, "%s: " str " - %m\n", __FUNCTION__, ## __VA_ARGS__)
 
-#define fi_err(rc, msg, ...) fprintf(stderr, "%s: " #msg ": %d - %s\n", \
+#define fi_err(rc, msg, ...) fprintf(stderr, "%s: " msg ": %d - %s\n", \
 				__FUNCTION__, ## __VA_ARGS__,		\
 				(int)(rc), fi_strerror(-(int)(rc)))
 
