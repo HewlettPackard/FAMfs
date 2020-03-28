@@ -256,6 +256,12 @@ int main(int argc, char *argv[])
 		    if (p == NULL) goto err2;
 		    if (p != (bosl->page+((e_sz == 1)?BIT_WORD(ul):BBIT_WORD(ul)))) goto err2;
 
+		    /* count existing bosl entries */
+		    vv = 0;
+		    for (i=0; i<pass; i++)
+			if (f_map_entry_in_bosl(bosl, entries[i]))
+			    vv++;
+
 		    t = 3; /* Store BoS page bit count */
 		    if (e_sz == 1) {
 			v = bitmap_weight(bosl->page, m->bosl_entries);
@@ -263,8 +269,7 @@ int main(int argc, char *argv[])
 		    } else {
 			v = bbitmap_weight(bosl->page, BB_PAT11, m->bosl_entries);
 		    }
-		    if (v > pass) goto err2;
-		    vv = v;
+		    if (v != vv) goto err2;
 
 		    t = 4; /* set SM entry to 'allocated' */
 		    if (e_sz == 1) {
@@ -280,7 +285,7 @@ int main(int argc, char *argv[])
 		    /* actual bbit position in the word */
 		    v = long_bbits - __builtin_clzl(*p)/e_sz - 1;
 		    ul += (unsigned int)v;
-		    if (ul != e && !in_entries(ul, entries, pass+1))
+		    if (ul != e && !in_entries(ul, entries, pass))
 			goto err2; /* Error: bit position is not correct */
 
 		    t = 5; /* count ones */
@@ -297,12 +302,8 @@ int main(int argc, char *argv[])
 		    if (it->bosl != bosl) goto err3;
 		    if (ul != m->nr_bosl) goto err3;
 
-		    t = 7; /* @e? */
-		    if (f_map_check_iter(it)) {
-			if (e != bosl->entry0) goto err3;
-		    } else {
-			if (!f_map_probe_iter_at(it, e, NULL)) goto err2;
-		    }
+		    t = 7; /* Test value @e */
+		    if (!f_map_probe_iter_at(it, e, NULL)) goto err2;
 		    f_map_free_iter(it); it = NULL;
 
 		    t = 8; /* Iterate all entries */
@@ -360,6 +361,12 @@ int main(int argc, char *argv[])
 		    if (p == NULL) goto err2;
 		    if (p != (bosl->page+((e_sz == 1)?BIT_WORD(ul):BBIT_WORD(ul)))) goto err2;
 
+		    /* count existing bosl entries */
+		    vv = 0;
+		    for (i=0; i<RND_REPS; i++)
+			if (f_map_entry_in_bosl(bosl, entries[i]))
+			    vv++;
+
 		    t = 13; /* Count ones in BoS */
 		    if (e_sz == 1) {
 			v = bitmap_weight(bosl->page, m->bosl_entries);
@@ -367,7 +374,7 @@ int main(int argc, char *argv[])
 		    } else {
 			v = bbitmap_weight(bosl->page, BB_PAT11, m->bosl_entries);
 		    }
-		    if (v == 0) goto err2;
+		    if (v != vv) goto err2;
 
 		    t = 14; /* Check SM entry is 'allocated' */
 		    if (e_sz == 1) {
@@ -385,7 +392,7 @@ int main(int argc, char *argv[])
 		    /* actual bbit position in the word */
 		    v = long_bbits - __builtin_clzl(*p)/e_sz - 1;
 		    ul += (unsigned int)v;
-		    if (ul != e && !in_entries(ul, entries, pass+1))
+		    if (ul != e && !in_entries(ul, entries, RND_REPS))
 			goto err2; /* Error: bit position is not correct */
 
 		    t = 16; /* Check iterator API @e */
@@ -514,12 +521,8 @@ int main(int argc, char *argv[])
 		    if (it->bosl != bosl) goto err3;
 		    if (ul != m->nr_bosl) goto err3;
 
-		    t = 7; /* @e? */
-		    if (f_map_check_iter(it)) {
-			if (e != bosl->entry0) goto err3;
-		    } else {
-			if (!f_map_probe_iter_at(it, e, NULL)) goto err2;
-		    }
+		    t = 7; /* Test value @e */
+		    if (!f_map_probe_iter_at(it, e, NULL)) goto err2;
 		    f_map_free_iter(it); it = NULL;
 
 		    t = 8; /* Iterate all entries */
@@ -712,8 +715,8 @@ err2:
 	(e - bosl->entry0)/(1U << m->geometry.pu_factor));
 err1:
     f_map_fprint_desc(stdout, m);
-    msg("  Test variables: var=%d ul=%lu ui=%u",
-	v, ul, ui);
+    msg("  Test variables: var=%d ul=%lu ui=%u vv=%d",
+	v, ul, ui, vv);
 err0:
     msg("  Test params: entry_size:%u, %u pages per BoS", e_sz, pages);
     if (tg==2)
