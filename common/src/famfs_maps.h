@@ -134,6 +134,7 @@ typedef struct f_slabmap_entry {
     F_EXTENT_ENTRY_t	extent_rec[0];
 } F_SLABMAP_ENTRY_t;
 
+
 /*
  * Claim Vector (CV)
  *
@@ -256,7 +257,7 @@ static inline unsigned char f_crc4_sm_fast(F_SLAB_ENTRY_t *se)
     return crc4_table_tp[ f_crc4_sm_chk(se) ];
 }
 
-
+#if 0
 /* List of stripes */
 typedef struct f_stripe_head_ {
     struct f_stripe_head_	*next;
@@ -310,6 +311,7 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 		free(s);
 	}
 }
+#endif
 
 /* FAMFS configutation access; defined in famfs_maps.c */
 struct f_pool_;

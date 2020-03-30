@@ -17,6 +17,19 @@
 #include "f_map.h"
 
 
+typedef union {
+    F_MAP_KEYSET_t;
+    struct f_slab_set;
+} MAP_KEYSET_u;
+
+static int slabmap_update(F_MAP_t *sm, MAP_KEYSET_u *set)
+{
+    F_MAP_KEYSET_t *keyset = (F_MAP_KEYSET_t *) set;
+
+    keyset->key_sz = sizeof(*set->slabs);
+    return f_map_update(sm, keyset);
+}
+
 /* Lookup device in lo->devlist by media_id */
 F_POOLDEV_INDEX_t *f_find_pdi_by_media_id(F_LAYOUT_t *lo, unsigned int media_id)
 {

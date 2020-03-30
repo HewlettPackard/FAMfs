@@ -653,10 +653,8 @@ _exit:
 }
 
 /* Update (load from KV store) only map entries given in the stripe list */
-#if 0
-int f_map_update(F_MAP_t *map, F_STRIPE_HEAD_t *stripes)
+int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *set)
 {
-	F_STRIPE_HEAD_t *done = NULL;
 	F_ITER_t *it = NULL;
 	unsigned long *bos_buf;
 	unsigned int part, parts, pu_per_bos, pu_factor;
@@ -714,7 +712,6 @@ _exit:
 	free(bos_buf);
 	return ret;
 }
-#endif
 
 /* Reset iterator so it could be re-used */
 static void iter_reset(F_ITER_t *it) {

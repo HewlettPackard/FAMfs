@@ -1,4 +1,4 @@
-AM_CPPFLAGS = -funroll-loops --param max-completely-peel-times=64
+AM_CPPFLAGS = -fms-extensions -funroll-loops --param max-completely-peel-times=64
 AM_CFLAGS = -std=gnu99 -Wall -Wextra
 
 noinst_LTLIBRARIES = libfamfs_common.la libfamfs_meta.la

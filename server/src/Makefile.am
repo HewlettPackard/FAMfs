@@ -38,7 +38,8 @@ unifycrd_SOURCES = arraylist.c \
 		   f_layout_ctl.h
 
 # Preprocessor options for inlined code from common/src/famfs_bbitops.h
-unifycrd_CPPFLAGS = -mbmi2 -funroll-loops --param max-completely-peel-times=64 $(AM_CPPFLAGS)
+unifycrd_CPPFLAGS = -mbmi2 -fms-extensions \
+		    -funroll-loops --param max-completely-peel-times=64 $(AM_CPPFLAGS)
 
 unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 

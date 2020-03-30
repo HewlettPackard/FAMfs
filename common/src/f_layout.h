@@ -32,6 +32,12 @@ struct f_stripe_set {
     f_stripe_t		*stripes;
 };
 
+struct f_slab_set {
+    uint32_t		count;
+    uint32_t		reserved;
+    f_slab_t		*slabs;
+} __attribute__ ((aligned(8)));
+
 /* Stripe entry type */
 enum req_type {
 	F_ALLREQ,

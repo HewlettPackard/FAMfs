@@ -347,6 +347,13 @@ typedef struct f_iter_ {
     void			*vf_arg;	/* optional vf_get/vf_set argument */
 } F_ITER_t;
 
+/* Array of keys - this is an argument to f_map_update() */
+typedef struct f_map_keyset_ {
+    uint32_t		_count;
+    uint32_t		key_sz;
+    void		*keys;
+} __attribute__ ((aligned(8))) F_MAP_KEYSET_t;
+
 
 /*
  * Map API
@@ -383,7 +390,7 @@ static inline int f_map_load(F_MAP_t *map) { return f_map_load_cb(map, NULL, NUL
 /* Put all 'dirty' PUs of all BoSses to KV store; delete zero PUs. */
 int f_map_flush(F_MAP_t *map);
 /* Update (load from KV store) only map entries given in the stripe list */
-// int f_map_update(F_MAP_t *map, F_STRIPE_HEAD_t *stripe_list);
+int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *set);
 /* Mark KV dirty */
 void f_map_mark_dirty(F_MAP_t *map, uint64_t entry);
 
