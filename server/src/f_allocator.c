@@ -21,6 +21,7 @@
 #include "f_pool.h"
 #include "f_layout.h"
 #include "famfs_lf_connect.h"
+#include "f_layout_ctl.h"
 #include "f_allocator.h"
 
 
@@ -283,6 +284,7 @@ int f_stop_allocator_threads(void)
 	return rc;
 }
 
+#if 0
 /* 
  * Slab allocation bitmap manipulation routines 
  */
@@ -395,6 +397,7 @@ static inline bool slab_full(F_LO_PART_t *lp, f_stripe_t stripe)
 {
 	return (slab_used(lp, stripe) == lp->layout->info.slab_stripes);
 }
+#endif
 
 static inline bool all_slabs_full(F_LO_PART_t *lp)
 {
@@ -1565,9 +1568,9 @@ static int release_slab(F_LO_PART_t *lp, f_slab_t slab)
 		set_slab_in_sync(lp, slab);  // unmapped slab is in sync by default
 		lp->sync_count++;
 		if (_sme->slab_rec.degraded)
-			atomic_inc(&lp->degraded_slabs);
+			atomic_dec(&lp->degraded_slabs);
 		else if (_sme->slab_rec.failed)
-			atomic_inc(&lp->failed_slabs);
+			atomic_dec(&lp->failed_slabs);
 //		clear_slab_recovering(lp, slab);
 	}
 	reset_slab_usage(lp, slab);
@@ -2591,13 +2594,6 @@ static unsigned int get_layout_slab_count(F_LAYOUT_t *lo)
 	return DIV_CEIL(pexts, lo->info.chunks);
 }
 
-static int fail_pdev(F_LAYOUT_t *lo, int pool_index)
-{
-//	F_POOL_DEV_t *pdev =  f_find_pdev(pool_index);;
-
-	return 0;
-}
-
 /*
  * Check if any of the layout devices are marked as failed
  * and update the affected slabs if any
@@ -2613,7 +2609,7 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 		pdi = &lo->devlist[i];
 		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
 		if (pdev && DevFailed(pdev->sha))
-			fail_pdev(lo, pdi->pool_index);
+			f_fail_pdev(lo, pdi->pool_index);
 	}
 }
 
