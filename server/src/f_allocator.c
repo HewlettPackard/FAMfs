@@ -81,8 +81,10 @@ static int create_pds_lfa(F_POOL_t *pool)
 			for_each_pool_dev(pool, pdev) {
 				if (pdev->ionode_idx == i && pdev->idx_in_ion == j) {
 					F_PDEV_SHA_t *sha = pdev->sha;
-					g_sha = pool->pds_lfa->global + si * (sizeof(F_PDEV_SHA_t) + bmap_size);
-					LOG(LOG_DBG2, "pdev @%d:%d sha %p", i, j, g_sha);
+					g_sha = pool->pds_lfa->global + 
+						si * (sizeof(F_PDEV_SHA_t) + bmap_size);
+					LOG(LOG_DBG2, "pdev @%d:%d sha %p failed:%d", 
+						i, j, g_sha, DevFailed(sha));
 					memcpy(g_sha, sha, sizeof(F_PDEV_SHA_t));
 					pdev->sha = g_sha;
 					free(sha);
@@ -913,7 +915,6 @@ static int read_maps(F_LO_PART_t *lp)
 		LOG(LOG_ERR, "%s[%d]: error allocating data area", lo->info.name, lp->part_num);
 		return  -ENOMEM;
 	}		
-	memset(pool->pds_lfa->global, 0, pool->pds_lfa->global_size);
 	rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
 		LOG(LOG_ERR, "%s[%d]: error %d loading SM, %d load errors", 
