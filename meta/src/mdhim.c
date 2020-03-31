@@ -1031,7 +1031,7 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
     size_t size, uint64_t *keys)
 {
 	struct mdhim_bgetrm_t *bgrm;
-	int i, key_len;
+	int i, key_len, op, num_keys;
 	void *keyp = keys;
 	unsigned long *p = buf;
 	ssize_t ret;
@@ -1039,8 +1039,18 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 	/* TODO: Pass buffer through _bget_records() */
 	key_len = sizeof(uint64_t);
 
-	bgrm = _bget_records(md, index, &keyp, &key_len, 1,
-			     size, MDHIM_GET_NEXT);
+	/* If size > 1 && keys[1] != 0, Op := MDHIM_GET_EQ,
+	otherwise Op := MDHIM_GET_NEXT */
+	if (size > 1 && keys[1]) {
+		op = MDHIM_GET_EQ;
+		num_keys = size;
+	} else {
+		op = MDHIM_GET_NEXT;
+		num_keys = 1;
+	}
+
+	bgrm = _bget_records(md, index, &keyp, &key_len, num_keys,
+			     size, op);
 	if (!bgrm || bgrm->error) {
 		ret = bgrm? bgrm->error : MDHIM_ERROR;
 		assert(ret < 0);
@@ -1048,7 +1058,10 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 	}
 	assert (bgrm->next == NULL);
 	assert (bgrm->keys && bgrm->values);
-	assert (IN_RANGE(bgrm->num_keys, 0, (int)size));
+	if (op == MDHIM_GET_EQ)
+		assert (IN_RANGE(bgrm->num_keys, 0, num_keys));
+	else
+		assert (IN_RANGE(bgrm->num_keys, 0, (int)size));
 
 	for (i = 0; i < bgrm->num_keys; i++) {
 		keys[i] = *((unsigned long*) bgrm->keys[i]);
@@ -1057,7 +1070,11 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 		mlog(MDHIM_CLIENT_DBG, "MDHIM Rank %d: get %d key:%lu",
 		     md->mdhim_rank, i, keys[i]);
 	}
-	ret = bgrm->num_keys;
+	if (op == MDHIM_GET_EQ && bgrm->num_keys != num_keys)
+		ret = MDHIM_ERROR;
+	else
+		ret = bgrm->num_keys;
+
 _err:
 	mdhim_full_release_msg(bgrm);
 	return ret;

@@ -351,7 +351,11 @@ typedef struct f_iter_ {
 typedef struct f_map_keyset_ {
     uint32_t		_count;
     uint32_t		key_sz;
-    void		*keys;
+    union {
+	void		*keys;
+	uint32_t	*keys_32;
+	uint64_t	*keys_64;
+    };
 } __attribute__ ((aligned(8))) F_MAP_KEYSET_t;
 
 

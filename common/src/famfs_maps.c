@@ -106,6 +106,8 @@ ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
 	ssize_t ret;
 
 	keys[0] = *off_p;
+	/* If size > 1 && keys[1] != 0, Op := MDHIM_GET_EQ,
+	otherwise Op := MDHIM_GET_NEXT */
 	ret = meta_iface->bget_fn(buf, map_id, size, keys);
 	if (ret > 0)
 		*off_p = keys[ret-1] + 1U;

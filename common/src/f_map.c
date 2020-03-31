@@ -583,7 +583,9 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 			dbg_printf("load map id:%d part:%u @%lu\n",
 				   map_id, part, *off);
 
-			/* BGET pu_per_bos entries */
+			/* BGET/MDHIM_GET_NEXT pu_per_bos entries */
+			if (pu_per_bos > 1)
+				keys[1] = 0;
 			size = pu_per_bos;
 			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, off);
 			if (rcv_cnt < 0) {
@@ -652,64 +654,159 @@ _exit:
 	return ret;
 }
 
-/* Update (load from KV store) only map entries given in the stripe list */
-int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *set)
+static void keyset_free(F_MAP_KEYSET_t *keyset)
 {
+	free(keyset->keys);
+	free(keyset);
+}
+
+static int keyset_part(F_MAP_KEYSET_t *to, F_MAP_t *map, unsigned int part,
+    F_MAP_KEYSET_t *from)
+{
+	unsigned int i, count = 0;
+	uint64_t entry;
+
+	to->keys = calloc(from->_count, sizeof(uint64_t));
+	if (!to->keys)
+		return -ENOMEM;
+
+	switch (from->key_sz) {
+	case 8: /* uint64_t */
+		for (i = 0; i < from->_count; i++) {
+			entry = from->keys_64[i];
+			if (!f_map_prt_has_global(map, entry, part))
+				continue;
+			to->keys_64[count++] = entry;
+		}
+		break;
+	case 4: /* uint32_t */
+		for (i = 0; i < from->_count; i++) {
+			entry = from->keys_32[i];
+			if (!f_map_prt_has_global(map, entry, part))
+				continue;
+			to->keys_64[count++] = entry;
+		}
+		break;
+	default: err("Unsupported map key size:%u", from->key_sz);
+		assert(0);
+	}
+	to->_count = count;
+	to->key_sz = from->key_sz;
+	return 0;
+}
+
+/* Update (load from KV store) only map entries given in 'keyset' */
+int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *keyset)
+{
+	F_MAP_KEYSET_t *kset_parted = NULL;
 	F_ITER_t *it = NULL;
-	unsigned long *bos_buf;
+	unsigned long *buf, *bos_buf = NULL;
 	unsigned int part, parts, pu_per_bos, pu_factor;
-	unsigned int i, count, intl;
+	unsigned int i, k, count;
 	size_t size;
+	size_t total = 0, pu_cnt = 0;
 	ssize_t rcv_cnt;
-	uint64_t *keys;
-	int map_id, ret = 0;
+	uint64_t offset, *keys;
+	int map_id, ret = -ENOMEM;
 
 	if (map == NULL)
 		return -1;
 	if (map->id == -1)
 		return 0; /* no DB backend for in-memory map */
 
-	pu_per_bos = map->geometry.bosl_pu_count;
-	keys = (uint64_t *) malloc(sizeof(uint64_t) * pu_per_bos);
-	if (!keys)
-		return -ENOMEM;
-
-	intl = 1U << map->geometry.intl_factor;
-	pu_factor = map->geometry.pu_factor;
-	map_id = map->id;
 	parts = map->parts;
-
+	pu_per_bos = map->geometry.bosl_pu_count;
+	keys = (uint64_t *) calloc(pu_per_bos, sizeof(uint64_t));
+	kset_parted = (F_MAP_KEYSET_t *) calloc(1, sizeof(F_MAP_KEYSET_t));
 	/* Allocate I/O buffer */
 	bos_buf = bosl_page_alloc(map->bosl_sz);
+	if (!kset_parted || !keys || !bos_buf)
+		goto _exit;
+
+	pu_factor = map->geometry.pu_factor;
+	map_id = map->id;
 
 	/* New unconditional map iterator */
 	it = f_map_new_iter_all(map);
+	if (!it)
+		goto _exit;
 
-	/* Until we reach the end on all partitions */
-	count = f_map_has_globals(map)? parts:1;
-	do {
-		/* For each map partition */
-		for (part = 0; part < parts; part++) {
-			if (part != map->part && !f_map_has_globals(map))
-				continue;
+	/* For each map partition */
+	for (part = 0; part < parts; part++) {
+		if (part != map->part && !f_map_has_globals(map))
+			continue;
 
-			/* BGET pu_per_bos entries */
-			size = pu_per_bos;
-			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, NULL);
-			if (rcv_cnt < 0) {
-				ret = (int) rcv_cnt;
+		if ((ret = keyset_part(kset_parted, map, part, keyset)))
+			goto _exit;
+		count = kset_parted->_count;
+		k = 0;
+
+		while (count > 0) {
+
+			/* BGET/MDHIM_GET_EQ size entries */
+			offset = kset_parted->keys_64[k++]; /* key[0] */
+			size = count>pu_per_bos? pu_per_bos:count;
+			for (i = 1; i < size; i++)
+				keys[i] = kset_parted->keys_64[k++];
+
+			dbg_printf("update map id:%d part:%u %zu keys: %lu..\n",
+				   map_id, part, size, offset);
+
+			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, &offset);
+			if (rcv_cnt != (ssize_t)size) {
+				ret = rcv_cnt<0? rcv_cnt:-ENOENT;
 				goto _exit;
 			}
-			size = (size_t) rcv_cnt;
-			assert (size <= pu_per_bos);
+			count -= size;
+			total += size; /* stats */
+
+			/* For all buffer PUs */
+			for (i = 0; size > 0; i++, size--) {
+				uint64_t e, pu;
+
+				e = keys[i];
+				if (!f_map_has_globals(map)) {
+					/* TODO: Need a special case for re-partitioning */
+					if (!f_map_prt_has_global(map, e, part)) {
+						dbg_printf(" L%d:%lu/%lu\n",
+						    map->part, e/map->bosl_entries,
+						    (e % map->bosl_entries) >> pu_factor);
+
+						continue;
+					}
+					e = f_map_prt_to_local(map, e);
+				}
+				pu_cnt++; /* stats */
+
+				/* Prepare BoS */
+				assert (f_map_seek_iter(it, e));
+
+				/* Copy PU values */
+				pu = e_to_bosl(it->bosl, e) >> pu_factor;
+				buf = bos_buf + f_map_pu_p_sz(map, i, buf);
+
+				pthread_spin_lock(&it->bosl->dirty_lock);
+				copy_pu_to_bosl(it->bosl, pu, buf);
+
+				/* Clear PU dirty bit */
+				//_f_map_clear_pu_dirty_bosl(it->bosl, pu);
+				clear_bit64(pu, it->bosl->dirty);
+				pthread_spin_unlock(&it->bosl->dirty_lock);
+			}
 		}
-	} while (count > 0);
-	map->loaded = 1;
+	}
+	//map->loaded = 1;
+	ret = 0;
 
 _exit:
+	/* DEBUG */
+	if (total != pu_cnt || ret != 0)
+		dbg_printf("p%d: map:%d Update totals: read %zu, got %zu PUs rc:%d\n",
+			   map->part, map_id, total, pu_cnt, ret);
 	f_map_free_iter(it);
-	free(keys);
 	free(bos_buf);
+	keyset_free(kset_parted);
+	free(keys);
 	return ret;
 }
 
