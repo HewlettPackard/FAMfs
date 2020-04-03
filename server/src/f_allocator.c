@@ -2443,6 +2443,7 @@ static inline int wait_stripes(F_LO_PART_t *lp)
  * ss->count should be set by the caller but could be adjusted down if there is not enough stripes.
  * It is expected that the caller will retry the call for the remainder.
  * If no stripes available but no out_of_space condition exists will wait for stripes to be allocated.
+ * All stripe #s in the set are global.
  * Returns # of stripes allocated or error
  */
 int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *ss)
@@ -2486,7 +2487,8 @@ _retry:
 		rc = __get_stripe(lp, match_stripe, &stripe);
 		if (rc) goto _err;
 
-		ss->stripes[i] = match_stripe = stripe;
+		match_stripe = stripe;
+		ss->stripes[i] = f_map_prt_to_global(lo->slabmap, stripe);
 	}
 	pthread_spin_unlock(&lp->alloc_lock);
 	atomic_inc(lo->stats + FL_STRIPE_GET);
@@ -2497,14 +2499,17 @@ _err:
 	pthread_spin_unlock(&lp->alloc_lock);
 	atomic_inc(lo->stats + FL_STRIPE_GET_ERR);
 	while (i--) {
-		if (ss->stripes[i] != F_STRIPE_INVALID)
-			__put_stripe(lp, ss->stripes[i]);
+		if (ss->stripes[i] != F_STRIPE_INVALID) {
+			ASSERT(f_map_prt_my_global(lo->slabmap, ss->stripes[i]));
+			__put_stripe(lp, f_map_prt_to_local(lo->slabmap, ss->stripes[i]));
+		}
 	}
 	return rc;
 }
 
 /*
  * Release a set of stripes (set claim vector to FREE).
+ * All stripe #s n the set are expected to be global and to belong to the local allocator partition.
  * Returns 0 or error
  */
 int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
@@ -2514,14 +2519,20 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	int i, rc = 0;
 
 	for (i = 0; i < ss->count; i++) {
+		f_stripe_t stripe;
+		
+		ASSERT(f_map_prt_my_global(lo->slabmap, ss->stripes[i]));
+		stripe = f_map_prt_to_local(lo->slabmap, ss->stripes[i]);
+
 		/* stripe should not be on the pre-allocated list */
-		se = find_stripe(lp, ss->stripes[i]);
+		se = find_stripe(lp, stripe);
 		if (se) {
-			LOG(LOG_ERR, "%s[%d]: stripe %lu is on preallocated list", lo->info.name, lp->part_num, se->stripe);
+			LOG(LOG_ERR, "%s[%d]: stripe %lu is on preallocated list", 
+				lo->info.name, lp->part_num, stripe);
 			ASSERT(!se);
 		}
 
-		rc += __put_stripe(lp, ss->stripes[i]);
+		rc += __put_stripe(lp, stripe);
 	}
 
 	return rc;
@@ -2529,6 +2540,7 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 
 /*
  * Commit a set of preallocated stripes (set claim vector to ALLOCATED).
+ * All stripe #s n the set are expected to be global and to belong to the local allocator partition.
  * Returns 0 or error
  */
 int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
@@ -2540,7 +2552,11 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	atomic_inc(lo->stats + FL_STRIPE_COMMIT_REQ);
 
 	for (i = 0; i < ss->count; i++) {
-		rc += commit_stripe(lp, ss->stripes[i]);
+		f_stripe_t stripe;
+		
+		ASSERT(f_map_prt_my_global(lo->slabmap, ss->stripes[i]));
+		stripe = f_map_prt_to_local(lo->slabmap, ss->stripes[i]);
+		rc += commit_stripe(lp, stripe);
 	}
 	
 	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 

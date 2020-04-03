@@ -24,7 +24,7 @@ int f_stop_allocator_threads(void);
  * Stripe allocation API 
  */
 /*
- * Get a set of preallocated stripes.
+ * Get a set of preallocated stripes. All stripe #s in the set are global.
  *
  *  Params
  *  	lo		FAMfs layout to get stripe for
@@ -32,7 +32,7 @@ int f_stop_allocator_threads(void);
  *  			If provided, will try to find a stripe that uses different devices than the match_stripe.  
  *  	ss		Stripe set object, ss->count should be set by the caller 
  *  			but could be adjusted down if there is not enough stripes.
- *  			Stripes are returned in the ss->stripes[] array
+ *  			Stripes (global) are returned in the ss->stripes[] array
  *  Returns
  *  	>0		success, returns number of stripes allocated (could be less than requested)
  *  	<>0		error
@@ -40,12 +40,13 @@ int f_stop_allocator_threads(void);
 int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *ss);
 
 /*
- * Release a set of layout stripes.
+ * Release a set of layout stripes. All stripe #s n the set are expected to be global 
+ * and to belong to the local allocator partition.
  *
  *  Params
  *  	lo		FAMfs layout to release stripe to
  *  	ss		Stripe set object, ss->count and ss->stripes[] should be set by the caller
- *  			to contain stripes to be released 
+ *  			to contain stripes (global) to be released 
  *  Returns
  *  	0		success
  *  	<>0		error
@@ -53,12 +54,14 @@ int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *s
 int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss);
 
 /*
- * Commit a set of layout stripes (mark them ALLOCATED). Should be done after a user process fills them with data.
+ * Commit a set of layout stripes (mark them ALLOCATED). Should be done after a user process 
+ * fills them with data. All stripe #s n the set are expected to be global and to belong 
+ * to the local allocator partition.
  *
  *  Params
  *  	lo		FAMfs layout to commit stripe in
  *  	ss		Stripe set object, ss->count and ss->stripes[] should be set by the caller
- *  			to contain stripes to be committed 
+ *  			to contain stripes (global) to be committed 
  *  Returns
  *  	0		success
  *  	<>0		error
