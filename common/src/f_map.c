@@ -660,6 +660,13 @@ static void keyset_free(F_MAP_KEYSET_t *keyset)
 	free(keyset);
 }
 
+static int compare_uint64(const void *a, const void *b)
+{
+    const uint64_t *ia = (const uint64_t *)a;
+    const uint64_t *ib = (const uint64_t *)b;
+    return (ia > ib) - (ia < ib);
+}
+
 static int keyset_part(F_MAP_KEYSET_t *to, F_MAP_t *map, unsigned int part,
     F_MAP_KEYSET_t *from)
 {
@@ -690,6 +697,7 @@ static int keyset_part(F_MAP_KEYSET_t *to, F_MAP_t *map, unsigned int part,
 	default: err("Unsupported map key size:%u", from->key_sz);
 		assert(0);
 	}
+	qsort(to->keys_64, count, sizeof(uint64_t), compare_uint64);
 	to->_count = count;
 	to->key_sz = from->key_sz;
 	return 0;
@@ -757,6 +765,15 @@ int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *keyset)
 				ret = rcv_cnt<0? rcv_cnt:-ENOENT;
 				goto _exit;
 			}
+			/* TODO: Remove me! */
+			if (size == 1 && offset-1 != kset_parted->keys_64[k-1])
+			{
+				err("ENOENT! key:%lu %lu",
+				    kset_parted->keys_64[k-1], offset-1);
+				assert( 0 );
+				ret = -ENOENT;
+				goto _exit;
+			}
 			count -= size;
 			total += size; /* stats */
 
@@ -796,17 +813,19 @@ int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *keyset)
 		}
 	}
 	//map->loaded = 1;
+	assert( total == pu_cnt );
 	ret = 0;
 
 _exit:
 	/* DEBUG */
-	if (total != pu_cnt || ret != 0)
-		dbg_printf("p%d: map:%d Update totals: read %zu, got %zu PUs rc:%d\n",
-			   map->part, map_id, total, pu_cnt, ret);
+	if (ret != 0)
+		dbg_printf("p%d: map:%d Update totals: update %zu PUs rc:%d\n",
+			   map->part, map_id, total, ret);
 	f_map_free_iter(it);
 	free(bos_buf);
 	keyset_free(kset_parted);
 	free(keys);
+	/* Return error (negative) or updated PU count */
 	return ret;
 }
 
@@ -1719,15 +1738,21 @@ static uint64_t bosl_weight(const F_ITER_t *it, const unsigned long *p,
  */
 uint64_t f_map_weight(const F_ITER_t *iter, size_t size)
 {
-	F_BOSL_t *bosl = iter->bosl;
-	F_MAP_t *map = iter->map;
+	F_BOSL_t *bosl;
+	F_MAP_t *map;
 	struct cds_ja_node *node;
 	uint64_t cnt, node_idx, idx;
 	uint64_t weight = 0;
 	uint64_t e, entry;
-	uint64_t length = map->bosl_entries;
+	uint64_t length;
+
+	if (iter == NULL)
+		return 0;
 
 	assert (!is_iter_reset(iter)); /* No iterator position! */
+	bosl = iter->bosl;
+	map = iter->map;
+	length = map->bosl_entries;
 	entry = iter->entry;
 	node_idx = entry / length;
 

@@ -1032,7 +1032,8 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 {
 	struct mdhim_bgetrm_t *bgrm;
 	int i, key_len, op, num_keys;
-	void *keyp = keys;
+	int *key_lens = NULL;
+	void **keys_p = NULL;
 	unsigned long *p = buf;
 	ssize_t ret;
 
@@ -1044,13 +1045,25 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 	if (size > 1 && keys[1]) {
 		op = MDHIM_GET_EQ;
 		num_keys = size;
+		key_lens = (int *) calloc(size, sizeof(int));
+		keys_p = (void **) calloc(size, sizeof(int *));
+		for (unsigned j = 0; j < size; j++) {
+			key_lens[j] = key_len;
+			keys_p[j] = &keys[j];
+		}
+		bgrm = _bget_records(md, index, keys_p, key_lens, num_keys,
+				     size, op);
 	} else {
 		op = MDHIM_GET_NEXT;
 		num_keys = 1;
+		bgrm = _bget_records(md, index, (void **)&keys, &key_len, num_keys,
+				     size, op);
 	}
 
-	bgrm = _bget_records(md, index, &keyp, &key_len, num_keys,
-			     size, op);
+	mlog(MDHIM_CLIENT_DBG, "bget op:%s %zu keys [0]:%lu %s",
+	     (op==MDHIM_GET_EQ)?"EQ":"NEXT", size, keys[0],
+	     (!bgrm || bgrm->error)?"ERR":"");
+
 	if (!bgrm || bgrm->error) {
 		ret = bgrm? bgrm->error : MDHIM_ERROR;
 		assert(ret < 0);
@@ -1058,10 +1071,7 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 	}
 	assert (bgrm->next == NULL);
 	assert (bgrm->keys && bgrm->values);
-	if (op == MDHIM_GET_EQ)
-		assert (IN_RANGE(bgrm->num_keys, 0, num_keys));
-	else
-		assert (IN_RANGE(bgrm->num_keys, 0, (int)size));
+	assert (IN_RANGE(bgrm->num_keys, 0, (int)size));
 
 	for (i = 0; i < bgrm->num_keys; i++) {
 		keys[i] = *((unsigned long*) bgrm->keys[i]);
@@ -1070,12 +1080,11 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 		mlog(MDHIM_CLIENT_DBG, "MDHIM Rank %d: get %d key:%lu",
 		     md->mdhim_rank, i, keys[i]);
 	}
-	if (op == MDHIM_GET_EQ && bgrm->num_keys != num_keys)
-		ret = MDHIM_ERROR;
-	else
-		ret = bgrm->num_keys;
+	ret = bgrm->num_keys;
 
 _err:
+	free(key_lens);
+	free(keys_p);
 	mdhim_full_release_msg(bgrm);
 	return ret;
 }
