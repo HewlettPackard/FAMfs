@@ -7,7 +7,16 @@
 #ifndef F_ALLOCATOR_H
 #define F_ALLOCATOR_H
 
-/* Start/stop allocators routines */
+/* 
+ * Start/stop allocators routines
+ *
+ *  Params
+ *  	none		
+ *  			
+ *  Returns
+ *  	0		success
+ *  	<>0		error
+ */
 int f_start_allocator_threads(void);
 int f_stop_allocator_threads(void);
 
@@ -55,5 +64,33 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss);
  *  	<>0		error
  */
 int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss);
+
+
+/* Device extents allocation/release routines */
+
+/*
+ * Allocate a free device extent: set pdev allocation bitmap and adjust pdev/pdi counters
+ * 
+ *  Params
+ *  	lp		FAMfs layout partition pointer
+ *	ext		extent entry pointer. Device index to allocate from has to be set 
+ *			here  by the caller.
+ *  Returns
+ *	>=0		device extent number
+ *	<0		error
+ */
+int f_alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext);
+
+/*
+ * Release device extent: clear pdev allocation bitmaps and adjust pdev/pdi counters
+ * 
+ *  Params
+ *  	lp		FAMfs layout partition pointer
+ *	ext		extent entry pointer. 
+ *
+ *  Returns
+ *	none
+ */
+void f_release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext);
 
 #endif

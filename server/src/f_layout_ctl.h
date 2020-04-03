@@ -20,6 +20,25 @@
  */
 int f_fail_pdev(F_LAYOUT_t *lo, int pool_index);
 
+/*
+ * Replace pool device extent:
+ * 1) no parameters: all failed extents replaced from the pool
+ * 2) only tgt_idx passsed: replace all extents from that device
+ *	by the available pool extents
+ * 3) both src_idx and tgt_idx passed: replace all extents from tgt_idx
+ *	by the extents from src_idx device
+ ^
+ ^  Params
+ *	lo		layout pointer
+ *	tgt_idx		replace all extents from that device
+ *	src_idx		by extents from src_idx device
+ ^
+ ^  Returns
+ *      0               success
+ *      <>0             error
+ */
+int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx);
+
 /* 
  * Slab allocation bitmap manipulation routines 
  */
@@ -131,6 +150,24 @@ static inline void reset_slab_usage(F_LO_PART_t *lp, f_slab_t slab)
 static inline bool slab_full(F_LO_PART_t *lp, f_stripe_t stripe)
 {
 	return (slab_used(lp, stripe) == lp->layout->info.slab_stripes);
+}
+
+static inline bool ag_used_in_slab(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, int pool_index)
+{
+	F_LO_PART_t *lp = lo->lp;
+	F_POOLDEV_INDEX_t *pdi0 = f_find_pdi_by_media_id(lo, pool_index);
+	int n;
+
+	for (n = 0; n < lo->info.chunks; n++) {
+		F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, sme->extent_rec[n].media_id);
+		if (sme->extent_rec[n].failed) continue; // skip failed extents
+		if (pdi->idx_ag == pdi0->idx_ag) {
+			LOG(LOG_DBG, "%s[%d]: device %d AG(%d) used by extent %d",
+				lo->info.name, lp->part_num, pool_index, pdi->idx_ag, n);
+			return true;
+		}
+	}
+	return false;
 }
 
 #endif

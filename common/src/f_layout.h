@@ -136,26 +136,33 @@ typedef struct f_pooldev_index_ {
 
 /* 2-dimensional device allocation matrix */
 struct f_pdi_matrix_;
+struct f_slabmap_entry_;
+struct f_layout_partition_;
 typedef int (*mx_init_fn) (struct f_pdi_matrix_ *mx);
 typedef F_POOLDEV_INDEX_t * (*mx_lookup_fn) (struct f_pdi_matrix_ *mx, size_t row, size_t col);
 typedef F_POOLDEV_INDEX_t * (*mx_lookup_by_id_fn) (struct f_pdi_matrix_ *mx, size_t row, unsigned int id);
 typedef void (*mx_sort_fn) (struct f_pdi_matrix_ *mx);
 typedef void (*mx_resort_fn) (struct f_pdi_matrix_ *mx, size_t row);
-typedef int (*mx_gen_devlist_fn) (struct f_pdi_matrix_ *mx, F_POOLDEV_INDEX_t *devlist, unsigned int *size);
+typedef int (*mx_gen_devlist_fn) (struct f_pdi_matrix_ *mx, 
+	F_POOLDEV_INDEX_t *devlist, unsigned int *size);
+typedef int (*mx_gen_devlist_for_replace_fn) (struct f_pdi_matrix_ *mx, 
+	F_POOLDEV_INDEX_t *devlist, unsigned int *size, struct f_slabmap_entry_ *sme);
 typedef void (*mx_release_fn) (struct f_pdi_matrix_ *mx);
 
 typedef struct f_pdi_matrix_ {
-    F_POOLDEV_INDEX_t	*addr;
-    size_t		rows;
-    size_t		cols;
+    struct f_layout_partition_		*lp;
+    F_POOLDEV_INDEX_t			*addr;
+    size_t				rows;
+    size_t				cols;
     /* Matrix operations */
-    mx_init_fn		init;
-    mx_lookup_fn	lookup;
-    mx_lookup_by_id_fn	lookup_by_id;
-    mx_sort_fn		sort;
-    mx_resort_fn	resort;
-    mx_gen_devlist_fn	gen_devlist;
-    mx_release_fn	release;
+    mx_init_fn				init;
+    mx_lookup_fn			lookup;
+    mx_lookup_by_id_fn			lookup_by_id;
+    mx_sort_fn				sort;
+    mx_resort_fn			resort;
+    mx_gen_devlist_fn			gen_devlist;
+    mx_gen_devlist_for_replace_fn	gen_devlist_for_replace;
+    mx_release_fn			release;
 } F_PDI_MATRIX_t;
 
 /* Partition info */

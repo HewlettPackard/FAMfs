@@ -26,22 +26,22 @@
 /*
  * Mark slab extent failed
  *
- ^  Params
- *	lo	FAMfs layout to mrk extent in
- *	sme	pointer to the slab map entry fo that slab
- ^	slab	slab to fail extent in
+ *  Params
+ *	lo	FAMfs layout pointer
+ *	sme	pointer to the slab map entry for that slab
  *	n	extent # to fail
  *
  *  Returns
- *	>	no update, extent already marked failed
+ *	0	no update, extent already marked failed
  *	1	partial update, only the extent record
  *	2	both the slab entry and the extent record have been updated
  */
-static inline int mark_extent_fail(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, f_slab_t slab, unsigned n)
+static inline int mark_extent_fail(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, unsigned n)
 {
 	F_LO_PART_t *lp = lo->lp;
 	F_SLAB_ENTRY_t se, old_se;
 	F_EXTENT_ENTRY_t ext, old_ext;
+	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
 	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
 	volatile F_EXTENT_ENTRY_t *extp = &sme->extent_rec[n];
 	bool failed = false;
@@ -98,6 +98,15 @@ static inline int mark_extent_fail(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, f_sla
 
 /*
  * Fail an extent for a specific device
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # to fail an extent in
+ *	pool_index	device index to fail
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
  */
 static int fail_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int pool_index)
 {
@@ -116,9 +125,9 @@ static int fail_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int pool_index)
 		rc = -EINVAL; goto _ret;
 	}	
 
-	/* Skip unmapped sheets */
+	/* Skip unmapped slabs */
 	if (!sme->slab_rec.mapped) {
-		LOG(LOG_DBG, "%s[%d]: slab %u s not mapped, skipping", lo->info.name, lp->part_num, slab);
+		LOG(LOG_DBG, "%s[%d]: slab %u not mapped, skipping", lo->info.name, lp->part_num, slab);
 		rc = -ENOENT; goto _ret;
 	}
 
@@ -134,7 +143,7 @@ static int fail_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int pool_index)
 		rc = -ENOENT; goto _ret;
 	}
 
-	if (mark_extent_fail(lo, sme, slab, n) > 0) {
+	if (mark_extent_fail(lo, sme, n) > 0) {
 		/* Update failed extents count */
 		off_t sha_off = (void *)pdev->sha - pool->pds_lfa->global;
 		off_t off = sha_off + offsetof(F_PDEV_SHA_t, failed_extents);
@@ -142,9 +151,9 @@ static int fail_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int pool_index)
 			LOG(LOG_WARN, "%s[%d]: error updating device %d failed exts",
 				lo->info.name, lp->part_num, pool_index);		
 		}
-		f_map_mark_dirty(lo->slabmap, slab);
 		LOG(LOG_DBG, "%s[%d]: marked ext %d (dev %d) in slab %u failed, count:%lu", 
 			lo->info.name, lp->part_num, n, pool_index, slab, pdev->sha->failed_extents);
+		f_map_mark_dirty(lo->slabmap, slab);
 	}
 _ret:
 	pthread_rwlock_unlock(&lp->lock);
@@ -164,6 +173,14 @@ static F_COND_t sm_slab_mapped = {
 
 /*
  * Fail all extents for a specific device
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	pool_index	device index to fail
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
  */
 static int fail_slab_extents(F_LAYOUT_t *lo, int pool_index)
 {
@@ -178,8 +195,8 @@ static int fail_slab_extents(F_LAYOUT_t *lo, int pool_index)
 		rc = fail_slab_extent(lo, slab, pool_index);
 		if (rc) {
 			if (rc != -ENOENT) {
-				LOG(LOG_ERR, "%s[%d]: error marking extent in slab %d failed",
-					lo->info.name, lp->part_num, rc);
+				LOG(LOG_ERR, "%s[%d]: error %d marking extent in slab %u failed",
+					lo->info.name, lp->part_num, rc, slab);
 			} else rc = 0;
 			continue;
 		}
@@ -202,8 +219,17 @@ static int fail_slab_extents(F_LAYOUT_t *lo, int pool_index)
 
 	return rc;
 }
+
 /*
  * Mark pool device failed and update the slabmap wherever that device us used
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	pool_index	device index to fail
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
  */
 int f_fail_pdev(F_LAYOUT_t *lo, int pool_index)
 {
@@ -214,7 +240,7 @@ int f_fail_pdev(F_LAYOUT_t *lo, int pool_index)
 	LOG(LOG_DBG2, "%s[%d]: marking slab extents failed", lo->info.name, lp->part_num);
 
 	if (!pdi) {
-		LOG(LOG_ERR, "%s[%d]:  pool device %d lookup failed",
+		LOG(LOG_ERR, "%s[%d]: pool device %d lookup failed",
 			lo->info.name, lp->part_num, pool_index);
 		return -EINVAL;
 	}
@@ -222,6 +248,502 @@ int f_fail_pdev(F_LAYOUT_t *lo, int pool_index)
 	rc = fail_slab_extents(lo, pool_index);
 	if (rc) LOG(LOG_ERR, "%s[%d]: error %d marking slab extents failed",
 			lo->info.name, lp->part_num, rc);
+
+	return rc;
+}
+
+/*
+ * Replace slab extent
+ *
+ ^  Params
+ *	lo	FAMfs layout
+ *	ext	new extent record pointer
+ *	sme	pointer to the slab map entry fo that slab
+ *	n	extent # to replace
+ *
+ *  Returns
+ *	0	no update, extent already replaced
+ *	1	partial update, only the extent record updated
+ *	2	both the slab entry and the extent record have been updated
+ */
+static inline int replace_extent(F_LAYOUT_t *lo, F_EXTENT_ENTRY_t *pext,
+	F_SLABMAP_ENTRY_t *sme, unsigned n)
+{
+	F_LO_PART_t *lp = lo->lp;
+	F_SLAB_ENTRY_t se, old_se;
+	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	F_EXTENT_ENTRY_t old_ext;
+	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
+	volatile F_EXTENT_ENTRY_t *extp = &sme->extent_rec[n];
+	bool failed = false;
+	int failed_chunks = 0;
+	int retries = 0, retries_max = 5;
+
+	old_ext._v64 = __atomic_load_8(&sme->extent_rec[n], __ATOMIC_SEQ_CST);
+	if (old_ext._v64 == pext->_v64) return 0;
+	do {
+		pext->failed = 1;
+		pext->checksum = 0;
+		pext->checksum = f_crc4_fast((char*)pext, sizeof(*pext));
+		if (likely(__atomic_compare_exchange_8(extp, &old_ext, pext->_v64,
+			0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)))
+			break;
+	} while (++retries < retries_max);
+	ASSERT(retries < retries_max);
+
+	if (slab_in_sync(lp, slab)) {
+		clear_slab_in_sync(lp, slab);
+		lp->sync_count--;
+	}
+
+	/* Count # of failed chunks to determine if the slab is degraded or failed */
+	for (n = 0; n < lo->info.chunks; n++) {
+		if (sme->extent_rec[n].failed)
+			failed_chunks++;
+	}
+	failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
+		
+	retries = 0;
+	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
+	if ((old_se.failed && failed) || (old_se.degraded && !failed)) return 1; // Already set
+	do {
+		se = old_se;
+		se.failed = failed;
+		se.degraded = !failed;
+		se.checksum = 0;
+		se.checksum = f_crc4_sm_fast(&se);
+		if (likely(__atomic_compare_exchange_16(sep, &old_se, se._v128,
+			0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)))
+			break;
+	} while (++retries < retries_max);
+	ASSERT(retries < retries_max);
+
+	if (se.failed) 
+		atomic_inc(&lp->failed_slabs);
+	else
+		atomic_inc(&lp->degraded_slabs);
+
+	return 2;
+}
+
+/* 
+ * Allocate device extent to replace a failed extent in a slab. Least utilized device is used 
+ * to allocate the replacement extent.
+ * Used by the slab extent replace function.
+ *
+ *  Params
+ *	lo		FAMfs layout partition pointer
+ *	pext		extent record pointer (to update)
+ *	sme		slab map entry pointer
+ *
+ *  Returns
+ *	>=0		success, returns allocated extent #
+ *	<0		error
+ */
+static int alloc_extent_by_util(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *pext, F_SLABMAP_ENTRY_t *sme)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	F_POOLDEV_INDEX_t *sorted_devlist = NULL;
+	unsigned devnum = pool->pool_ags * pool->ag_devs;
+	int i, rc = -ENOSPC;
+
+	sorted_devlist = calloc(pool->pool_ags, sizeof(F_POOLDEV_INDEX_t));
+	if (!sorted_devlist) {
+		LOG(LOG_ERR, "%s[%d]: error allocating device list array", lo->info.name, lp->part_num);
+		return 0;
+	}
+
+	pthread_rwlock_wrlock(&pool->lock);
+
+	/* Make sure the next allocator thread sees an updated list */ 
+	rc = lp->dmx->gen_devlist_for_replace(lp->dmx, sorted_devlist, &devnum, sme);
+	if (rc) {
+		LOG(LOG_ERR, "%s[%d]: slab %u: error %d in gen_devlist",
+			lo->info.name, lp->part_num, slab, rc);
+		return 0;
+	}
+
+	for (i = 0; i < devnum; i++) {
+		F_POOLDEV_INDEX_t *pdi = &sorted_devlist[i];		
+		ASSERT(pdi->pool_index != F_PDI_NONE);
+
+		if (ag_used_in_slab(lo, sme, pdi->pool_index))
+			continue;
+
+		/* Try to allocate a device extent */
+		pext->media_id = pdi->pool_index;
+		rc = f_alloc_dev_extent(lp, pext);
+		if (rc < 0) {
+			LOG(LOG_WARN, "%s[%d]: allocation failed on device id %d", 
+				lo->info.name, lp->part_num, pdi->pool_index);
+			continue;
+		}
+
+		LOG(LOG_DBG, "%s[%d]: allocated extent %d from device %d",
+			lo->info.name, lp->part_num, pext->extent, pdi->pool_index);
+		goto _ret;
+	}
+
+	LOG(LOG_ERR, "%s[%d]: no devices found for allocation", lo->info.name, lp->part_num);
+	rc = -ENOSPC;
+
+_ret:
+	pthread_rwlock_unlock(&pool->lock);
+	free(sorted_devlist);
+
+	return rc;
+}
+
+/* 
+ * Allocate device extent to replace a failed extent in a slab by an extent from a specific device.
+ * Used by the slab extent replace function.
+ *
+ *  Params
+ *	lo		FAMfs layout partition pointer
+ *	pext		extent record pointer (to update)
+ *	pool_index	if not F_PDI_NONE, allocate new extent from that device
+ *
+ *  Returns
+ *	>=0		success, returns allocated extent #
+ *	<0		error
+ */
+static int alloc_extent_by_idx(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *pext, int pool_index)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	F_POOL_t *pool = lo->pool;
+	int rc = -ENOSPC;
+
+	pthread_rwlock_wrlock(&pool->lock);
+
+	/* Try to allocate a device extent */
+	pext->media_id = pool_index;
+	rc = f_alloc_dev_extent(lp, pext);
+	if (rc < 0) {
+		LOG(LOG_ERR, "%s[%d]: allocation failed on device id %d", 
+			lo->info.name, lp->part_num, pool_index);
+	} else {
+
+		LOG(LOG_DBG, "%s[%d]: allocated extent %d from device %d",
+			lo->info.name, lp->part_num, pext->extent, pool_index);
+	}
+
+	pthread_rwlock_unlock(&pool->lock);
+
+	return rc;
+}
+
+/* 
+ * Allocate device extent to replace a failed extent in a slab.
+ * If pool_index provided allocate the extent from that device, otherwise 
+ * use the utilization based allocation.
+ * Used by the slab extent replace function.
+ *
+ *  Params
+ *	lo		FAMfs layout partition pointer
+ *	pext		extent record pointer (to update)
+ *	sme		slab map entry pointer
+ *	pool_index	if not F_PDI_NONE, allocate new extent from that device
+ *
+ *  Returns
+ *	>=0		success, returns allocated extent #
+ *	<0		error
+ */
+static int alloc_extent2replace(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *pext, 
+	F_SLABMAP_ENTRY_t *sme, int pool_index)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	int extent;
+
+	if (pool_index != F_PDI_NONE && ag_used_in_slab(lo, sme, pool_index)) return -EINVAL;
+
+	extent = (pool_index != F_PDI_NONE) ? alloc_extent_by_idx(lp, pext, pool_index) :
+		alloc_extent_by_util(lp, pext, sme);
+
+	if (extent >= 0) {
+		/* Fill in the extent */
+		pext->extent = extent;
+		pext->mapped = 1;
+		pext->failed = 1;
+		pext->checksum = 0;
+		pext->checksum = f_crc4_fast((char*)pext, sizeof(*pext));
+	} else {
+		memset(pext, 0, sizeof(F_EXTENT_ENTRY_t));
+	}
+
+	return extent;
+}
+
+/*
+ * Do extents replacement:
+ *	- allocate a replacement extent from the pool or the src_idx device
+ *	- update the slab map entry with the new extent info
+ *	- release the old extent and update counters  
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	sme		slab map entry pointer
+ *	n		extent # to replace
+ *	src_idx		if not F_PDI_NONE, allocate new extent from the src_idx device
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+static int do_replace_extent(F_LAYOUT_t *lo, f_slab_t slab, F_SLABMAP_ENTRY_t *sme, 
+	int n, int src_idx)
+{
+	F_LO_PART_t *lp = lo->lp;
+	F_POOL_t *pool = lo->pool;
+	F_EXTENT_ENTRY_t ext, old_ext = sme->extent_rec[n];
+	int rc;
+
+	LOG(LOG_DBG2, "%s[%d]: replacing extent @%d", lo->info.name, lp->part_num, n);
+	memset(&ext, 0, sizeof(F_EXTENT_ENTRY_t));
+	rc = alloc_extent2replace(lp, &ext, sme, src_idx);
+	if (rc < 0) {
+		LOG(LOG_ERR, "%s[%d]: failed to allocate replacement extent @%d",
+			lo->info.name, lp->part_num, n);
+		return rc;
+	}
+
+	/*
+	 * Update the slab map extents. Mark the replaced extent
+	 * failed so it will be picked up by recovery
+	 */
+	if (!replace_extent(lo, &ext, sme, n)) {
+		LOG(LOG_WARN, "%s[%d]: extent @%d already replaced",
+			lo->info.name, lp->part_num, n);
+		return -ESRCH;
+
+	}
+	/* Update failed extents count */
+	F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, ext.media_id);
+	off_t sha_off = (void *)pdev->sha - pool->pds_lfa->global;
+	off_t off = sha_off + offsetof(F_PDEV_SHA_t, failed_extents);
+	if (f_lfa_giafl(pool->pds_lfa->global_abd, off)) {
+		LOG(LOG_WARN, "%s[%d]: error updating device %d failed exts",
+			lo->info.name, lp->part_num, ext.media_id);		
+	}
+
+	/* Release the original device extent */
+	if (old_ext.mapped)
+		f_release_dev_extent(lp, &old_ext);
+
+	LOG(LOG_DBG, "%s[%d]: replaced ext %d (dev %d) in slab %u, count:%lu", 
+		lo->info.name, lp->part_num, n, ext.media_id, slab, pdev->sha->failed_extents);
+	return 0;
+}
+
+/*
+ * Replace all or specified failed extents in the slab by available pool extents or by 
+ * the extents from the source device if given
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # for replacement
+ *	tgt_idx		replace all extents from that device
+ *	src_idx		by extents from src_idx device
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+static int replace_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int tgt_idx, int src_idx)
+{
+	F_LO_PART_t *lp = lo->lp;
+//	F_POOL_t *pool = lo->pool;
+	F_SLABMAP_ENTRY_t *sme;
+//	F_EXTENT_ENTRY_t ext, old_ext;
+	int n, replaced = 0, rc = 0;
+
+	ASSERT(slab < lp->slab_count);
+
+	pthread_rwlock_wrlock(&lp->lock);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	if (!sme) {
+		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
+		rc = -EINVAL; goto _ret;
+	}	
+
+	/* Skip unmapped slabs */
+	if (!sme->slab_rec.mapped) {
+		LOG(LOG_DBG, "%s[%d]: slab %u not mapped, skipping", lo->info.name, lp->part_num, slab);
+		rc = -ENOENT; goto _ret;
+	}
+
+	/* Skip failed slabs */
+	if (sme->slab_rec.failed) {
+		LOG(LOG_DBG, "%s[%d]: slab %u is failed, skipping", lo->info.name, lp->part_num, slab);
+		rc = -ENOENT; goto _ret;
+	}
+
+	/* Skip not degraded slabs */
+	if (!sme->slab_rec.degraded) {
+		LOG(LOG_DBG, "%s[%d]: slab %u is not degraded, skipping", 
+			lo->info.name, lp->part_num, slab);
+		rc = -ENOENT; goto _ret;
+	}
+
+	/* Find a failed extent */
+	for (n = 0; n < lo->info.chunks; n++) {
+		if (sme->extent_rec[n].media_id == tgt_idx || sme->extent_rec[n].failed) {
+			rc = do_replace_extent(lo, slab, sme, n, src_idx);
+			if (!rc) replaced++;
+		}
+		/* If we are only replacing the tgt_idx extents, we are done here */
+		if (sme->extent_rec[n].media_id == tgt_idx) break;
+#if 0
+			old_ext = sme->extent_rec[n];
+			rc = alloc_extent2replace(lp, &ext, sme, -1);
+			if (rc) {
+				 LOG(LOG_ERR, "%s[%d]: failed to allocate replacement extent @%d",
+					lo->info.name, lp->part_num, n);
+				goto _ret;
+			}
+
+			/*
+			 * Update the slab map extents. Mark the replaced extent
+			 * failed so it will be picked up by recovery
+			 */
+			if (replace_extent(lo, &ext, sme, slab, n) > 0) {
+				/* Update failed extents count */
+				F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, ext.media_id);
+				off_t sha_off = (void *)pdev->sha - pool->pds_lfa->global;
+				off_t off = sha_off + offsetof(F_PDEV_SHA_t, failed_extents);
+				if (f_lfa_giafl(pool->pds_lfa->global_abd, off)) {
+					LOG(LOG_WARN, "%s[%d]: error updating device %d failed exts",
+						lo->info.name, lp->part_num, ext.media_id);		
+				}
+				LOG(LOG_DBG, "%s[%d]: replaced ext %d (dev %d) in slab %u, count:%lu", 
+					lo->info.name, lp->part_num, n, ext.media_id, slab, 
+					pdev->sha->failed_extents);
+				replaced++;
+			}
+
+			/* Release the original device extent */
+			if (old_ext.mapped)
+				f_release_dev_extent(lp, &old_ext);
+		}
+#endif
+	}
+
+	if (n == lo->info.chunks && !replaced) {
+		LOG(LOG_DBG, "%s[%d]: no failed extents in slab %u, skipping", 
+			lo->info.name, lp->part_num, slab);
+		rc = -ENOENT; goto _ret;
+	}
+
+	LOG(LOG_DBG, "%s[%d]: replaced %d extents in slab %u", 
+		lo->info.name, lp->part_num, replaced, slab); 
+	f_map_mark_dirty(lo->slabmap, slab);
+_ret:
+	pthread_rwlock_unlock(&lp->lock);
+	return rc;
+}
+
+/*
+ * Replace failed extents by available pool extents unless src_idx is passed
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	tgt_idx		replace all extents from that device
+ *	src_idx		by extents from src_idx device
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+static int replace_slab_extents(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
+{
+	F_LO_PART_t *lp = lo->lp;
+	F_ITER_t *sm_it;
+	int rc = 0, updated = 0;
+	
+	sm_it = f_map_get_iter(lo->slabmap, sm_slab_mapped, 0);
+	for_each_iter(sm_it) {
+		f_slab_t slab = sm_it->entry;
+
+		rc = replace_slab_extent(lo, slab, tgt_idx, src_idx);
+		if (rc) {
+			if (rc != -ENOENT) {
+				LOG(LOG_ERR, "%s[%d]: error %d replacing extent in slab %u",
+					lo->info.name, lp->part_num, rc, slab);
+			} else rc = 0;
+			continue;
+		}
+		updated++;
+	}
+
+	LOG(LOG_DBG, "%s[%d]: replaced extents for %d out of %d slabs",
+		lo->info.name, lp->part_num, updated, lp->slab_count);
+
+	/* Flush slabmap and wake up the allocator thread */
+	if (updated) {
+		if (log_print_level > 0)
+			f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		rc = f_map_flush(lo->slabmap);
+		if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing slab map", 
+			lo->info.name, lp->part_num, rc);
+		atomic_inc(&lp->slabmap_version);
+		pthread_cond_signal(&lp->a_thread_cond);
+	}
+
+	return rc;
+}
+
+/*
+ * Replace pool device extent:
+ * 1) no parameters: all failed extents replaced from the pool
+ * 2) only tgt_idx passsed: replace all extents from that device
+ *	by the available pool extents
+ * 3) both src_idx and tgt_idx passed: replace all extents from tgt_idx
+ *	by the extents from src_idx device
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	tgt_idx		replace all extents from that device
+ *	src_idx		by extents from src_idx device
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
+{
+	F_LO_PART_t *lp = lo->lp;
+	int rc;
+
+	LOG(LOG_DBG2, "%s[%d]: replacing slab extents on dev %d from dev %d", 
+		lo->info.name, lp->part_num, tgt_idx, src_idx);
+
+	/* Validate parmeters */
+	if (tgt_idx != F_PDI_NONE) {
+		/* Replace all extents for a specific device */
+		F_POOLDEV_INDEX_t *tgt_pdi = f_find_pdi_by_media_id(lo, tgt_idx);
+		F_POOLDEV_INDEX_t *src_pdi;
+		
+		if (!tgt_pdi) {
+			LOG(LOG_ERR, "%s[%d]: invalid target device %d",
+				lo->info.name, lp->part_num, tgt_idx);
+			return -EINVAL;
+		}
+
+		/* Replace all extents for a target device only by extents from a source device */
+		if (src_idx != F_PDI_NONE) {
+			/* Source device index passed in the command */
+			src_pdi = f_find_pdi_by_media_id(lo, src_idx);
+			if (!src_pdi) {
+				LOG(LOG_ERR, "%s[%d]: invalid source device %d",
+					lo->info.name, lp->part_num, src_idx);
+				return -EINVAL;
+			}
+		}
+	}
+
+	rc = replace_slab_extents(lo, tgt_idx, src_idx);
+	if (rc) LOG(LOG_ERR, "%s[%d]: error %d replacing slab extents tgt/src: %d/%d",
+		lo->info.name, lp->part_num, rc, tgt_idx, src_idx);
 
 	return rc;
 }
