@@ -29,6 +29,10 @@ static void *f_allocator_thread(void *ctx);
 
 #define F_LFA_PORT "30000"
 #define F_LFA_PDS_KEY 16661
+
+/*
+ * Destroy pool devices shared structs array LFA
+ */
 static void destroy_pds_lfa(F_POOL_t *pool)
 {
 	if (pool->pds_lfa->global_abd) f_lfa_detach(pool->pds_lfa->global_abd, 0);
@@ -40,7 +44,7 @@ static void destroy_pds_lfa(F_POOL_t *pool)
 }
 
 /*
- * Create LFA for the shared part of pool devices for that layout
+ * Create LFA for the shared part of pool devices (F_PDEV_SHA_t) 
  */
 static int create_pds_lfa(F_POOL_t *pool)
 {
