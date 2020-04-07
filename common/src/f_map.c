@@ -524,6 +524,7 @@ int f_map_register(F_MAP_t *m, int layout_id)
 
 	/* On success, set map id (table index #) and RO flag */
 	if (rc == 0) {
+		m->reg_id = layout_id;
 		m->id = info.map_id;
 		f_map_set_ro(m, info.ro);
 	}
@@ -2460,8 +2461,8 @@ static int sbosl_add_pages(F_MAP_t *m)
 
 	/* memory region name */
 	//entry = id*F_SHMAP_SZ(1);
-	l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%01d_%01lu",
-		     F_SHMAP_DATA_NAME, priv_sb->id, id);
+	l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%c_%1.1lu",
+		     F_SHMAP_DATA_NAME, (char)priv_sb->id, id);
 	strncpy(sb_name+l, sb->name+l, F_SHMAP_NAME_LEN-l);
 
 	size = F_SHMAP_DATA_SZ(m->bosl_sz);
@@ -2673,18 +2674,19 @@ static int sbosl_alloc_page(F_MAP_t *m, uint64_t entry, unsigned long **page_p)
 }
 
 /* Share the map in SHMEM */
-int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
+int f_map_shm_attach(F_MAP_t *m, F_MAPMEM_t rw)
 {
     F_MAP_SB_t *priv_sb;
     F_SHMAP_SB_t *sb = NULL;
     F_MAP_t *sm = NULL;
     pthread_rwlockattr_t attr;
     char sb_name[F_SHMAP_NAME_LEN+1] = { 0 };
-    size_t l, size;
+    size_t size;
+    signed char reg_id;
     unsigned int tmo, slp;
     int rc = 0;
 
-    if (m->shm_sb)
+    if (!m || m->shm_sb)
 	return -EINVAL; /* already attached */
     if (m->nr_bosl || m->loaded)
 	return -EADDRINUSE; /* already in use */
@@ -2693,12 +2695,11 @@ int f_map_shm_attach(F_MAP_t *m, const char* name, F_MAPMEM_t rw)
     if (!priv_sb)
 	return -ENOMEM;
     INIT_LIST_HEAD(&priv_sb->shmap_data);
-    priv_sb->id = (m->id>=0)? m->id:0;
+    reg_id = (signed char)m->reg_id;
+    priv_sb->id = (reg_id + 0x30) & 0xff; /* IPC shared memory region signature */
 
-    l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%01d",
-		 F_SHMAP_NAME_PREFIX, priv_sb->id);
-    if (name)
-	strncpy(sb_name+l, name, F_SHMAP_NAME_LEN-l);
+    snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%c",
+	     F_SHMAP_NAME_PREFIX, (char)priv_sb->id);
     priv_sb->name = strdup(sb_name);
     priv_sb->shm = rw;
 

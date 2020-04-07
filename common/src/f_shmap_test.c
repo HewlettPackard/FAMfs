@@ -228,8 +228,7 @@ int main(int argc, char *argv[])
 			   F_MAPLOCKING_DEFAULT);
 	    if (!m) goto err0;
 	    dbg("Pages:%u e_sz:%u - map_shm_attach", pages, e_sz);
-	    rc = f_map_shm_attach(m, NULL,
-				  rank? F_MAPMEM_SHARED_RD : F_MAPMEM_SHARED_WR);
+	    rc = f_map_shm_attach(m, rank?F_MAPMEM_SHARED_RD:F_MAPMEM_SHARED_WR);
 	    if (rc) goto err0;
 	    /* check BoS size */
 	    if (m->bosl_entries != (unsigned int)(m->bosl_sz*8/e_sz)) goto err1;
@@ -463,8 +462,7 @@ int main(int argc, char *argv[])
 	    m = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, (pages==1)?0:page_sz,
 			   F_MAPLOCKING_DEFAULT);
 	    if (!m) goto err0;
-	    rc = f_map_shm_attach(m, NULL,
-				  rank? F_MAPMEM_SHARED_RD : F_MAPMEM_SHARED_WR);
+	    rc = f_map_shm_attach(m, rank?F_MAPMEM_SHARED_RD:F_MAPMEM_SHARED_WR);
 	    if (rc) goto err0;
 
 	    /* Populate shared map: WR */

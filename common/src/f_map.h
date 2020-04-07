@@ -161,6 +161,7 @@ typedef struct f_map_ {
     unsigned int		bosl_entries;	/* BoS entry count */
     F_MAPTYPE_t			type;		/* BITMAP or STRUCTURED */
     int				id;		/* map id */
+    int				reg_id;		/* ID that this map is registered with KV store */
     F_MAP_GEO_t			geometry;	/* map geometry */
     unsigned int		part;		/* partition number */
     unsigned int		parts;		/* number of partitions */
@@ -377,8 +378,8 @@ int f_map_reshape(F_MAP_t **new, F_SETTER_t setter, F_MAP_t *origin, F_COND_t co
 F_MAP_t *f_map_reduce(size_t hint_bosl_sz, F_MAP_t *orig, F_COND_t cond, int arg);
 /* Print map description: KV size, in-memory size and so on */
 void f_map_fprint_desc(FILE *f, F_MAP_t *map);
-/* Share the map in SHMEM */
-int f_map_shm_attach(F_MAP_t *map, const char* name, F_MAPMEM_t rw);
+/* Share (WR) or attach to the shared (RO) registered map in SHMEM */
+int f_map_shm_attach(F_MAP_t *map, F_MAPMEM_t rw);
 
 /*
  * Persistent map backend: the KV store
