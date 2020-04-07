@@ -100,7 +100,7 @@ int f_rbq_pop(f_rbq_t *q, void *e, long wait);
 //  ETIMEDOUT - Timed out waiting
 //  ECANCELED - Somebody reset water marks
 //  -1        - Check errno
-int f_rbq_wait_lwm(f_rbq_t *q, long tmo);
+int f_rbq_waitlwm(f_rbq_t *q, long tmo);
 
 //
 // Sleep until high water mark is reached
@@ -111,7 +111,7 @@ int f_rbq_wait_lwm(f_rbq_t *q, long tmo);
 //  0         - Success (low water mark reached)
 //  ETIMEDOUT - Timed out waiting
 //  -1        - Check errno
-int f_rbq_wait_hwm(f_rbq_t *q, long tmo); 
+int f_rbq_waithwm(f_rbq_t *q, long tmo); 
 
 //
 // Returns queu size, i.e. number of slots in the ring buffer
@@ -162,5 +162,14 @@ static inline void f_rbq_resetwm(f_rbq_t *q) {
     f_rbq_setlwm(q, 0);
     f_rbq_sethwm(q, 0);
 }
+
+static inline int f_rbq_getlwm(f_rbq_t *q) {
+    return q->rbq->lwm;
+}
+
+static inline int f_rbq_gethwm(f_rbq_t *q) {
+    return q->rbq->hwm;
+}
+
 
 #endif

@@ -211,7 +211,7 @@ int f_rbq_pop(f_rbq_t *q, void *e, long wait) {
     return 0;
 }
 
-int f_rbq_wait_lwm(f_rbq_t *q, long tmo) {
+int f_rbq_waitlwm(f_rbq_t *q, long tmo) {
     struct timespec ts;
     int s;
 
@@ -236,7 +236,7 @@ int f_rbq_wait_lwm(f_rbq_t *q, long tmo) {
     return pthread_mutex_unlock(&q->rbq->lwmx);
 }
 
-int f_rbq_wait_hwm(f_rbq_t *q, long tmo) { 
+int f_rbq_waithwm(f_rbq_t *q, long tmo) { 
     struct timespec ts;
     int s;
 
@@ -317,7 +317,7 @@ int main(int argc, char *argv[]) {
                 printf("push %c[%d]\n", argv[1][1], j);
                 if (f_rbq_count(myq) > 24) {
                     printf("sleep on LW\n");
-                    if (s = f_rbq_wait_lwm(myq, tmo))
+                    if (s = f_rbq_waitlwm(myq, tmo))
                         printf("wait %s\n", strerror(s));
                     else
                         printf("GOT UP\n");
@@ -352,7 +352,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("waiting for queue\n");
-    //s = f_rbq_wait_hwm(myq, tmo);
+    //s = f_rbq_waithwm(myq, tmo);
     //printf("%s\n", strerror(s));
 
 

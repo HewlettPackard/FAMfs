@@ -62,7 +62,7 @@
 #include "famfs_maps.h"
 #include "f_allocator.h"
 #include "mpi_utils.h"
-
+#include "f_helper.h"
 
 int *local_rank_lst;
 int local_rank_cnt;
@@ -138,6 +138,9 @@ static void famfs_exit()
 volatile int sm_ready = 0;
 extern int num_fds;
 long max_recs_per_slice;
+
+extern pthread_t al_thrd[F_CMDQ_MAX];
+extern pthread_t cm_thrd;
 
 int main(int argc, char *argv[])
 {
@@ -267,7 +270,9 @@ int main(int argc, char *argv[])
                 LOG(LOG_ERR, "LO %s svc thread create failed", lo->info.name);
                 exit(rc);
             }
+
         }
+
     }
 
     /* we DO NOT support multiple instances of famfs demon on one node */
@@ -364,6 +369,14 @@ int main(int argc, char *argv[])
     	if (rc != ULFS_SUCCESS) {
 	    LOG(LOG_WARN, "%s starting allocator threads", ULFS_str_errno(rc));
     	}
+    }
+
+    if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
+        if ((rc = f_ah_init(pool))) {
+            LOG(LOG_ERR, "error startting helper threads");
+        } else {
+            LOG(LOG_DBG, "helper threads started");
+        }
     }
 
     {
