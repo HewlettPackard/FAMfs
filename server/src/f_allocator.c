@@ -150,17 +150,10 @@ _ret:
 int start_allocator_thread(F_LAYOUT_t *lo)
 {
 	F_LO_PART_t *lp = lo->lp;
-	int e_sz, chunks, rc = 0;
+	int rc = 0;
 
 	pthread_mutex_init(&lp->lock_ready, NULL);
 	pthread_cond_init(&lp->cond_ready, NULL);
-
-	/* Initialize layout maps */
-	chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
-	e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
-	lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
-	lo->claimvec = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
-	if (!lo->slabmap || !lo->claimvec) return -EINVAL;
 
 	lo->slab_alloc_type = F_BY_UTIL;
 	lo->thread_run_intl = 1000;
@@ -455,7 +448,7 @@ static int get_slab_devmap(F_LO_PART_t *lp, f_slab_t slab, unsigned long *devmap
 	bitmap_zero(devmap, pool->info.pdev_max_idx+1);
 
 	/* Get the slab map entry */
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error on SM entry %u", lo->info.name, lp->part_num, slab);
 		return -EINVAL;
@@ -772,8 +765,8 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 	F_SLABMAP_ENTRY_t *sme;
 	f_slab_t slab = e;
 	int bmap_size =max(sizeof(long), BITS_TO_BYTES(pool->info.max_extents)); 
-	unsigned int pu_entries = 1U << lo->slabmap->geometry.pu_factor;
-	unsigned int e_sz = lo->slabmap->geometry.entry_sz;
+	unsigned int pu_entries = 1U << lp->slabmap->geometry.pu_factor;
+	unsigned int e_sz = lp->slabmap->geometry.entry_sz;
 	int dev0 =  pool->info.pdev_max_idx + 1 - pool->pool_devs;
 	unsigned int i;
 
@@ -878,8 +871,8 @@ static void claimvec_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 	F_LO_PART_t *lp = data->lp;;
 	F_LAYOUT_t *lo = lp->layout;
 	f_stripe_t s = e;
-	unsigned int pu_entries = 1U << lo->claimvec->geometry.pu_factor;
-	unsigned int e_sz = lo->claimvec->geometry.entry_sz;
+	unsigned int pu_entries = 1U << lp->claimvec->geometry.pu_factor;
+	unsigned int e_sz = lp->claimvec->geometry.entry_sz;
 	unsigned int i;
 
 	if (bbitmap_empty((unsigned long *)pu, e_sz*pu_entries)) return;
@@ -890,7 +883,7 @@ static void claimvec_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 			f_slab_t slab = stripe_to_slab(lo, s);
 
 			/* Verify that the slab is mapped */
-			sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+			sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 			if (!sme->slab_rec.mapped) {
 				LOG(LOG_ERR, "%s[%d]: slab %u (s %lu) not mapped", 
 					lo->info.name, lp->part_num, slab, s);
@@ -901,7 +894,7 @@ static void claimvec_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 		} else if (test_bbit(i, CVE_PREALLOC, (unsigned long *)pu)) {
 			LOG(LOG_DBG3, "%s[%d]: clearing preallocated stipe %lu", lo->info.name, lp->part_num, s);
 			set_bbit(i, CVE_FREE, (unsigned long *)pu);
-			f_map_mark_dirty(lo->claimvec, s);
+			f_map_mark_dirty(lp->claimvec, s);
 		}
 		LOG(LOG_DBG3, "%s[%d]: stripe %lu loaded: %d errors", lo->info.name, lp->part_num, s, data->err);
 		data->loaded++;
@@ -922,17 +915,17 @@ static int read_maps(F_LO_PART_t *lp)
 	struct cb_data cbdata;
 	int rc;
 
-	ASSERT(lo->slabmap && lo->claimvec);
+	ASSERT(lp->slabmap && lp->claimvec);
 
 	LOG(LOG_DBG, "%s[%d]: loading slabmap", lo->info.name, lp->part_num);
-	rc = f_map_init_prt(lo->slabmap, lo->part_count, lp->part_num, 0, 0);
+	rc = f_map_init_prt(lp->slabmap, lo->part_count, lp->part_num, 0, 0);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d initializing SM", lo->info.name, lp->part_num, rc);
 		return rc;
 	}
 
-	rc = f_map_register(lo->slabmap, lo->info.conf_id);
-	if (rc || f_map_is_ro(lo->slabmap)) {
+	rc = f_map_register(lp->slabmap, lo->info.conf_id);
+	if (rc || f_map_is_ro(lp->slabmap)) {
 		LOG(LOG_ERR, "%s[%d]: error %d registering SM", lo->info.name, lp->part_num, rc);
 		return rc;
 	}
@@ -946,11 +939,11 @@ static int read_maps(F_LO_PART_t *lp)
 		LOG(LOG_ERR, "%s[%d]: error allocating data area", lo->info.name, lp->part_num);
 		return  -ENOMEM;
 	}		
-	rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
+	rc = f_map_load_cb(lp->slabmap, slabmap_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
 		LOG(LOG_ERR, "%s[%d]: error %d loading SM, %d load errors", 
 			lo->info.name, lp->part_num, rc, cbdata.err);
-		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
 		return rc ? rc : cbdata.err;
 	}
 
@@ -968,24 +961,24 @@ static int read_maps(F_LO_PART_t *lp)
 	cbdata.dsize = 0;
 
 	if (log_print_level > 0)
-		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
 
 	LOG(LOG_DBG, "%s[%d]: loading claim vector", lo->info.name, lp->part_num);
-	rc = f_map_init_prt(lo->claimvec, lo->part_count, lp->part_num, 0, 0);
+	rc = f_map_init_prt(lp->claimvec, lo->part_count, lp->part_num, 0, 0);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d initializing CV", lo->info.name, lp->part_num, rc);
 		return rc;
 	}
 
-	rc = f_map_register(lo->claimvec, lo->info.conf_id);
-	if (rc || f_map_is_ro(lo->claimvec)) {
+	rc = f_map_register(lp->claimvec, lo->info.conf_id);
+	if (rc || f_map_is_ro(lp->claimvec)) {
 		LOG(LOG_ERR, "%s[%d]: error %d registering CV", lo->info.name, lp->part_num, rc);
 		return rc;
 	}
 
 	cbdata.err = 0;
 	cbdata.loaded = 0;
-	rc = f_map_load_cb(lo->claimvec, claimvec_load_cb, (void *)&cbdata);
+	rc = f_map_load_cb(lp->claimvec, claimvec_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
 		LOG(LOG_ERR, "%s[%d]: error %d loading CV, %d load errors", 
 			lo->info.name, lp->part_num, rc, cbdata.err);
@@ -995,10 +988,10 @@ static int read_maps(F_LO_PART_t *lp)
 		lo->info.name, lp->part_num, cbdata.loaded, cbdata.err);
 
 	if (log_print_level > 0)
-		f_print_cv(dbg_stream, lo->claimvec);
+		f_print_cv(dbg_stream, lp->claimvec);
 
 	if (cbdata.loaded) {
-		rc = f_map_flush(lo->claimvec);
+		rc = f_map_flush(lp->claimvec);
 		if (rc) {
 			LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
 			return rc;
@@ -1012,9 +1005,9 @@ static void flush_maps(F_LO_PART_t *lp)
 	F_LAYOUT_t *lo = lp->layout;
 	int rc;
 	LOG(LOG_DBG2, "%s[%d]: flushing maps", lo->info.name, lp->part_num);
-	rc = f_map_flush(lo->slabmap);
+	rc = f_map_flush(lp->slabmap);
 	if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing slab map", lo->info.name, lp->part_num, rc);
-	rc = f_map_flush(lo->claimvec);
+	rc = f_map_flush(lp->claimvec);
 	if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
 }
 
@@ -1613,7 +1606,7 @@ static int release_slab(F_LO_PART_t *lp, f_slab_t slab)
 		return -EINVAL;
 	}
 
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
 		return -EINVAL;
@@ -1629,14 +1622,14 @@ static int release_slab(F_LO_PART_t *lp, f_slab_t slab)
 	 * Copy the slabmap entry to a temp buffer to be able to release it 
 	 * prior to releasing device extents 
 	 */
-	_sme = alloca(lo->slabmap->geometry.entry_sz);
-	memcpy(_sme, sme, lo->slabmap->geometry.entry_sz);
+	_sme = alloca(lp->slabmap->geometry.entry_sz);
+	memcpy(_sme, sme, lp->slabmap->geometry.entry_sz);
 
 	/*
 	 * Clear and flush the slab map entry before releasing
 	 * device extents to avoid the stripe repair confusion in case we crash here.
 	 */
-	memset(sme, 0, lo->slabmap->geometry.entry_sz); //FIXME: atomic update
+	memset(sme, 0, lp->slabmap->geometry.entry_sz); //FIXME: atomic update
 
 	/* Update bitmaps */
 	clear_slab_allocated(lp, slab);
@@ -1652,9 +1645,9 @@ static int release_slab(F_LO_PART_t *lp, f_slab_t slab)
 	reset_slab_usage(lp, slab);
 
 	/* Flush the slab map before releasing device extents */
-	f_map_mark_dirty(lo->slabmap, slab);
+	f_map_mark_dirty(lp->slabmap, slab);
 	LOG(LOG_DBG2, "%s[%d]: flushing slabmap for slab %u", lo->info.name, lp->part_num, slab);
-	rc = f_map_flush(lo->slabmap);
+	rc = f_map_flush(lp->slabmap);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing slabmap for slab %u",
 			lo->info.name, lp->part_num, rc, slab);
@@ -1691,10 +1684,10 @@ static int __alloc_new_slab(F_LO_PART_t *lp, f_slab_t *slabp)
 		return -ENOSPC;
 	}
 
-	sm_iter = f_map_new_iter(lo->slabmap, F_NO_CONDITION, 0);
+	sm_iter = f_map_new_iter(lp->slabmap, F_NO_CONDITION, 0);
 	sm_iter = f_map_seek_iter(sm_iter, s);
 	assert(sm_iter);
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, sm_iter->entry);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, sm_iter->entry);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error on SM entry %u", lo->info.name, lp->part_num, s);
 		goto _ret;
@@ -1707,8 +1700,8 @@ static int __alloc_new_slab(F_LO_PART_t *lp, f_slab_t *slabp)
 		goto _ret;
 	}
 
-	_sme = alloca(lo->slabmap->geometry.entry_sz);
-	memcpy(_sme, sme, lo->slabmap->geometry.entry_sz);
+	_sme = alloca(lp->slabmap->geometry.entry_sz);
+	memcpy(_sme, sme, lp->slabmap->geometry.entry_sz);
 
 	/* Set s0 before allocating slab extents */
 	_sme->slab_rec.stripe_0 = slab_to_stripe0(lo, s);
@@ -1741,9 +1734,9 @@ static int __alloc_new_slab(F_LO_PART_t *lp, f_slab_t *slabp)
 	set_slab_in_sync(lp, s);
 	lp->sync_count++;
 
-	f_map_mark_dirty(lo->slabmap, s);
+	f_map_mark_dirty(lp->slabmap, s);
 	LOG(LOG_DBG2, "%s[%d]: flushing slabmap for slab %u", lo->info.name, lp->part_num, s);
-	rc = f_map_flush(lo->slabmap);
+	rc = f_map_flush(lp->slabmap);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing slabmap for slab %u",
 			lo->info.name, lp->part_num, rc, s);
@@ -1825,7 +1818,7 @@ static int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	unsigned long old;
-	void *p = f_map_get_p(lo->claimvec, s);
+	void *p = f_map_get_p(lp->claimvec, s);
 
 	if (!p) {
 		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
@@ -1839,7 +1832,7 @@ static int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
 	ASSERT(old == CVE_FREE);
 
 	/* Set the dirty bit */
-	f_map_mark_dirty(lo->claimvec, s);
+	f_map_mark_dirty(lp->claimvec, s);
 	return 0;
 }
 
@@ -1850,7 +1843,9 @@ static int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	unsigned long old;
-	void *p = f_map_get_p(lo->claimvec, s);
+	void *p = f_map_get_p(lp->claimvec, s);
+
+	LOG(LOG_DBG3, "%s[%d]: committing stripe %lu", lo->info.name, lp->part_num, s);
 
 	if (!p) {
 		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
@@ -1864,7 +1859,7 @@ static int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
 	ASSERT(old == CVE_PREALLOC || old == CVE_ALLOCATED);
 
 	/* Set the dirty bit */
-	f_map_mark_dirty(lo->claimvec, s);
+	f_map_mark_dirty(lp->claimvec, s);
 	return 0;
 }
 
@@ -1881,7 +1876,7 @@ static int release_stripe(F_LO_PART_t *lp, f_stripe_t s, bool drop_slab)
 
 	LOG(LOG_DBG3, "%s[%d]: releasing stripe %lu", lo->info.name, lp->part_num, s);
 
-	p = f_map_get_p(lo->claimvec, s);
+	p = f_map_get_p(lp->claimvec, s);
 	if (!p) {
 		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
 		return -ENOENT;
@@ -1894,7 +1889,7 @@ static int release_stripe(F_LO_PART_t *lp, f_stripe_t s, bool drop_slab)
 	ASSERT(old != CVE_FREE);
 
 	/* Set the dirty bit */
-	f_map_mark_dirty(lo->claimvec, s);
+	f_map_mark_dirty(lp->claimvec, s);
 
 	/* Consider releasing this stripe slab if this was the last allocated stripe there */
 	dec_slab_used(lp, s);
@@ -2085,7 +2080,7 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 	ASSERT(rc == 0);
 	ASSERT(!bitmap_empty(devmap, pool->info.pdev_max_idx+1));
 
-	cv_it = f_map_new_iter(lo->claimvec, F_NO_CONDITION, 0);
+	cv_it = f_map_new_iter(lp->claimvec, F_NO_CONDITION, 0);
 	assert(cv_it);
 	for (n = 0, i = 0; i < lo->info.slab_stripes && n < count; i++) {
 		int v;
@@ -2128,7 +2123,7 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 		return 0;
 	}
 
-	rc = f_map_flush(lo->claimvec);
+	rc = f_map_flush(lp->claimvec);
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
 		list_for_each_entry_safe(se, next, &alloclist, list) {
@@ -2454,6 +2449,8 @@ int f_get_stripe(F_LAYOUT_t *lo, f_stripe_t match_stripe, struct f_stripe_set *s
 	ASSERT(lp);
 	atomic_inc(lo->stats + FL_STRIPE_GET_REQ);
 
+	LOG(LOG_DBG2, "%s[%d]: received req for %d stripes", lo->info.name, lp->part_num, ss->count);
+
 _retry:
 	pthread_spin_lock(&lp->alloc_lock);
 	if (atomic_read(&lp->prealloced_stripes) < ss->count) {
@@ -2488,7 +2485,7 @@ _retry:
 		if (rc) goto _err;
 
 		match_stripe = stripe;
-		ss->stripes[i] = f_map_prt_to_global(lo->slabmap, stripe);
+		ss->stripes[i] = f_map_prt_to_global(lp->slabmap, stripe);
 	}
 	pthread_spin_unlock(&lp->alloc_lock);
 	atomic_inc(lo->stats + FL_STRIPE_GET);
@@ -2500,8 +2497,8 @@ _err:
 	atomic_inc(lo->stats + FL_STRIPE_GET_ERR);
 	while (i--) {
 		if (ss->stripes[i] != F_STRIPE_INVALID) {
-			ASSERT(f_map_prt_my_global(lo->slabmap, ss->stripes[i]));
-			__put_stripe(lp, f_map_prt_to_local(lo->slabmap, ss->stripes[i]));
+			ASSERT(f_map_prt_my_global(lp->slabmap, ss->stripes[i]));
+			__put_stripe(lp, f_map_prt_to_local(lp->slabmap, ss->stripes[i]));
 		}
 	}
 	return rc;
@@ -2518,11 +2515,13 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	struct f_stripe_entry *se;
 	int i, rc = 0;
 
+	LOG(LOG_DBG2, "%s[%d]: releasing %d stripes", lo->info.name, lp->part_num, ss->count);
+
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t stripe;
 		
-		ASSERT(f_map_prt_my_global(lo->slabmap, ss->stripes[i]));
-		stripe = f_map_prt_to_local(lo->slabmap, ss->stripes[i]);
+		ASSERT(f_map_prt_my_global(lp->slabmap, ss->stripes[i]));
+		stripe = f_map_prt_to_local(lp->slabmap, ss->stripes[i]);
 
 		/* stripe should not be on the pre-allocated list */
 		se = find_stripe(lp, stripe);
@@ -2551,16 +2550,19 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	ASSERT(lp);
 	atomic_inc(lo->stats + FL_STRIPE_COMMIT_REQ);
 
+	LOG(LOG_DBG2, "%s[%d]: committing %d stripes", lo->info.name, lp->part_num, ss->count);
+
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t stripe;
 		
-		ASSERT(f_map_prt_my_global(lo->slabmap, ss->stripes[i]));
-		stripe = f_map_prt_to_local(lo->slabmap, ss->stripes[i]);
+		ASSERT(f_map_prt_my_global(lp->slabmap, ss->stripes[i]));
+		stripe = f_map_prt_to_local(lp->slabmap, ss->stripes[i]);
 		rc += commit_stripe(lp, stripe);
 	}
 	
 	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 
 
+	LOG(LOG_DBG2, "%s[%d]: committing %d stripes rc=%d", lo->info.name, lp->part_num, i, rc);
 	return rc;
 }
 
@@ -2641,7 +2643,7 @@ static int process_degraded_slabs(F_LO_PART_t *lp)
 	F_ITER_t *sm_it;
 	int df = 0, rc = 0;
 
-	sm_it = f_map_get_iter(lo->slabmap, sm_slab_f_d, 0);
+	sm_it = f_map_get_iter(lp->slabmap, sm_slab_f_d, 0);
 	for_each_iter(sm_it) {
 		f_slab_t slab = sm_it->entry;
 		f_stripe_t s0 = slab_to_stripe0(lo, slab);
@@ -2714,6 +2716,8 @@ static void check_layout_devices(F_LAYOUT_t *lo)
  */
 static inline void layout_partition_free(F_LO_PART_t *lp)
 {
+	if (lp->slabmap) f_map_exit(lp->slabmap);
+	if (lp->claimvec) f_map_exit(lp->claimvec);
 	rcu_unregister_thread();
 	release_lp_dev_matrix(lp);
 	pthread_mutex_destroy(&lp->a_thread_lock);
@@ -2736,6 +2740,7 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	F_POOL_t *pool = lo->pool;
 	int chunk_size_factor   = F_CHUNK_SIZE_MAX / lo->info.chunk_sz;
 	size_t slab_usage_size, cv_bmap_size;
+	int e_sz, chunks;
 
 	rcu_register_thread();
 	if (pthread_mutex_init(&lp->a_thread_lock, NULL)) goto _err;
@@ -2775,7 +2780,14 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	lp->cv_bmap = calloc(1, cv_bmap_size);
 	if (!lp->slab_bmap) goto _err;
 
-	LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes", 
+	/* Initialize layout partition maps */
+	chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
+	e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
+	lp->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
+	lp->claimvec = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
+	if (!lp->slabmap || !lp->claimvec) goto _err;
+
+LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes", 
 		lo->info.name, lp->part_num, lp->slab_count, lp->stripe_count);
 	return 0;
 
@@ -2825,7 +2837,7 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 
 	/* Flush slab map if requested */
 	if (LPSMFlush(lp)) {
-		rc = f_map_flush(lo->slabmap);
+		rc = f_map_flush(lp->slabmap);
 		if (rc) {
 			LOG(LOG_ERR, "%s[%d]: error %s flushing slabmap", 
 				lo->info.name, lp->part_num, strerror(rc));
@@ -2954,8 +2966,8 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 		pthread_cond_signal(&lp->stripes_wait_cond);
 		
 	if (log_print_level > 0) {
-		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
-		f_print_cv(dbg_stream, lo->claimvec);
+		f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		f_print_cv(dbg_stream, lp->claimvec);
 	}
 _ret:
 	return rc;

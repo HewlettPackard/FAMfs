@@ -185,6 +185,10 @@ typedef struct f_layout_partition_ {
     uint64_t		stripe0;	/* first stripe in this partition */
     uint64_t		stripe_count;	/* total number of stripes in this partition */
 
+    /* Partition local maps */
+    struct f_map_	*slabmap;	/* partition slab map */
+    struct f_map_	*claimvec;	/* partition claim vector map */
+
     /* Slab usage maps */
     struct f_slab_usage *slab_usage;	/* stripe usage in each slab */
     unsigned long	*slab_bmap;	/* Allocated slab bitmap */
@@ -286,8 +290,8 @@ typedef struct f_layout_ {
     uint32_t		part_count;	/* layout allocator threads count */
     struct f_layout_partition_	*lp;	/* layout partition structure or NULL */
 
-    struct f_map_	*slabmap;	/* slab map */
-    struct f_map_	*claimvec;	/* claim vector map */
+    struct f_map_	*slabmap;	/* global slab map */
+    struct f_map_	*claimvec;	/* global claim vector map */
 
     F_SLAB_ALLOC_TYPE_t	slab_alloc_type;/* layout slab allocation type */
 

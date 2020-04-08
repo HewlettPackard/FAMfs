@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2019, HPE
+ *
+ * Written by: Oleg Neverovitch, Yann Livis
+ */
 #include <mpi.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -23,13 +28,16 @@
 #include "famfs_env.h"
 #include "famfs_error.h"
 #include "famfs_maps.h"
+#include "famfs_bitmap.h"
 #include "lf_client.h"
 #include "famfs_rbq.h"
 #include "f_pool.h"
 #include "f_layout.h"
 #include "famfs_maps.h"
+#include "f_map.h"
 #include "f_allocator.h"
 #include "mpi_utils.h"
+#include "f_layout_ctl.h"
 #include "f_helper.h"
 
 extern volatile int exit_flag;
@@ -121,6 +129,151 @@ int f_ah_shutdown(F_POOL_t *pool) {
     return rc;
 }
 
+/* Map load callback function data */
+struct cb_data {
+	F_LAYOUT_t 	*lo;
+	int		loaded;
+	int		err;
+};
+
+/*
+ * Slab map load callback function. Called on each slab map PU load
+ */
+static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
+{
+	struct cb_data *data = (struct cb_data *) arg;
+	F_LAYOUT_t *lo = data->lo;
+	F_POOL_t *pool = lo->pool;
+	F_SLABMAP_ENTRY_t *sme;
+	f_slab_t slab = e;
+	unsigned int pu_entries = 1U << lo->slabmap->geometry.pu_factor;
+	unsigned int e_sz = lo->slabmap->geometry.entry_sz;
+	unsigned int i;
+
+	for(i = 0; i < pu_entries; i++, slab++) {
+		f_stripe_t s0 = slab_to_stripe0(lo, slab);;
+		unsigned int n;
+
+		sme = (F_SLABMAP_ENTRY_t *)&pu->se;
+		if (!sme) {
+			LOG(LOG_ERR, "%s: error on SM entry %u", lo->info.name, slab);
+			data->err++;
+		}
+	
+		if (!sme->slab_rec.mapped) continue;
+
+		/* Check slab map entry CRC */
+		if (f_crc4_sm_chk(&sme->slab_rec)) {
+			LOG(LOG_ERR, "%s: slab %u CRC error", lo->info.name, slab);
+			data->err++;
+		}
+	
+		if (sme->slab_rec.stripe_0 != s0) {
+			LOG(LOG_ERR, "%s: slab %u s0 mismatch", lo->info.name, slab);
+			data->err++;
+		}
+	
+		/* Process this slab map entry */
+		for (n = 0;  n < lo->info.chunks; n++) {
+			unsigned int dev_id = sme->extent_rec[n].media_id;
+			F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, dev_id);
+			F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, dev_id);
+			
+			if (!pdev) {
+				LOG(LOG_ERR, "%s: slab %u ext %u invalid dev idx %u", 
+					lo->info.name, slab, n, dev_id);
+				data->err++;
+			}
+			if (!pdi) {
+				LOG(LOG_ERR, "%s: slab %u ext %u dev idx %u not in layout", 
+					lo->info.name, slab, n, dev_id);
+				data->err++;
+			}
+
+			if (f_crc4_fast_chk(&sme->extent_rec[n], sizeof(F_EXTENT_ENTRY_t))) {
+				LOG(LOG_ERR, "%s: slab %u ext %u CRC err", lo->info.name, slab, n);
+				data->err++;
+			}
+
+			if (DevMissing(pdev->sha)) {
+				LOG(LOG_INFO, "%s: missing dev in slab %u ext %u", 
+					lo->info.name, slab, n); 
+			}
+
+			/* All chunk extents have to be mapped */
+			if (!sme->extent_rec[n].mapped) {
+				LOG(LOG_ERR, "%s: slab %u ext %u not mapped", lo->info.name, slab, n);
+				data->err++;
+				continue;
+			}
+		}
+
+		data->loaded++;
+
+		LOG(LOG_DBG, "%s: slab %u loaded: %d errors", lo->info.name, slab, data->err);
+		pu = (F_PU_VAL_t *) ((char*)pu + e_sz);
+	}
+
+}
+
+/*
+ * Load and verify global slab map (all partitions)
+ *
+ * Slab Map
+ *
+ * [F_SLAB_ENTRY_t 0][F_EXTENT_ENTRY_t 0][F_EXTENT_ENTRY_t 1]...[F_EXTENT_ENTRY_t N] [F_SLAB_ENTRY_t 1]...
+ */
+static int read_global_slabmap(F_LAYOUT_t *lo)
+{
+	F_POOL_t *pool = lo->pool;
+	struct cb_data cbdata;
+	int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
+	int e_sz, chunks, rc;
+
+	LOG(LOG_DBG, "%s: loading global slabmap", lo->info.name);
+
+	chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
+	e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
+	lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
+	if (!lo->slabmap) return -EINVAL;
+
+	rc = f_map_init_prt(lo->slabmap, lo->part_count, part, 0, 1);
+	if (rc) {
+		LOG(LOG_ERR, "%s: error %d initializing global slabmap", lo->info.name, rc);
+		return rc;
+	}
+
+	rc = f_map_register(lo->slabmap, lo->info.conf_id);
+	if (rc || f_map_is_ro(lo->slabmap)) {
+		LOG(LOG_ERR, "%s: error %d registering global slabmap", lo->info.name, rc);
+		return rc;
+	}
+
+	rc = f_map_shm_attach(lo->slabmap, NULL, F_MAPMEM_SHARED_WR);
+	if (rc || f_map_is_ro(lo->slabmap)) {
+		LOG(LOG_ERR, "%s: error %d attaching to global slabmap", lo->info.name, rc);
+		return rc;
+	}
+
+	cbdata.lo = lo;
+	cbdata.err = 0;
+	cbdata.loaded = 0;
+	rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
+	if (rc || cbdata.err) {
+		LOG(LOG_ERR, "%s: error %d loading global slabmap, %d load errors", 
+			lo->info.name, rc, cbdata.err);
+		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		return rc ? rc : cbdata.err;
+	}
+
+	LOG(LOG_DBG, "%s: %u slabs loaded: %d errors", lo->info.name, cbdata.loaded, cbdata.err);
+
+	if (log_print_level > 0)
+		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+
+	return rc;
+}
+
 void *f_ah_stoker(void *arg) {
     int rc = 0;
     char qname[MAX_RBQ_NAME];
@@ -142,6 +295,13 @@ void *f_ah_stoker(void *arg) {
 
     // set low water mark
     f_rbq_setlwm(salq, f_rbq_size(salq)/100*F_SALQ_LWM);
+
+    rcu_register_thread();
+
+    if ((rc = read_global_slabmap(lo))) {
+	LOG(LOG_ERR, "%s: slabmap load failed: %s", lo->info.name, strerror(rc = errno));
+        goto _abort;
+    }
 
     if (NodeForceHelper(&pool->mynode)) {
         F_LO_PART_t *lp = lo->lp;
@@ -251,7 +411,7 @@ _retry:
                 }
             }
             if ((rc = f_put_stripe(lo, &ss))) 
-                LOG(LOG_ERR, "%s[%d]: error %d in f_put_stripe", lo->info.name, lo->lp->part_num, rc);
+                LOG(LOG_ERR, "%s: error %d in f_put_stripe", lo->info.name, rc);
 
             free(ss.stripes);
            
@@ -262,6 +422,9 @@ _retry:
 
 _abort:
 
+    if (lo->slabmap) f_map_exit(lo->slabmap);
+    rcu_unregister_thread();
+    f_rbq_destroy(salq);
     return NULL;
 }
 
@@ -448,4 +611,28 @@ int f_ah_commit_stripe(F_LAYOUT_t *lo, f_stripe_t str) {
 
 }
 
+int f_test_helper(F_POOL_t *pool)
+{
+	int rc = f_ah_attach();
+	if (rc) return rc;
+	printf("attached\n");
 
+    	while (!exit_flag) {
+		for (int i = 0; i < pool->info.layouts_count; i++) {
+			f_stripe_t s;
+			F_LAYOUT_t *lo = f_get_layout(i);
+		
+			rc = f_ah_get_stripe(lo, &s);
+			if (rc) return rc;
+			printf("got stripe %lu\n", s);
+
+			usleep(100);
+
+			rc = f_ah_commit_stripe(lo, s);
+			if (rc) return rc;
+			printf("committed stripe %lu\n", s);
+		}
+	}
+	f_ah_dettach();	
+	return 0;
+}
