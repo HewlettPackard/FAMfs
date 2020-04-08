@@ -76,6 +76,7 @@ int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int fo
     pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED);
     pthread_cond_init(&hp->lwmc, &cattr);
     pthread_cond_init(&hp->hwmc, &cattr);
+    hp->refc = 0;
 
     return 0;
 }
@@ -112,22 +113,28 @@ int f_rbq_open(char *name, f_rbq_t **qp) {
     if ((*qp)->osem == SEM_FAILED)
         return -1;
 
+    __sync_fetch_and_add(&hp->refc, 1);
     return 0;
 }
 
 int f_rbq_close(f_rbq_t *q) {
     size_t size = (q->rbq->esize + sizeof(uint64_t))*q->rbq->qsize + sizeof(f_rbq_hdr_t);
 
+    __sync_fetch_and_sub(&q->rbq->refc, 1);
+
     munmap(q->rbq, size);
     sem_close(q->isem);
     sem_close(q->osem);
     free(q);
-
+    
     return 0;
 }
 
 int f_rbq_destroy(f_rbq_t *q) {
     char sem_name[MAX_RBQ_NAME + 8], name[MAX_RBQ_NAME];
+
+    if (q->rbq->refc > 1)
+        return EAGAIN;
 
     strcpy(name, q->rbq->name);
     pthread_cond_destroy(&q->rbq->lwmc);
@@ -232,8 +239,13 @@ int f_rbq_waitlwm(f_rbq_t *q, long tmo) {
         pthread_mutex_unlock(&q->rbq->lwmx);
         return s;
     }
+    pthread_mutex_unlock(&q->rbq->lwmx);
 
-    return pthread_mutex_unlock(&q->rbq->lwmx);
+    // check for alarm signal/WM reset
+    if (!q->rbq->lwm || f_rbq_count(q) > q->rbq->lwm)
+        return ECANCELED;
+
+    return 0;
 }
 
 int f_rbq_waithwm(f_rbq_t *q, long tmo) { 
@@ -257,8 +269,13 @@ int f_rbq_waithwm(f_rbq_t *q, long tmo) {
         pthread_mutex_unlock(&q->rbq->hwmx);
         return s;
     }
+    pthread_mutex_unlock(&q->rbq->hwmx);
+
+    // check for alarm signal/WM reset
+    if (!q->rbq->hwm || f_rbq_count(q) < q->rbq->hwm)
+        return ECANCELED;
     
-    return pthread_mutex_unlock(&q->rbq->hwmx);
+    return 0;
 }
 
 #ifdef __F_RBQ_MAIN__

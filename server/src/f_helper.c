@@ -33,9 +33,13 @@
 #include "f_helper.h"
 
 extern volatile int exit_flag;
+volatile int quit = 0;
 
 pthread_t al_thrd[F_CMDQ_MAX];
 pthread_t cm_thrd;
+
+f_rbq_t   *alq[F_CMDQ_MAX];
+f_rbq_t   *cmq;
 
 int f_ah_init(F_POOL_t *pool) {
     int rc = 0;
@@ -66,6 +70,57 @@ int f_ah_init(F_POOL_t *pool) {
     return 0;
 }
 
+int f_ah_shutdown(F_POOL_t *pool) {
+    int rc = 0;
+    int n = 0;
+
+    if (f_host_is_ionode(NULL) && !NodeForceHelper(&pool->mynode)) {
+        LOG(LOG_ERR, "attempt to start helper on ION");
+        return EINVAL;
+    }
+
+    quit = 1;
+    for (int i = 0; i < pool->info.layouts_count; i++) 
+        f_rbq_wakewm(alq[i]);
+
+    f_rbq_wakewm(cmq);
+
+    for (int i = 0; i < pool->info.layouts_count; i++) {
+        F_LAYOUT_t *lo = f_get_layout(i);
+        if (lo == NULL) {
+            LOG(LOG_ERR, "get layout [%d] info\n", i);
+            continue;
+        }
+        pthread_join(al_thrd[i], NULL);
+
+        n = 0;
+        while (f_rbq_destroy(alq[i]) == EAGAIN) {
+            LOG(LOG_WARN, "refcnt not 0 on layout %d", i);
+            sleep(5);
+            if (++n > 6) {
+                LOG(LOG_ERR, "helper thread %d is taking too long to exit", i);
+                rc = ETIMEDOUT;
+                break;
+            }
+        }
+    }
+
+    pthread_join(cm_thrd, NULL);
+
+    n = 0;
+    while (f_rbq_destroy(cmq) == EAGAIN) {
+        LOG(LOG_WARN, "refcnt not 0 commit queue");
+        sleep(5);
+        if (++n > 6) {
+            LOG(LOG_ERR, "helper commit thread is taking too long to exit");
+            rc = ETIMEDOUT;
+            break;
+        }
+    }
+
+    return rc;
+}
+
 void *f_ah_stoker(void *arg) {
     int rc = 0;
     char qname[MAX_RBQ_NAME];
@@ -82,6 +137,8 @@ void *f_ah_stoker(void *arg) {
         LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
         exit(rc);
     }
+
+    alq[lo->info.conf_id] = salq;
 
     // set low water mark
     f_rbq_setlwm(salq, f_rbq_size(salq)/100*F_SALQ_LWM);
@@ -112,20 +169,20 @@ void *f_ah_stoker(void *arg) {
 
     LOG(LOG_DBG, "helper alloc thread %s is up", qname);
 
-    while (!exit_flag) {
+    while (!quit) {
 
         // wait until queue is sufficiently empty
         if ((rc = f_rbq_waitlwm(salq, F_SALQ_LWTMO)) == ETIMEDOUT) {
             LOG(LOG_DBG, "rbq %s: LW TMO\n", qname);
             continue;
-        } else if (rc < 0) {
-            LOG(LOG_ERR, "rbq %s wait lwm: %s", qname, strerror(rc = errno));
+        } else if (rc && rc != ECANCELED) {
+            LOG(LOG_ERR, "rbq %s wait lwm: %s", qname, strerror(rc));
             continue;
         }
-        if (exit_flag)
+        if (quit)
             break;
 
-        // stuff stripes in queue untill full
+        // stuff stripes into the queue untill it's full
         while (f_rbq_count(salq) < f_rbq_size(salq)) {
             if (NodeForceHelper(&pool->mynode)) {
 
@@ -133,7 +190,7 @@ void *f_ah_stoker(void *arg) {
                 ss.stripes = calloc(ss.count, sizeof(f_stripe_t));
                 if (ss.stripes == NULL) {
                     LOG(LOG_FATAL, "helper ran out of memory");
-                    exit_flag = 1;
+                    quit = 1;
                     return NULL;
                 }
 
@@ -171,6 +228,8 @@ _retry:
             
     }
 
+    LOG(LOG_DBG, "rbq %s rceived quit signal", qname);
+
     // return all unused stripes back to allocator
     while (!f_rbq_isempty(salq)) {
         if (NodeForceHelper(&pool->mynode)) {
@@ -203,7 +262,6 @@ _retry:
 
 _abort:
 
-    f_rbq_destroy(salq);
     return NULL;
 }
 
@@ -223,6 +281,8 @@ void *f_ah_drainer(void *arg) {
         exit(rc);
     }
 
+    cmq = scmq;
+
     // set high water mark
     f_rbq_sethwm(scmq, f_rbq_size(scmq)/100*F_SCMQ_HWM);
 
@@ -241,16 +301,16 @@ void *f_ah_drainer(void *arg) {
 
     LOG(LOG_DBG, "helper commit thread %s is up", qname);
 
-    while (!exit_flag) {
+    while (!quit) {
         // wait until queue is sufficiently full 
         if ((rc = f_rbq_waithwm(scmq, F_SCMQ_HWTMO)) == ETIMEDOUT) {
             LOG(LOG_DBG, "rbq %s: HW TMO\n", qname);
             continue;
-        } else if (rc < 0) {
-            LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(rc = errno));
+        } else if (rc && rc != ECANCELED) {
+            LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(rc));
             continue;
         }
-        if (exit_flag)
+        if (quit)
             break;
 
         // read commit queue untill empty and send stripe (home)

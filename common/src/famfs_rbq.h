@@ -10,6 +10,7 @@ typedef struct {
     uint64_t            out;
     uint64_t            qsize;
     uint64_t            esize;
+    uint64_t            refc;
     pthread_mutex_t     lwmx;
     pthread_cond_t      lwmc;
     pthread_mutex_t     hwmx;
@@ -98,7 +99,7 @@ int f_rbq_pop(f_rbq_t *q, void *e, long wait);
 // Return:
 //  0         - Success (low water mark reached)
 //  ETIMEDOUT - Timed out waiting
-//  ECANCELED - Somebody reset water marks
+//  ECANCELED - Somebody removed low water mark or signaled reset
 //  -1        - Check errno
 int f_rbq_waitlwm(f_rbq_t *q, long tmo);
 
@@ -110,6 +111,7 @@ int f_rbq_waitlwm(f_rbq_t *q, long tmo);
 // Return:
 //  0         - Success (low water mark reached)
 //  ETIMEDOUT - Timed out waiting
+//  ECANCELED - Somebody removed high water mark or signaled reset
 //  -1        - Check errno
 int f_rbq_waithwm(f_rbq_t *q, long tmo); 
 
@@ -141,11 +143,18 @@ static inline int f_rbq_isfull(f_rbq_t *q) {
     return f_rbq_count(q) == f_rbq_size(q);
 }
 
+// wake any and all threads slumbering on water mark wait
+static inline void f_rbq_wakewm(f_rbq_t *q) {
+    pthread_cond_broadcast(&q->rbq->lwmc);
+    pthread_cond_broadcast(&q->rbq->hwmc);
+}
+
 //
 // Set low water mark
 //
 static inline void f_rbq_setlwm(f_rbq_t *q, int low_water) {
     q->rbq->lwm = low_water;
+    pthread_cond_broadcast(&q->rbq->lwmc);
 }
 
 //
@@ -153,6 +162,7 @@ static inline void f_rbq_setlwm(f_rbq_t *q, int low_water) {
 //
 static inline void f_rbq_sethwm(f_rbq_t *q, int high_water) {
     q->rbq->hwm = high_water;
+    pthread_cond_broadcast(&q->rbq->hwmc);
 }
 
 //
@@ -161,6 +171,7 @@ static inline void f_rbq_sethwm(f_rbq_t *q, int high_water) {
 static inline void f_rbq_resetwm(f_rbq_t *q) {
     f_rbq_setlwm(q, 0);
     f_rbq_sethwm(q, 0);
+    f_rbq_wakewm(q);
 }
 
 static inline int f_rbq_getlwm(f_rbq_t *q) {

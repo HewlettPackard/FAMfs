@@ -22,6 +22,7 @@ typedef struct _f_ah_scme {
 } f_ah_scme_t;
 
 int  f_ah_init(F_POOL_t *pool);
+int  f_ah_shutdown(F_POOL_t *pool);
 void *f_ah_stoker(void *arg);
 void *f_ah_drainer(void *arg);
 

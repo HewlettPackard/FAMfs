@@ -441,6 +441,9 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    if (f_ah_shutdown(pool))
+        LOG(LOG_ERR, "helper did not exit cleanly");
+
     unifycr_exit();
 
     MPI_Barrier(MPI_COMM_WORLD);
