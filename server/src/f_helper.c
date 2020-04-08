@@ -291,7 +291,8 @@ void *f_ah_drainer(void *arg) {
                 }
                 if ((rc = f_commit_stripe(lo, &ssa[i])) < 0)
                     LOG(LOG_ERR, "%s[%d]: error %d in f_commit_stripe", lo->info.name, lo->lp->part_num, rc);
-                
+
+                ssa[i].count = 0;
             }
         }
     }
