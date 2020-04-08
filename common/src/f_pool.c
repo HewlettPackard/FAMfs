@@ -87,6 +87,9 @@ int lf_clients_init(F_POOL_t *p)
 	FAM_DEV_t *fdev = &pdev->dev->f;
 	unsigned int media_id = pdev->pool_index;
 
+	if (DevFailed(pdev->sha))
+	    goto _cont;
+
 	rc = f_conn_open(fdev, domain, lf_info, media_id, LF_CLIENT);
 	if (rc) {
 	    err("Failed to open libfabric connection to media id:%u @%s",
@@ -94,14 +97,15 @@ int lf_clients_init(F_POOL_t *p)
 		goto _err;
 	}
 
+_cont:
 	if (verbose) {
 	    if (lf_info->opts.true_fam)
-		printf("%s: CL attached to FAM device %d znode:%s url:%s mr_key:%lu\n",
-			node->hostname, media_id,
+		printf("%s: CL %s FAM device %d znode:%s url:%s mr_key:%lu\n",
+			node->hostname, fdev->ep?"attached to":"skip", media_id,
 			fdev->zfm.znode, fdev->zfm.url, fdev->mr_key);
 	    else
-		printf("%s: CL attached to media id:%u on %s:%s mr_key:%lu\n",
-			node->hostname, media_id,
+		printf("%s: CL %s media id:%u on %s:%s mr_key:%lu\n",
+			node->hostname, fdev->ep?"attached to":"skip", media_id,
 			fdev->lf_name, fdev->service, fdev->mr_key);
 	}
     }

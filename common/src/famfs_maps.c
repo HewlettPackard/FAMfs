@@ -1048,7 +1048,8 @@ void f_print_layouts(void) {
 
 	    assert( pdev->pool_index != F_PDI_NONE );
 	    uuid_unparse(pdev->uuid, pr_uuid);
-	    printf ("    [%u,%u] id:%u uuid:%s size:%zu\n",
+	    printf ("  %s [%u,%u] id:%u uuid:%s size:%zu\n",
+		DevFailed(pdev->sha)?"F":" ",
 		pdev->idx_ag, pdev->idx_dev, pdev->pool_index,
 		pr_uuid, pdev->size);
 	    zfm=&pdev->dev->f.zfm;
