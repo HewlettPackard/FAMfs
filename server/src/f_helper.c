@@ -249,7 +249,7 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
 		return rc;
 	}
 
-	rc = f_map_shm_attach(lo->slabmap, NULL, F_MAPMEM_SHARED_WR);
+	rc = f_map_shm_attach(lo->slabmap, F_MAPMEM_SHARED_WR);
 	if (rc || f_map_is_ro(lo->slabmap)) {
 		LOG(LOG_ERR, "%s: error %d attaching to global slabmap", lo->info.name, rc);
 		return rc;
