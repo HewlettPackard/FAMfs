@@ -16,6 +16,7 @@
 #include "famfs_ktypes.h"
 #include "famfs_bitops.h"
 #include "famfs_lfa.h"
+#include "f_map.h"
 #include "f_dict.h"
 #include "list.h"
 
@@ -37,6 +38,11 @@ struct f_slab_set {
     uint32_t		reserved;
     f_slab_t		*slabs;
 } __attribute__ ((aligned(8)));
+
+typedef union {
+    F_MAP_KEYSET_t;
+    struct f_slab_set;
+} F_MAP_KEYSET_u;
 
 /* Stripe entry type */
 enum req_type {
@@ -329,6 +335,7 @@ struct f_map_;
 F_POOLDEV_INDEX_t *f_find_pdi_by_media_id(F_LAYOUT_t *lo, unsigned int media_id);
 void f_print_sm(FILE *f, struct f_map_ *sm, uint16_t chunks, uint32_t slab_stripes);
 void f_print_cv(FILE *f, struct f_map_ *cv);
+int f_slabmap_update(F_MAP_t *sm, F_MAP_KEYSET_u *set);
 
 #endif /* F_LAYOUT_H_ */
 

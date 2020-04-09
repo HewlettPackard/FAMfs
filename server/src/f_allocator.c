@@ -2470,9 +2470,11 @@ _retry:
 
 		if (!atomic_read(&lp->prealloced_stripes)) {
 			rc = wait_stripes(lp);
-			if (rc == -ETIMEDOUT) return -ENOMEM;
+			if (rc == -ETIMEDOUT && !atomic_read(&lp->prealloced_stripes)) return -ENOMEM;
 		} else { /* Return what we have for now */
-			ss->count = atomic_read(&lp->prealloced_stripes);
+			ss->count = min(ss->count, atomic_read(&lp->prealloced_stripes));
+			LOG(LOG_DBG, "%s[%d]: adjusted stripe count to %d", 
+				lo->info.name, lp->part_num, ss->count);
 		}
 		goto _retry;
 	}
@@ -2534,6 +2536,7 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 		rc += __put_stripe(lp, stripe);
 	}
 
+	LOG(LOG_DBG2, "%s[%d]: released %d stripes rc=%d", lo->info.name, lp->part_num, i, rc);
 	return rc;
 }
 
@@ -2562,7 +2565,7 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	
 	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 
 
-	LOG(LOG_DBG2, "%s[%d]: committing %d stripes rc=%d", lo->info.name, lp->part_num, i, rc);
+	LOG(LOG_DBG2, "%s[%d]: committed %d stripes rc=%d", lo->info.name, lp->part_num, i, rc);
 	return rc;
 }
 

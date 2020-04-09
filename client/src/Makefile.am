@@ -1,4 +1,4 @@
-AM_CPPFLAGS =	-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE \
+AM_CPPFLAGS =	-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -fms-extensions \
 		-I$(top_builddir)/common/src \
 		-I$(top_builddir)/client \
 		-I$(top_srcdir)/userspace-rcu/include \

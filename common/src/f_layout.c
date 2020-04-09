@@ -17,12 +17,7 @@
 #include "f_map.h"
 
 
-typedef union {
-    F_MAP_KEYSET_t;
-    struct f_slab_set;
-} MAP_KEYSET_u;
-
-static int slabmap_update(F_MAP_t *sm, MAP_KEYSET_u *set)
+int f_slabmap_update(F_MAP_t *sm, F_MAP_KEYSET_u *set)
 {
     F_MAP_KEYSET_t *keyset = (F_MAP_KEYSET_t *) set;
 

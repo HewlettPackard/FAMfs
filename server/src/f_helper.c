@@ -283,11 +283,12 @@ void *f_ah_stoker(void *arg) {
     F_POOL_t   *pool = lo->pool;
 
     struct f_stripe_set ss;
+    F_MAP_KEYSET_u keyset;
 
     // create rbq
     sprintf(qname, "%s-%s", F_SALQ_NAME, lo->info.name);
     if ((rc = f_rbq_create(qname, sizeof(f_stripe_t), F_MAX_SALQ, &salq, 1))) {
-        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
+        LOG(LOG_ERR, "%s: rbq %s create: %s", lo->info.name, qname, strerror(rc = errno));
         exit(rc);
     }
 
@@ -299,7 +300,7 @@ void *f_ah_stoker(void *arg) {
     rcu_register_thread();
 
     if ((rc = read_global_slabmap(lo))) {
-	LOG(LOG_ERR, "%s: slabmap load failed: %s", lo->info.name, strerror(rc = errno));
+	LOG(LOG_ERR, "%s: slabmap load failed: %s", lo->info.name, strerror(rc));
         goto _abort;
     }
 
@@ -315,28 +316,28 @@ void *f_ah_stoker(void *arg) {
             pthread_mutex_lock(&lp->lock_ready);
             if ((rc = pthread_cond_timedwait(&lp->cond_ready, &lp->lock_ready, &ts))) {
                 if (rc == ETIMEDOUT) {
-                    LOG(LOG_ERR, "TMO waiting for alloc thread to be ready");
+                    LOG(LOG_ERR, "%s: TMO waiting for alloc thread to be ready", lo->info.name);
                 } else {
-                    LOG(LOG_ERR, "error waitng for allocator");
+                    LOG(LOG_ERR, "%s: error waitng for allocator", lo->info.name);
                 }
             } else {
-                LOG(LOG_DBG, "allocator thread is ready");
+                LOG(LOG_DBG, "%s: stocker thread is ready", lo->info.name);
             }
         }
     } else {
         // TODO: MPI sync wait for allocators
     }
 
-    LOG(LOG_DBG, "helper alloc thread %s is up", qname);
+    LOG(LOG_DBG, "%s: helper alloc thread %s is up", lo->info.name, qname);
 
     while (!quit) {
 
         // wait until queue is sufficiently empty
         if ((rc = f_rbq_waitlwm(salq, F_SALQ_LWTMO)) == ETIMEDOUT) {
-            LOG(LOG_DBG, "rbq %s: LW TMO\n", qname);
+            LOG(LOG_DBG, "%s: rbq %s: LW TMO\n", lo->info.name, qname);
             continue;
         } else if (rc && rc != ECANCELED) {
-            LOG(LOG_ERR, "rbq %s wait lwm: %s", qname, strerror(rc));
+            LOG(LOG_ERR, "%s: rbq %s wait lwm: %s", lo->info.name, qname, strerror(rc));
             continue;
         }
         if (quit)
@@ -348,38 +349,71 @@ void *f_ah_stoker(void *arg) {
 
                 ss.count = f_rbq_size(salq) - f_rbq_count(salq);
                 ss.stripes = calloc(ss.count, sizeof(f_stripe_t));
-                if (ss.stripes == NULL) {
-                    LOG(LOG_FATAL, "helper ran out of memory");
+                if (!ss.stripes) {
+                    LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
                     quit = 1;
                     return NULL;
                 }
 
                 if ((rc = f_get_stripe(lo, F_STRIPE_INVALID, &ss)) < 0) {
-                    LOG(LOG_ERR, "%s[%d]: error %d in f_get_stripe", lo->info.name, lo->lp->part_num, rc);
+                    LOG(LOG_ERR, "%s: error %d in f_get_stripe", lo->info.name, rc);
+		    free(ss.stripes);
+		    if (rc == -ENOSPC) sleep(1); // FIXME
                     continue;
                 } else {
-                    LOG(LOG_DBG, "%s[%d]: allocated %d stripes", lo->info.name, lo->lp->part_num, rc);
+                    LOG(LOG_DBG, "%s: allocated %d stripes", lo->info.name, rc);
+                }
+
+                keyset.slabs = calloc(ss.count, sizeof(f_slab_t));
+                if (!keyset.slabs) {
+                    LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
+		    free(ss.stripes);
+                    quit = 1;
+                    return NULL;
                 }
 
                 uint64_t tmo = 0;
+		int j, n = 0;
+		keyset.count = 0;
                 for (int i = 0; i < ss.count; i++) {
-                    //f_slab_t slab = stripe_to_slab(lo, ss.stripes[i]);
-                    // TODO: check slab map and update if missing this stripe
+                    // check slab map and update if missing that slab
+                    f_slab_t slab = stripe_to_slab(lo, ss.stripes[i]);
+		    F_SLABMAP_ENTRY_t *sme;
 
+		    for (j = 0; j < keyset.count; j++) {
+		    	if (keyset.slabs[j] == slab) break;
+		    }
+
+		    if (j == keyset.count) {
+			sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+			if (!sme || !sme->slab_rec.mapped) {
+			    keyset.slabs[n] = slab;
+			    keyset.count = ++n;
+printf("added slab %u to update count %d\n", slab, keyset.count);
+		    	}
+		    }
 _retry:
                     if ((rc = f_rbq_push(salq, &ss.stripes[i], tmo)) < 0) {
-                        LOG(LOG_ERR, "rbq %s push error: %s", qname, strerror(rc = errno));
+                        LOG(LOG_ERR, "%s: rbq %s push error: %s", lo->info.name, qname, strerror(rc = errno));
                         break;
                     } else if (rc == EAGAIN) {
                         // queue full?
                         // that should not have happened, but try to recover
-                        LOG(LOG_ERR, "rbq %s push failed: queue is full", qname);
+                        LOG(LOG_ERR, "%s: rbq %s push failed: queue is full", lo->info.name, qname);
                         tmo += RBQ_TMO_1S;
                         goto _retry;
                     }
                     tmo = 0;
                 }
+		if (keyset.count > 0) {
+                    LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, n);
+		    if ((rc = f_slabmap_update(lo->slabmap, &keyset)))
+		    	LOG(LOG_ERR, "%s: error %d updating global slabmap", lo->info.name, rc);
+		    if (log_print_level > 0)
+			f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		}
                 free(ss.stripes);
+                free(keyset.slabs);
 
             } else {
                 // TODO: MPI magic
@@ -388,7 +422,7 @@ _retry:
             
     }
 
-    LOG(LOG_DBG, "rbq %s rceived quit signal", qname);
+    LOG(LOG_DBG, "%s: rbq %s rceived quit signal", lo->info.name, qname);
 
     // return all unused stripes back to allocator
     while (!f_rbq_isempty(salq)) {
@@ -396,13 +430,14 @@ _retry:
             ss.count = f_rbq_count(salq);
             ss.stripes = calloc(ss.count, sizeof(f_stripe_t));
             if (ss.stripes == NULL) {
-                LOG(LOG_FATAL, "helper ran out of memory");
+                LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
                 goto _abort;
             }
 
             for (int i = 0; i < ss.count; i++) {
                 if ((rc = f_rbq_pop(salq, &ss.stripes[i], 0)) < 0) {
-                    LOG(LOG_ERR, "rbq %s pop error while cleaning up: %s", qname, strerror(rc = errno));
+                    LOG(LOG_ERR, "%s: rbq %s pop error while cleaning up: %s", 
+			lo->info.name, qname, strerror(rc = errno));
                     continue;
                 } else if (rc == EAGAIN) {
                     // empty, we are done
@@ -623,16 +658,21 @@ int f_test_helper(F_POOL_t *pool)
 			F_LAYOUT_t *lo = f_get_layout(i);
 		
 			rc = f_ah_get_stripe(lo, &s);
-			if (rc) return rc;
+			if (rc == ETIMEDOUT) {
+				sleep(1);
+				continue;
+			} else if (rc) goto _ret;
+
 			printf("got stripe %lu\n", s);
 
 			usleep(100);
 
 			rc = f_ah_commit_stripe(lo, s);
-			if (rc) return rc;
+			if (rc) goto _ret;
 			printf("committed stripe %lu\n", s);
 		}
 	}
+_ret:
 	f_ah_dettach();	
-	return 0;
+	return rc;
 }
