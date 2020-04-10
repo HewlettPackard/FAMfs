@@ -42,7 +42,7 @@ typedef struct {
 //  flag:   if != 0 will force queue creation, destroying old structures if they exist
 // Return:
 //   0     - Success and qp points to the newly created queue
-//  -1     - Check errno
+//  -errno - Check errno
 int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int force);
 
 //
@@ -51,7 +51,7 @@ int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int fo
 //  qp:     address of a pointer to the queue handle
 // Return:
 //  0       - Success
-// -1       - Check errno
+// -errno   - Check errno
 //
 int f_rbq_open(char *name, f_rbq_t **qp);
 
@@ -72,10 +72,10 @@ int f_rbq_destroy(f_rbq_t *q);
 //  e:      element to push
 //  wait:   -1: wait forever, 0 - try to push, >0 sleep on full condition until timeout (in usec)
 // Return:
-//  0         - Success
-//  EAGAIN    - Queue is full and wait == 0
-//  ETIMEDOUT - Timeout waiting on queue not full condition
-//  -1        - check errno
+//  0          - Success
+//  -EAGAIN    - Queue is full and wait == 0
+//  -ETIMEDOUT - Timeout waiting on queue not full condition
+//  -errno     - check errno
 int f_rbq_push(f_rbq_t *q, void *e, long wait);
 
 //
@@ -84,11 +84,11 @@ int f_rbq_push(f_rbq_t *q, void *e, long wait);
 //  e:      element to push
 //  wait:   -1: wait forever, 0 - try to pop, >0 sleep on empty condition until timeout (in usec)
 // Return:
-//  0         - Success
-//  EAGAIN    - Queue is empty and wait == 0
-//  ECANCELED - Somebody reset water marks
-//  ETIMEDOUT - Timeout waiting on queue not empty condition
-//  -1        - check errno
+//  0          - Success
+//  -EAGAIN    - Queue is empty and wait == 0
+//  -ECANCELED - Somebody reset water marks
+//  -ETIMEDOUT - Timeout waiting on queue not empty condition
+//  -errno     - check errno
 int f_rbq_pop(f_rbq_t *q, void *e, long wait);
 
 //
@@ -97,10 +97,10 @@ int f_rbq_pop(f_rbq_t *q, void *e, long wait);
 //  q:      queue handle
 //  tmo:    timeout in usec
 // Return:
-//  0         - Success (low water mark reached)
-//  ETIMEDOUT - Timed out waiting
-//  ECANCELED - Somebody removed low water mark or signaled reset
-//  -1        - Check errno
+//  0          - Success (low water mark reached)
+//  -ETIMEDOUT - Timed out waiting
+//  -ECANCELED - Somebody removed low water mark or signaled reset
+//  -errno     - Check errno
 int f_rbq_waitlwm(f_rbq_t *q, long tmo);
 
 //
@@ -109,10 +109,10 @@ int f_rbq_waitlwm(f_rbq_t *q, long tmo);
 //  q:      queue handle
 //  tmo:    timeout in usec
 // Return:
-//  0         - Success (low water mark reached)
-//  ETIMEDOUT - Timed out waiting
-//  ECANCELED - Somebody removed high water mark or signaled reset
-//  -1        - Check errno
+//  0          - Success (low water mark reached)
+//  -ETIMEDOUT - Timed out waiting
+//  -ECANCELED - Somebody removed high water mark or signaled reset
+//  -errno     - Check errno
 int f_rbq_waithwm(f_rbq_t *q, long tmo); 
 
 //

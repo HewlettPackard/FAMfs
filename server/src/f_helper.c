@@ -274,6 +274,11 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
 	return rc;
 }
 
+/*
+ * Shovel preallocated stripes, obtained from (remote) allocator into
+ * ready-queue on compute node
+ *
+ */
 void *f_ah_stoker(void *arg) {
     int rc = 0;
     char qname[MAX_RBQ_NAME];
@@ -310,12 +315,13 @@ void *f_ah_stoker(void *arg) {
         if (!lp->ready) {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
+            // set timeout to 1 minute
             ts.tv_sec += (ts.tv_nsec + 60000000000L)/1000000000L;
             ts.tv_nsec = (ts.tv_nsec + 60000000000L)%1000000000L;
 
             pthread_mutex_lock(&lp->lock_ready);
             if ((rc = pthread_cond_timedwait(&lp->cond_ready, &lp->lock_ready, &ts))) {
-                if (rc == ETIMEDOUT) {
+                if (rc == -ETIMEDOUT) {
                     LOG(LOG_ERR, "%s: TMO waiting for alloc thread to be ready", lo->info.name);
                 } else {
                     LOG(LOG_ERR, "%s: error waitng for allocator", lo->info.name);
@@ -334,11 +340,12 @@ void *f_ah_stoker(void *arg) {
 
         // wait until queue is sufficiently empty
         if ((rc = f_rbq_waitlwm(salq, F_SALQ_LWTMO)) == -ETIMEDOUT) {
-            LOG(LOG_DBG, "%s: rbq %s: LW TMO\n", lo->info.name, qname);
-            continue;
-        } else if (rc && rc != -ECANCELED) {
+            if (f_rbq_isfull(salq))
+                LOG(LOG_DBG, "%s: rbq %s: LW TMO\n", lo->info.name, qname);
+        } else if (rc == -ECANCELED) {
+            LOG(LOG_INFO, "%s: rbq %s wak-up signal", lo->info.name, qname);
+        } else if (rc) {
             LOG(LOG_ERR, "%s: rbq %s wait lwm: %s", lo->info.name, qname, strerror(-rc));
-            continue;
         }
         if (quit)
             break;
@@ -357,8 +364,8 @@ void *f_ah_stoker(void *arg) {
 
                 if ((rc = f_get_stripe(lo, F_STRIPE_INVALID, &ss)) < 0) {
                     LOG(LOG_ERR, "%s: error %d in f_get_stripe", lo->info.name, rc);
-		    free(ss.stripes);
-		    if (rc == -ENOSPC) sleep(1); // FIXME
+                    free(ss.stripes);
+                    if (rc == -ENOSPC) sleep(1); // FIXME
                     continue;
                 } else {
                     LOG(LOG_DBG, "%s: allocated %d stripes", lo->info.name, rc);
@@ -367,31 +374,31 @@ void *f_ah_stoker(void *arg) {
                 keyset.slabs = calloc(ss.count, sizeof(f_slab_t));
                 if (!keyset.slabs) {
                     LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
-		    free(ss.stripes);
+                    free(ss.stripes);
                     quit = 1;
                     return NULL;
                 }
 
                 uint64_t tmo = 0;
-		int j, n = 0;
-		keyset.count = 0;
+                int j, n = 0;
+                keyset.count = 0;
                 for (int i = 0; i < ss.count; i++) {
                     // check slab map and update if missing that slab
                     f_slab_t slab = stripe_to_slab(lo, ss.stripes[i]);
-		    F_SLABMAP_ENTRY_t *sme;
-
-		    for (j = 0; j < keyset.count; j++) {
-		    	if (keyset.slabs[j] == slab) break;
-		    }
-
-		    if (j == keyset.count) {
-			sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
-			if (!sme || !sme->slab_rec.mapped) {
-			    keyset.slabs[n] = slab;
-			    keyset.count = ++n;
-printf("added slab %u to update count %d\n", slab, keyset.count);
-		    	}
-		    }
+                    F_SLABMAP_ENTRY_t *sme;
+                    
+                    for (j = 0; j < keyset.count; j++) {
+                        if (keyset.slabs[j] == slab) break;
+                    }
+                    
+                    if (j == keyset.count) {
+                        sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+                        if (!sme || !sme->slab_rec.mapped) {
+                            keyset.slabs[n] = slab;
+                            keyset.count = ++n;
+                            printf("added slab %u to update count %d\n", slab, keyset.count);
+                        }
+                    }
 _retry:
                     if ((rc = f_rbq_push(salq, &ss.stripes[i], tmo)) < 0) {
                         LOG(LOG_ERR, "%s: rbq %s push error: %s", lo->info.name, qname, strerror(rc = errno));
@@ -405,13 +412,13 @@ _retry:
                     }
                     tmo = 0;
                 }
-		if (keyset.count > 0) {
+                if (keyset.count > 0) {
                     LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, n);
-		    if ((rc = f_slabmap_update(lo->slabmap, &keyset)))
-		    	LOG(LOG_ERR, "%s: error %d updating global slabmap", lo->info.name, rc);
-		    if (log_print_level > 0)
-			f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
-		}
+                    if ((rc = f_slabmap_update(lo->slabmap, &keyset)))
+                        LOG(LOG_ERR, "%s: error %d updating global slabmap", lo->info.name, rc);
+                    if (log_print_level > 0)
+                        f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+                }
                 free(ss.stripes);
                 free(keyset.slabs);
 
@@ -437,7 +444,7 @@ _retry:
             for (int i = 0; i < ss.count; i++) {
                 if ((rc = f_rbq_pop(salq, &ss.stripes[i], 0)) < 0) {
                     LOG(LOG_ERR, "%s: rbq %s pop error while cleaning up: %s", 
-			lo->info.name, qname, strerror(-rc));
+                            lo->info.name, qname, strerror(-rc));
                     continue;
                 } else if (rc == EAGAIN) {
                     // empty, we are done
@@ -503,10 +510,11 @@ void *f_ah_drainer(void *arg) {
         // wait until queue is sufficiently full 
         if ((rc = f_rbq_waithwm(scmq, F_SCMQ_HWTMO)) == -ETIMEDOUT) {
             LOG(LOG_DBG, "rbq %s: HW TMO\n", qname);
-            continue;
-        } else if (rc && rc != -ECANCELED) {
+        } else if (rc != -ECANCELED) {
+            if (!f_rbq_isempty(scmq))
+                LOG(LOG_INFO, "rbq %s: wake-up signal received", qname);
+        } else if (rc) {
             LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(rc));
-            continue;
         }
         if (quit)
             break;
@@ -624,14 +632,26 @@ int f_ah_dettach() {
 
 int f_ah_get_stripe(F_LAYOUT_t *lo, f_stripe_t *str) {
     F_POOL_t    *pool = f_get_pool();
+    int rc;
 
     if (str == NULL || lo->info.conf_id >= pool->info.layouts_count || lo->info.conf_id < 0) {
         ERROR("bad call parameteres");
         return -EINVAL;
     }
     
-    return f_rbq_pop(calq[lo->info.conf_id], str, RBQ_TMO_1S);
+    int rt = 0;
+    do {
+        rc = f_rbq_pop(calq[lo->info.conf_id], str, 10*RBQ_TMO_1S);
+    } while (rc == -ETIMEDOUT && ++rt < 3);
 
+    if (rc == -ETIMEDOUT && f_rbq_isempty(calq[lo->info.conf_id])) {
+        ERROR("looks like lo %s is out of space", lo->info.name);
+        rc = -ENOSPC;
+    } else if (rc) {
+        ERROR("layout %s rbq error: %s", lo->info.name, strerror(-rc));
+    }
+
+    return rc;
 }
 
 int f_ah_commit_stripe(F_LAYOUT_t *lo, f_stripe_t str) {
@@ -644,6 +664,10 @@ int f_ah_commit_stripe(F_LAYOUT_t *lo, f_stripe_t str) {
     
     return f_rbq_push(ccmq, &str, 10*RBQ_TMO_1S);
 
+}
+
+void f_ah_flush() {
+    f_rbq_wakewm(ccmq);
 }
 
 int f_test_helper(F_POOL_t *pool)

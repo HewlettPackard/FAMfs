@@ -30,5 +30,6 @@ int f_ah_attach();
 int f_ah_detach();
 int f_ah_get_stripe(F_LAYOUT_t *lo, f_stripe_t *str);
 int f_ah_commit_stripe(F_LAYOUT_t *lo, f_stripe_t str);
+void f_ah_flush();
 
 #endif
