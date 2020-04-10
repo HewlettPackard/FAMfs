@@ -25,20 +25,20 @@ int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int fo
 
     if (strlen(name) > MAX_RBQ_NAME) {
         errno = EINVAL;
-        return -1;
+        return -errno;
     }
 
     if (!force)
         flags |= O_EXCL;
 
     if (-1 == (fd = shm_open(name, flags, 0777))) 
-        return errno == EEXIST && !force ? EEXIST : -1;
+        return errno == EEXIST && !force ? -EEXIST : -1;
 
     if (-1 == ftruncate(fd, size))
-        return -1;
+        return -errno;
 
     if (NULL == (hp = mmap(NULL, size, PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET))) 
-        return -1;
+        return -errno;
 
     bzero(hp, size);
     hp->qsize = ecnt;
@@ -47,7 +47,7 @@ int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int fo
     hp->mapfd = fd;
     if (NULL == (*qp = malloc(sizeof(f_rbq_t)))) {
         errno = ENOMEM;
-        return -1;
+        return -errno;
     }
     (*qp)->rbq = hp;
     
@@ -55,12 +55,12 @@ int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int fo
     sem_unlink(sem_name);
     (*qp)->isem = sem_open(sem_name, O_CREAT | O_EXCL, 0666, ecnt);
     if ((*qp)->isem == SEM_FAILED) 
-        return -1;
+        return -errno;
     snprintf(sem_name, sizeof(sem_name) - 1, "/%s:out", name);
     sem_unlink(sem_name);
     (*qp)->osem = sem_open(sem_name, O_CREAT | O_EXCL, 0666, 0);
     if ((*qp)->osem == SEM_FAILED) 
-        return -1;
+        return -errno;
 
     hp->lwm = hp->hwm = -1;
     strcpy(hp->name, name);
@@ -76,7 +76,7 @@ int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int fo
     pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED);
     pthread_cond_init(&hp->lwmc, &cattr);
     pthread_cond_init(&hp->hwmc, &cattr);
-    hp->refc = 0;
+    hp->refc = 1;
 
     return 0;
 }
@@ -88,30 +88,30 @@ int f_rbq_open(char *name, f_rbq_t **qp) {
     size_t    size;
 
     if (-1 == (fd = shm_open(name, O_RDWR, 0))) 
-        return -1;
+        return -errno;
 
     if (NULL == (hp = mmap(NULL, sizeof(f_rbq_hdr_t), PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET))) 
-        return -1;
+        return -errno;
 
     size = (hp->esize + sizeof(uint64_t))*hp->qsize + sizeof(f_rbq_hdr_t);
     munmap(hp, sizeof(f_rbq_hdr_t));
     if (NULL == (hp = mmap(NULL, size, PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET)))
-        return -1;
+        return -errno;
 
     if (NULL == (*qp = malloc(sizeof(f_rbq_t)))) {
         errno = ENOMEM;
-        return -1;
+        return -errno;
     }
 
     (*qp)->rbq = hp;
     snprintf(sem_name, sizeof(sem_name) - 1, "/%s:in", name);
     (*qp)->isem = sem_open(sem_name, 0);
     if ((*qp)->isem == SEM_FAILED)
-        return -1;
+        return -errno;
     snprintf(sem_name, sizeof(sem_name) - 1, "/%s:out", name);
     (*qp)->osem = sem_open(sem_name, 0);
     if ((*qp)->osem == SEM_FAILED)
-        return -1;
+        return -errno;
 
     __sync_fetch_and_add(&hp->refc, 1);
     return 0;
@@ -134,7 +134,7 @@ int f_rbq_destroy(f_rbq_t *q) {
     char sem_name[MAX_RBQ_NAME + 8], name[MAX_RBQ_NAME];
 
     if (q->rbq->refc > 1)
-        return EAGAIN;
+        return -EAGAIN;
 
     strcpy(name, q->rbq->name);
     pthread_cond_destroy(&q->rbq->lwmc);
@@ -155,18 +155,18 @@ int f_rbq_destroy(f_rbq_t *q) {
 int f_rbq_push(f_rbq_t *q, void *e, long wait) {
     if (!wait) {
         if (-1 == sem_trywait(q->isem)) 
-            return errno == EAGAIN ? EAGAIN : -1;
+            return -errno;
     } else {
         if (wait == -1) {
             if (-1 == sem_wait(q->isem))
-                return -1;
+                return -errno;
         } else {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             ts.tv_sec += (ts.tv_nsec + wait*1000L)/1000000000L;
             ts.tv_nsec = (ts.tv_nsec + wait*1000L)%1000000000L;
             if (-1 == sem_timedwait(q->isem, &ts)) 
-                return errno == ETIMEDOUT ? ETIMEDOUT : -1;
+                return -errno;
         }
     }
     uint64_t ix = __sync_fetch_and_add(&q->rbq->in, 1)%q->rbq->qsize;
@@ -178,7 +178,7 @@ int f_rbq_push(f_rbq_t *q, void *e, long wait) {
 
     *(uint64_t *)p = 1UL;
     if (-1 == sem_post(q->osem))
-        return -1;
+        return -errno;
     if (q->rbq->hwm > 0 && f_rbq_count(q) >= q->rbq->hwm) 
         pthread_cond_broadcast(&q->rbq->hwmc);
     return 0;
@@ -187,18 +187,18 @@ int f_rbq_push(f_rbq_t *q, void *e, long wait) {
 int f_rbq_pop(f_rbq_t *q, void *e, long wait) {
     if (!wait) {
         if (-1 == sem_trywait(q->osem)) 
-            return errno == EAGAIN ? EAGAIN : -1;
+            return -errno;
     } else {
         if (wait == -1) {
             if (-1 == sem_wait(q->osem))
-                return -1;
+                return -errno;
         } else {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             ts.tv_sec += (ts.tv_nsec + wait*1000L)/1000000000L;
             ts.tv_nsec = (ts.tv_nsec + wait*1000L)%1000000000L;
             if (-1 == sem_timedwait(q->osem, &ts)) 
-                return errno == ETIMEDOUT ? ETIMEDOUT : -1;
+                return -errno;
         }
     }
     uint64_t ix = __sync_fetch_and_add(&q->rbq->out, 1)%q->rbq->qsize;
@@ -211,7 +211,7 @@ int f_rbq_pop(f_rbq_t *q, void *e, long wait) {
 
     *(uint64_t *)p = 1UL;
     if (-1 == sem_post(q->isem))
-        return -1;
+        return -errno;
     if (q->rbq->lwm > 0 && f_rbq_count(q) <= q->rbq->lwm) 
         pthread_cond_broadcast(&q->rbq->lwmc);
 
@@ -223,27 +223,27 @@ int f_rbq_waitlwm(f_rbq_t *q, long tmo) {
     int s;
 
     if (q->rbq->lwm == -1)
-        return EINVAL;
+        return -EINVAL;
     else if (!q->rbq->lwm || f_rbq_count(q) <= q->rbq->lwm)
         return 0;
 
     if (!tmo) 
-        return ETIMEDOUT;
+        return -ETIMEDOUT;
 
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += (ts.tv_nsec + (unsigned long)tmo*1000L)/1000000000L;
     ts.tv_nsec = (ts.tv_nsec + (unsigned long)tmo*1000L)%1000000000L;
     if ((s = pthread_mutex_lock(&q->rbq->lwmx)))
-        return s;
+        return -s;
     if ((s = pthread_cond_timedwait(&q->rbq->lwmc, &q->rbq->lwmx, &ts))) {
         pthread_mutex_unlock(&q->rbq->lwmx);
-        return s;
+        return -s;
     }
     pthread_mutex_unlock(&q->rbq->lwmx);
 
     // check for alarm signal/WM reset
     if (!q->rbq->lwm || f_rbq_count(q) > q->rbq->lwm)
-        return ECANCELED;
+        return -ECANCELED;
 
     return 0;
 }
@@ -253,27 +253,27 @@ int f_rbq_waithwm(f_rbq_t *q, long tmo) {
     int s;
 
     if (q->rbq->hwm == -1)
-        return EINVAL;
+        return -EINVAL;
     else if (!q->rbq->hwm || f_rbq_count(q) >= q->rbq->hwm)
         return 0;
 
     if (!tmo) 
-        return ETIMEDOUT;
+        return -ETIMEDOUT;
 
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += (ts.tv_nsec + (unsigned long)tmo*1000L)/1000000000L;
     ts.tv_nsec = (ts.tv_nsec + (unsigned long)tmo*1000L)%1000000000L;
     if ((s = pthread_mutex_lock(&q->rbq->hwmx)))
-        return s;
+        return -s;
     if ((s = pthread_cond_timedwait(&q->rbq->hwmc, &q->rbq->hwmx, &ts))) {
         pthread_mutex_unlock(&q->rbq->hwmx);
-        return s;
+        return -s;
     }
     pthread_mutex_unlock(&q->rbq->hwmx);
 
     // check for alarm signal/WM reset
     if (!q->rbq->hwm || f_rbq_count(q) < q->rbq->hwm)
-        return ECANCELED;
+        return -ECANCELED;
     
     return 0;
 }
@@ -328,14 +328,14 @@ int main(int argc, char *argv[]) {
             for (int j = 0; j < N; j++) {
                 data.id = j;
                 if ((s = f_rbq_push(myq, &data, tmo))) {
-                    printf("*** push %d %s\n", s, strerror(errno));
+                    printf("*** push %d %s\n", s, strerror(-s));
                     exit(EXIT_FAILURE);
                 }
                 printf("push %c[%d]\n", argv[1][1], j);
                 if (f_rbq_count(myq) > 24) {
                     printf("sleep on LW\n");
                     if (s = f_rbq_waitlwm(myq, tmo))
-                        printf("wait %s\n", strerror(s));
+                        printf("wait %s\n", strerror(-s));
                     else
                         printf("GOT UP\n");
                 }
@@ -354,11 +354,11 @@ int main(int argc, char *argv[]) {
     if (!f)
         usleep(500000);
     if (s = f_rbq_create("cmd", sizeof(data), 32, &myq, f)) {
-        if (s != EEXIST) {
-            printf("*** rbq create %s\n", strerror(errno));
+        if (s != -EEXIST) {
+            printf("*** rbq create %s\n", strerror(-s));
             exit(EXIT_FAILURE);
-        } else if (f_rbq_open("cmd", &myq)) {
-            printf("*** rbq open %s\n", strerror(errno));
+        } else if (s = f_rbq_open("cmd", &myq)) {
+            printf("*** rbq open %s\n", strerror(-s));
             exit(EXIT_FAILURE);
         }
         printf("Consumer opened cmd: %lu[%d] in=%d\n", myq->rbq->esize, f_rbq_size(myq), f_rbq_count(myq));
@@ -377,11 +377,11 @@ int main(int argc, char *argv[]) {
     for (int j = 0; j < N; j++) {
         //if (s = f_rbq_pop(myq, &data, tmo)) {
         if (s = f_rbq_pop(myq, &data, -1)) {
-            if (s == ETIMEDOUT) {
+            if (s == -ETIMEDOUT) {
                 printf("TMO\n");
                 break;
             }
-            printf("pop %d %s\n", s, strerror(errno));
+            printf("pop %d %s\n", s, strerror(-s));
             exit(EXIT_FAILURE);
         }
         printf("%c[%d]\n", data.pfx[0], data.id);
@@ -394,8 +394,8 @@ int main(int argc, char *argv[]) {
         usleep(tmo);
         while (!f_rbq_isempty(myq)) {
             if ((s = f_rbq_pop(myq, &data, 0))) {
-                if (s != EAGAIN) {
-                    printf("*** pop %d %s\n", s, strerror(errno));
+                if (s != -EAGAIN) {
+                    printf("*** pop %d %s\n", s, strerror(-s));
                     exit(EXIT_FAILURE);
                 } else {
                     printf("cmd empty\n");

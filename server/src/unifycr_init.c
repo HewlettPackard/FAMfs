@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
     /* Create admin queue on all nodes */
     sprintf(qname, "%s-admin", F_CMDQ_NAME);
     if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &admq, 1))) {
-        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
+        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
         exit(rc);
     }
 
@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
             }
             sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
             if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &cmdq[i], 1))) {
-                LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
+                LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
                 exit(rc);
             }
             LOG(LOG_INFO, "layout %d:%s queue %s created", i, lo->info.name, qname);
@@ -397,7 +397,7 @@ int main(int argc, char *argv[])
             break;
         }
         if ((rc = f_rbq_pop(admq, &acmd, RBQ_TMO_4EVER))) {
-            LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(errno), rc);
+            LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(-rc), rc);
             exit(1);
         }
         

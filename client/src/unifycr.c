@@ -1148,13 +1148,13 @@ static int f_create_file_global(f_fattr_t *f_meta)
     ASSERT(cq);
 
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push cretae file command onto layout %d queue", f_meta->loid);
-        return rc > 0 ? rc : errno;
+        ERROR("can't push 'cretae file' command onto layout %d queue: %s", f_meta->loid, strerror(-rc));
+        return rc;
     }
     
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for cretae file from layout %d queue", f_meta->loid);
-        return rc > 0 ? rc : errno; 
+        ERROR("couldn't get response for 'cretae file' from layout %d queue: %s", f_meta->loid, strerror(-rc));
+        return rc; 
     }
 
     return r.rc;
@@ -1250,13 +1250,13 @@ static int f_find_file_global(int gfid, int loid, f_fattr_t **file_meta) {
     ASSERT(cq);
 
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push cretae file command onto layout %d queue", loid);
-        return rc > 0 ? rc : errno;
+        ERROR("can't push 'find file' command onto layout %d queue: %s", loid, strerror(-rc));
+        return rc;
     }
     
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for cretae file from layout %d queue", loid);
-        return rc > 0 ? rc : errno; 
+        ERROR("couldn't get response for 'find file' from layout %d queue: %s", loid, strerror(-rc));
+        return rc; 
     }
     if (r.rc) {
         // not found in global DB
@@ -1342,7 +1342,7 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
     memcpy(*fam_meta, cmd_buf + 2 * sizeof(int), size);
 #endif
     if ((rc = f_rbq_push(adminq, &c, RBQ_TMO_1S*10))) {
-        ERROR("couldn't push fam attr get admin q: %d\n", rc < 0 ? errno : rc);
+        ERROR("couldn't push fam attr get admin q: %s (%d)\n", strerror(-rc), rc);
         return rc;
     }
     *fam_meta = NULL;
@@ -1352,7 +1352,7 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
         if ((rc = f_rbq_pop(rplyq, &r, RBQ_TMO_1S*30))) {
             if (*fam_meta)
                 free(*fam_meta);
-            ERROR("error getting FAM %d attr: %d", fam_id, rc < 0 ? errno : rc);
+            ERROR("error getting FAM %d attr: %s (%d)", fam_id, strerror(-rc), rc);
             return rc;
         }
 
@@ -2465,7 +2465,7 @@ int unifycr_unmount() {
     F_POOL_t *pool;
     pool = f_get_pool();
     if (f_rbq_push(adminq, &c, RBQ_TMO_1S)) {
-        ERROR("couldn't push UNMOUNT command to svr");
+        ERROR("couldn't push UNMOUNT command to srv");
     }
     f_rbq_destroy(rplyq);
     f_rbq_close(adminq);
@@ -2685,12 +2685,12 @@ static int f_server_sync() {
     strncpy(c.ext_dir, external_spill_dir, F_MAX_FNM);
 
     if ((rc = f_rbq_push(adminq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("rank %d couldn't send MOUNT command: %d", dbg_rank, rc < 0 ? errno : rc);
+        ERROR("rank %d couldn't send MOUNT command: %s(%d)", dbg_rank, strerror(-rc), rc);
         return -1;
     }
 
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("rank %d couldn't mount FAMfs: %d", dbg_rank, rc < 0 ? errno : rc);
+        ERROR("rank %d couldn't mount FAMfs: %s(%d)", dbg_rank, strerror(-rc), rc);
         return -1;
     }
 
@@ -2916,24 +2916,24 @@ static int f_srv_connect() {
 
     sprintf(qname, "%s-%02d", F_RPLYQ_NAME, local_rank_idx);
     if ((rc = f_rbq_create(qname, sizeof(f_svcrply_t), F_MAX_RPLYQ, &rplyq, 1))) {
-        ERROR("failed to create reply queue: %d %s", rc, strerror(errno));
+        ERROR("failed to create reply queue: %s(%d)", strerror(-rc), rc);
         return rc;
     }
 
     sprintf(qname, "%s-admin", F_CMDQ_NAME);
     if ((rc = f_rbq_open(qname, &adminq))) {
-        ERROR("failed to open admin queue: %d %s", rc, strerror(errno));
+        ERROR("failed to open admin queue: %s(%d)", strerror(-rc), rc);
         return rc;
     }
 
     if ((rc = f_rbq_push(adminq, &c, RBQ_TMO_1S))) {
-        ERROR("failed to send command: %d %s", rc, strerror(errno));
+        ERROR("failed to send command: %s(%d)", strerror(-rc), rc);
         return rc;
     }
 
 
     if ((rc = f_rbq_pop(rplyq, &r, 10*RBQ_TMO_1S))) {
-        ERROR("failed to get reply: %d %s", rc, strerror(errno));
+        ERROR("failed to get reply: %s(%d)", strerror(-rc), rc);
         return rc;
     }
     if (r.ackcode != c.opcode || r.rc != 0) {
@@ -2949,7 +2949,7 @@ static int f_srv_connect() {
         }
         sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
         if ((rc = f_rbq_open(qname, &lo_cq[i]))) {
-            ERROR("can't open LO %s command queue: %d", lo->info.name, rc);
+            ERROR("can't open LO %s command queue: %s(%d)", lo->info.name, strerror(-rc), rc);
             return -1;
         }
     }

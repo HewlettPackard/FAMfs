@@ -1668,11 +1668,11 @@ int famfs_read(read_req_t *read_req, int count)
     f_rbq_t *cq = lo_cq[lid];
     ASSERT(cq);
     if ((rc = f_rbq_push(cq, &c, RBQ_TMO_1S))) {
-        ERROR("can't push MD_GET cmd, layout %d: %d", lid, rc < 0 ? errno : rc);
+        ERROR("can't push MD_GET cmd, layout %d: %s(%d)", lid, strerror(-rc), rc);
         return -EIO;
     }
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("can't get reply to MD_GET from layout %d: %d", lid, rc < 0 ? errno : rc);
+        ERROR("can't get reply to MD_GET from layout %d: %s(%d)", lid, strerror(-rc), rc);
         return -EIO;
     }
     if (r.rc) {
@@ -1940,13 +1940,13 @@ static int f_fsync(int fd) {
     ASSERT(cq);
 
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push cretae file command onto layout %d queue", meta->loid);
-        return rc > 0 ? rc : errno;
+        ERROR("can't push cretae file command onto layout %d queue: %s", meta->loid, strerror(-rc));
+        return rc;
     }
     
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for cretae file from layout %d queue", meta->loid);
-        return rc > 0 ? rc : errno; 
+        ERROR("couldn't get response for cretae file from layout %d queue: %s", meta->loid, strerror(-rc));
+        return rc; 
     }
 
     UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);

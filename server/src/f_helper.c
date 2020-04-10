@@ -102,7 +102,7 @@ int f_ah_shutdown(F_POOL_t *pool) {
         pthread_join(al_thrd[i], NULL);
 
         n = 0;
-        while (f_rbq_destroy(alq[i]) == EAGAIN) {
+        while (f_rbq_destroy(alq[i]) == -EAGAIN) {
             LOG(LOG_WARN, "refcnt not 0 on layout %d", i);
             sleep(5);
             if (++n > 6) {
@@ -116,7 +116,7 @@ int f_ah_shutdown(F_POOL_t *pool) {
     pthread_join(cm_thrd, NULL);
 
     n = 0;
-    while (f_rbq_destroy(cmq) == EAGAIN) {
+    while (f_rbq_destroy(cmq) == -EAGAIN) {
         LOG(LOG_WARN, "refcnt not 0 commit queue");
         sleep(5);
         if (++n > 6) {
@@ -288,7 +288,7 @@ void *f_ah_stoker(void *arg) {
     // create rbq
     sprintf(qname, "%s-%s", F_SALQ_NAME, lo->info.name);
     if ((rc = f_rbq_create(qname, sizeof(f_stripe_t), F_MAX_SALQ, &salq, 1))) {
-        LOG(LOG_ERR, "%s: rbq %s create: %s", lo->info.name, qname, strerror(rc = errno));
+        LOG(LOG_ERR, "%s: rbq %s create: %s", lo->info.name, qname, strerror(-rc));
         exit(rc);
     }
 
@@ -333,11 +333,11 @@ void *f_ah_stoker(void *arg) {
     while (!quit) {
 
         // wait until queue is sufficiently empty
-        if ((rc = f_rbq_waitlwm(salq, F_SALQ_LWTMO)) == ETIMEDOUT) {
+        if ((rc = f_rbq_waitlwm(salq, F_SALQ_LWTMO)) == -ETIMEDOUT) {
             LOG(LOG_DBG, "%s: rbq %s: LW TMO\n", lo->info.name, qname);
             continue;
-        } else if (rc && rc != ECANCELED) {
-            LOG(LOG_ERR, "%s: rbq %s wait lwm: %s", lo->info.name, qname, strerror(rc));
+        } else if (rc && rc != -ECANCELED) {
+            LOG(LOG_ERR, "%s: rbq %s wait lwm: %s", lo->info.name, qname, strerror(-rc));
             continue;
         }
         if (quit)
@@ -396,7 +396,7 @@ _retry:
                     if ((rc = f_rbq_push(salq, &ss.stripes[i], tmo)) < 0) {
                         LOG(LOG_ERR, "%s: rbq %s push error: %s", lo->info.name, qname, strerror(rc = errno));
                         break;
-                    } else if (rc == EAGAIN) {
+                    } else if (rc == -EAGAIN) {
                         // queue full?
                         // that should not have happened, but try to recover
                         LOG(LOG_ERR, "%s: rbq %s push failed: queue is full", lo->info.name, qname);
@@ -437,7 +437,7 @@ _retry:
             for (int i = 0; i < ss.count; i++) {
                 if ((rc = f_rbq_pop(salq, &ss.stripes[i], 0)) < 0) {
                     LOG(LOG_ERR, "%s: rbq %s pop error while cleaning up: %s", 
-			lo->info.name, qname, strerror(rc = errno));
+			lo->info.name, qname, strerror(-rc));
                     continue;
                 } else if (rc == EAGAIN) {
                     // empty, we are done
@@ -475,7 +475,7 @@ void *f_ah_drainer(void *arg) {
     // create rbq
     sprintf(qname, "%s-all", F_SCMQ_NAME);
     if ((rc = f_rbq_create(qname, sizeof(f_ah_scme_t), F_MAX_SCMQ, &scmq, 1))) {
-        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(rc = errno));
+        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
         exit(rc);
     }
 
@@ -501,10 +501,10 @@ void *f_ah_drainer(void *arg) {
 
     while (!quit) {
         // wait until queue is sufficiently full 
-        if ((rc = f_rbq_waithwm(scmq, F_SCMQ_HWTMO)) == ETIMEDOUT) {
+        if ((rc = f_rbq_waithwm(scmq, F_SCMQ_HWTMO)) == -ETIMEDOUT) {
             LOG(LOG_DBG, "rbq %s: HW TMO\n", qname);
             continue;
-        } else if (rc && rc != ECANCELED) {
+        } else if (rc && rc != -ECANCELED) {
             LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(rc));
             continue;
         }
@@ -513,7 +513,7 @@ void *f_ah_drainer(void *arg) {
 
         // read commit queue untill empty and send stripe (home)
         while (!f_rbq_isempty(scmq)) {
-            if ((rc = f_rbq_pop(scmq, &scme, 0) == EAGAIN)) {
+            if ((rc = f_rbq_pop(scmq, &scme, 0) == -EAGAIN)) {
                 // empty, done
                 break;
             } else if (rc < 0) {
@@ -658,7 +658,7 @@ int f_test_helper(F_POOL_t *pool)
 			F_LAYOUT_t *lo = f_get_layout(i);
 		
 			rc = f_ah_get_stripe(lo, &s);
-			if (rc == ETIMEDOUT) {
+			if (rc == -ETIMEDOUT) {
 				sleep(1);
 				continue;
 			} else if (rc) goto _ret;

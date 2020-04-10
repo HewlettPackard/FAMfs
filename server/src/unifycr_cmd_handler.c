@@ -224,8 +224,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
         }
         sprintf(qname, "%s-%02d", F_RPLYQ_NAME, pcmd->cid); 
         if ((rc = f_rbq_open(qname, &rplyq[pcmd->cid]))) {
-            rc = errno;
-            LOG(LOG_ERR, "can't open client reply queue %s", qname);
+            LOG(LOG_ERR, "can't open client reply queue %s:%s", qname, strerror(-rc));
             return rc;
         }
         break;
@@ -266,7 +265,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
                         rply.cnt = n;
                         rply.more = pval->part_cnt - n;
                         if ((rc = f_rbq_push(rplyq[pcmd->cid], &rply, RBQ_TMO_1S))) {
-                            LOG(LOG_ERR, "can't push partial reply onto q %d: %d\n", pcmd->cid, rc);
+                            LOG(LOG_ERR, "can't push partial reply onto q %d: %s\n", pcmd->cid, strerror(-rc));
                             free(pval);
                             return rc;
                         }
@@ -349,7 +348,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
     }
 
     if ((rc = f_rbq_push(rplyq[pcmd->cid], &rply, RBQ_TMO_1S))) {
-        LOG(LOG_ERR, "filed to post reply to client %d: %s", pcmd->cid, strerror(errno));
+        LOG(LOG_ERR, "filed to post reply to client %d: %s", pcmd->cid, strerror(-rc));
     }
     return rc;
 }
@@ -361,7 +360,7 @@ void *f_command_thrd(void *arg) {
 
     while (1) {
         if ((rc = f_rbq_pop(myq, &fcmd, 10*RBQ_TMO_1S))) {
-            if (rc == ETIMEDOUT) {
+            if (rc == -ETIMEDOUT) {
                 LOG(LOG_DBG, "SRV: 10s, no command");
                 if (exit_flag) {
                     LOG(LOG_INFO, "svc exit gflag set, exiting");
@@ -369,7 +368,7 @@ void *f_command_thrd(void *arg) {
                 }
                 continue;
             } else {
-                LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(errno), rc);
+                LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(-rc), rc);
                 exit(1);
             }
 
