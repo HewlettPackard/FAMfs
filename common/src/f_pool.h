@@ -116,6 +116,9 @@ typedef struct f_pool_info_ {
     uint32_t		pdev_max_idx;	/* the attribute array size: max used device index */
     uint32_t		max_extents;	/* maximum number of extents in pool devices */
 
+    int			lfa_port;	/* port for lf_atomics */
+    int			cq_hwm;		/* high water mark for committed stripes queue */
+
 			/* pool devlist lookup helper arrays that have index in devlist */
     uint16_t		*pdev_indexes;	/* devlist stripped of holes (F_PDI_NONE), array of
 					device indexes in devlist of 'dev_count' size */

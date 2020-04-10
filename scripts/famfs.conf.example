@@ -3,6 +3,8 @@ chunk_bits = 20
 chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
+# lfa_port = 30000 ; port for lf_atomics
+# cq_hwm = 75 ; high water mark for committed stripes queue
 
 [log]
 # verbosity = 7 ; the highest level:7
@@ -116,6 +118,8 @@ devices = [5,4,6]
 id = 0 ; optional: layout ids starts with zero
 name = "1D:1M"
 devices = [1,2,3,4] ; optional list of device IDs
+# sq_depth = 4096 ; preallocated stripes queue size per layout and compute node
+# sq_lwm = 25 ; low water mark for preallocated queue
 
 [layout]
 name = "2D:1M"

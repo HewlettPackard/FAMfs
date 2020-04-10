@@ -194,6 +194,11 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define UNIFYCR_ION_COUNT	1
 #define UNIFYCR_LAYOUTS_COUNT	1
 #define LAYOUT0_NAME		"1D:1M"
+#define LAYOUT_SQ_DEPTH		4096	/* preallocated stripes queue size per layout and compute node */
+#define LAYOUT_SQ_LWM		25	/* low water mark for preallocated queue */
+
+#define UNIFYCR_LFA_PORT	30000	/* port for lf_atomics */
+#define UNIFYCR_CQ_HWM		75	/* high water mark for committed stripes queue */
 
 /* Limits: slab, stripe, device and layout */
 #define F_DEVICES_MAX		4096	/* Maximum number of FAMs, divisible by 8 */

@@ -275,6 +275,9 @@ typedef struct f_layout_info_ {
     uint16_t		chunks;		/* number of chunks constituting a stripe */
     uint16_t		data_chunks;	/* number of data chunks in stripe */
 
+    int			sq_depth;	/* preallocated stripes queue size per CN */
+    int			sq_lwm;		/* low water mark for preallocated queue */
+
     uint32_t		pdi_max_idx;	/* the higest media_id used in the layout */
     uint16_t		*pdi_by_media;	/* devlist indexed by media_id, size: pdi_max_idx+1 */
 } F_LAYOUT_INFO_t;

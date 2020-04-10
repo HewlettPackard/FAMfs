@@ -482,6 +482,10 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (f_uuid_parse(c->devices_uuid, p->uuid)) {
 	assert( uuid_parse(FAMFS_PDEVS_UUID_DEF, p->uuid) == 0);
     }
+    if (configurator_int_val(c->unifycr_lfa_port, &l)) goto _noarg;
+    pool_info->lfa_port = (int)l;
+    if (configurator_int_val(c->unifycr_cq_hwm, &l)) goto _noarg;
+    pool_info->cq_hwm = (int)l;
 
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
@@ -841,6 +845,10 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     info = &lo->info;
     if (configurator_int_val(c->layout_id[idx][0], &l)) goto _noarg;
     info->conf_id = (unsigned int)l;
+    if (configurator_int_val(c->layout_sq_depth[idx][0], &l)) goto _noarg;
+    info->sq_depth = (unsigned int)l;
+    if (configurator_int_val(c->layout_sq_lwm[idx][0], &l)) goto _noarg;
+    info->sq_lwm = (unsigned int)l;
 
     /* Partition */
     lo->lp = (F_LO_PART_t *) calloc(sizeof(F_LO_PART_t), 1);
@@ -1064,11 +1072,13 @@ void f_print_layouts(void) {
     for (u = 0; u <= pool_info->pdev_max_idx; u++, pdi_by_media_id++)
 	if (*pdi_by_media_id != F_PDI_NONE)
 	    break;
-    printf("  pool media_id range is %u to %u, of %u extents at most.",
+    printf("  pool media_id range is %u to %u, of %u extents at most.\n",
 	   u, pool_info->pdev_max_idx, pool_info->max_extents);
+    printf("  lfa_port:%d cq_hwm:%d\n",
+	   pool_info->lfa_port, pool_info->cq_hwm);
 
     /* IO nodes */
-    printf("\nConfiguration has %u IO nodes:\n", p->ionode_count);
+    printf("Configuration has %u IO nodes:\n", p->ionode_count);
     for (u = 0; u < p->ionode_count; u++) {
 	F_IONODE_INFO_t *info = &p->ionodes[u];
 
@@ -1095,6 +1105,8 @@ void f_print_layouts(void) {
         printf("  %uD+%uP chunk:%u, stripes:%u per slab, total %u slab(s)\n",
 	    info->data_chunks, (info->chunks - info->data_chunks),
 	    info->chunk_sz, info->slab_stripes, info->slab_count);
+	printf("  preallocated stripes queue depth:%d, low water mark %d %%.\n",
+	    info->sq_depth, info->sq_lwm);
 	printf("  This layout has %u device(s), including %u missing.\n",
 	    info->devnum, info->misdevnum);
 	pdi = lo->devlist;

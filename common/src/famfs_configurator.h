@@ -55,6 +55,8 @@
     UNIFYCR_CFG_CLI(unifycr, daemonize, BOOL, off, "enable server daemonization", NULL, 'D', "on|off") \
     UNIFYCR_CFG_CLI(unifycr, debug, BOOL, off, "enable debug output", NULL, 'd', "on|off") \
     UNIFYCR_CFG_CLI(unifycr, mount_point, STRING, UNIFYCR_MOUNT_POINT, "mountpoint directory", NULL, 'm', "specify full path to desired mountpoint") \
+    UNIFYCR_CFG(unifycr, lfa_port, INT, UNIFYCR_LFA_PORT, "libfabric atomics port", NULL) \
+    UNIFYCR_CFG(unifycr, cq_hwm, INT, UNIFYCR_CQ_HWM, "high water mark for committed stripes queue", NULL) \
     UNIFYCR_CFG_CLI(log, verbosity, INT, 0, "log verbosity level", NULL, 'v', "specify logging verbosity level") \
     UNIFYCR_CFG_CLI(log, file, STRING,  UNIFYCR_DEFAULT_LOG_FILE, "log file name", NULL, 'l', "specify log file name") \
     UNIFYCR_CFG_CLI(log, dir, STRING, LOGDIR, "log file directory", configurator_directory_check, 'L', "specify full path to directory to contain log file") \
@@ -114,6 +116,8 @@
     UNIFYCR_CFG_MULTI(layout, id, INT, NULLSTRING, "device ID in layout", NULL, 1) \
     UNIFYCR_CFG_MULTI(layout, devices, INT, NULLSTRING, "device ID in layout", NULL, 0) \
     UNIFYCR_CFG_MULTI(layout, name, STRING, LAYOUT0_NAME, "layout name (moniker)", configurator_moniker_check, 1) \
+    UNIFYCR_CFG_MULTI(layout, sq_depth, INT, LAYOUT_SQ_DEPTH, "preallocated stripes queue size per compute node", NULL, 1) \
+    UNIFYCR_CFG_MULTI(layout, sq_lwm, INT, LAYOUT_SQ_LWM, "low water mark for preallocated queue", NULL, 1) \
 
 
 /* unifycr_cfg_t struct */
