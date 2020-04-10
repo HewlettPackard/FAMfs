@@ -118,6 +118,7 @@ typedef struct f_pool_info_ {
 
     int			lfa_port;	/* port for lf_atomics */
     int			cq_hwm;		/* high water mark for committed stripes queue */
+    int			cq_hwm_tmo;	/* high water mark timeout, sec */
 
 			/* pool devlist lookup helper arrays that have index in devlist */
     uint16_t		*pdev_indexes;	/* devlist stripped of holes (F_PDI_NONE), array of

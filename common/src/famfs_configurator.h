@@ -57,6 +57,7 @@
     UNIFYCR_CFG_CLI(unifycr, mount_point, STRING, UNIFYCR_MOUNT_POINT, "mountpoint directory", NULL, 'm', "specify full path to desired mountpoint") \
     UNIFYCR_CFG(unifycr, lfa_port, INT, UNIFYCR_LFA_PORT, "libfabric atomics port", NULL) \
     UNIFYCR_CFG(unifycr, cq_hwm, INT, UNIFYCR_CQ_HWM, "high water mark for committed stripes queue", NULL) \
+    UNIFYCR_CFG(unifycr, cq_hwm_tmo, INT, UNIFYCR_CQ_HWM_TMO, "high water mark stripes queue timeout, sec", NULL) \
     UNIFYCR_CFG_CLI(log, verbosity, INT, 0, "log verbosity level", NULL, 'v', "specify logging verbosity level") \
     UNIFYCR_CFG_CLI(log, file, STRING,  UNIFYCR_DEFAULT_LOG_FILE, "log file name", NULL, 'l', "specify log file name") \
     UNIFYCR_CFG_CLI(log, dir, STRING, LOGDIR, "log file directory", configurator_directory_check, 'L', "specify full path to directory to contain log file") \

@@ -486,6 +486,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info->lfa_port = (int)l;
     if (configurator_int_val(c->unifycr_cq_hwm, &l)) goto _noarg;
     pool_info->cq_hwm = (int)l;
+    if (configurator_int_val(c->unifycr_cq_hwm_tmo, &l)) goto _noarg;
+    pool_info->cq_hwm_tmo = (int)l;
 
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
@@ -1074,8 +1076,8 @@ void f_print_layouts(void) {
 	    break;
     printf("  pool media_id range is %u to %u, of %u extents at most.\n",
 	   u, pool_info->pdev_max_idx, pool_info->max_extents);
-    printf("  lfa_port:%d cq_hwm:%d\n",
-	   pool_info->lfa_port, pool_info->cq_hwm);
+    printf("  lfa_port:%d commit queue hwm:%d, TMO:%d sec.\n",
+	   pool_info->lfa_port, pool_info->cq_hwm,  pool_info->cq_hwm_tmo);
 
     /* IO nodes */
     printf("Configuration has %u IO nodes:\n", p->ionode_count);
