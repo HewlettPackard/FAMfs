@@ -218,8 +218,9 @@ static uint16_t find_pdev(struct f_pool_ *p, unsigned int index) {
 struct f_pool_dev_ *f_find_pdev(unsigned int media_id) {
     struct f_pool_ *p = pool;
 
-    return (media_id <= p->info.pdev_max_idx)?
-	(&p->devlist[ p->info.pdi_by_media[media_id] ]) : NULL;
+    return (media_id > p->info.pdev_max_idx)? NULL:
+	( (p->info.pdi_by_media[media_id] == F_PDI_NONE)? NULL:
+	  &p->devlist[ p->info.pdi_by_media[media_id] ]);
 }
 
 static int cmp_pdev_by_index(const void *a, const void *b)
