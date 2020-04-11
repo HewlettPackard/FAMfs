@@ -241,6 +241,12 @@ int f_start_allocator_threads(void)
 
 	ASSERT(pool);
 
+	rc = f_set_ionode_ranks(pool);
+	if (rc) {
+		LOG(LOG_ERR, "error %s in f_set_ionode_ranks", strerror(rc));
+		return rc;
+	}
+
 	rc = create_pds_lfa(pool);
 	if (rc) {
 		destroy_pds_lfa(pool);
@@ -2985,16 +2991,16 @@ static void *f_allocator_thread(void *ctx)
 	F_POOL_t *pool = lo->pool;
 	F_LO_PART_t *lp = lo->lp;
 	int *rcbuf;
-	int thr_cnt, thr_rank, i;
+	int ion_cnt, ion_rank, i;
 	int rc = 0;
 
 	ASSERT(pool && lo && lp);
 
-	ON_ERROR((MPI_Comm_rank(pool->ionode_comm, &thr_rank)), "MPI_Comm_rank");
-	ON_ERROR((MPI_Comm_size(pool->ionode_comm, &thr_cnt)), "MPI_Comm_size");
-	rcbuf = alloca(thr_cnt*sizeof(rc));
+	ON_ERROR((MPI_Comm_rank(pool->ionode_comm, &ion_rank)), "MPI_Comm_rank");
+	ON_ERROR((MPI_Comm_size(pool->ionode_comm, &ion_cnt)), "MPI_Comm_size");
+	rcbuf = alloca(ion_cnt*sizeof(rc));
 	ASSERT(rcbuf);
-	memset(rcbuf, 0, thr_cnt*sizeof(rc));
+	memset(rcbuf, 0, ion_cnt*sizeof(rc));
 
 	lp->part_num = pool->mynode.ionode_idx;
 	lo->part_count = pool->ionode_count;
@@ -3013,9 +3019,9 @@ static void *f_allocator_thread(void *ctx)
 
 	if (rc) goto _ret;
 
-	if (thr_cnt != lo->part_count) {
+	if (ion_cnt != lo->part_count) {
 		LOG(LOG_WARN, "%s[%d]: allocator on %s started in partial config: %d of %d parts", 
-			lo->info.name, lp->part_num, pool->mynode.hostname, thr_cnt, lo->part_count);
+			lo->info.name, lp->part_num, pool->mynode.hostname, ion_cnt, lo->part_count);
 		goto _ret;
 	}
 
@@ -3025,14 +3031,14 @@ static void *f_allocator_thread(void *ctx)
 	 */ 
 	MPI_Barrier(pool->ionode_comm);
 
-	rcbuf[thr_rank] = rc;
+	rcbuf[ion_rank] = rc;
 	ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, rcbuf, 1, MPI_INT, pool->ionode_comm), "MPI_Allgather");
 
-	for (i = 0; i < thr_cnt; i++) {
+	for (i = 0; i < ion_cnt; i++) {
 		/* Bring down all allocators if any of them failed */
 		LOG(LOG_DBG, "%s[%d]: loaded slab map part %d rc: %d", lo->info.name, lp->part_num, i, rcbuf[i]);
 		if (rcbuf[i] !=0) {
-			if (!thr_rank) LOG(LOG_ERR, "%s[%d]: error %d loading slab map part %d", 
+			if (!ion_rank) LOG(LOG_ERR, "%s[%d]: error %d loading slab map part %d", 
 				lo->info.name, lp->part_num, rcbuf[i], i);
 			SetLayoutThreadFailed(lo);
 			rc = -1;

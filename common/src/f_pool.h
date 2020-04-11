@@ -130,6 +130,7 @@ typedef struct f_pool_info_ {
 typedef struct f_ionode_info_ {
     uuid_t		uuid;		/* IO node UUID */
     char		*hostname;	/* IO node hostname */
+    int 		rank;		/* IO node MPI rank */
     F_ZFM_t		zfm;		/* GenZ fabric manager data */
     uint32_t		conf_id;	/* ID in configuration file */
     uint32_t		mds;		/* number of MD servers running on this node */

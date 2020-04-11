@@ -713,4 +713,49 @@ int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
 	return rc;
 }
 
+/*
+ * Set IO-node ranks in the pool ionodes array.
+ *
+ *  Params
+ *	pool		FAMfs pool pointer
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_set_ionode_ranks(F_POOL_t *pool)
+{
+	int *idxbuf, io_idx = pool->mynode.ionode_idx;
+	int rank, cnt, rc, i, n;
 
+	ASSERT(pool->mynode.ionode_idx < pool->ionode_count);
+
+	rc = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	if (rc != MPI_SUCCESS) return rc;
+
+	rc = MPI_Comm_size(MPI_COMM_WORLD, &cnt);
+	if (rc != MPI_SUCCESS) return rc;
+
+	idxbuf = alloca(cnt*sizeof(io_idx));
+	if (!idxbuf) return -ENOMEM;
+	memset(idxbuf, 0, cnt*sizeof(io_idx));
+
+	/*
+	 * Synchronize all allocator and helper threads across all nodes and 
+	 * exchange IO-node ranks
+	 */ 
+	idxbuf[rank] = NodeIsIOnode(&pool->mynode) ? io_idx : -1;
+	rc = MPI_Allgather(MPI_IN_PLACE, sizeof(io_idx), MPI_BYTE, idxbuf, 
+		sizeof(io_idx), MPI_BYTE, MPI_COMM_WORLD);
+	if (rc != MPI_SUCCESS) return rc;
+
+	for (i = 0, n = 0; i < cnt; i++) {
+		if (idxbuf[i] != -1) {
+			uint16_t idx = idxbuf[i];
+			ASSERT(idx < pool->ionode_count);
+			pool->ionodes[idx].rank = i;
+			n++;
+		}
+	}
+	return n == pool->ionode_count ? 0 : -EINVAL;
+}

@@ -39,6 +39,19 @@ int f_fail_pdev(F_LAYOUT_t *lo, int pool_index);
  */
 int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx);
 
+/*
+ * Set IO-node ranks in the pool ionodes array.
+ *
+ *  Params
+ *	pool		FAMfs pool pointer
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_set_ionode_ranks(F_POOL_t *pool);
+
+
 /* 
  * Slab allocation bitmap manipulation routines 
  */

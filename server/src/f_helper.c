@@ -57,6 +57,14 @@ int f_ah_init(F_POOL_t *pool) {
         return EINVAL;
     }
 
+    if (!NodeForceHelper(&pool->mynode)) {
+	rc = f_set_ionode_ranks(pool);
+	if (rc) {
+		LOG(LOG_ERR, "error %s in f_set_ionode_ranks", strerror(rc));
+		return rc;
+	}
+    }
+
     for (int i = 0; i < pool->info.layouts_count; i++) {
         F_LAYOUT_t *lo = f_get_layout(i);
         if (lo == NULL) {
@@ -305,7 +313,7 @@ void *f_ah_stoker(void *arg) {
     rcu_register_thread();
 
     if ((rc = read_global_slabmap(lo))) {
-	LOG(LOG_ERR, "%s: slabmap load failed: %s", lo->info.name, strerror(rc));
+	LOG(LOG_ERR, "%s: slabmap load failed: %s", lo->info.name, strerror(-rc));
         goto _abort;
     }
 
