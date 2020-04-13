@@ -106,12 +106,6 @@ do { \
                __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
 } while (0)
 
-#define ERROR(fmt, ...) \
-do { \
-        printf("famfs error: %s:%d: %s: " fmt "\n", \
-               __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
-} while (0)
-
 /* define a macro to capture function name, file name, and line number
  * along with user-defined string */
 #define UNIFYCR_UNSUPPORTED(fmt, args...) \
