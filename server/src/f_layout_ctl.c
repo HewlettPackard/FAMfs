@@ -752,8 +752,11 @@ int f_set_ionode_ranks(F_POOL_t *pool)
 	for (i = 0, n = 0; i < cnt; i++) {
 		if (idxbuf[i] != -1) {
 			uint16_t idx = idxbuf[i];
+			F_IONODE_INFO_t *ioi;
 			ASSERT(idx < pool->ionode_count);
 			pool->ionodes[idx].rank = i;
+			ioi = &pool->ionodes[idx];
+			if (!rank) printf("IO-node %s: idx %d rank %d\n", ioi->hostname, idx, ioi->rank);
 			n++;
 		}
 	}

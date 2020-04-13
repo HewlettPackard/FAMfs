@@ -243,7 +243,7 @@ int f_start_allocator_threads(void)
 
 	rc = f_set_ionode_ranks(pool);
 	if (rc) {
-		LOG(LOG_ERR, "error %s in f_set_ionode_ranks", strerror(rc));
+		LOG(LOG_ERR, "error %s in f_set_ionode_ranks", strerror(-rc));
 		return rc;
 	}
 
@@ -259,7 +259,7 @@ int f_start_allocator_threads(void)
 		rc = start_allocator_thread(lo);
 		if (rc) {
 			LOG(LOG_ERR, "%s[%d]: error %s starting allocator", 
-				lo->info.name, lo->lp->part_num, strerror(rc));
+				lo->info.name, lo->lp->part_num, strerror(-rc));
 		}
 	}
 
@@ -281,7 +281,7 @@ int f_stop_allocator_threads(void)
 			rc = stop_allocator_thread(lo);
 			if (rc) {
 				LOG(LOG_ERR, "%s[%d]: error %s stopping allocator", 
-					lo->info.name, lo->lp->part_num, strerror(rc));
+					lo->info.name, lo->lp->part_num, strerror(-rc));
 			}
 		}
 	}
@@ -289,121 +289,9 @@ int f_stop_allocator_threads(void)
 	return rc;
 }
 
-#if 0
 /* 
- * Slab allocation bitmap manipulation routines 
+ * Slab allocation helper routines 
  */
-static inline void set_slab_bit(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
-{
-	ASSERT(slab < lp->slab_count);
-	set_bit(slab, bmap);
-}
-
-static inline void clear_slab_bit(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
-{
-	ASSERT(slab < lp->slab_count);
-	clear_bit(slab, bmap);
-}
-
-static inline bool slab_bit_set(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
-{
-	ASSERT(slab < lp->slab_count);
-	return test_bit(slab, bmap);
-}
-
-static inline void set_slab_allocated(F_LO_PART_t *lp, f_slab_t slab)
-{
-	atomic_inc(&lp->allocated_slabs);
-	return set_slab_bit(lp, slab, lp->slab_bmap);
-}
-
-static inline void clear_slab_allocated(F_LO_PART_t *lp, f_slab_t slab)
-{
-	atomic_dec(&lp->allocated_slabs);
-	return clear_slab_bit(lp, slab, lp->slab_bmap);
-}
-
-static inline int slab_allocated(F_LO_PART_t *lp, f_slab_t slab)
-{
-	return slab_bit_set(lp, slab, lp->slab_bmap);
-}
-
-static inline int slabs_allocated(F_LO_PART_t *lp)
-{
-	return bitmap_weight(lp->slab_bmap, lp->slab_count);
-}
-
-static inline int max_slab_allocated(F_LO_PART_t *lp)
-{
-	return find_last_bit(lp->slab_bmap, lp->slab_count);
-}
-
-static inline bool all_slabs_allocated(F_LO_PART_t *lp)
-{
-	F_LAYOUT_t *lo = lp->layout;
-	return (slabs_allocated(lp) == lp->slab_count || LayoutNoSpace(lo));
-}
-
-static inline void set_slab_in_sync(F_LO_PART_t *lp, f_slab_t slab)
-{
-	return set_slab_bit(lp, slab, lp->sync_bmap);
-}
-
-static inline void clear_slab_in_sync(F_LO_PART_t *lp, f_slab_t slab)
-{
-	return clear_slab_bit(lp, slab, lp->sync_bmap);
-}
-
-static inline int slab_in_sync(F_LO_PART_t *lp, f_slab_t slab)
-{
-	return slab_bit_set(lp, slab, lp->sync_bmap);
-}
-
-static inline f_slab_t stripe_to_slab(F_LAYOUT_t *lo, f_stripe_t stripe)
-{
-	return (stripe / lo->info.slab_stripes);
-}
-
-static inline f_stripe_t slab_to_stripe0(F_LAYOUT_t *lo, f_slab_t slab)
-{
-	return (slab * lo->info.slab_stripes);
-}
-
-static inline void inc_slab_used(F_LO_PART_t *lp, f_stripe_t stripe)
-{
-	f_slab_t slab = stripe_to_slab(lp->layout, stripe);
-	ASSERT(slab < lp->slab_count);
-	ASSERT(++(lp->slab_usage[slab].used) <= lp->layout->info.slab_stripes);
-	atomic_inc(&lp->allocated_stripes);
-}
-
-static inline void dec_slab_used(F_LO_PART_t *lp, f_stripe_t stripe)
-{
-	f_slab_t slab = stripe_to_slab(lp->layout, stripe);
-	ASSERT(slab < lp->slab_count);
-	lp->slab_usage[slab].used--;
-	atomic_dec(&lp->allocated_stripes);
-}
-
-static inline int slab_used(F_LO_PART_t *lp, f_stripe_t stripe)
-{
-	f_slab_t slab = stripe_to_slab(lp->layout, stripe);
-	ASSERT(slab < lp->slab_count);
-	return lp->slab_usage[slab].used;
-}
-
-static inline void reset_slab_usage(F_LO_PART_t *lp, f_slab_t slab)
-{
-	ASSERT(slab < lp->slab_count);
-	lp->slab_usage[slab].used = 0;	
-}
-
-static inline bool slab_full(F_LO_PART_t *lp, f_stripe_t stripe)
-{
-	return (slab_used(lp, stripe) == lp->layout->info.slab_stripes);
-}
-#endif
-
 static inline bool all_slabs_full(F_LO_PART_t *lp)
 {
 	int n = lp->slab_count;
@@ -480,7 +368,7 @@ static int get_slab_agmap(F_LO_PART_t *lp, F_SLABMAP_ENTRY_t *sme, unsigned long
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_POOL_t *pool = lo->pool;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	int n;
 
 	bitmap_zero(agmap, pool->pool_ags);
@@ -777,7 +665,7 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 	unsigned int i;
 
 	for(i = 0; i < pu_entries; i++, slab++) {
-		f_stripe_t s0 = slab_to_stripe0(lo, slab);;
+		f_stripe_t s0 = slab_to_stripe0(lo, f_map_prt_to_global(lp->slabmap, slab));
 		unsigned int n;
 
 		sme = (F_SLABMAP_ENTRY_t *)&pu->se;
@@ -1471,8 +1359,8 @@ static unsigned int alloc_slab_extents_by_util(F_LO_PART_t *lp,
 	unsigned int n;
 	int i, rc = 0;
 
-	LOG(LOG_DBG, "%s[%d]: allocating extents for slab %u", lo->info.name, lp->part_num,
-			(unsigned int)stripe_to_slab(lo, sme->slab_rec.stripe_0));
+	LOG(LOG_DBG, "%s[%d]: allocating extents for slab %lu", lo->info.name, lp->part_num,
+		f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0)));
 
 	for (i = 0, n = 0; i < devnum && n < lo->info.chunks; i++) {
 		F_POOLDEV_INDEX_t *pdi = &devlist[i];		
@@ -1500,7 +1388,7 @@ static unsigned int alloc_slab_extents_by_index(F_LO_PART_t *lp,
 	F_SLABMAP_ENTRY_t *sme, F_POOLDEV_INDEX_t *devlist, int devnum)
 {
 	F_LAYOUT_t *lo = lp->layout;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	unsigned int n;
 	int i, rc = 0;
 
@@ -1535,7 +1423,7 @@ static unsigned int alloc_slab_extents(F_LO_PART_t *lp, F_SLABMAP_ENTRY_t *sme)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_POOL_t *pool = lo->pool;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	F_POOLDEV_INDEX_t *sorted_devlist = NULL;
 	unsigned int n = 0, devnum = pool->pool_ags;
 	int rc;
@@ -1709,8 +1597,8 @@ static int __alloc_new_slab(F_LO_PART_t *lp, f_slab_t *slabp)
 	_sme = alloca(lp->slabmap->geometry.entry_sz);
 	memcpy(_sme, sme, lp->slabmap->geometry.entry_sz);
 
-	/* Set s0 before allocating slab extents */
-	_sme->slab_rec.stripe_0 = slab_to_stripe0(lo, s);
+	/* Set s0 (global) before allocating slab extents */
+	_sme->slab_rec.stripe_0 = slab_to_stripe0(lo, f_map_prt_to_global(lp->slabmap,s));
 
 	/* Allocate slab extents */
 	n = alloc_slab_extents(lp, _sme);
@@ -2493,7 +2381,7 @@ _retry:
 		if (rc) goto _err;
 
 		match_stripe = stripe;
-		ss->stripes[i] = f_map_prt_to_global(lp->slabmap, stripe);
+		ss->stripes[i] = f_map_prt_to_global(lp->claimvec, stripe);
 	}
 	pthread_spin_unlock(&lp->alloc_lock);
 	atomic_inc(lo->stats + FL_STRIPE_GET);
@@ -2505,8 +2393,8 @@ _err:
 	atomic_inc(lo->stats + FL_STRIPE_GET_ERR);
 	while (i--) {
 		if (ss->stripes[i] != F_STRIPE_INVALID) {
-			ASSERT(f_map_prt_my_global(lp->slabmap, ss->stripes[i]));
-			__put_stripe(lp, f_map_prt_to_local(lp->slabmap, ss->stripes[i]));
+			ASSERT(f_map_prt_my_global(lp->claimvec, ss->stripes[i]));
+			__put_stripe(lp, f_map_prt_to_local(lp->claimvec, ss->stripes[i]));
 		}
 	}
 	return rc;
@@ -2528,8 +2416,8 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t stripe;
 		
-		ASSERT(f_map_prt_my_global(lp->slabmap, ss->stripes[i]));
-		stripe = f_map_prt_to_local(lp->slabmap, ss->stripes[i]);
+		ASSERT(f_map_prt_my_global(lp->claimvec, ss->stripes[i]));
+		stripe = f_map_prt_to_local(lp->claimvec, ss->stripes[i]);
 
 		/* stripe should not be on the pre-allocated list */
 		se = find_stripe(lp, stripe);
@@ -2564,8 +2452,8 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t stripe;
 		
-		ASSERT(f_map_prt_my_global(lp->slabmap, ss->stripes[i]));
-		stripe = f_map_prt_to_local(lp->slabmap, ss->stripes[i]);
+		ASSERT(f_map_prt_my_global(lp->claimvec, ss->stripes[i]));
+		stripe = f_map_prt_to_local(lp->claimvec, ss->stripes[i]);
 		rc += commit_stripe(lp, stripe);
 	}
 	
@@ -3029,14 +2917,13 @@ static void *f_allocator_thread(void *ctx)
 	 * Synchronize all allocator threads across all IO-nodes and make sure 
 	 * all slab map partitions were successfully loaded
 	 */ 
-	MPI_Barrier(pool->ionode_comm);
-
 	rcbuf[ion_rank] = rc;
 	ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, rcbuf, 1, MPI_INT, pool->ionode_comm), "MPI_Allgather");
 
 	for (i = 0; i < ion_cnt; i++) {
 		/* Bring down all allocators if any of them failed */
-		LOG(LOG_DBG, "%s[%d]: loaded slab map part %d rc: %d", lo->info.name, lp->part_num, i, rcbuf[i]);
+		LOG(LOG_DBG, "%s[%d]: loaded slab map part %d rc: %d", 
+			lo->info.name, lp->part_num, i, rcbuf[i]);
 		if (rcbuf[i] !=0) {
 			if (!ion_rank) LOG(LOG_ERR, "%s[%d]: error %d loading slab map part %d", 
 				lo->info.name, lp->part_num, rcbuf[i], i);
@@ -3048,7 +2935,8 @@ static void *f_allocator_thread(void *ctx)
 	/* Load global PDS LFA */
 	if (!rc) {
 		rc = f_lfa_gget(pool->pds_lfa->global_abd, 0, pool->pds_lfa->global_size);
-		if (rc) LOG(LOG_WARN, "%s[%d]: error %d loading global PDS LFA", lo->info.name, lp->part_num, rc);
+		if (rc) LOG(LOG_WARN, "%s[%d]: error %d loading global PDS LFA", 
+				lo->info.name, lp->part_num, rc);
 	}
 
 	/* All is well, signal the parent thread */

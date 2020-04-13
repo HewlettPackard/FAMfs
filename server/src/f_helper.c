@@ -72,6 +72,7 @@ int f_ah_init(F_POOL_t *pool) {
             return EIO;
         }
 
+	lo->part_count = pool->ionode_count;
         if ((rc = pthread_create(&al_thrd[i], NULL, f_ah_stoker, lo))) {
             LOG(LOG_ERR, "LO %s helper alloc thread create failed", lo->info.name);
             return rc;
@@ -252,13 +253,13 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
 	}
 
 	rc = f_map_register(lo->slabmap, lo->info.conf_id);
-	if (rc || f_map_is_ro(lo->slabmap)) {
+	if (rc) {
 		LOG(LOG_ERR, "%s: error %d registering global slabmap", lo->info.name, rc);
 		return rc;
 	}
 
 	rc = f_map_shm_attach(lo->slabmap, F_MAPMEM_SHARED_WR);
-	if (rc || f_map_is_ro(lo->slabmap)) {
+	if (rc) {
 		LOG(LOG_ERR, "%s: error %d attaching to global slabmap", lo->info.name, rc);
 		return rc;
 	}
@@ -280,6 +281,35 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
 		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 
 	return rc;
+}
+
+/*
+ * Open global claim vector (all partitions). Not used by the helper, done only to work around
+ * the global index creation barrier. Hence, we do not load the claim vector here.
+ */
+static int open_global_claimvec(F_LAYOUT_t *lo)
+{
+	F_POOL_t *pool = lo->pool;
+	int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
+	int rc;
+
+	LOG(LOG_DBG, "%s: opening global claim vector", lo->info.name);
+
+	lo->claimvec  = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
+	if (!lo->claimvec) return -EINVAL;
+
+	rc = f_map_init_prt(lo->claimvec, lo->part_count, part, 0, 1);
+	if (rc) {
+		LOG(LOG_ERR, "%s: error %d initializing global claim vector", lo->info.name, rc);
+		return rc;
+	}
+
+	rc = f_map_register(lo->claimvec, lo->info.conf_id);
+	if (rc) {
+		LOG(LOG_ERR, "%s: error %d registering global claim vector", lo->info.name, rc);
+		return rc;
+	}
+	return 0;
 }
 
 /*
@@ -314,6 +344,11 @@ void *f_ah_stoker(void *arg) {
 
     if ((rc = read_global_slabmap(lo))) {
 	LOG(LOG_ERR, "%s: slabmap load failed: %s", lo->info.name, strerror(-rc));
+        goto _abort;
+    }
+
+    if ((rc = open_global_claimvec(lo))) {
+	LOG(LOG_ERR, "%s: claim vector load failed: %s", lo->info.name, strerror(-rc));
         goto _abort;
     }
 
