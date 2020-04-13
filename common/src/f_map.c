@@ -2091,10 +2091,16 @@ void f_map_fprint_desc(FILE *f, F_MAP_t *m)
 	fprintf(f, ", dirty (%lu PUs)", dirty_count);
     else
 	fprintf(f, ", clean");
-    fprintf(f, ";\n  part %u of %u in %spartitioned %s map; "
-	    "interleave: %u entr%s (%u PUs);\n",
-	    m->part, m->parts, (m->parts<=1)?"non-":"",
-	    f_map_has_globals(m)?"global":"local",
+    fprintf(f, ";\n");
+    if (m->parts<=1)
+	fprintf(f, "  non-partitioned map; ");
+    else if (f_map_has_globals(m))
+	fprintf(f, "  partitioned global map with %u partitions; ",
+	    m->parts);
+    else
+	fprintf(f, "  part %u of %u in partitioned local map; ",
+	    m->part, m->parts);
+    fprintf(f, "interleave: %u entr%s (%u PUs);\n",
 	    1U<<m->geometry.intl_factor,
 	    m->geometry.intl_factor?"ies":"y",
 	    1U<<(m->geometry.intl_factor-m->geometry.pu_factor));
