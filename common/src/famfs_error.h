@@ -12,6 +12,12 @@
 
 #include <rdma/fi_errno.h>
 
+#define ERROR(fmt, ...) \
+do {								\
+	fprintf(stderr, "famfs error: %s:%d: %s: " fmt "\n",	\
+		__FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
+} while (0)
+
 #define FI_ERROR_LOG(err, msg, ...)       \
     do {                                  \
         int64_t __err = (int64_t)err;     \

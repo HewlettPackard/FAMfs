@@ -29,6 +29,7 @@ libfamfs_la_SOURCES = \
   utlist.h \
   lf_client.c \
   lf_client.h \
+  f_helper.c \
   fam_stripe.c \
   fam_stripe.h
 
@@ -38,11 +39,11 @@ libfamfs_la_CPPFLAGS = \
   $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
 libfamfs_la_LDFLAGS = \
   -static -version-info $(LIBUNIFYCR_LT_VERSION) \
-  $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
-  -lcrypto -lrt -lpthread
+  $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 libfamfs_la_LIBADD =	$(top_builddir)/common/src/libfamfs_common.la \
 		$(top_builddir)/common/src/libfamfs_meta.la \
-		$(top_builddir)/userspace-rcu/src/.libs/liburcu.la
+		$(top_builddir)/userspace-rcu/src/.libs/liburcu.la \
+		-lurcu-qsbr -lurcu-cds -lcrypto -lrt -lpthread
 
 libfamfs_gotcha_la_SOURCES = \
   unifycr-fixed.c \
@@ -63,6 +64,7 @@ libfamfs_gotcha_la_SOURCES = \
   utlist.h \
   lf_client.c \
   lf_client.h \
+  f_helper.c \
   fam_stripe.c \
   fam_stripe.h
 
@@ -73,7 +75,8 @@ libfamfs_gotcha_la_CPPFLAGS = \
 libfamfs_gotcha_la_LDFLAGS = \
   -shared -version-info $(LIBUNIFYCR_LT_VERSION) \
   $(GOTCHA_LDFLAGS) $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
-  -lgotcha -lcrypto -lrt -lpthread
-libfamfs_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la
+  -lgotcha
+libfamfs_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la \
+		-lurcu-qsbr -lurcu-cds -lcrypto -lrt -lpthread
 #		$(top_builddir)/common/src/libfamfs_meta.la
 
