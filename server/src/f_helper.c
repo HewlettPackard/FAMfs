@@ -576,6 +576,20 @@ void *f_ah_drainer(void *arg) {
                 LOG(LOG_ERR, "bad layout id %d popped of queue %s", scme.lo_id, qname);
                 continue;
             }
+            if (scme.flag) {
+                f_stripe_t s = scme.str;
+                struct f_stripe_set ss = {.count = 1, .stripes = &s};
+
+                if (NodeForceHelper(&pool->mynode)) {
+                    if ((lo = f_get_layout(lo_id)) == NULL)
+                        LOG(LOG_ERR, "get layout [%d] info\n", lo_id);
+                    if ((rc = f_put_stripe(lo, &ss)))
+                        LOG(LOG_ERR, "%s: error %d in f_put_stripe", lo->info.name, rc);
+                } else {
+                    // TODO: MPI magic
+                }
+                continue;
+            }
             if (sss[lo_id] <= ssa[lo_id].count) {
                 sss[lo_id] += sss[lo_id];
                 ssa[lo_id].stripes = realloc(ssa[lo_id].stripes, sss[lo_id]);
@@ -697,16 +711,28 @@ int f_ah_get_stripe(F_LAYOUT_t *lo, f_stripe_t *str) {
     return rc;
 }
 
-int f_ah_commit_stripe(F_LAYOUT_t *lo, f_stripe_t str) {
+static int _push_stripe(F_LAYOUT_t *lo, f_stripe_t str, int release) {
     F_POOL_t    *pool = f_get_pool();
+    f_ah_scme_t scme;
 
     if (lo->info.conf_id >= pool->info.layouts_count || lo->info.conf_id < 0) {
         ERROR("bad call parameteres");
         return -EINVAL;
     }
-    
-    return f_rbq_push(ccmq, &str, 10*RBQ_TMO_1S);
+    scme.lo_id = lo->info.conf_id;
+    scme.str = str;
+    scme.flag = release;
 
+    return f_rbq_push(ccmq, &scme, 10*RBQ_TMO_1S);
+
+}
+
+int f_ah_commit_stripe(F_LAYOUT_t *lo, f_stripe_t str) {
+    return _push_stripe(lo, str, 0);
+}
+
+int f_ah_release_stripe(F_LAYOUT_t *lo, f_stripe_t str) {
+    return _push_stripe(lo, str, 1);
 }
 
 void f_ah_flush() {

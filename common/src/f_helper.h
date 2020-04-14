@@ -19,6 +19,7 @@
 typedef struct _f_ah_scme {
     f_stripe_t  str;
     int         lo_id;
+    int         flag;
 } f_ah_scme_t;
 
 int  f_ah_init(F_POOL_t *pool);
