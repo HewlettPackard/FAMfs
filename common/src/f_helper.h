@@ -22,15 +22,18 @@ typedef struct _f_ah_scme {
     int         flag;
 } f_ah_scme_t;
 
-int  f_ah_init(F_POOL_t *pool);
-int  f_ah_shutdown(F_POOL_t *pool);
+struct f_pool_;
+int  f_ah_init(struct f_pool_ *pool);
+int  f_ah_shutdown(struct f_pool_ *pool);
 void *f_ah_stoker(void *arg);
 void *f_ah_drainer(void *arg);
 
 int f_ah_attach();
 int f_ah_detach();
-int f_ah_get_stripe(F_LAYOUT_t *lo, f_stripe_t *str);
-int f_ah_commit_stripe(F_LAYOUT_t *lo, f_stripe_t str);
+struct f_layout_;
+int f_ah_get_stripe(struct f_layout_ *lo, f_stripe_t *str);
+int f_ah_commit_stripe(struct f_layout_ *lo, f_stripe_t str);
+int f_ah_release_stripe(struct f_layout_ *lo, f_stripe_t str)'
 void f_ah_flush();
 
 #endif
