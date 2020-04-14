@@ -251,6 +251,7 @@ static int unifycr_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
         /* got one from spill over */
         chunk_meta->location = CHUNK_LOCATION_SPILLOVER;
         chunk_meta->id = s;
+	chunk_meta->flags = 0;
     } else {
         /* don't know how to allocate chunk */
         chunk_meta->location = CHUNK_LOCATION_NULL;
@@ -276,6 +277,31 @@ static int unifycr_chunk_free(int fid, unifycr_filemeta_t *meta, int chunk_id)
         unifycr_stack_unlock();
     } else if (chunk_meta->location == CHUNK_LOCATION_SPILLOVER) {
         /* TODO: free spill over chunk */
+
+	/* release stripe; check uncommited stripe */
+	F_LAYOUT_t *lo = f_get_layout(meta->loid);
+	ASSERT(lo);
+	f_stripe_t s = id;
+	int rc;
+
+	if (!chunk_meta->f.in_use) {
+	    DEBUG("free unallocated stripe %lu in layout %s",
+		  s, lo->info.name);
+	} else if (!chunk_meta->f.written) {
+	    if ((rc = f_ah_release_stripe(lo, s))) {
+		ERROR("failed to release stripe %lu in layout %s, error:%d",
+		      s, lo->info.name, rc);
+		return UNIFYCR_FAILURE;
+	    }
+	} else if (!chunk_meta->f.committed) {
+	    if ((rc = f_ah_commit_stripe(lo, s))) {
+		ERROR("failed to report committed stripe %lu in layout %s, error:%d",
+		      s, lo->info.name, rc);
+		return UNIFYCR_FAILURE;
+	    }
+	}
+	chunk_meta->flags = 0;
+
     } else {
         /* unkwown chunk location */
         DEBUG("unknown chunk location %d\n", chunk_meta->location);

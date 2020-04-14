@@ -272,8 +272,16 @@ enum flock_enum {
 
 typedef struct {
     int location; /* CHUNK_LOCATION specifies how chunk is stored */
+    union {
+	int flags;
+	struct {
+	    unsigned int in_use:1;	/* we have got it from helper */
+	    unsigned int written:1;	/* [partially] written */
+	    unsigned int committed:1;	/* been committed */
+	} f;
+    };
     off_t id;     /* physical id of chunk in its respective storage */
-} unifycr_chunkmeta_t;
+} __attribute__((aligned(8))) unifycr_chunkmeta_t;
 
 typedef struct {
     off_t size;                     /* current file size */

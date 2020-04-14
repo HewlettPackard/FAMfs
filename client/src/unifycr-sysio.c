@@ -627,6 +627,35 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
             meta->size = newpos;
             meta->real_size = pos + count;
         }
+
+	F_LAYOUT_t *lo = f_get_layout(meta->loid);
+	ASSERT(lo);
+
+	/* commit stripes */
+	unifycr_chunkmeta_t *stripe = meta->chunk_meta;
+	for (int i = 0; i < meta->chunks; i++, stripe++) {
+	    f_stripe_t s = stripe->id;
+	    int rc;
+
+	    ASSERT(stripe->f.in_use);
+
+	    if (stripe->f.written) {
+		if ((rc = f_ah_commit_stripe(lo, s))) {
+		    ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
+			   fd, s, lo->info.name, rc);
+		    return UNIFYCR_FAILURE;
+		}
+		stripe->f.committed = 1;
+	    } else {
+		ASSERT(!stripe->f.committed);
+		if ((rc = f_ah_release_stripe(lo, s))) {
+		    ERROR("fd:%d - failed to release stripe %lu in layout %s, error:%d",
+			   fd, s, lo->info.name, rc);
+		    return UNIFYCR_FAILURE;
+		}
+		stripe->f.in_use = 0;
+	    }
+	}
     }
     return write_rc;
 }
@@ -1919,7 +1948,7 @@ static int unifycr_fsync(int fd)
 }
 #endif
 
-static int f_fsync(int fd) {
+static int f_fsync(int fd, int on_close) {
     int rc;
     f_svcrply_t r;
     f_svcrq_t c = {
@@ -1936,18 +1965,40 @@ static int f_fsync(int fd) {
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fd);
     ASSERT(meta);
 
+    F_LAYOUT_t *lo = f_get_layout(meta->loid);
+    ASSERT(lo);
+
     /* uncommited stripe? */
     unifycr_chunkmeta_t *stripe = meta->chunk_meta;
-    if (stripe) {
+    for (int i = 0; i < meta->chunks; i++, stripe++) {
 	f_stripe_t s = stripe->id;
-	F_LAYOUT_t *lo = f_get_layout(meta->loid);
 
-	ASSERT(lo);
-	if ((rc = f_ah_commit_stripe(lo, s))) {
-	    ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
-		  fd, s, lo->info.name, rc);
-	    return rc;
+	if (!stripe->f.written || stripe->f.committed)
+	    continue;
+
+	if (!stripe->f.in_use) {
+	    ERROR("fd:%d - unallocated stripe %lu in layout %s",
+		  fd, s, lo->info.name);
+	    goto io_err;
 	}
+	if (!stripe->f.written) {
+	    if (on_close &&
+		(rc = f_ah_release_stripe(lo, s)))
+	    {
+		ERROR("fd:%d - failed to release stripe %lu in layout %s, error:%d",
+		      fd, s, lo->info.name, rc);
+		goto io_err;
+	    }
+	} else if (!stripe->f.committed) {
+	    if ((rc = f_ah_commit_stripe(lo, s))) {
+		ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
+		      fd, s, lo->info.name, rc);
+		goto io_err;
+	    }
+	    stripe->f.committed = 1;
+	}
+	if (on_close)
+	    stripe->flags = 0;
     }
 
     if (fs_type == FAMFS && allow_merge)
@@ -1971,6 +2022,10 @@ static int f_fsync(int fd) {
     //*unifycr_fattrs.ptr_num_entries = 0;
 
     return r.rc;
+
+io_err:
+    errno = EIO;
+    return -1;
 }
 
 int UNIFYCR_WRAP(fsync)(int fd)
@@ -1988,7 +2043,7 @@ int UNIFYCR_WRAP(fsync)(int fd)
 #if 0
         return unifycr_fsync(fd);
 #endif
-        return f_fsync(fd);
+        return f_fsync(fd, 0);
     } else {
         MAP_OR_FAIL(fsync);
         int ret = UNIFYCR_REAL(fsync)(fd);
@@ -2186,7 +2241,7 @@ int UNIFYCR_WRAP(close)(int fd)
         if(unifycr_fsync(fd))
 		return -1; /* EIO */
 #endif
-        int rc = f_fsync(fd);
+        int rc = f_fsync(fd, 1);
 
         /* close the file id */
         int close_rc = unifycr_fid_close(fid);
