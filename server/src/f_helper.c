@@ -592,7 +592,7 @@ void *f_ah_drainer(void *arg) {
             }
             if (sss[lo_id] <= ssa[lo_id].count) {
                 sss[lo_id] += sss[lo_id];
-                ssa[lo_id].stripes = realloc(ssa[lo_id].stripes, sss[lo_id]);
+                ssa[lo_id].stripes = realloc(ssa[lo_id].stripes, sizeof(f_stripe_t)*sss[lo_id]);
                 if (ssa[lo_id].stripes == NULL) {
                     LOG(LOG_FATAL, "helper ran out of memory");
                     goto _abort;
