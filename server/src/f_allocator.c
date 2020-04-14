@@ -2459,6 +2459,9 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	
 	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 
 
+	rc = f_map_flush(lp->claimvec);
+	if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
+
 	LOG(LOG_DBG2, "%s[%d]: committed %d stripes rc=%d", lo->info.name, lp->part_num, i, rc);
 	return rc;
 }

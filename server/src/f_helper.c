@@ -749,9 +749,11 @@ int f_test_helper(F_POOL_t *pool)
 		for (int i = 0; i < pool->info.layouts_count; i++) {
 			f_stripe_t s;
 			F_LAYOUT_t *lo = f_get_layout(i);
+			int n = 0;
 		
 			rc = f_ah_get_stripe(lo, &s);
 			if (rc == -ETIMEDOUT) {
+				if (n++ > 3) goto _ret;
 				sleep(1);
 				continue;
 			} else if (rc) goto _ret;
@@ -763,9 +765,12 @@ int f_test_helper(F_POOL_t *pool)
 			rc = f_ah_commit_stripe(lo, s);
 			if (rc) goto _ret;
 			printf("committed stripe %lu\n", s);
+	
 		}
 	}
 _ret:
+	if (rc) printf("f_test_helper: error %d, flushing commit queue\n", rc);
+	f_ah_flush();
 	f_ah_dettach();	
 	return rc;
 }

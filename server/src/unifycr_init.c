@@ -378,7 +378,7 @@ int main(int argc, char *argv[])
             LOG(LOG_DBG, "helper threads started");
         }
 /*
-	usleep(100);
+	usleep(500);
 	if ((rc = f_test_helper(pool)))
 		LOG(LOG_ERR, "error %d in f_test_helper", rc);
 */
