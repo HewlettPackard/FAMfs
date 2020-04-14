@@ -69,6 +69,8 @@
 #include "famfs_env.h"
 #include "famfs_global.h"
 #include "famfs_rbq.h"
+#include "f_layout.h"
+#include "f_helper.h"
 //
 // === libfabric stuff =============
 //
@@ -1928,10 +1930,25 @@ static int f_fsync(int fd) {
 
     if (!*unifycr_indices.ptr_num_entries)
         return 0;
+
+    STATS_START(start);
+
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fd);
     ASSERT(meta);
 
-    STATS_START(start);
+    /* uncommited stripe? */
+    unifycr_chunkmeta_t *stripe = meta->chunk_meta;
+    if (stripe) {
+	f_stripe_t s = stripe->id;
+	F_LAYOUT_t *lo = f_get_layout(meta->loid);
+
+	ASSERT(lo);
+	if ((rc = f_ah_commit_stripe(lo, s))) {
+	    ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
+		  fd, s, lo->info.name, rc);
+	    return rc;
+	}
+    }
 
     if (fs_type == FAMFS && allow_merge)
         famfs_merge_md();
@@ -1943,10 +1960,10 @@ static int f_fsync(int fd) {
         ERROR("can't push cretae file command onto layout %d queue: %s", meta->loid, strerror(-rc));
         return rc;
     }
-    
+
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
         ERROR("couldn't get response for cretae file from layout %d queue: %s", meta->loid, strerror(-rc));
-        return rc; 
+        return rc;
     }
 
     UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);

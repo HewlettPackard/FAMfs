@@ -216,6 +216,7 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define F_SLAB_INVALID		0xffffffffUL
 
 #define F_UUID_BUF_SIZE		(37)	/* Print buffer size for UUID */
+#define F_SMAP_BOSL_SZ		(4*KIB)	/* Slab map BoS buffer size on Helper, Client */
 
 /* Client */
 #define UNIFYCR_INDEX_BUF_SIZE (20 * MIB)

@@ -33,7 +33,7 @@ int f_ah_detach();
 struct f_layout_;
 int f_ah_get_stripe(struct f_layout_ *lo, f_stripe_t *str);
 int f_ah_commit_stripe(struct f_layout_ *lo, f_stripe_t str);
-int f_ah_release_stripe(struct f_layout_ *lo, f_stripe_t str)'
+int f_ah_release_stripe(struct f_layout_ *lo, f_stripe_t str);
 void f_ah_flush();
 
 #endif

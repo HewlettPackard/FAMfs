@@ -293,6 +293,7 @@ typedef struct f_layout_ {
     pthread_spinlock_t	dict_lock;	/* dictionary lock */
     F_LAYOUT_INFO_t	info;
     struct f_pool_	*pool;		/* reference to parent pool structure */
+    struct f_map_	*file_ids;	/* open file IDs bitmap */
 
     long		thread_run_intl; /* layout allocator thread run interval */
 //    atomic_t		active_thread_count; /* layout active allocator threads count */

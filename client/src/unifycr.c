@@ -792,10 +792,9 @@ int unifycr_fid_free(int fid)
  * returns the new fid, or negative value on error */
 int unifycr_fid_create_file(const char *path, int loid)
 {
-
     int fid = unifycr_fid_alloc();
     if (fid < 0)  {
-        /* was there an error? if so, return it */
+        /* TODO: Return unifycr_max_files error: ENFILE */
         errno = ENOSPC;
         return fid;
     }
@@ -806,6 +805,11 @@ int unifycr_fid_create_file(const char *path, int loid)
      * and return appropriate error if it is greater
      */
     strcpy((void *)&unifycr_filelist[fid].filename, path);
+
+    /* add fid to the layout's array of open file IDs */
+    F_LAYOUT_t *lo = f_get_layout(loid);
+    set_bit(fid%BITS_PER_LONG, f_map_new_p(lo->file_ids, fid));
+
     DEBUG("Filename %s got unifycr fd %d\n",
           unifycr_filelist[fid].filename, fid);
 
@@ -1586,6 +1590,11 @@ int unifycr_fid_close(int fid)
 {
     /* TODO: clear any held locks */
 
+    /* remove fid from the layout's array of open file IDs */
+    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    F_LAYOUT_t *lo = f_get_layout(meta->loid);
+    clear_bit(fid%BITS_PER_LONG, f_map_new_p(lo->file_ids, fid));
+
     /* nothing to do here, just a place holder */
     return UNIFYCR_SUCCESS;
 }
@@ -2341,11 +2350,6 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 	F_POOL_t *pool = f_get_pool();
 	ASSERT(pool); /* f_set_layouts_info must fail if no pool */
 
-        if ((rc = unifycrfs_mount(prefix, size, rank))) {
-            printf("unifycrfs_mount failed: %d\n", rc);
-            return rc;
-        }
-
 	/* DEBUG */
 	if (pool->verbose) {
 	    unifycr_config_print(&client_cfg, NULL);
@@ -2355,6 +2359,11 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
         if ((rc = lfs_connect(rank, size, &lfs_ctx))) {
             printf("lf-connect failed on mount: %d\n", rc);
 	    f_free_layouts_info();
+            return rc;
+        }
+
+        if ((rc = unifycrfs_mount(prefix, size, rank))) {
+            printf("unifycrfs_mount failed: %d\n", rc);
             return rc;
         }
     }

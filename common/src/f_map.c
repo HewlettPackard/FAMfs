@@ -152,13 +152,13 @@ _err:
 	return ret;
 }
 
-static F_MAP_t *map_alloc(void)
+static F_MAP_t *map_alloc(int key_size)
 {
 	F_MAP_t *map;
 
 	map = (F_MAP_t *) calloc(sizeof(F_MAP_t), 1);
 	if (map) {
-		map->bosses = cds_ja_new(64); /* 64-bit key */
+		map->bosses = cds_ja_new(key_size); /* Usually 64-bit key */
 		pthread_spin_init(&map->bosl_lock, PTHREAD_PROCESS_PRIVATE);
 		//pthread_mutex_init(&map->pu_lock, NULL);
 	}
@@ -361,10 +361,13 @@ static int bosl_is_pu_clean(F_BOSL_t *bosl, unsigned int pu)
 }
 
 static int _map_init(F_MAP_t **map_p, F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
-    F_MAPLOCKING_t locking)
+    F_MAPLOCKING_t locking, int key_size)
 {
 	F_MAP_t *map = *map_p;
 	size_t psize = getpagesize();
+
+	if (!IN_RANGE(key_size, 31, 64))
+		return -EINVAL;
 
 	/* Safe defaults */
 	switch (type) {
@@ -386,9 +389,9 @@ static int _map_init(F_MAP_t **map_p, F_MAPTYPE_t type, int entry_sz, size_t bos
 	assert (IN_RANGE(locking, 0, F_MAPLOCKING_END-1));
 
 	if (map == NULL) {
-		map = map_alloc();
+		map = map_alloc(key_size);
 	} else {
-		map->bosses = cds_ja_new(64); /* 64-bit key */
+		map->bosses = cds_ja_new(key_size); /* 64-bit key */
 		pthread_spin_init(&map->bosl_lock, PTHREAD_PROCESS_PRIVATE);
 	}
 	if (map == NULL)
@@ -441,7 +444,8 @@ F_MAP_t *f_map_init(F_MAPTYPE_t type, int entry_sz, size_t bosl_sz,
 {
 	F_MAP_t *m = NULL;
 
-	_map_init(&m, type, entry_sz, bosl_sz, locking);
+	/* new map with 64-bit keys */
+	_map_init(&m, type, entry_sz, bosl_sz, locking, 64);
 	return m;
 }
 
@@ -2201,7 +2205,7 @@ static int shmem_open(void **shm_p, const char *name,
 {
     void *shm;
     key_t key;
-    struct shmid_ds sbuf;
+    struct shmid_ds sbuf = { .shm_nattch = 0, };
     const char *p = name;
     int shm_id, id;
     int flags = SHM_NORESERVE;
@@ -2243,7 +2247,10 @@ static int shmem_open(void **shm_p, const char *name,
 	if (-1 == shmctl(shm_id, IPC_STAT, &sbuf)) {
 	    rc = errno;
 	    if (rc == EINVAL || rc == EIDRM) {
-		dbg_printf("shmem_open %s shmctl STAT WARNING - %m\n", name);
+		if (w_f == 0)
+		    goto _sleep; /* IPC_RMID success! */
+
+		err("shmem_open %s shmctl STAT WARNING - %m\n", name);
 		slp = F_SHM_ATTACH_TMO >> 6;
 		goto _retry;
 	    }
@@ -2262,9 +2269,15 @@ static int shmem_open(void **shm_p, const char *name,
 	    slp = F_SHM_ATTACH_TMO >> 6;
 
 _retry:
-	if (w_f == 0)
-	    err("shmem_open %s %s waits", name, rd?"RD":"WR");
+	if (w_f == 0) {
+	    if (rd)
+		err("shmem_open %s waits for source", name);
+	    else
+		err("shmem_open %s waits for stale clients:%lu",
+		    name, sbuf.shm_nattch);
+	}
 	w_f = 1;
+_sleep:
 	usleep(slp);
     } while (1);
 
@@ -2324,7 +2337,8 @@ static int shmem_create(void **shm_p, const char *name,
 	}
 
 	if (w_f == 0)
-	    err("shmem_create %s WARNING: Wait for stale clients!", name);
+	    dbg_printf("shmem_create %s - clean up stale shared region",
+			name);
 	w_f = 1;
 
 	/* Set REMID flag and wait until nattch drops to zero */
@@ -2725,7 +2739,7 @@ int f_map_shm_attach(F_MAP_t *m, F_MAPMEM_t rw)
 	/* create supermap */
 	sm = &sb->super_map;
 	rc = _map_init(&sm, F_MAPTYPE_STRUCTURED, m->bosl_sz,
-			F_SHMAP_SZ(m->bosl_sz), 0);
+			F_SHMAP_SZ(m->bosl_sz), 0, 64);
 	if (rc)
 		goto _err;
 	break;

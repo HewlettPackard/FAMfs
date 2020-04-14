@@ -75,6 +75,8 @@ extern int unifycr_spillover_max_chunks;
 #include "famfs_env.h"
 #include "fam_stripe.h"
 #include "lf_client.h"
+#include "f_layout.h"
+#include "f_helper.h"
 #include "famfs_rbq.h"
 #include "famfs_lf_cqprogress.h"
 
@@ -213,6 +215,15 @@ static int unifycr_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
             return UNIFYCR_ERR_NOSPC;
         }
     } else if (unifycr_use_spillover) {
+	F_LAYOUT_t *lo = f_get_layout(meta->loid);
+	int rc;
+	f_stripe_t s;
+
+	if (lo == NULL) {
+	    DEBUG("layout (%d) does not exist\n", meta->loid);
+	    return UNIFYCR_FAILURE;
+	}
+#if 0
         /* memory file system is not enabled, but spill over is */
 
         /* shm segment out of space, grab a block from spill-over device */
@@ -227,10 +238,19 @@ static int unifycr_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
             DEBUG("spill-over device out of space (%d)\n", id);
             return UNIFYCR_ERR_NOSPC;
         }
+#endif
+	if ((rc = f_ah_get_stripe(lo, &s))) {
+	    if (rc == -ENOSPC) {
+		DEBUG("layout (%d) out of space\n", meta->loid);
+		return UNIFYCR_ERR_NOSPC;
+	    }
+	    DEBUG("layout (%d) getting stripe error:%d\n", meta->loid, rc);
+	    return UNIFYCR_FAILURE;
+        }
 
         /* got one from spill over */
         chunk_meta->location = CHUNK_LOCATION_SPILLOVER;
-        chunk_meta->id = id;
+        chunk_meta->id = s;
     } else {
         /* don't know how to allocate chunk */
         chunk_meta->location = CHUNK_LOCATION_NULL;

@@ -133,6 +133,7 @@ typedef struct f_slabmap_entry_ {
     F_SLAB_ENTRY_t	slab_rec;
     F_EXTENT_ENTRY_t	extent_rec[0];
 } F_SLABMAP_ENTRY_t;
+#define F_SLABMAP_ENTRY_SZ(extents)	(sizeof(F_SLAB_ENTRY_t)+(extents)*sizeof(F_EXTENT_ENTRY_t))
 
 
 /*
