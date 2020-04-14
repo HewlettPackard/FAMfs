@@ -185,6 +185,8 @@ typedef struct f_lfa_attr_ {
     size_t		global_size;	/* LFA global buffer size */
 } F_LFA_ATTR_t;
 
+#define F_LFA_PDS_KEY 16661
+
 /* Partition info */
 typedef struct f_pool_ {
     uuid_t		uuid;		/* pool uuid */

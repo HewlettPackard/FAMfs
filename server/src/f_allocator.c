@@ -27,8 +27,6 @@
 
 static void *f_allocator_thread(void *ctx);
 
-#define F_LFA_PORT "30000"
-#define F_LFA_PDS_KEY 16661
 
 /*
  * Destroy pool devices shared structs array LFA
@@ -51,6 +49,7 @@ static int create_pds_lfa(F_POOL_t *pool)
 	F_IONODE_INFO_t *my_ionode, *ioi;
 	F_LFA_SLIST_t *ionode_lst;
 	F_PDEV_SHA_t *g_sha;
+	char lfa_port[6] = { 0 };
 	int bmap_size = max(sizeof(long), BITS_TO_BYTES(pool->info.max_extents)); // size extent map by the max dev size
 	int i, si, rc = -ENOMEM;
 
@@ -99,7 +98,8 @@ static int create_pds_lfa(F_POOL_t *pool)
 		}
 	}
 
-	pool->pds_lfa->lfa = f_lfa_mydom(pool->mynode.domain->fi, pool->mynode.hostname, F_LFA_PORT);
+	sprintf(lfa_port, "%5d", pool->info.lfa_port);
+	pool->pds_lfa->lfa = f_lfa_mydom(pool->mynode.domain->fi, pool->mynode.hostname, lfa_port);
 	if (!pool->pds_lfa->lfa) {
 		LOG(LOG_ERR, "error opening domain for pds LFA");
 		goto _ret;
@@ -124,7 +124,7 @@ static int create_pds_lfa(F_POOL_t *pool)
 		char *sbuf = calloc(1, 32);
 		if (!sbuf) { rc = -ENOMEM; goto _ret; }
 		ionode_lst[i].name = strdup(ioi->hostname);
-		ionode_lst[i].service = strdup(F_LFA_PORT);
+		ionode_lst[i].service = strdup(lfa_port);
 		ionode_lst[i].bsz = ioi->fam_devs*(sizeof(F_PDEV_SHA_t) + bmap_size);
 		LOG(LOG_DBG2, "added server/port: %s/%s/%lu", 
 			ionode_lst[i].name, ionode_lst[i].service, ionode_lst[i].bsz); 
