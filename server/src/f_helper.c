@@ -41,27 +41,57 @@
 #include "f_helper.h"
 
 extern volatile int exit_flag;
-volatile int quit = 0;
 
-pthread_t al_thrd[F_CMDQ_MAX];
-pthread_t cm_thrd;
+static volatile int quit = 0;
 
-f_rbq_t   *alq[F_CMDQ_MAX];
-f_rbq_t   *cmq;
+static pthread_t al_thrd[F_CMDQ_MAX];
+static pthread_t cm_thrd;
+static pthread_t hs_athrd[F_CMDQ_MAX];
+static pthread_t hs_cthrd;
+
+static f_rbq_t   *alq[F_CMDQ_MAX];
+static f_rbq_t   *cmq;
+
+static void *stoker(void *arg);
+static void *drainer(void *arg);
+static void *alloc_srv(void *arg);
+static void *commit_srv(void *arg);
 
 int f_ah_init(F_POOL_t *pool) {
     int rc = 0;
 
+    // Only for "pure" IONs
     if (f_host_is_ionode(NULL) && !NodeForceHelper(&pool->mynode)) {
-        LOG(LOG_ERR, "attempt to start helper on ION");
-        return EINVAL;
+
+        // start alloc srv threads
+        for (int i = 0; i < pool->info.layouts_count; i++) {
+            F_LAYOUT_t *lo = f_get_layout(i);
+            if (lo == NULL) {
+                LOG(LOG_ERR, "get layout [%d] info\n", i);
+                continue;
+            }
+
+            if ((rc = pthread_create(&hs_athrd[i], NULL, alloc_srv, lo))) {
+                LOG(LOG_ERR, "helper alloc srv thread create failed on LO %s", lo->info.name);
+                return rc;
+            }
+        }
+
+        // start commit srv thread
+        if ((rc = pthread_create(&hs_cthrd, NULL, commit_srv, pool))) {
+            LOG(LOG_ERR, "helper commit srv thread create failed");
+            return rc;
+        }
+
+        return 0;
     }
 
+    // Only for "pure" CNs
     if (!NodeForceHelper(&pool->mynode)) {
 	rc = f_set_ionode_ranks(pool);
 	if (rc) {
-		LOG(LOG_ERR, "error %s in f_set_ionode_ranks", strerror(rc));
-		return rc;
+            LOG(LOG_ERR, "error %s in f_set_ionode_ranks", strerror(rc));
+            return rc;
 	}
     }
 
@@ -72,14 +102,14 @@ int f_ah_init(F_POOL_t *pool) {
             return EIO;
         }
 
-	lo->part_count = pool->ionode_count;
-        if ((rc = pthread_create(&al_thrd[i], NULL, f_ah_stoker, lo))) {
-            LOG(LOG_ERR, "LO %s helper alloc thread create failed", lo->info.name);
+        lo->part_count = pool->ionode_count;
+        if ((rc = pthread_create(&al_thrd[i], NULL, stoker, lo))) {
+            LOG(LOG_ERR, "helper alloc thread create failed on LO %s", lo->info.name);
             return rc;
         }
     }
     
-    if ((rc = pthread_create(&cm_thrd, NULL, f_ah_drainer, pool))) {
+    if ((rc = pthread_create(&cm_thrd, NULL, drainer, pool))) {
         LOG(LOG_ERR, "helper str commit thread create failed");
         return rc;
     }
@@ -87,16 +117,182 @@ int f_ah_init(F_POOL_t *pool) {
     return 0;
 }
 
+/*
+ * Helper commit server thread, runs only on real IONs
+ * Provides MPI IPC with helper threads on CNs
+ * This is the remote counterpart of CN's helper "drainer" thread
+ * One for all layouts in config
+ *
+ */
+static void *commit_srv(void *arg) {
+    F_POOL_t *pool = (F_POOL_t *)arg;
+    F_LAYOUT_t *lo;
+    int msg_max = sizeof(f_ah_ipc_op_t) + sizeof(f_stripe_t)*F_MAX_CMS_CNT;
+    int rc = 0, msg_sz = 0;
+    MPI_Status sts;
+    f_ah_ipc_t *msg = malloc(msg_max);
+    struct f_stripe_set ss = {.count = 0, .stripes = NULL}; 
+
+    if (!msg) {
+        LOG(LOG_ERR, "out of memory");
+        return NULL;
+    }
+
+    while (!quit) {
+        // wait for any commit message from CNs' helpers
+        // commit thread uses TAG_BASE + layout_count
+        rc = MPI_Recv(&msg, msg_max, MPI_BYTE, MPI_ANY_SOURCE, F_TAG_BASE + pool->info.layouts_count, MPI_COMM_WORLD, &sts);
+        if (rc != MPI_SUCCESS || sts.MPI_ERROR != MPI_SUCCESS) {
+            LOG(LOG_ERR, "MPI_Recv returnd error %d/sts=%d", rc, sts.MPI_ERROR);
+            continue;
+        }
+
+        MPI_Get_count(&sts, MPI_BYTE, &msg_sz);
+        LOG(LOG_DBG, "srv CT from %d: msg[%d].op=%d got %d stripes to commit to LO %d", 
+            sts.MPI_SOURCE, msg_sz, msg->cmd, msg->cnt, msg->lo_id);
+        if (msg->cmd == F_AH_QUIT)
+            break;
+        if (msg->cmd != F_AH_COMS && msg->cmd != F_AH_PUTS) {
+            LOG(LOG_ERR, "srv CT: wrong command received: %d, LO %d", msg->cmd, msg->lo_id);
+            continue;
+        }
+        ASSERT(msg_sz == sizeof(f_ah_ipc_op_t) + sizeof(f_stripe_t)*msg->cnt);
+        ASSERT(msg->lo_id + F_TAG_BASE == sts.MPI_TAG);
+
+        ss.count = msg->cnt;
+        ss.stripes = &msg->str[0];
+        lo = f_get_layout(msg->lo_id);
+        if (lo == NULL) {
+            LOG(LOG_ERR, "get layout [%d] info\n", msg->lo_id);
+            continue;
+        }
+
+        // commit or release stripes and continue, no respose required
+        if (msg->cmd == F_AH_COMS) {
+            rc = f_commit_stripe(lo, &ss);
+        } else {
+            rc = f_put_stripe(lo, &ss);
+        }
+        if (rc < 0)
+            LOG(LOG_ERR, "%s[%d]: error %d in %s", lo->info.name, lo->lp->part_num, 
+                rc, msg->cmd == F_AH_COMS ? "commit_stripe" : "put_stripe");
+
+    }
+
+    free(msg);
+    return NULL;
+}
+
+/*
+ * Helper allocation server thread, runs only on real IONs
+ * Provides MPI IPC with helper threads on CNs
+ * This is the remote counterpart of CN's helper "stoker" thread
+ * One per each layout in config
+ *
+ */
+static void *alloc_srv(void *arg) {
+    struct f_stripe_set ss = {.count = 0, .stripes = NULL}; 
+    F_LAYOUT_t *lo = (F_LAYOUT_t *)arg;
+    MPI_Status sts;
+    MPI_Request rq;
+    f_ah_ipc_t msg, *rply = NULL;
+    int rc = 0, msg_sz = 0, ss_cnt = 0, in_flight = 0;
+
+
+    while (!quit) {
+        // wait for any commit message from CNs' helpers
+        // allocators use TAG_BASE + layout ID tag
+        rc = MPI_Recv(&msg, sizeof(msg), MPI_BYTE, MPI_ANY_SOURCE, F_TAG_BASE + lo->info.conf_id, MPI_COMM_WORLD, &sts);
+        if (rc != MPI_SUCCESS || sts.MPI_ERROR != MPI_SUCCESS) {
+            LOG(LOG_ERR, "MPI_Recv returnd error %d/sts=%d", rc, sts.MPI_ERROR);
+            continue;
+        }
+
+        MPI_Get_count(&sts, MPI_BYTE, &msg_sz);
+        LOG(LOG_DBG, "srv AT from %d: msg[%d].op=%d got %d stripes to commit to LO %d", 
+            sts.MPI_SOURCE, msg_sz, msg.cmd, msg.cnt, msg.lo_id);
+        if (msg.cmd == F_AH_QUIT)
+            break;
+        if (msg.cmd != F_AH_GETS) {
+            LOG(LOG_ERR, "srv AT: wrong command received: %d, LO %d", msg.cmd, msg.lo_id);
+            continue;
+        }
+        ASSERT(msg.lo_id + F_TAG_BASE == sts.MPI_TAG);
+        if (lo->info.conf_id != msg.lo_id) {
+            LOG(LOG_ERR, "srv AT: wrong layout id: expected %d, got %d", lo->info.conf_id, msg.lo_id);
+            continue;
+        }
+
+        ss.count = msg.cnt;
+        if (ss_cnt < ss.count) {
+            if (rply)
+                free(rply);
+            rply = malloc(sizeof(f_ah_ipc_t) + sizeof(f_stripe_t)*ss.count);
+            if (!rply) {
+                LOG(LOG_ERR, "out of memory");
+                return NULL;
+            }
+            ss.stripes = &rply->str[0];
+            ss_cnt = ss.count;
+            rply->cmd = F_AH_GETS;
+            rply->lo_id = lo->info.conf_id;
+        }
+
+        // acquires stripes from allocator
+        if ((rc = f_get_stripe(lo, F_STRIPE_INVALID, &ss)) < 0) {
+            LOG(LOG_ERR, "%s: error %d in f_get_stripe", lo->info.name, rc);
+            rply->flag = rc;
+        } else {
+            LOG(LOG_DBG, "%s: allocated %d stripes", lo->info.name, rc);
+            rply->flag = 0;
+            ASSERT(rc == ss.count);
+        }
+        rply->cnt = ss.count;
+
+        if (in_flight) 
+            MPI_Wait(&rq, MPI_STATUS_IGNORE);
+        in_flight = 0;
+
+        int len = sizeof(f_ah_ipc_op_t) + sizeof(f_stripe_t)*ss.count;
+        rc = MPI_Isend(rply, len, MPI_BYTE, sts.MPI_SOURCE, sts.MPI_TAG, MPI_COMM_WORLD, &rq);
+        if (rc != MPI_SUCCESS) {
+            LOG(LOG_ERR, "MPI_Recv returnd error %d", rc);
+            continue;
+        }
+        in_flight = 1;
+    }
+
+    if (rply)
+        free(rply);
+
+    return NULL;
+}
+
 int f_ah_shutdown(F_POOL_t *pool) {
     int rc = 0;
     int n = 0;
 
+    // make'em all know we are finished
+    quit = 1;
+
     if (f_host_is_ionode(NULL) && !NodeForceHelper(&pool->mynode)) {
-        LOG(LOG_ERR, "attempt to start helper on ION");
-        return EINVAL;
+        // running on "real" ION
+        MPI_Request rq[pool->info.layouts_count];
+        f_ah_ipc_t qm = {.cmd = F_AH_QUIT};
+        int myself;
+
+        MPI_Comm_rank(MPI_COMM_WORLD, &myself);
+        for (int i = 0; i < pool->info.layouts_count; i++) {
+            MPI_Isend(&qm, sizeof(qm), MPI_BYTE, myself, F_TAG_BASE + i, MPI_COMM_WORLD, &rq[i]);
+            pthread_join(hs_athrd[i], NULL);
+        }
+
+        MPI_Isend(&qm, sizeof(qm), MPI_BYTE, myself, F_TAG_BASE + pool->info.layouts_count, MPI_COMM_WORLD, &rq[0]);
+        pthread_join(hs_cthrd, NULL);
+
+        return 0;
     }
 
-    quit = 1;
     for (int i = 0; i < pool->info.layouts_count; i++) 
         f_rbq_wakewm(alq[i]);
 
@@ -140,9 +336,9 @@ int f_ah_shutdown(F_POOL_t *pool) {
 
 /* Map load callback function data */
 struct cb_data {
-	F_LAYOUT_t 	*lo;
-	int		loaded;
-	int		err;
+    F_LAYOUT_t 	*lo;
+    int		loaded;
+    int		err;
 };
 
 /*
@@ -150,78 +346,78 @@ struct cb_data {
  */
 static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 {
-	struct cb_data *data = (struct cb_data *) arg;
-	F_LAYOUT_t *lo = data->lo;
-	F_POOL_t *pool = lo->pool;
-	F_SLABMAP_ENTRY_t *sme;
-	f_slab_t slab = e;
-	unsigned int pu_entries = 1U << lo->slabmap->geometry.pu_factor;
-	unsigned int e_sz = lo->slabmap->geometry.entry_sz;
-	unsigned int i;
+    struct cb_data *data = (struct cb_data *) arg;
+    F_LAYOUT_t *lo = data->lo;
+    F_POOL_t *pool = lo->pool;
+    F_SLABMAP_ENTRY_t *sme;
+    f_slab_t slab = e;
+    unsigned int pu_entries = 1U << lo->slabmap->geometry.pu_factor;
+    unsigned int e_sz = lo->slabmap->geometry.entry_sz;
+    unsigned int i;
 
-	for(i = 0; i < pu_entries; i++, slab++) {
-		f_stripe_t s0 = slab_to_stripe0(lo, slab);;
-		unsigned int n;
+    for(i = 0; i < pu_entries; i++, slab++) {
+        f_stripe_t s0 = slab_to_stripe0(lo, slab);;
+        unsigned int n;
 
-		sme = (F_SLABMAP_ENTRY_t *)&pu->se;
-		if (!sme) {
-			LOG(LOG_ERR, "%s: error on SM entry %u", lo->info.name, slab);
-			data->err++;
-		}
-	
-		if (!sme->slab_rec.mapped) continue;
+        sme = (F_SLABMAP_ENTRY_t *)&pu->se;
+        if (!sme) {
+            LOG(LOG_ERR, "%s: error on SM entry %u", lo->info.name, slab);
+            data->err++;
+        }
 
-		/* Check slab map entry CRC */
-		if (f_crc4_sm_chk(&sme->slab_rec)) {
-			LOG(LOG_ERR, "%s: slab %u CRC error", lo->info.name, slab);
-			data->err++;
-		}
-	
-		if (sme->slab_rec.stripe_0 != s0) {
-			LOG(LOG_ERR, "%s: slab %u s0 mismatch", lo->info.name, slab);
-			data->err++;
-		}
-	
-		/* Process this slab map entry */
-		for (n = 0;  n < lo->info.chunks; n++) {
-			unsigned int dev_id = sme->extent_rec[n].media_id;
-			F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, dev_id);
-			F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, dev_id);
-			
-			if (!pdev) {
-				LOG(LOG_ERR, "%s: slab %u ext %u invalid dev idx %u", 
-					lo->info.name, slab, n, dev_id);
-				data->err++;
-			}
-			if (!pdi) {
-				LOG(LOG_ERR, "%s: slab %u ext %u dev idx %u not in layout", 
-					lo->info.name, slab, n, dev_id);
-				data->err++;
-			}
+        if (!sme->slab_rec.mapped) continue;
 
-			if (f_crc4_fast_chk(&sme->extent_rec[n], sizeof(F_EXTENT_ENTRY_t))) {
-				LOG(LOG_ERR, "%s: slab %u ext %u CRC err", lo->info.name, slab, n);
-				data->err++;
-			}
+        /* Check slab map entry CRC */
+        if (f_crc4_sm_chk(&sme->slab_rec)) {
+            LOG(LOG_ERR, "%s: slab %u CRC error", lo->info.name, slab);
+            data->err++;
+        }
 
-			if (DevMissing(pdev->sha)) {
-				LOG(LOG_INFO, "%s: missing dev in slab %u ext %u", 
-					lo->info.name, slab, n); 
-			}
+        if (sme->slab_rec.stripe_0 != s0) {
+            LOG(LOG_ERR, "%s: slab %u s0 mismatch", lo->info.name, slab);
+            data->err++;
+        }
 
-			/* All chunk extents have to be mapped */
-			if (!sme->extent_rec[n].mapped) {
-				LOG(LOG_ERR, "%s: slab %u ext %u not mapped", lo->info.name, slab, n);
-				data->err++;
-				continue;
-			}
-		}
+        /* Process this slab map entry */
+        for (n = 0;  n < lo->info.chunks; n++) {
+            unsigned int dev_id = sme->extent_rec[n].media_id;
+            F_POOL_DEV_t *pdev = f_find_pdev_by_media_id(pool, dev_id);
+            F_POOLDEV_INDEX_t *pdi = f_find_pdi_by_media_id(lo, dev_id);
+            
+            if (!pdev) {
+                LOG(LOG_ERR, "%s: slab %u ext %u invalid dev idx %u", 
+                        lo->info.name, slab, n, dev_id);
+                data->err++;
+            }
+            if (!pdi) {
+                LOG(LOG_ERR, "%s: slab %u ext %u dev idx %u not in layout", 
+                        lo->info.name, slab, n, dev_id);
+                data->err++;
+            }
 
-		data->loaded++;
+            if (f_crc4_fast_chk(&sme->extent_rec[n], sizeof(F_EXTENT_ENTRY_t))) {
+                LOG(LOG_ERR, "%s: slab %u ext %u CRC err", lo->info.name, slab, n);
+                data->err++;
+            }
 
-		LOG(LOG_DBG, "%s: slab %u loaded: %d errors", lo->info.name, slab, data->err);
-		pu = (F_PU_VAL_t *) ((char*)pu + e_sz);
-	}
+            if (DevMissing(pdev->sha)) {
+                LOG(LOG_INFO, "%s: missing dev in slab %u ext %u", 
+                        lo->info.name, slab, n); 
+            }
+
+            /* All chunk extents have to be mapped */
+            if (!sme->extent_rec[n].mapped) {
+                LOG(LOG_ERR, "%s: slab %u ext %u not mapped", lo->info.name, slab, n);
+                data->err++;
+                continue;
+            }
+        }
+
+        data->loaded++;
+
+        LOG(LOG_DBG, "%s: slab %u loaded: %d errors", lo->info.name, slab, data->err);
+        pu = (F_PU_VAL_t *) ((char*)pu + e_sz);
+    }
 
 }
 
@@ -234,53 +430,53 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
  */
 static int read_global_slabmap(F_LAYOUT_t *lo)
 {
-	F_POOL_t *pool = lo->pool;
-	struct cb_data cbdata;
-	int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
-	int e_sz, chunks, rc;
+    F_POOL_t *pool = lo->pool;
+    struct cb_data cbdata;
+    int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
+    int e_sz, chunks, rc;
 
-	LOG(LOG_DBG, "%s: loading global slabmap", lo->info.name);
+    LOG(LOG_DBG, "%s: loading global slabmap", lo->info.name);
 
-	chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
-	e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
-	lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
-	if (!lo->slabmap) return -EINVAL;
+    chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
+    e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
+    lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
+    if (!lo->slabmap) return -EINVAL;
 
-	rc = f_map_init_prt(lo->slabmap, lo->part_count, part, 0, 1);
-	if (rc) {
-		LOG(LOG_ERR, "%s: error %d initializing global slabmap", lo->info.name, rc);
-		return rc;
-	}
+    rc = f_map_init_prt(lo->slabmap, lo->part_count, part, 0, 1);
+    if (rc) {
+        LOG(LOG_ERR, "%s: error %d initializing global slabmap", lo->info.name, rc);
+        return rc;
+    }
 
-	rc = f_map_register(lo->slabmap, lo->info.conf_id);
-	if (rc) {
-		LOG(LOG_ERR, "%s: error %d registering global slabmap", lo->info.name, rc);
-		return rc;
-	}
+    rc = f_map_register(lo->slabmap, lo->info.conf_id);
+    if (rc) {
+        LOG(LOG_ERR, "%s: error %d registering global slabmap", lo->info.name, rc);
+        return rc;
+    }
 
-	rc = f_map_shm_attach(lo->slabmap, F_MAPMEM_SHARED_WR);
-	if (rc) {
-		LOG(LOG_ERR, "%s: error %d attaching to global slabmap", lo->info.name, rc);
-		return rc;
-	}
+    rc = f_map_shm_attach(lo->slabmap, F_MAPMEM_SHARED_WR);
+    if (rc) {
+        LOG(LOG_ERR, "%s: error %d attaching to global slabmap", lo->info.name, rc);
+        return rc;
+    }
 
-	cbdata.lo = lo;
-	cbdata.err = 0;
-	cbdata.loaded = 0;
-	rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
-	if (rc || cbdata.err) {
-		LOG(LOG_ERR, "%s: error %d loading global slabmap, %d load errors", 
-			lo->info.name, rc, cbdata.err);
-		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
-		return rc ? rc : cbdata.err;
-	}
+    cbdata.lo = lo;
+    cbdata.err = 0;
+    cbdata.loaded = 0;
+    rc = f_map_load_cb(lo->slabmap, slabmap_load_cb, (void *)&cbdata);
+    if (rc || cbdata.err) {
+        LOG(LOG_ERR, "%s: error %d loading global slabmap, %d load errors",
+                lo->info.name, rc, cbdata.err);
+        f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+        return rc ? rc : cbdata.err;
+    }
 
-	LOG(LOG_DBG, "%s: %u slabs loaded: %d errors", lo->info.name, cbdata.loaded, cbdata.err);
+    LOG(LOG_DBG, "%s: %u slabs loaded: %d errors", lo->info.name, cbdata.loaded, cbdata.err);
 
-	if (log_print_level > 0)
-		f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+    if (log_print_level > 0)
+        f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 
-	return rc;
+    return rc;
 }
 
 /*
@@ -289,27 +485,27 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
  */
 static int open_global_claimvec(F_LAYOUT_t *lo)
 {
-	F_POOL_t *pool = lo->pool;
-	int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
-	int rc;
+    F_POOL_t *pool = lo->pool;
+    int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
+    int rc;
 
-	LOG(LOG_DBG, "%s: opening global claim vector", lo->info.name);
+    LOG(LOG_DBG, "%s: opening global claim vector", lo->info.name);
 
-	lo->claimvec  = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
-	if (!lo->claimvec) return -EINVAL;
+    lo->claimvec  = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
+    if (!lo->claimvec) return -EINVAL;
 
-	rc = f_map_init_prt(lo->claimvec, lo->part_count, part, 0, 1);
-	if (rc) {
-		LOG(LOG_ERR, "%s: error %d initializing global claim vector", lo->info.name, rc);
-		return rc;
-	}
+    rc = f_map_init_prt(lo->claimvec, lo->part_count, part, 0, 1);
+    if (rc) {
+        LOG(LOG_ERR, "%s: error %d initializing global claim vector", lo->info.name, rc);
+        return rc;
+    }
 
-	rc = f_map_register(lo->claimvec, lo->info.conf_id);
-	if (rc) {
-		LOG(LOG_ERR, "%s: error %d registering global claim vector", lo->info.name, rc);
-		return rc;
-	}
-	return 0;
+    rc = f_map_register(lo->claimvec, lo->info.conf_id);
+    if (rc) {
+        LOG(LOG_ERR, "%s: error %d registering global claim vector", lo->info.name, rc);
+        return rc;
+    }
+    return 0;
 }
 
 /*
@@ -317,7 +513,7 @@ static int open_global_claimvec(F_LAYOUT_t *lo)
  * ready-queue on compute node
  *
  */
-void *f_ah_stoker(void *arg) {
+static void *stoker(void *arg) {
     int rc = 0;
     char qname[MAX_RBQ_NAME];
 
@@ -395,16 +591,17 @@ void *f_ah_stoker(void *arg) {
 
         // stuff stripes into the queue untill it's full
         while (f_rbq_count(salq) < f_rbq_size(salq)) {
+
+            ss.count = f_rbq_size(salq) - f_rbq_count(salq);
+            ss.stripes = calloc(ss.count, sizeof(f_stripe_t));
+            if (!ss.stripes) {
+                LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
+                quit = 1;
+                return NULL;
+            }
+
             if (NodeForceHelper(&pool->mynode)) {
-
-                ss.count = f_rbq_size(salq) - f_rbq_count(salq);
-                ss.stripes = calloc(ss.count, sizeof(f_stripe_t));
-                if (!ss.stripes) {
-                    LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
-                    quit = 1;
-                    return NULL;
-                }
-
+                // Single-node config (testing enviro)
                 if ((rc = f_get_stripe(lo, F_STRIPE_INVALID, &ss)) < 0) {
                     LOG(LOG_ERR, "%s: error %d in f_get_stripe", lo->info.name, rc);
                     free(ss.stripes);
@@ -414,60 +611,60 @@ void *f_ah_stoker(void *arg) {
                     LOG(LOG_DBG, "%s: allocated %d stripes", lo->info.name, rc);
                 }
 
-                keyset.slabs = calloc(ss.count, sizeof(f_slab_t));
-                if (!keyset.slabs) {
-                    LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
-                    free(ss.stripes);
-                    quit = 1;
-                    return NULL;
-                }
-
-                uint64_t tmo = 0;
-                int j, n = 0;
-                keyset.count = 0;
-                for (int i = 0; i < ss.count; i++) {
-                    // check slab map and update if missing that slab
-                    f_slab_t slab = stripe_to_slab(lo, ss.stripes[i]);
-                    F_SLABMAP_ENTRY_t *sme;
-                    
-                    for (j = 0; j < keyset.count; j++) {
-                        if (keyset.slabs[j] == slab) break;
-                    }
-                    
-                    if (j == keyset.count) {
-                        sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
-                        if (!sme || !sme->slab_rec.mapped) {
-                            keyset.slabs[n] = slab;
-                            keyset.count = ++n;
-                            printf("added slab %u to update count %d\n", slab, keyset.count);
-                        }
-                    }
-_retry:
-                    if ((rc = f_rbq_push(salq, &ss.stripes[i], tmo)) < 0) {
-                        LOG(LOG_ERR, "%s: rbq %s push error: %s", lo->info.name, qname, strerror(rc = errno));
-                        break;
-                    } else if (rc == -EAGAIN) {
-                        // queue full?
-                        // that should not have happened, but try to recover
-                        LOG(LOG_ERR, "%s: rbq %s push failed: queue is full", lo->info.name, qname);
-                        tmo += RBQ_TMO_1S;
-                        goto _retry;
-                    }
-                    tmo = 0;
-                }
-                if (keyset.count > 0) {
-                    LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, n);
-                    if ((rc = f_slabmap_update(lo->slabmap, &keyset)))
-                        LOG(LOG_ERR, "%s: error %d updating global slabmap", lo->info.name, rc);
-                    if (log_print_level > 0)
-                        f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
-                }
-                free(ss.stripes);
-                free(keyset.slabs);
-
             } else {
                 // TODO: MPI magic
             }
+
+            keyset.slabs = calloc(ss.count, sizeof(f_slab_t));
+            if (!keyset.slabs) {
+                LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
+                free(ss.stripes);
+                quit = 1;
+                return NULL;
+            }
+
+            int j, n = 0;
+            keyset.count = 0;
+            for (int i = 0; i < ss.count; i++) {
+                // check slab map and update if missing that slab
+                f_slab_t slab = stripe_to_slab(lo, ss.stripes[i]);
+                F_SLABMAP_ENTRY_t *sme;
+                long tmo = 0;
+                
+                for (j = 0; j < keyset.count; j++) {
+                    if (keyset.slabs[j] == slab) break;
+                }
+                
+                if (j == keyset.count) {
+                    sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+                    if (!sme || !sme->slab_rec.mapped) {
+                        keyset.slabs[n] = slab;
+                        keyset.count = ++n;
+                        printf("added slab %u to update count %d\n", slab, keyset.count);
+                    }
+                }
+_retry:
+                if ((rc = f_rbq_push(salq, &ss.stripes[i], tmo)) < 0) {
+                    LOG(LOG_ERR, "%s: rbq %s push error: %s", lo->info.name, qname, strerror(rc = errno));
+                    break;
+                } else if (rc == -EAGAIN) {
+                    // queue full?
+                    // that should not have happened, but try to recover
+                    LOG(LOG_ERR, "%s: rbq %s push failed: queue is full", lo->info.name, qname);
+                    tmo += RBQ_TMO_1S;
+                    goto _retry;
+                }
+            }
+            if (keyset.count > 0) {
+                LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, n);
+                if ((rc = f_slabmap_update(lo->slabmap, &keyset)))
+                    LOG(LOG_ERR, "%s: error %d updating global slabmap", lo->info.name, rc);
+                if (log_print_level > 0)
+                    f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+            }
+            free(ss.stripes);
+            free(keyset.slabs);
+
         }
             
     }
@@ -513,7 +710,12 @@ _abort:
     return NULL;
 }
 
-void *f_ah_drainer(void *arg) {
+/*
+ * Empty committed stripes queue and send them back to (remote) allocator
+ * on ION, he'll know what to do with them
+ *
+ */
+static void *drainer(void *arg) {
     int rc = 0;
     char qname[MAX_RBQ_NAME];
 
@@ -602,7 +804,7 @@ void *f_ah_drainer(void *arg) {
             ssa[lo_id].count++;
 
             // send them out if too many
-            if (ssa[lo_id].count > F_MAX_CMS_CNT)
+            if (ssa[lo_id].count >= F_MAX_CMS_CNT)
                 break;
         }
 
@@ -612,8 +814,12 @@ void *f_ah_drainer(void *arg) {
                      LOG(LOG_ERR, "get layout [%d] info\n", i);
                      continue;
                 }
-                if ((rc = f_commit_stripe(lo, &ssa[i])) < 0)
-                    LOG(LOG_ERR, "%s[%d]: error %d in f_commit_stripe", lo->info.name, lo->lp->part_num, rc);
+                if (NodeForceHelper(&pool->mynode)) {
+                    if ((rc = f_commit_stripe(lo, &ssa[i])) < 0)
+                        LOG(LOG_ERR, "%s[%d]: error %d in f_commit_stripe", lo->info.name, lo->lp->part_num, rc);
+                } else {
+                    // TODO: MPI magic
+                }
 
                 ssa[i].count = 0;
             }
@@ -749,11 +955,9 @@ int f_test_helper(F_POOL_t *pool)
 		for (int i = 0; i < pool->info.layouts_count; i++) {
 			f_stripe_t s;
 			F_LAYOUT_t *lo = f_get_layout(i);
-			int n = 0;
 		
 			rc = f_ah_get_stripe(lo, &s);
 			if (rc == -ETIMEDOUT) {
-				if (n++ > 3) goto _ret;
 				sleep(1);
 				continue;
 			} else if (rc) goto _ret;
@@ -765,12 +969,9 @@ int f_test_helper(F_POOL_t *pool)
 			rc = f_ah_commit_stripe(lo, s);
 			if (rc) goto _ret;
 			printf("committed stripe %lu\n", s);
-	
 		}
 	}
 _ret:
-	if (rc) printf("f_test_helper: error %d, flushing commit queue\n", rc);
-	f_ah_flush();
 	f_ah_dettach();	
 	return rc;
 }
