@@ -363,7 +363,7 @@ int main(int argc, char *argv[])
 	goto _err;
     }
 
-   /* Start allocator threads on IO nodes only */
+    /* Start allocator threads on IO nodes only */
     if (NodeIsIOnode(&pool->mynode)) {
 	rc = f_start_allocator_threads();
     	if (rc != ULFS_SUCCESS) {
@@ -371,19 +371,19 @@ int main(int argc, char *argv[])
     	}
     }
 
-    if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
-        if ((rc = f_ah_init(pool))) {
-            LOG(LOG_ERR, "error startting helper threads");
-        } else {
-            LOG(LOG_DBG, "helper threads started");
-        }
+    /* Perform f_ah_init on all nodes, it will start appropriate threads for that node */
+    if ((rc = f_ah_init(pool))) {
+        LOG(LOG_ERR, "error startting helper threads");
+    } else {
+        LOG(LOG_DBG, "helper threads started");
+    }
 /*
+    if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
 	usleep(500);
 	if ((rc = f_test_helper(pool)))
 		LOG(LOG_ERR, "error %d in f_test_helper", rc);
-*/
     }
-
+*/
     {
         char fname[256];
         sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
@@ -445,9 +445,6 @@ int main(int argc, char *argv[])
 
     }
 #endif
-
-    if (f_ah_shutdown(pool))
-        LOG(LOG_ERR, "helper did not exit cleanly");
 
     unifycr_exit();
 
@@ -769,6 +766,9 @@ static int unifycr_exit()
             f_rbq_close(rplyq[i]);
 
     f_rbq_destroy(admq);
+
+    if (f_ah_shutdown(pool))
+        LOG(LOG_ERR, "helper did not exit cleanly");
 
     if (NodeIsIOnode(&pool->mynode)) {
 	f_stop_allocator_threads();

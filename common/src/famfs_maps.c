@@ -391,11 +391,13 @@ static void free_pool(F_POOL_t *p)
 
 	lf_clients_free(p);
 
-	for_each_pool_dev(p, pdev)
-	    free_pdev(pdev);
-	free(p->devlist);
-	free(p->info.pdev_indexes);
-	free(p->info.pdi_by_media);
+	if (p->devlist && p->info.pdev_indexes) {
+	    for_each_pool_dev(p, pdev)
+	        free_pdev(pdev);
+	}
+	if (p->devlist) free(p->devlist);
+	if (p->info.pdev_indexes) free(p->info.pdev_indexes);
+	if (p->info.pdi_by_media) free(p->info.pdi_by_media);
 
 	if (p->ags) {
 	    for (i = 0; i < p->pool_ags; i++)

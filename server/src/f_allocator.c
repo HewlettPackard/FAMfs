@@ -1693,7 +1693,7 @@ static inline bool can_allocate_from_slab(F_LO_PART_t *lp, f_slab_t slab)
 
 	// Skip full slabs
 	if (lp->slab_usage[slab].used == lo->info.slab_stripes) {
-		LOG(LOG_DBG, "%s[%d]: slab %u is full", lo->info.name, lp->part_num, slab);
+		LOG(LOG_DBG3, "%s[%d]: slab %u is full", lo->info.name, lp->part_num, slab);
 		return false;
 	}
 	// Skip degraded slabs

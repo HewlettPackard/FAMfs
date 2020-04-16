@@ -45,11 +45,13 @@ F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id)
 void lf_clients_free(F_POOL_t *p)
 {
     if (p) {
-	F_POOL_DEV_t *pdev;
+	F_POOL_DEV_t *pdev = NULL;
 
-	for_each_pool_dev(p, pdev)
-	    f_conn_close(&pdev->dev->f);
-
+	if (p->devlist && p->info.pdev_indexes) {
+	    for_each_pool_dev(p, pdev)
+	        if (pdev && pdev->dev)
+	            f_conn_close(&pdev->dev->f);
+	}
 	f_domain_close(&p->mynode.domain);
     }
 }
