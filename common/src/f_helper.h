@@ -14,18 +14,18 @@
 #define F_SALQ_LWTMO RBQ_TMO_1M
 #define F_SCMQ_HWTMO RBQ_TMO_1M
 
-#define F_MAX_CMS_CNT 256 
+#define F_MAX_CMS_CNT 1024 
 
 #define F_TAG_BASE  666
 
 typedef struct _f_ah_scme {
     f_stripe_t  str;
-    int         lo_id;
+    int         lid;
     int         flag;
 } f_ah_scme_t;
 
 typedef enum {
-    F_AH_GETS,
+    F_AH_GETS = 1,
     F_AH_PUTS,
     F_AH_COMS,
     F_AH_QUIT
@@ -34,10 +34,47 @@ typedef enum {
 typedef struct _f_ah_ipc {
     f_ah_ipc_op_t   cmd;
     int             flag;
-    int             lo_id;
+    int             lid;
     int             cnt;
     f_stripe_t      str[0];
 } f_ah_ipc_t;
+
+typedef struct _f_ah_ipci {
+    f_ah_ipc_t  hdr;
+    f_stripe_t  str;
+} f_ah_ipci_t;
+
+#define F_AH_MSG(var, sz) struct {\
+    f_ah_ipc_t      hdr;          \
+    f_stripe_t      str[sz];      \
+} var
+
+#define F_AH_MSG_INIT(c,l,s) {.hdr.cmd = c, .hdr.lid = l, .hdr.cnt = s, .hdr.flag = 0, .str = {0}}
+#define F_AH_MSG_SZ(n) (sizeof(f_ah_ipc_t) + (n)*sizeof(f_stripe_t))
+#define F_AH_MSG_ALLOC(m,n,c,s) ({\
+    int ext = 0;\
+    __auto_type _new = (n);\
+    __auto_type _cur = (c);\
+    (s).count = _new;\
+    if (_cur < _new) {\
+        if (m) free(m);\
+        m = malloc(F_AH_MSG_SZ(_new));\
+        (c) = _new;\
+        ext = 1;\
+        if (m) (s).stripes = &m->str[0];\
+    }\
+    ext;\
+})
+
+#define F_AH_MSG_APPEND(m,e,c,s) ({\
+    if (c <= (s).count) {\
+        c += c;\
+        m = realloc(m, F_AH_MSG_SZ(c));\
+        if (m) (s).stripes = &m->str[0];\
+    }\
+    if (m) (s).stripes[(s).count] = (e);\
+    (s).count++;\
+})
 
 struct f_pool_;
 int  f_ah_init(struct f_pool_ *pool);

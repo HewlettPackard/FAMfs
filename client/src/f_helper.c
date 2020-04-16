@@ -102,7 +102,7 @@ static int _push_stripe(F_LAYOUT_t *lo, f_stripe_t str, int release) {
         ERROR("bad call parameteres");
         return -EINVAL;
     }
-    scme.lo_id = lo->info.conf_id;
+    scme.lid = lo->info.conf_id;
     scme.str = str;
     scme.flag = release;
 

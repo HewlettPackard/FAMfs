@@ -725,40 +725,46 @@ int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
  */
 int f_set_ionode_ranks(F_POOL_t *pool)
 {
-	int *idxbuf, io_idx = pool->mynode.ionode_idx;
-	int rank, cnt, rc, i, n;
+    int *idxbuf, io_idx = pool->mynode.ionode_idx;
+    int rank, cnt, rc, i, n, hcnt, hidx = 0;
 
-	ASSERT(pool->mynode.ionode_idx < pool->ionode_count);
+    ASSERT(pool->mynode.ionode_idx < pool->ionode_count);
 
-	rc = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	if (rc != MPI_SUCCESS) return rc;
+    rc = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (rc != MPI_SUCCESS) return rc;
 
-	rc = MPI_Comm_size(MPI_COMM_WORLD, &cnt);
-	if (rc != MPI_SUCCESS) return rc;
+    rc = MPI_Comm_size(MPI_COMM_WORLD, &cnt);
+    if (rc != MPI_SUCCESS) return rc;
 
-	idxbuf = alloca(cnt*sizeof(io_idx));
-	if (!idxbuf) return -ENOMEM;
-	memset(idxbuf, 0, cnt*sizeof(io_idx));
+    idxbuf = alloca(cnt*sizeof(io_idx));
+    if (!idxbuf) return -ENOMEM;
+    memset(idxbuf, 0, cnt*sizeof(io_idx));
 
-	/*
-	 * Synchronize all allocator and helper threads across all nodes and 
-	 * exchange IO-node ranks
-	 */ 
-	idxbuf[rank] = NodeIsIOnode(&pool->mynode) ? io_idx : -1;
-	rc = MPI_Allgather(MPI_IN_PLACE, sizeof(io_idx), MPI_BYTE, idxbuf, 
-		sizeof(io_idx), MPI_BYTE, MPI_COMM_WORLD);
-	if (rc != MPI_SUCCESS) return rc;
+    /*
+     * Synchronize all allocator and helper threads across all nodes and 
+     * exchange IO-node ranks
+     */ 
+    idxbuf[rank] = NodeIsIOnode(&pool->mynode) ? io_idx : -1;
+    rc = MPI_Allgather(MPI_IN_PLACE, sizeof(io_idx), MPI_BYTE, idxbuf, 
+            sizeof(io_idx), MPI_BYTE, MPI_COMM_WORLD);
+    if (rc != MPI_SUCCESS) return rc;
 
-	for (i = 0, n = 0; i < cnt; i++) {
-		if (idxbuf[i] != -1) {
-			uint16_t idx = idxbuf[i];
-			F_IONODE_INFO_t *ioi;
-			ASSERT(idx < pool->ionode_count);
-			pool->ionodes[idx].rank = i;
-			ioi = &pool->ionodes[idx];
-			if (!rank) printf("IO-node %s: idx %d rank %d\n", ioi->hostname, idx, ioi->rank);
-			n++;
-		}
-	}
-	return n == pool->ionode_count ? 0 : -EINVAL;
+    for (i = 0, n = 0, hcnt = 0; i < cnt; i++) {
+        if (idxbuf[i] != -1) {
+            uint16_t idx = idxbuf[i];
+            F_IONODE_INFO_t *ioi;
+            ASSERT(idx < pool->ionode_count);
+            pool->ionodes[idx].rank = i;
+            ioi = &pool->ionodes[idx];
+            if (!rank) printf("IO-node %s: idx %d rank %d\n", ioi->hostname, idx, ioi->rank);
+            n++;
+        } else {
+            // this rank is CN's helper, is it me?
+            if (rank == i)
+                hidx = hcnt;
+            hcnt++;
+        }
+    }
+    pool->mynode.my_ion = pool->ionodes[hidx%pool->ionode_count].rank;
+    return n == pool->ionode_count ? 0 : -EINVAL;
 }

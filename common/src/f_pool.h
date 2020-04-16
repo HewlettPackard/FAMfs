@@ -154,6 +154,7 @@ typedef struct f_mynode_ {
 	unsigned long	    flags;	/* f_mynode_flags */
     }			io;
     uint16_t		ionode_idx;	/* for IO node ONLY: index in ionodes array */
+    uint16_t            my_ion;         /* for helper ndes only: rank of associated ION */
 
     /* FAM emulation only: NodeRunLFSrv */
     struct lf_dom_	*emul_domain;	/* libfabric domain for FAM emulation or NULL */
