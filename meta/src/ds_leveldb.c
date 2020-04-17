@@ -1061,16 +1061,19 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 		} else {
 
 			long tmp_end;
-			if (UNIFYCR_OFFSET(end_key) > UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+
+			if (!famfs) {
+			    if (UNIFYCR_OFFSET(end_key) > UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
 				 	 	 	 	 	 	 	 	 	 	 	 	start 	 	 	 	 	end 	 */
 
 				tmp_end = UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1;
-			} else {
+			    } else {
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
 				 	 	 	 	 	 	 	 	 	 	 	 	start end 	 */
 
 				tmp_end = UNIFYCR_OFFSET(end_key);
+			    }
 			}
 
 			char *ret_out_key = malloc(tmp_key_len);
@@ -1136,11 +1139,16 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 				 	  	 	 	 	 	 	 	 	 	 		 */
 				int to_ret = 0;
 				long tmp_end;
-				if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+				if (famfs) {
+				    if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1)
+					to_ret = 1;
+				} else {
+				    if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 					to_ret = 1;
 					tmp_end = UNIFYCR_OFFSET(end_key);
-				} else {
+				    } else {
 					tmp_end = UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1;
+				    }
 				}
 
 				char *ret_out_key = malloc(tmp_key_len);
