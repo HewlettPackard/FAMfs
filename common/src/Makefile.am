@@ -8,7 +8,7 @@ include_HEADERS = err_enumerator.h
 libfamfs_commondir = $(includedir)
 
 BASE_SRCS = famfs_env.h famfs_error.h famfs_stats.h \
-	famfs_stripe.h famfs_zfm.h \
+	famfs_zfm.h \
 	famfs_lf_connect.h famfs_lf_cqprogress.h \
 	famfs_lf_connect.c \
 	tinyexpr.h tinyexpr.c \
