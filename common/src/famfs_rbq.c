@@ -177,9 +177,11 @@ int f_rbq_push(f_rbq_t *q, void *e, long wait) {
     asm volatile("" ::: "memory");
 
     *(uint64_t *)p = 1UL;
+    int pre_post;
+    sem_getvalue(q->osem, &pre_post);
     if (-1 == sem_post(q->osem))
         return -errno;
-    if (q->rbq->hwm > 0 && f_rbq_count(q) >= q->rbq->hwm) 
+    if (q->rbq->hwm > 0 && f_rbq_count(q) >= q->rbq->hwm && pre_post < q->rbq->hwm)
         pthread_cond_broadcast(&q->rbq->hwmc);
     return 0;
 } 
@@ -210,9 +212,11 @@ int f_rbq_pop(f_rbq_t *q, void *e, long wait) {
     memcpy(e, p + sizeof(uint64_t), q->rbq->esize);
 
     *(uint64_t *)p = 1UL;
+    int pre_post;
+    sem_getvalue(q->isem, &pre_post);
     if (-1 == sem_post(q->isem))
         return -errno;
-    if (q->rbq->lwm > 0 && f_rbq_count(q) <= q->rbq->lwm) 
+    if (q->rbq->lwm > 0 && f_rbq_count(q) <= q->rbq->lwm && pre_post > q->rbq->lwm) 
         pthread_cond_broadcast(&q->rbq->lwmc);
 
     return 0;
