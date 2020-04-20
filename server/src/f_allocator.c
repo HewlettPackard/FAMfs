@@ -339,6 +339,7 @@ static int get_slab_devmap(F_LO_PART_t *lp, f_slab_t slab, unsigned long *devmap
 	F_SLABMAP_ENTRY_t *sme;
 	int n;
 
+	ASSERT(F_DEVMAP_SIZE >= BITS_TO_LONGS(pool->info.pdev_max_idx+1));
 	bitmap_zero(devmap, pool->info.pdev_max_idx+1);
 
 	/* Get the slab map entry */
@@ -1719,6 +1720,8 @@ static int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
 		return -ENOENT;
 	}
 
+	LOG(LOG_DBG3, "%s[%d]: allocating stripe %lu", lo->info.name, lp->part_num, s);
+
 	/* Set the stripe preallocated */
 	old = atomic_test_and_set_bbit(BBIT_NR_IN_LONG(s), CVE_PREALLOC, p);
 
@@ -1969,6 +1972,9 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 
 	LOG(LOG_DBG, "%s[%d]: allocating %d stripes in slab %u", lo->info.name, lp->part_num, count, slab);
 	INIT_LIST_HEAD(&alloclist);
+
+	if (log_print_level > LOG_DBG2)
+		f_print_cv(dbg_stream, lp->claimvec);
 
 	rc = get_slab_devmap(lp, slab, devmap);
 	ASSERT(rc == 0);
@@ -2353,12 +2359,12 @@ _retry:
 			atomic_inc(lo->stats + FL_STRIPE_GET_NOSPC_ERR);
 			return -ENOSPC;
 		} 
-
+/*
 		if (!lp->increase_prealloc) {
 			lp->increase_prealloc = 1;
 			LOG(LOG_WARN, "%s[%d]: no stripes pre-allocated", lo->info.name, lp->part_num);
 		}
-			
+*/			
 		pthread_cond_signal(&lp->a_thread_cond);
 		atomic_inc(lo->stats + FL_STRIPE_GET_ERR);
 
@@ -2382,8 +2388,11 @@ _retry:
 
 		match_stripe = stripe;
 		ss->stripes[i] = f_map_prt_to_global(lp->claimvec, stripe);
+		LOG(LOG_DBG3,"%s[%d]: stripe %lu", lo->info.name, lp->part_num, ss->stripes[i]);
 	}
 	pthread_spin_unlock(&lp->alloc_lock);
+
+	LOG(LOG_DBG2, "%s[%d]: completed req for %d stripes", lo->info.name, lp->part_num, ss->count);
 	atomic_inc(lo->stats + FL_STRIPE_GET);
 
 	return i;

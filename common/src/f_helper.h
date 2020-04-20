@@ -14,7 +14,7 @@
 #define F_SALQ_LWTMO RBQ_TMO_1M
 #define F_SCMQ_HWTMO RBQ_TMO_1M
 
-#define F_MAX_CMS_CNT 1024 
+#define F_MAX_IPC_ME 1024 // max count of Message Elements to snd at once 
 
 #define F_TAG_BASE  666
 

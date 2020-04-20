@@ -127,7 +127,7 @@ int f_ah_init(F_POOL_t *pool) {
 static void *commit_srv(void *arg) {
     F_POOL_t *pool = (F_POOL_t *)arg;
     F_LAYOUT_t *lo;
-    int msg_max = F_AH_MSG_SZ(F_MAX_CMS_CNT);
+    int msg_max = F_AH_MSG_SZ(F_MAX_IPC_ME);
     int rc = 0, msg_sz = 0;
     MPI_Status sts;
     f_ah_ipc_t *msg = malloc(msg_max);
@@ -142,7 +142,7 @@ static void *commit_srv(void *arg) {
     while (!quit) {
         // wait for any commit or release message from CNs' helpers
         // commit thread uses TAG_BASE + layout_count
-        rc = MPI_Recv(&msg, msg_max, MPI_BYTE, MPI_ANY_SOURCE, 
+        rc = MPI_Recv(msg, msg_max, MPI_BYTE, MPI_ANY_SOURCE, 
                       F_TAG_BASE + N, MPI_COMM_WORLD, &sts);
         if (rc != MPI_SUCCESS || sts.MPI_ERROR != MPI_SUCCESS) {
             LOG(LOG_ERR, "MPI_Recv returnd error %d/sts=%d", rc, sts.MPI_ERROR);
@@ -161,7 +161,6 @@ static void *commit_srv(void *arg) {
             continue;
         }
         ASSERT(msg_sz == F_AH_MSG_SZ(msg->cnt));
-        ASSERT(msg->lid + F_TAG_BASE == sts.MPI_TAG);
 
         ss.count = msg->cnt;
         ss.stripes = &msg->str[0];
@@ -203,7 +202,6 @@ static void *alloc_srv(void *arg) {
     int rc = 0, msg_sz = 0, ss_cnt = 0, in_flight = 0;
     int lid = lo->info.conf_id;
 
-
     while (!quit) {
         // wait for any commit message from CNs' helpers
         // allocators use TAG_BASE + layout ID tag
@@ -215,7 +213,7 @@ static void *alloc_srv(void *arg) {
         }
 
         MPI_Get_count(&sts, MPI_BYTE, &msg_sz);
-        LOG(LOG_DBG, "srv AT from %d: msg[%d].op=%d got %d stripes to commit to LO %d", 
+        LOG(LOG_DBG, "srv AT from %d: msg[%d].op=%d got req for %d stripes to alloc for LO %d", 
             sts.MPI_SOURCE, msg_sz, msg.cmd, msg.cnt, msg.lid);
         if (msg.cmd == F_AH_QUIT) {
             LOG(LOG_INFO, "srv AT: recevided QUIT command");
@@ -225,21 +223,29 @@ static void *alloc_srv(void *arg) {
             LOG(LOG_ERR, "srv AT: wrong command received: %d, LO %d", msg.cmd, msg.lid);
             continue;
         }
+        ASSERT(msg_sz == sizeof(msg));
         ASSERT(msg.lid + F_TAG_BASE == sts.MPI_TAG);
         if (lid != msg.lid) {
             LOG(LOG_ERR, "srv AT: wrong layout id: expected %d, got %d", lid, msg.lid);
             continue;
         }
 
+        if (in_flight) {
+            MPI_Wait(&mrq, MPI_STATUS_IGNORE);
+            in_flight = 0;
+        }
+
         F_AH_MSG_ALLOC(rply, msg.cnt, ss_cnt, ss);
         if (!rply) {
-            LOG(LOG_ERR, "out of memory");
+            LOG(LOG_FATAL, "out of memory");
+            quit = 1;
             return NULL;
         }
         rply->cmd = F_AH_GETS;
         rply->lid = lid;
 
         // acquire stripes from allocator
+        int rq_cnt = ss.count;
         if ((rc = f_get_stripe(lo, F_STRIPE_INVALID, &ss)) < 0) {
             LOG(LOG_ERR, "%s: error %d in f_get_stripe", lo->info.name, rc);
             rply->flag = rc;
@@ -250,10 +256,8 @@ static void *alloc_srv(void *arg) {
         }
         rply->cnt = ss.count;
 
-        if (in_flight) 
-            MPI_Wait(&mrq, MPI_STATUS_IGNORE);
-        in_flight = 0;
-
+        if (ss.count < rq_cnt)
+            LOG(LOG_WARN, "srv AT: requested %d stripes, but only got %d\n", rq_cnt, ss.count);
         rc = MPI_Isend(rply, F_AH_MSG_SZ(ss.count), MPI_BYTE, sts.MPI_SOURCE, 
                        sts.MPI_TAG, MPI_COMM_WORLD, &mrq);
         if (rc != MPI_SUCCESS) {
@@ -261,8 +265,16 @@ static void *alloc_srv(void *arg) {
             continue;
         }
         in_flight = 1;
-    }
+/*
+        rc = MPI_Send(rply, F_AH_MSG_SZ(ss.count), MPI_BYTE, sts.MPI_SOURCE, 
+                       sts.MPI_TAG, MPI_COMM_WORLD);
+        if (rc != MPI_SUCCESS) {
+            LOG(LOG_ERR, "MPI_Send returnd error %d", rc);
+            continue;
+        }
+*/
 
+    }
     if (rply)
         free(rply);
 
@@ -603,17 +615,18 @@ static void *stoker(void *arg) {
             break;
 
         // stuff stripes into the queue untill it's full
-        while (!f_rbq_isfull(salq)) {
-            int batch = min(f_rbq_size(salq) - f_rbq_count(salq), F_MAX_CMS_CNT);
+        int to_do = f_rbq_size(salq) - f_rbq_count(salq);
+        while (to_do) {
+            int batch = min(f_rbq_size(salq) - f_rbq_count(salq), F_MAX_IPC_ME);
             if (F_AH_MSG_ALLOC(arq, batch, cur_ss_sz, ss)) {
                 if (keyset.slabs)
                     free(keyset.slabs);
                 keyset.slabs = calloc(ss.count, sizeof(f_slab_t));
-            }
-            if (!arq || !keyset.slabs) {
-                LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
-                quit = 1;
-                goto _abort;
+                if (!arq || !keyset.slabs) {
+                    LOG(LOG_FATAL, "%s: helper ran out of memory", lo->info.name);
+                    quit = 1;
+                    goto _abort;
+                }
             }
 
             if (NodeForceHelper(&pool->mynode)) {
@@ -635,7 +648,6 @@ static void *stoker(void *arg) {
                 arq->cmd = F_AH_GETS;
                 arq->flag = 0;
                 arq->lid = lo->info.conf_id;
-
                 // send request to remote allocator
                 rc = MPI_Send(arq, sizeof(*arq), MPI_BYTE, dst, 
                               F_TAG_BASE + lo->info.conf_id, MPI_COMM_WORLD);
@@ -672,6 +684,7 @@ static void *stoker(void *arg) {
                     ss.count = arq->cnt;
                 }
             }
+            to_do -= ss.count;
 
             int j, n = 0;
             keyset.count = 0;
@@ -689,7 +702,7 @@ static void *stoker(void *arg) {
                     if (!sme || !sme->slab_rec.mapped) {
                         keyset.slabs[n] = slab;
                         keyset.count = ++n;
-                        printf("added slab %u to update count %d\n", slab, keyset.count);
+                        printf("added slab %u (s %lu) to update count %d\n", slab, ss.stripes[i], keyset.count);
                     }
                 }
 _retry:
@@ -711,7 +724,6 @@ _retry:
                 if (log_print_level > 0)
                     f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
             }
-
         }
             
     }
@@ -899,7 +911,7 @@ static void *drainer(void *arg) {
             }
 
             // send them out if too many
-            if (ssa[lid].count >= F_MAX_CMS_CNT)
+            if (ssa[lid].count >= F_MAX_IPC_ME)
                 break;
         }
 
@@ -1056,6 +1068,7 @@ int f_test_helper(F_POOL_t *pool)
 	printf("attached\n");
 
     	while (!exit_flag) {
+		int n = 0;
 		for (int i = 0; i < pool->info.layouts_count; i++) {
 			f_stripe_t s;
 			F_LAYOUT_t *lo = f_get_layout(i);
@@ -1066,16 +1079,15 @@ int f_test_helper(F_POOL_t *pool)
 				continue;
 			} else if (rc) goto _ret;
 
-			printf("got stripe %lu\n", s);
-
 			usleep(100);
 
 			rc = f_ah_commit_stripe(lo, s);
 			if (rc) goto _ret;
-			printf("committed stripe %lu\n", s);
 		}
 	}
 _ret:
+	printf("flushing commit queue\n");
+	f_ah_flush();
 	f_ah_dettach();	
 	return rc;
 }
