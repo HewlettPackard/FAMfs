@@ -2649,7 +2649,8 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	F_POOL_t *pool = lo->pool;
 	int chunk_size_factor   = F_CHUNK_SIZE_MAX / lo->info.chunk_sz;
 	size_t slab_usage_size, cv_bmap_size;
-	int e_sz, chunks;
+	unsigned int cv_intl_factor = ilog2(lo->info.slab_stripes);
+	int e_sz, chunks, rc = -ENOMEM;
 
 	rcu_register_thread();
 	if (pthread_mutex_init(&lp->a_thread_lock, NULL)) goto _err;
@@ -2695,14 +2696,20 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	lp->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
 	lp->claimvec = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
 	if (!lp->slabmap || !lp->claimvec) goto _err;
+	/* 
+	 * Reset the claim vector interleave to one slab worth of stripes.
+	 * This is neccessary in order to align slab map and claim vector partition.
+	 */  
+	if (cv_intl_factor < lp->claimvec->geometry.intl_factor) { rc = -EINVAL; goto _err; }
+	lp->claimvec->geometry.intl_factor = cv_intl_factor; 
 
-LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes", 
+	LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes", 
 		lo->info.name, lp->part_num, lp->slab_count, lp->stripe_count);
 	return 0;
 
 _err:
 	layout_partition_free(lp);
-	return -ENOMEM;
+	return rc;
 }
 
 /*
