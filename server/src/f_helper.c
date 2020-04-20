@@ -535,6 +535,7 @@ static int open_global_claimvec(F_LAYOUT_t *lo)
  */
 static void *stoker(void *arg) {
     int dst = 0, rc = 0;
+    useconds_t backoff = 0;
 
     F_LAYOUT_t *lo = (F_LAYOUT_t *)arg;
     F_POOL_t   *pool = lo->pool;
@@ -629,6 +630,9 @@ static void *stoker(void *arg) {
                 }
             }
 
+            // goto sleep if back off is required
+            if (backoff) usleep(backoff);
+
             if (NodeForceHelper(&pool->mynode)) {
                 // Single-node config (testing enviro)
                 if ((rc = f_get_stripe(lo, F_STRIPE_INVALID, &ss)) < 0) {
@@ -682,6 +686,11 @@ static void *stoker(void *arg) {
                 } else if (arq->cnt != ss.count) {
                     LOG(LOG_WARN, "remote allocator returnd %d stripes, %d requested", arq->cnt, ss.count);
                     ss.count = arq->cnt;
+                    // adjust back off delay to reduce pressure on the allocator
+                    backoff += RBQ_TMO_1S; 
+                } else {
+                    // got everything we hoped for, reset back off delay
+                    backoff = 0;
                 }
             }
             to_do -= ss.count;
@@ -1068,7 +1077,7 @@ int f_test_helper(F_POOL_t *pool)
 	printf("attached\n");
 
     	while (!exit_flag) {
-		int n = 0;
+		//int n = 0;
 		for (int i = 0; i < pool->info.layouts_count; i++) {
 			f_stripe_t s;
 			F_LAYOUT_t *lo = f_get_layout(i);
