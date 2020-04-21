@@ -866,11 +866,11 @@ static void *drainer(void *arg) {
         // wait until queue is sufficiently full 
         if ((rc = f_rbq_waithwm(scmq, tmo)) == -ETIMEDOUT) {
             LOG(LOG_DBG, "rbq %s: HW TMO\n", qname);
-        } else if (rc != -ECANCELED) {
+        } else if (rc == -ECANCELED) {
             if (!f_rbq_isempty(scmq))
                 LOG(LOG_INFO, "rbq %s: wake-up signal received", qname);
         } else if (rc) {
-            LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(rc));
+            LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(-rc));
         }
         if (quit)
             break;
