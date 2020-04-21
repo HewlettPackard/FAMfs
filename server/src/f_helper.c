@@ -631,7 +631,8 @@ static void *stoker(void *arg) {
             }
 
             // goto sleep if back off is required
-            if (backoff) usleep(backoff);
+            if (backoff) usleep(min(backoff, RBQ_TMO_1M));
+            if (quit) break;
 
             if (NodeForceHelper(&pool->mynode)) {
                 // Single-node config (testing enviro)
@@ -682,12 +683,13 @@ static void *stoker(void *arg) {
                 ASSERT(arq->lid + F_TAG_BASE == sts.MPI_TAG);
                 if (arq->flag) {
                     LOG(LOG_ERR, "remote allocator %d returnd error %d", dst, arq->flag);
+                    if (arq->flag == -ENOSPC) backoff += 10*RBQ_TMO_1S;
                     continue;
                 } else if (arq->cnt != ss.count) {
                     LOG(LOG_WARN, "remote allocator returnd %d stripes, %d requested", arq->cnt, ss.count);
                     ss.count = arq->cnt;
                     // adjust back off delay to reduce pressure on the allocator
-                    backoff += RBQ_TMO_1S; 
+                    backoff += backoff ? : RBQ_TMO_1S;
                 } else {
                     // got everything we hoped for, reset back off delay
                     backoff = 0;
