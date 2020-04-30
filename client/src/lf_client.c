@@ -6,10 +6,12 @@
 #include <malloc.h>
 
 #include "famfs_env.h"
+#include "famfs_error.h"
 #include "famfs_global.h"
 #include "lf_client.h"
-#include "fam_stripe.h"
-#include "unifycr-internal.h" /* DEBUG() macro */
+//#include "fam_stripe.h"
+#include "unifycr-internal.h" /* DEBUG() macro; UNIFYCR_SUCCESS */
+#include "famfs.h"
 #include "famfs_maps.h"
 #include "f_pool.h"
 #include "f_layout.h"
@@ -146,10 +148,10 @@ int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
     F_POOL_t *pool;
     F_POOL_INFO_t *info;
     LF_INFO_t *lf_info;
-    N_STRIPE_t *stripe = NULL;
+//    N_STRIPE_t *stripe = NULL;
     LFS_CTX_t *lfs_ctx_p;
     F_LAYOUT_INFO_t *lo_info;
-    N_CHUNK_t *chunk, *chunks = NULL;
+//    N_CHUNK_t *chunk, *chunks = NULL;
     struct famsim_stats *stats_fi_wr;
     int i, nchunks;
     int rc = 1; /* OOM error */

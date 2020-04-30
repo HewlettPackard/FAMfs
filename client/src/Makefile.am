@@ -30,6 +30,8 @@ libfamfs_la_SOURCES = \
   lf_client.c \
   lf_client.h \
   f_helper.c \
+  famfs.c \
+  famfs.h \
   fam_stripe.c \
   fam_stripe.h
 
@@ -65,6 +67,8 @@ libfamfs_gotcha_la_SOURCES = \
   lf_client.c \
   lf_client.h \
   f_helper.c \
+  famfs.c \
+  famfs.h \
   fam_stripe.c \
   fam_stripe.h
 

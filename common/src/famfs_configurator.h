@@ -55,6 +55,7 @@
     UNIFYCR_CFG_CLI(unifycr, daemonize, BOOL, off, "enable server daemonization", NULL, 'D', "on|off") \
     UNIFYCR_CFG_CLI(unifycr, debug, BOOL, off, "enable debug output", NULL, 'd', "on|off") \
     UNIFYCR_CFG_CLI(unifycr, mount_point, STRING, UNIFYCR_MOUNT_POINT, "mountpoint directory", NULL, 'm', "specify full path to desired mountpoint") \
+    UNIFYCR_CFG_CLI(unifycr, fs_type, STRING, UNIFYCR_FS_TYPE, "filesystem type", NULL, 't', "types: unifycr, famfs, both") \
     UNIFYCR_CFG(unifycr, lfa_port, INT, UNIFYCR_LFA_PORT, "libfabric atomics port", NULL) \
     UNIFYCR_CFG(unifycr, cq_hwm, INT, UNIFYCR_CQ_HWM, "high water mark for committed stripes queue", NULL) \
     UNIFYCR_CFG(unifycr, cq_hwm_tmo, INT, UNIFYCR_CQ_HWM_TMO, "high water mark stripes queue timeout, sec", NULL) \

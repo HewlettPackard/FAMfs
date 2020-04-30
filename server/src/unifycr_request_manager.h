@@ -33,6 +33,9 @@
 #include "unifycr_global.h"
 #include "arraylist.h"
 
+
+int rm_fetch_md(int qid, int num);
+
 typedef struct {
     int src_fid;
     long offset;
@@ -41,7 +44,6 @@ typedef struct {
 
 void *rm_delegate_request_thread(void *arg);
 int rm_read_remote_data(int qid, int num);
-int rm_fetch_md(int qid, int num);
 int rm_send_remote_requests(thrd_ctrl_t *thrd_ctrl,
                             int thrd_tag, long *tot_sz);
 int rm_pack_send_requests(char *req_msg_buf,
@@ -62,4 +64,5 @@ void print_remote_del_reqs(int app_id, int cli_id,
                            int dbg_rank, del_req_stat_t *del_req_stat);
 void print_send_msgs(send_msg_t *send_metas,
                      long msg_cnt, int dbg_rank);
+
 #endif

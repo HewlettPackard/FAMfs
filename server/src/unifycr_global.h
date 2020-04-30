@@ -37,6 +37,16 @@
 #include "arraylist.h"
 
 typedef enum {
+    COMM_MOUNT, /*the list of addrs: appid, size of buffer, offset of data section, metadata section*/
+    COMM_META,
+    COMM_READ,
+    COMM_UNMOUNT,
+    COMM_DIGEST,
+    COMM_SYNC_DEL,
+    COMM_MDGET,
+} cmd_lst_t;
+
+typedef enum {
     XFER_COMM_DATA,
     XFER_COMM_EXIT,
 } service_cmd_lst_t;
@@ -60,8 +70,9 @@ typedef struct {
     int src_thrd;
     int src_dbg_rank;
     int arrival_time;
-    int fam_cid;
-    int fam_nid;
+//    int fam_cid;
+//    int fam_nid;
+    uint64_t fam_sid;
 } send_msg_t;
 
 typedef struct {
@@ -138,7 +149,10 @@ typedef struct {
 
 typedef struct {
     int app_id;
-    int qid;
+    union {
+        int sock_id;
+        int qid;
+    };
 } cli_signature_t;
 
 typedef int fattr_key_t;
@@ -151,6 +165,7 @@ typedef struct {
 
 extern arraylist_t *app_config_list;
 extern arraylist_t *thrd_list;
+int invert_sock_ids[MAX_NUM_CLIENTS];
 int invert_qids[MAX_NUM_CLIENTS];
 extern pthread_t data_thrd;
 extern int glb_rank, glb_size;

@@ -3,9 +3,11 @@ chunk_bits = 20
 chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
+debug = on
 # lfa_port = 30000 ; port for lf_atomics
 # cq_hwm = 75 ; high water mark for committed stripes queue
 # cq_hwm_tmo = 30 ; time to wait (in sec) for commit que to read HWM, flush
+# fs_type = famfs | unifycr | both ; default: famfs
 
 [log]
 # verbosity = 7 ; the highest level:7

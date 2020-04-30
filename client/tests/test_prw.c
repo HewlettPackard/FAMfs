@@ -58,6 +58,12 @@
 #include "famfs_stats.h"
 
 
+//#define FAMFS_EXPLICIT_LO	/* Uncomment to set LAYOUT explicitly in path */
+#define MOUNT_POINT	"/tmp/mnt"
+#ifdef FAMFS_EXPLICIT_LO
+#define LAYOUT		"1D:1M"
+#endif
+
 #define GEN_STR_LEN 1024
 
 #define print0(...) if (rank == 0 && vmax == 0) {printf(__VA_ARGS__);}
@@ -83,7 +89,7 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 
-    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:V";
+    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:VU";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
     //long num_reqs;
@@ -100,6 +106,7 @@ int main(int argc, char *argv[]) {
     struct famsim_stats *famsim_stats_send, *famsim_stats_recv;
     int carbon_stats = 0; /* Only on Carbon: CPU instruction stats */
     int fam_cnt = 0; /* Number of FAMs */
+    int unifycr_fs = 0;
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -168,12 +175,21 @@ int main(int argc, char *argv[]) {
                carbon_stats = atoi(optarg); break; /* 1: Enable stats */
             case 'V':
                vfy++; break;
+            case 'U':
+               unifycr_fs = 1; break; /* 0: FAMFS, 1: UNIFYCR_LOG */
         }
     }
     if (read_sz == 0)
         read_sz = tran_sz;
     if (blk_sz == 0)
         blk_sz = tran_sz;
+
+    /* choose fs type: UNIFYCR_LOG or FAMFS */
+    fs_type_t fs = unifycr_fs?UNIFYCR_LOG:FAMFS;
+    if (!fs_supported(fs)) {
+        printf(" fs type %d not supported - check configuration file!\n", fs);
+        exit(1);
+    }
 
     if (rank == 0) printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
         (pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
@@ -194,15 +210,33 @@ int main(int argc, char *argv[]) {
     famsim_stats_send = famsim_stats_create(famsim_ctx, FAMSIM_STATS_SEND);
     famsim_stats_recv = famsim_stats_create(famsim_ctx, FAMSIM_STATS_RECV);
 
+    int rc = 0;
     if (mount_burstfs) {
-        print0("mount unifycr\n");
-        unifycr_mount("/tmp/mnt", rank, rank_num, 0, 3);
+        sprintf(tmpfname, "%s", MOUNT_POINT);
+#ifdef FAMFS_EXPLICIT_LO
+        if (fs == FAMFS)
+            sprintf(tmpfname, "%s::%s", LAYOUT, MOUNT_POINT);
+#endif
+        print0("mount unifycr at %s\n", tmpfname);
+        rc = unifycr_mount(tmpfname, rank, rank_num, 0, fs);
+        if (rc) {
+            fprintf(stderr, "mount (fs:%d) error:%d - %m\n", fs, rc);
+            exit(1);
+        }
         if (famsim_ctx)
             fam_cnt = famsim_ctx->fam_cnt;
     } else
         to_unmount = 0;
 
-    int rc = 0;
+    /* Add layout name if FAMFS */
+#ifdef FAMFS_EXPLICIT_LO
+    if (fs == FAMFS) {
+        sprintf(tmpfname, "%s::%s", LAYOUT, fname);
+        strcpy(fname, tmpfname);
+    }
+#endif
+    print0("File name is %s\n", fname);
+
     char *buf;
     size_t len;
     if (gbuf) {

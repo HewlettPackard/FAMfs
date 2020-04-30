@@ -40,9 +40,12 @@
 #include <linux/limits.h>
 #include <sys/time.h>
 #include "ds_leveldb.h"
-#include "famfs_global.h"
 
-int famfs = 1;
+#include "famfs_global.h"
+#include "famfs_error.h"
+
+
+static int famfs = 1; /* DEBUG: 1 - turn on extra check for FAMfs only */
 
 struct timeval dbputstart, dbputend;
 struct timeval dbgetstart, dbgetend;
@@ -993,6 +996,10 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
  * start_e: the end of the key-value pair right after start_key
  * start_e = start_f + range of the key-value pair (length) - 1
  * */
+
+/* FAMfs - Now request key/len and md key/len don't cross stripe boundary
+    so the returned key-value pairs always belong to the same stripe.
+    TODO: Allow rq to cross the boundary and return all md stripes that match the rq. */
 int leveldb_process_range(leveldb_iterator_t *iter, 
         char *start_key, char *end_key, int key_len, 
         char ***out_key, int **out_key_len, char ***out_val, int **out_val_len, 
@@ -1056,24 +1063,21 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 	if (data_end_flag || diff_fid_flag) {
 		if (UNIFYCR_OFFSET(start_key) > UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 			/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-			 		 	 	 	 	 	 	 	 	 	 	 	 	  	 	 	 start  end 	 */
+									 start			*/
 			return 0;
 		} else {
 
 			long tmp_end;
-
-			if (!famfs) {
-			    if (UNIFYCR_OFFSET(end_key) > UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+			if (UNIFYCR_OFFSET(end_key) > UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-				 	 	 	 	 	 	 	 	 	 	 	 	start 	 	 	 	 	end 	 */
+						   start			 end			*/
 
 				tmp_end = UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1;
-			    } else {
+			} else {
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-				 	 	 	 	 	 	 	 	 	 	 	 	start end 	 */
+						   start end						*/
 
 				tmp_end = UNIFYCR_OFFSET(end_key);
-			    }
 			}
 
 			char *ret_out_key = malloc(tmp_key_len);
@@ -1081,11 +1085,9 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 			memcpy(ret_out_key, ret_key, tmp_key_len);
 			memcpy(ret_out_val, ret_val, tmp_val_len);
 
-            if (!famfs) {
-                UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
-                UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
-                UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
-            }
+			UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
+			UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
+			UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
 
 			add_kv(out_key, out_key_len, out_val, out_val_len, 
                 tmp_records_cnt, tmp_out_cap, ret_out_key, ret_out_val, 
@@ -1127,28 +1129,20 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 			if (UNIFYCR_OFFSET(start_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-				 	 	 	 	 start 		 end
-				 	 	 	 	  	 	 	 	 	 	 	 	 	 		 */
+						   start end						*/
 
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-				 	 	 	 	 start 							 end
-				 	 	 	 	  	 	 	 	 	 	 	 	 	 		 */
+						   start			 end			*/
 
 				/*	pre_start,...........,pre_end; (start_f)..............(start_e)
-				 	 	 	 	 start 							 							end
-				 	  	 	 	 	 	 	 	 	 	 		 */
+						   start						end */
 				int to_ret = 0;
 				long tmp_end;
-				if (famfs) {
-				    if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1)
-					to_ret = 1;
-				} else {
-				    if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
+				if (UNIFYCR_OFFSET(end_key) <= UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1) {
 					to_ret = 1;
 					tmp_end = UNIFYCR_OFFSET(end_key);
-				    } else {
+				} else {
 					tmp_end = UNIFYCR_OFFSET(ret_key) + UNIFYCR_LEN(ret_val) - 1;
-				    }
 				}
 
 				char *ret_out_key = malloc(tmp_key_len);
@@ -1156,11 +1150,9 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 				memcpy(ret_out_key, ret_key, tmp_key_len);
 				memcpy(ret_out_val, ret_val, tmp_val_len);
 
-			    if (!famfs) {
-                    UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
-                    UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
-                    UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
-                }
+				UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(start_key) - UNIFYCR_OFFSET(ret_key);
+				UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
+				UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
 
 				add_kv(out_key, out_key_len, out_val, out_val_len, 
                     tmp_records_cnt, tmp_out_cap, 
@@ -1224,10 +1216,8 @@ int handle_next_half(
 			memcpy(ret_out_key, ret_key, tmp_key_len);
 			memcpy(ret_out_val, ret_val, tmp_val_len);
 
-            if (!famfs) {
-                UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) +1;
-                UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(ret_key) - UNIFYCR_OFFSET(start_key);
-            }
+			UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) +1;
+			UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(ret_key) - UNIFYCR_OFFSET(start_key);
 
 			add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                 ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
@@ -1317,10 +1307,8 @@ int handle_next_half(
 				memcpy(ret_out_key, ret_key, tmp_key_len);
 				memcpy(ret_out_val, ret_val, tmp_val_len);
 
-                if (!famfs) {
-                    UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) + 1;
-                    UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val);
-                }
+				UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) + 1;
+				UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val);
 
 				add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                     ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
@@ -1335,7 +1323,7 @@ int handle_next_half(
 
 int add_kv(
     char ***out_key, int **out_key_len, char ***out_val,
-    int **out_val_len, int *tmp_records_cnt, int *tmp_out_cap, 
+    int **out_val_len, int *tmp_records_cnt, int *tmp_out_cap,
     char *ret_key, char *ret_val, int key_len, int val_len) {
 
 	if (*tmp_records_cnt == *tmp_out_cap) {
@@ -1344,6 +1332,20 @@ int add_kv(
 		*out_key_len = (int *)realloc(*out_key_len, 2 * (*tmp_out_cap) * sizeof(int));
 		*out_val_len = (int *)realloc(*out_val_len, 2 * (*tmp_out_cap) * sizeof(int));
 		*tmp_out_cap *= 2;
+	}
+
+	if (famfs && *tmp_records_cnt) {
+	    int prev = *tmp_records_cnt -1;
+	    unsigned long s = FAMFS_STRIPE((*out_key)[prev]);
+
+	    /* Check same stripe here; the consumer must check ADDR+LEN <= stripe size! */
+	    if (FAMFS_STRIPE(ret_val) != s) {
+		ERROR("fid=%lu md[%d] st/len=%ld/%ld stripe=%lu cross prev st/len=%ld/%ld stripe=%lu",
+		    UNIFYCR_FID(ret_key), prev+1,
+		    UNIFYCR_OFFSET(ret_key), UNIFYCR_LEN(ret_key), FAMFS_STRIPE(ret_val),
+		    UNIFYCR_OFFSET((*out_key)[prev]), UNIFYCR_LEN((*out_key)[prev]), s);
+		ASSERT(0);
+	    }
 	}
 
 	(*out_key)[*tmp_records_cnt] = ret_key;

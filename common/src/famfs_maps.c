@@ -490,6 +490,14 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info->cq_hwm = (int)l;
     if (configurator_int_val(c->unifycr_cq_hwm_tmo, &l)) goto _noarg;
     pool_info->cq_hwm_tmo = (int)l;
+    if (!strcmp(c->unifycr_fs_type, "famfs"))
+	SetPoolFAMFS(p);
+    else if (!strcmp(c->unifycr_fs_type, "unifycr"))
+	SetPoolUNIFYCR(p);
+    else if (!strcmp(c->unifycr_fs_type, "both")) {
+	SetPoolFAMFS(p);
+	SetPoolUNIFYCR(p);
+    } else goto _syntax;
 
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
@@ -499,7 +507,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (configurator_int_val(c->devices_offset, &l)) goto _noarg;
     pool_info->data_offset = (unsigned long)l;
     if (configurator_bool_val(c->devices_emulated, &b)) goto _noarg;
-    if (b)
+    if (b && PoolFAMFS(p))
 	SetPoolFAMEmul(p);
     else
 	lf_info->opts.true_fam = 1;
@@ -1048,6 +1056,8 @@ void f_print_layouts(void) {
 	return;
     /* Pool */
     pool_info = &p->info;
+ printf("FS mode:%s%s%s\n",
+ PoolFAMFS(pool)?"FAMFS ":"", PoolUNIFYCR(pool)?"UNIFYCR ":"", PoolFAMEmul(pool)?"Emul":"");
     printf("Pool has %u devices in %u AGs, %u each\n",
 	pool_info->dev_count, p->pool_ags, p->ag_devs);
     ag = p->ags;

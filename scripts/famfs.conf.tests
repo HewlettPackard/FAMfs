@@ -3,8 +3,13 @@ chunk_bits = 20
 chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
-debug = on
-verbosity = 7
+debug = off
+fs_type = famfs ; "famfs" (default), "unifycr" or "both"
+
+[log]
+verbosity = 0 ; the highest level:7
+dir = /dev/shm
+file = log
 
 [meta]
 server_ratio = 1

@@ -27,16 +27,17 @@
  * Please read https://github.com/llnl/burstfs/LICENSE for full license text.
  */
 
+#include "famfs_global.h"
+#include "unifycr_request_manager.h"
+#include "unifycr_metadata.h"
+
 #include <mpi.h>
 #include <poll.h>
 #include <time.h>
 #include <string.h>
-#include "famfs_global.h"
 #include "log.h"
-#include "unifycr_request_manager.h"
 #include "unifycr_const.h"
 #include "unifycr_global.h"
-#include "unifycr_metadata.h"
 #include "unifycr_sock.h"
 
 
@@ -139,10 +140,10 @@ int rm_fetch_md(int qid, int req_num) {
     thrd_ctrl_t *thrd_ctrl = (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
 
     pthread_mutex_lock(&thrd_ctrl->thrd_lock);
-                            
+
     /* get the locations of all the read requests from the key-value store*/
     int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
-    fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1); 
+    fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1);
     //printf("srv: md fetch for client %d %p %p %p\n", client_id, app_config->shm_recv_bufs[client_id], pcnt, pmd);
     rc = famfs_md_get(app_config->shm_req_bufs[client_id], req_num, pmd, pcnt);
 

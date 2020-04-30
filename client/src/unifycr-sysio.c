@@ -65,12 +65,18 @@
 #include "unifycr-sysio.h"
 #include "unifycr-internal.h"
 #include "unifycr-fixed.h"
+#include "unifycr-sysio.h"
+#include "unifycr.h" /* fs_type_t */
+
+#include "famfs.h"
 #include "famfs_stats.h"
 #include "famfs_env.h"
+#include "famfs_error.h"
 #include "famfs_global.h"
 #include "famfs_rbq.h"
-#include "f_layout.h"
-#include "f_helper.h"
+//#include "f_layout.h"
+//#include "f_helper.h"
+
 //
 // === libfabric stuff =============
 //
@@ -593,7 +599,7 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
     if (meta->storage == FILE_STORAGE_FIXED_CHUNK) {
         /* extend file size and allocate chunks if needed */
         newpos = pos + (off_t) count;
-        int extend_rc = unifycr_fid_extend(fid, newpos);
+        int extend_rc = fd_iface->fid_extend(fid, newpos);
         if (extend_rc != UNIFYCR_SUCCESS) {
             return extend_rc;
         }
@@ -610,7 +616,7 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
 
     else if (meta->storage == FILE_STORAGE_LOGIO) {
         newpos = filesize + (off_t)count;
-        int extend_rc = unifycr_fid_extend(fid, newpos);
+        int extend_rc = fd_iface->fid_extend(fid, newpos);
         if (extend_rc != UNIFYCR_SUCCESS) {
             return extend_rc;
         }
@@ -619,7 +625,7 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
     }
 
     /* finally write specified data to file */
-    int write_rc = unifycr_fid_write(fid, pos, buf, count);
+    int write_rc = fd_iface->fid_write(fid, pos, buf, count);
 
     if (meta->storage == FILE_STORAGE_LOGIO) {
         unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
@@ -627,35 +633,6 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
             meta->size = newpos;
             meta->real_size = pos + count;
         }
-
-	F_LAYOUT_t *lo = f_get_layout(meta->loid);
-	ASSERT(lo);
-
-	/* commit stripes */
-	unifycr_chunkmeta_t *stripe = meta->chunk_meta;
-	for (int i = 0; i < meta->chunks; i++, stripe++) {
-	    f_stripe_t s = stripe->id;
-	    int rc;
-
-	    ASSERT(stripe->f.in_use);
-
-	    if (stripe->f.written) {
-		if ((rc = f_ah_commit_stripe(lo, s))) {
-		    ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
-			   fd, s, lo->info.name, rc);
-		    return UNIFYCR_FAILURE;
-		}
-		stripe->f.committed = 1;
-	    } else {
-		ASSERT(!stripe->f.committed);
-		if ((rc = f_ah_release_stripe(lo, s))) {
-		    ERROR("fd:%d - failed to release stripe %lu in layout %s, error:%d",
-			   fd, s, lo->info.name, rc);
-		    return UNIFYCR_FAILURE;
-		}
-		stripe->f.in_use = 0;
-	    }
-	}
     }
     return write_rc;
 }
@@ -671,7 +648,7 @@ int UNIFYCR_WRAP(creat)(const char *path, mode_t mode)
         /* create the file */
         int fid;
         off_t pos;
-        int rc = unifycr_fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, mode, &fid, &pos);
+        int rc = fd_iface->fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, mode, &fid, &pos);
         if (rc != UNIFYCR_SUCCESS) {
             return -1;
         }
@@ -726,7 +703,7 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
         /* create the file */
         int fid;
         off_t pos;
-        int rc = unifycr_fid_open(path, flags, mode, &fid, &pos);
+        int rc = fd_iface->fid_open(path, flags, mode, &fid, &pos);
         if (rc != UNIFYCR_SUCCESS) {
             return -1;
         }
@@ -925,27 +902,15 @@ ssize_t UNIFYCR_WRAP(read)(int fd, void *buf, size_t count)
         /* read data from file */
         size_t retcount;
 
-        if (fs_type == FAMFS) {
+        if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
             read_req_t tmp_req;
             tmp_req.buf = buf;
             tmp_req.fid = fd + unifycr_fd_limit;
             tmp_req.length = count;
             tmp_req.offset = filedesc->pos;
+            tmp_req.lid = unifycr_get_meta_from_fid(fd)->loid;
 
-            int ret = unifycr_fd_logreadlist(&tmp_req, 1);
-            if (!ret) {
-                retcount = count;
-            } else {
-                retcount = 0;
-            }
-        } else if (fs_type == UNIFYCR_LOG) {
-            read_req_t tmp_req;
-            tmp_req.buf = buf;
-            tmp_req.fid = fd + unifycr_fd_limit;
-            tmp_req.length = count;
-            tmp_req.offset = filedesc->pos;
-
-            int ret = unifycr_fd_logreadlist(&tmp_req, 1);
+            int ret = fd_iface->fd_logreadlist(&tmp_req, 1);
             if (!ret) {
                 retcount = count;
             } else {
@@ -1053,14 +1018,15 @@ int UNIFYCR_WRAP(lio_listio)(int mode, struct aiocb *const aiocb_list[],
             //does not support write operation currently
             return -1;
         }
-        glb_read_reqs[i].fid = aiocb_list[i]->aio_fildes;
+        int fid = aiocb_list[i]->aio_fildes + unifycr_fd_limit;
+        glb_read_reqs[i].fid = fid;
         glb_read_reqs[i].buf = (char *)aiocb_list[i]->aio_buf;
         glb_read_reqs[i].length = aiocb_list[i]->aio_nbytes;
         glb_read_reqs[i].offset = aiocb_list[i]->aio_offset;
-
+        glb_read_reqs[i].lid = unifycr_get_meta_from_fid(fid)->loid;
     }
 
-    ret = unifycr_fd_logreadlist(glb_read_reqs, nitems);
+    ret = fd_iface->fd_logreadlist(glb_read_reqs, nitems);
     free(glb_read_reqs);
     return ret;
 }
@@ -1416,7 +1382,6 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
               bytes_read = 0, num = 0, bytes_write = 0;
     int *ptr_size = NULL, *ptr_num = NULL;
     int tmp_counter = 0;
-    int delegator;
 
     /*
      * Todo: When the number of read requests exceed the
@@ -1449,7 +1414,7 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
 
     shm_meta_t *tmp_sh_meta;
 
-    int cmd = CMD_READ;
+    int cmd = COMM_READ;
     memcpy(cmd_buf, &cmd, sizeof(int));
     memcpy(cmd_buf + sizeof(int), &(read_req_set.count), sizeof(int));
 
@@ -1554,178 +1519,6 @@ static inline off_t choff_nxt(off_t off) {
     return (chunk_num(off) + 1) << unifycr_chunk_bits;
 }
 
-static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt, fsmd_kv_t  *md, int md_cnt, size_t ttl ) {
-    int i, rc;
-    for (i = 0; i < rq_cnt; i++) {
-        off_t fam_off;
-        size_t fam_len;
-        off_t rq_b = rq[i].offset;
-        off_t rq_e = rq_b + rq[i].length;
-        char *bufp;
-        int j;
-
-        for (j = 0; j < md_cnt; j++) {
-            off_t md_b = md[j].k.offset;
-            off_t md_e = md[j].k.offset + md[j].v.len;
-
-            fam_off = fam_len = 0;
-            if (md[j].k.fid != rq[i].fid) 
-                continue;
-            if (rq_b >= md_b && rq_b < md_e) {
-                // [MD_b ... (rq_b ... MD_e] ... rq_e)
-                // [MD_b ... (rq_b ... rq_e) ... MD_e]  
-                fam_off = md[j].v.addr + (rq_b - md_b);
-                fam_len = min(md_e, rq_e) - rq_b;
-                bufp = rq[i].buf;
-            } else if (rq_e > md_b && rq_b <= md_b) {
-                // (rq_b ... [MD_b ... rq_e) ... MD_e]
-                // (rq_b ... [MD_b ... MD_e] ... rq_e)
-                fam_off = md[j].v.addr;
-                fam_len = min(rq_e, md_e) - md_b;
-                bufp = rq[i].buf + (md_b - rq_b);
-            } else {
-                // not our chunk
-                continue;
-            }
-
-            if (fam_len) {
-                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - rq[i].buf, fam_off,
-                    md[j].v.node, md[j].v.chunk);
-                if ((rc = lf_fam_read(bufp, fam_len, fam_off, md[j].v.node, md[j].v.chunk))) {
-                    ioerr("lf_fam_read failed ret:%d", rc);
-                    return (ssize_t)rc;
-                }
-                ttl -= fam_len;
-            }
-        }
-    }
-    return ttl;
-}
-
-int famfs_read(read_req_t *read_req, int count)
-{
-    int i, j, rc = UNIFYCR_SUCCESS, bytes_read = 0, num = 0, bytes_write = 0;
-    long tot_sz = 0;
-    int delegator;
-    int sh_cursor = 0;
-    shm_meta_t *md_rq;
-    int rq_cnt;
-    read_req_t *rq_ptr;
-    int *rc_ptr = (int *)shm_recvbuf;
-    fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
-
-    f_fattr_t tmp_meta_entry;
-    f_fattr_t *ptr_meta_entry;
-    if (!count)
-        return 0;
-    int lid = read_req[0].lid;
-
-    for (i = 0; i < count; i++) {
-        if (read_req[0].lid != lid) {
-            ERROR("read rqs on different layouts, expected %d, got %d", read_req[0].lid, lid);
-            return -EIO;
-        }
-        read_req[i].fid -= unifycr_fd_limit;
-        tmp_meta_entry.fid = read_req[i].fid;
-
-        ptr_meta_entry = (f_fattr_t *)bsearch(&tmp_meta_entry,
-                         unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                         sizeof(f_fattr_t), compare_fattr);
-        if (ptr_meta_entry != NULL) {
-            read_req[i].fid = ptr_meta_entry->gfid;
-        } else {
-            DEBUG("file %d has no gfid %d record in DB\n", read_req[i].fid, ptr_meta_entry->gfid);
-            return -EBADF;
-        }
-    }
-
-    qsort(read_req, count, sizeof(read_req_t), compare_read_req);
-    if (unifycr_key_slice_range % unifycr_chunk_size) {
-        // If some brain-dead individual created a FS with key range slice not multiples of
-        // chunk size, split reads that cross slice boundary
-        // *** NOTE: this is REALLY stupid and should be discouraged in SOP
-        split_reads_by_slice(read_req, count, &read_req_set);
-        rq_cnt = read_req_set.count;
-        rq_ptr = read_req_set.read_reqs;
-    } else {
-        rq_cnt = count;
-        rq_ptr = read_req_set.read_reqs;
-        memcpy(rq_ptr, read_req, sizeof(read_req_t)*count);
-    }
-
-    md_rq = (shm_meta_t *)(shm_reqbuf);
-    for (i = 0, j = 0; i < rq_cnt; i++) {
-        tot_sz += rq_ptr[i].length;
-
-        while ((rq_ptr[i].offset + rq_ptr[i].length) > choff_nxt(rq_ptr[i].offset)) {
-            md_rq[j].length = choff_nxt(rq_ptr[i].offset) - rq_ptr[i].offset;
-            md_rq[j].src_fid = rq_ptr[i].fid;
-            md_rq[j].offset  = rq_ptr[i].offset;
-            rq_ptr[i].length -= md_rq[j].length;
-            rq_ptr[i].offset += md_rq[j].length;
-            j++;
-        }
-        md_rq[j].length  = rq_ptr[i].length;
-        md_rq[j].src_fid = rq_ptr[i].fid;
-        md_rq[j].offset  = rq_ptr[i].offset;
-        j++;
-    }
-    rq_cnt += j - i;
-
-    if (*rc_ptr) {
-        // Have prev MD in cache, see if anything matches
-        tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
-        if (tot_sz < 0) {
-            printf("lf_read error\n");
-            return (int)tot_sz;
-        }
-        if (!tot_sz)
-            return 0;
-    }
-
-    f_svcrq_t c = {
-       .opcode  = CMD_MDGET,
-       .cid     = local_rank_idx,
-       .md_rcnt = rq_cnt
-    };
-    f_svcrply_t r;
-
-    STATS_START(start);
-    
-    DEBUG("MD/read TMO: poll %d rq:\n", rq_cnt);
-    for (i = 0; i < rq_cnt; i++) {
-        DEBUG("fid %d: %ld(%ld)\n", rq_ptr[i].fid, rq_ptr[i].offset, rq_ptr[i].length);
-    }
-    f_rbq_t *cq = lo_cq[lid];
-    ASSERT(cq);
-    if ((rc = f_rbq_push(cq, &c, RBQ_TMO_1S))) {
-        ERROR("can't push MD_GET cmd, layout %d: %s(%d)", lid, strerror(-rc), rc);
-        return -EIO;
-    }
-    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("can't get reply to MD_GET from layout %d: %s(%d)", lid, strerror(-rc), rc);
-        return -EIO;
-    }
-    if (r.rc) {
-        ERROR("error retrieving file MD: %d", r.rc);
-        return -EIO;
-    }
-    UPDATE_STATS(md_fg_stat, *rc_ptr, *rc_ptr*sizeof(fsmd_kv_t), start);
-
-    tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
-    if (tot_sz < 0) {
-        printf("lf_read error\n");
-        return (int)tot_sz;
-    }
-
-    if (tot_sz) {
-        printf("residual length not 0: %ld\n", tot_sz);
-        return -ENODATA;
-    }
-
-    return 0;
-}
-
 
 ssize_t UNIFYCR_WRAP(pread)(int fd, void *buf, size_t count, off_t offset)
 {
@@ -1743,27 +1536,14 @@ ssize_t UNIFYCR_WRAP(pread)(int fd, void *buf, size_t count, off_t offset)
         }
 
         size_t retcount;
-        if (fs_type == FAMFS) {
+        if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
             read_req_t tmp_req;
             tmp_req.buf = buf;
             tmp_req.fid = fd + unifycr_fd_limit;
             tmp_req.length = count;
             tmp_req.offset = offset;
             tmp_req.lid = unifycr_get_meta_from_fid(fd)->loid;
-            int read_rc =  famfs_read(&tmp_req, 1);
-
-            if (read_rc == 0) {
-                return count;
-            } else {
-                return 0;
-            }
-        } else if (fs_type == UNIFYCR_LOG) {
-            read_req_t tmp_req;
-            tmp_req.buf = buf;
-            tmp_req.fid = fd + unifycr_fd_limit;
-            tmp_req.length = count;
-            tmp_req.offset = offset;
-            int read_rc =  unifycr_fd_logreadlist(&tmp_req, 1);
+            int read_rc =  fd_iface->fd_logreadlist(&tmp_req, 1);
 
             if (read_rc == 0) {
                 return count;
@@ -1880,10 +1660,7 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
     }
 }
 
-static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
-
-#if 0
-static int unifycr_fsync(int fd)
+int unifycr_fsync(int fd)
 {
     if (!*unifycr_indices.ptr_num_entries)
         return 0;
@@ -1894,12 +1671,9 @@ static int unifycr_fsync(int fd)
         if (__real_fsync(unifycr_spilloverblock))
             return -1; /* EIO */
 
-    if (fs_type == FAMFS && allow_merge)
-        famfs_merge_md();
-
-    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
+    if (fs_type == UNIFYCR_LOG) {
         /*put indices to key-value store*/
-        int cmd = CMD_META;
+        int cmd = COMM_META;
         memcpy(cmd_buf, &cmd, sizeof(int));
         int flag = 3;
         memcpy(cmd_buf + sizeof(int), &flag, sizeof(int));
@@ -1922,7 +1696,7 @@ static int unifycr_fsync(int fd)
                             return -1;
                         } else {
                             /**/
-                            if (*((int *)cmd_buf) != CMD_META ||
+                            if (*((int *)cmd_buf) != COMM_META ||
                                 *((int *)cmd_buf + 1) != ACK_SUCCESS) {
                                 return -1;
                             } else {
@@ -1946,87 +1720,6 @@ static int unifycr_fsync(int fd)
     }
     return 0;
 }
-#endif
-
-static int f_fsync(int fd, int on_close) {
-    int rc;
-    f_svcrply_t r;
-    f_svcrq_t c = {
-        .opcode = CMD_META,
-        .cid = local_rank_idx,
-        .md_type = MDRQ_FSYNC
-    };
-
-    if (!*unifycr_indices.ptr_num_entries)
-        return 0;
-
-    STATS_START(start);
-
-    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fd);
-    ASSERT(meta);
-
-    F_LAYOUT_t *lo = f_get_layout(meta->loid);
-    ASSERT(lo);
-
-    /* uncommited stripe? */
-    unifycr_chunkmeta_t *stripe = meta->chunk_meta;
-    for (int i = 0; i < meta->chunks; i++, stripe++) {
-	f_stripe_t s = stripe->id;
-
-	if (!stripe->f.written || stripe->f.committed)
-	    continue;
-
-	if (!stripe->f.in_use) {
-	    ERROR("fd:%d - unallocated stripe %lu in layout %s",
-		  fd, s, lo->info.name);
-	    goto io_err;
-	}
-	if (!stripe->f.written) {
-	    if (on_close &&
-		(rc = f_ah_release_stripe(lo, s)))
-	    {
-		ERROR("fd:%d - failed to release stripe %lu in layout %s, error:%d",
-		      fd, s, lo->info.name, rc);
-		goto io_err;
-	    }
-	} else if (!stripe->f.committed) {
-	    if ((rc = f_ah_commit_stripe(lo, s))) {
-		ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
-		      fd, s, lo->info.name, rc);
-		goto io_err;
-	    }
-	    stripe->f.committed = 1;
-	}
-	if (on_close)
-	    stripe->flags = 0;
-    }
-
-    if (fs_type == FAMFS && allow_merge)
-        famfs_merge_md();
-
-    f_rbq_t *cq = lo_cq[meta->loid];
-    ASSERT(cq);
-
-    if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push cretae file command onto layout %d queue: %s", meta->loid, strerror(-rc));
-        return rc;
-    }
-
-    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for cretae file from layout %d queue: %s", meta->loid, strerror(-rc));
-        return rc;
-    }
-
-    UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
-    *unifycr_indices.ptr_num_entries = 0;
-    //*unifycr_fattrs.ptr_num_entries = 0;
-
-    return r.rc;
-
-io_err:
-    errno = EIO;
-    return -1;
-}
 
 int UNIFYCR_WRAP(fsync)(int fd)
 {
@@ -2040,10 +1733,8 @@ int UNIFYCR_WRAP(fsync)(int fd)
         }
 
         /* transfer ("flush") all modified in-core data to backend device */
-#if 0
-        return unifycr_fsync(fd);
-#endif
-        return f_fsync(fd, 0);
+        return fd_iface->fd_fsync(fd);
+
     } else {
         MAP_OR_FAIL(fsync);
         int ret = UNIFYCR_REAL(fsync)(fd);
@@ -2145,6 +1836,12 @@ void *UNIFYCR_WRAP(mmap)(void *addr, size_t length, int prot, int flags,
             }
         }
 
+        if (fs_type == FAMFS) {
+            fprintf(stderr, "Function not yet supported @ %s:%d\n", __FILE__, __LINE__);
+            errno = ENOSYS;
+            return MAP_FAILED;
+        }
+
         /* TODO: do we need to extend file if offset+length goes past current end? */
 
         /* check that we don't copy past the end of the file */
@@ -2225,6 +1922,8 @@ int UNIFYCR_WRAP(close)(int fd)
 {
     /* check whether we should intercept this file descriptor */
     if (unifycr_intercept_fd(&fd)) {
+        int rc;
+
         DEBUG("closing fd %d\n", fd);
 
         /* TODO: what to do if underlying file has been deleted? */
@@ -2237,14 +1936,16 @@ int UNIFYCR_WRAP(close)(int fd)
         }
 
         /* transfer ("flush") all modified in-core data to backend device */
-#if 0
-        if(unifycr_fsync(fd))
-		return -1; /* EIO */
-#endif
-        int rc = f_fsync(fd, 1);
+
+        rc = fd_iface->fd_fsync(fd);
+        if (rc) {
+            DEBUG("ERROR %d syncing fd:%d - %m", rc, fd);
+            errno = EIO;
+            return -1;
+        }
 
         /* close the file id */
-        int close_rc = unifycr_fid_close(fid);
+        int close_rc = fd_iface->fid_close(fid);
         if (close_rc != UNIFYCR_SUCCESS) {
             errno = EIO;
             return -1;

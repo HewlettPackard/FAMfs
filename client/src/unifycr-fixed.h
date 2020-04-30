@@ -45,6 +45,47 @@
 
 #include "unifycr-internal.h"
 
+
+enum flock_enum {
+    UNLOCKED,
+    EX_LOCKED,
+    SH_LOCKED
+};
+
+#if 0
+typedef struct unifycr_chunkmeta_t_ {
+    int location; /* CHUNK_LOCATION specifies how chunk is stored */
+    off_t id;     /* physical id of chunk in its respective storage */
+} unifycr_chunkmeta_t;
+#endif
+typedef struct unifycr_chunkmeta_t_ {
+    int location; /* CHUNK_LOCATION specifies how chunk is stored */
+    union {
+        int flags;
+        struct {
+            unsigned int in_use:1;      /* we have got it from helper */
+            unsigned int written:1;     /* [partially] written */
+            unsigned int committed:1;   /* been committed */
+        } f;
+    };
+    off_t id;     /* physical id of chunk in its respective storage */
+} __attribute__((aligned(8))) unifycr_chunkmeta_t;
+
+typedef struct unifycr_filemeta_t_ {
+    off_t size;                     /* current file size */
+    off_t real_size;                                /* real size of the file for logio*/
+    int is_dir;                     /* is this file a directory */
+    pthread_spinlock_t fspinlock;   /* file lock variable */
+    enum flock_enum flock_status;   /* file lock status */
+
+    int storage;                    /* FILE_STORAGE specifies file data management */
+
+    off_t chunks;                   /* number of chunks allocated to file */
+    unifycr_chunkmeta_t *chunk_meta; /* meta data for chunks */
+    int loid;                       /* FAMFS layout id */
+
+} unifycr_filemeta_t;
+
 /* if length is greater than reserved space,
  * reserve space up to length */
 int unifycr_fid_store_fixed_extend(
@@ -80,9 +121,5 @@ int unifycr_fid_store_fixed_write(
     const void *buf,         /* user buffer holding data */
     size_t count             /* number of bytes to write */
 );
-
-int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off);
-int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid);
-void famfs_merge_md();
 
 #endif /* UNIFYCR_FIXED_H */

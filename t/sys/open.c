@@ -42,10 +42,16 @@ int main(int argc, char *argv[])
 
     unifycr_root = testutil_get_mount_point();
 
+    /* choose fs type: UNIFYCR_LOG or FAMFS */
+    fs_type_t fs = FAMFS;
+    if (!fs_supported(fs))
+        fs = UNIFYCR_LOG;
+    ok(fs_supported(fs), "no support for FS - check configuration file!");
+
     /*
      * Verify unifycr_mount succeeds.
      */
-    rc = unifycr_mount(unifycr_root, rank, rank_num, 0, /* 1 */ 3);
+    rc = unifycr_mount(unifycr_root, rank, rank_num, 0, fs);
     ok(rc == 0, "unifycr_mount at %s (rc=%d)", unifycr_root, rc);
 
     testutil_rand_path(path, sizeof(path), unifycr_root);

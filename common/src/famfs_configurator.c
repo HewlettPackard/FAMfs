@@ -300,8 +300,12 @@ int unifycr_config_set_defaults(unifycr_cfg_t *cfg)
 
 #define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use) \
     val = stringify(dv);                                        \
-    if (0 != strcmp(val, "NULLSTRING"))                         \
-        cfg->sec##_##key = strdup(val);
+    if (0 != strcmp(val, "NULLSTRING")) {			\
+      if (!strcmp(#typ, "STRING") && val[0] == '\"' && strlen(val) > 1)\
+	cfg->sec##_##key = strndup(val+1, strlen(val)-2);	\
+      else							\
+        cfg->sec##_##key = strdup(val);				\
+    }
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
     /* cfg->n_##sec##_##key[i] = 0; */					\
@@ -632,7 +636,7 @@ int inih_config_handler(void *user,
 	defval = stringify(dv);					\
 	if (curval && strcmp(defval, curval) == 0)		\
 	    free(*v);						\
-	*v = (!strcmp(#typ,"STRING") &&				\
+	*v = (!strcmp(#typ, "STRING") &&			\
 	      val[0]=='\"' && strlen(val)>1)?			\
 		    strndup(val+1, strlen(val)-2) : strdup(val);\
     }
@@ -640,14 +644,14 @@ int inih_config_handler(void *user,
 #define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)	\
     else if ((strcmp(section, #sec) == 0) &&			\
 	     (strcmp(kee, #key) == 0)) {			\
-	curval = cfg->sec##_##key;				\
+	char **v = &cfg->sec##_##key;				\
+	curval = *v;						\
 	defval = stringify(dv);					\
-	if (curval == NULL)					\
-	    cfg->sec##_##key = strdup(val);			\
-	else if (strcmp(defval, curval) == 0) {			\
-	    free(cfg->sec##_##key);				\
-	    cfg->sec##_##key = strdup(val);			\
-	}							\
+	if (curval && strcmp(defval, curval) == 0)		\
+	    free(*v);						\
+	*v = (!strcmp(#typ, "STRING") &&			\
+	      val[0]=='\"' && strlen(val)>1)?			\
+		    strndup(val+1, strlen(val)-2) : strdup(val);\
     }
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\

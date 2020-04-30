@@ -66,7 +66,9 @@
 #include "utlist.h"
 #include "uthash.h"
 
+#include "famfs_global.h"
 #include "famfs_configurator.h"
+
 
 /* TODO: Move common defs to another file ---> */
 #if 1
@@ -252,12 +254,6 @@ typedef struct {
     size_t         _r; /* number of bytes left at pointer */
 } unifycr_stream_t;
 
-enum flock_enum {
-    UNLOCKED,
-    EX_LOCKED,
-    SH_LOCKED
-};
-
 /* TODO: make this an enum */
 #define FILE_STORAGE_NULL        0
 #define FILE_STORAGE_FIXED_CHUNK 1
@@ -268,35 +264,8 @@ enum flock_enum {
 #define CHUNK_LOCATION_MEMFS     1
 #define CHUNK_LOCATION_SPILLOVER 2
 
-#include "famfs_global.h"
 
-typedef struct {
-    int location; /* CHUNK_LOCATION specifies how chunk is stored */
-    union {
-	int flags;
-	struct {
-	    unsigned int in_use:1;	/* we have got it from helper */
-	    unsigned int written:1;	/* [partially] written */
-	    unsigned int committed:1;	/* been committed */
-	} f;
-    };
-    off_t id;     /* physical id of chunk in its respective storage */
-} __attribute__((aligned(8))) unifycr_chunkmeta_t;
-
-typedef struct {
-    off_t size;                     /* current file size */
-    off_t real_size;                                /* real size of the file for logio*/
-    int is_dir;                     /* is this file a directory */
-    pthread_spinlock_t fspinlock;   /* file lock variable */
-    enum flock_enum flock_status;   /* file lock status */
-
-    int storage;                    /* FILE_STORAGE specifies file data management */
-
-    off_t chunks;                   /* number of chunks allocated to file */
-    unifycr_chunkmeta_t *chunk_meta; /* meta data for chunks */
-    int loid;                       /* FAMFS layout id */
-
-} unifycr_filemeta_t;
+struct unifycr_filemeta_t_;
 
 /* path to fid lookup struct */
 typedef struct {
@@ -306,7 +275,7 @@ typedef struct {
 } unifycr_filename_t;
 
 /*unifycr structures*/
-typedef struct {
+typedef struct read_req_t_ {
     int fid;
     int lid;                        /* layout id */
     long offset;
@@ -326,7 +295,6 @@ typedef struct {
     md_index_t *index_entry;
 } unifycr_index_buf_t;
 
-
 typedef struct {
     off_t *ptr_num_entries;
     f_fattr_t *meta_entry;
@@ -337,33 +305,51 @@ typedef struct {
     int count;
 } index_set_t;
 
-typedef enum {
-    UNIFYCRFS,
-    UNIFYCR_LOG,
-    UNIFYCR_STRIPE,
-    FAMFS
-} fs_type_t;
-
 typedef struct {
     read_req_t read_reqs[UNIFYCR_MAX_READ_CNT];
     int count;
 } read_req_set_t;
 
+/* --------------------------------------
+ * sysio/stdio interface: UNIFYCR or FAMFS
+ * --------------------------------------- */
+typedef int (*f_fid_open) (const char *path, int flags, mode_t mode,
+    int *outfid, off_t *outpos);
+typedef int (*f_fid_close) (int fid);
+typedef int (*f_fid_extend) (int fid, off_t length);
+typedef int (*f_fid_shrink) (int fid, off_t length);
+typedef int (*f_fid_write) (int fid, off_t pos, const void *buf, size_t count);
+
+typedef int (*f_fd_logreadlist) (read_req_t *read_req, int count);
+typedef int (*f_fd_fsync) (int fd);
+
+typedef struct f_fd_iface_ {
+    f_fid_open		fid_open;
+    f_fid_close		fid_close;
+    f_fid_extend	fid_extend;
+    f_fid_shrink	fid_shrink;
+    f_fid_write		fid_write;
+    /* direct wrapper fn used in unifycr-sysio.c */
+    f_fd_logreadlist	fd_logreadlist;
+    f_fd_fsync		fd_fsync;
+} F_FD_IFACE_t;
+/* --------------------------------------- */
+
 read_req_set_t read_req_set;
 read_req_set_t tmp_read_req_set;
 index_set_t tmp_index_set;
 
-extern int *local_rank_lst;
-extern int local_rank_cnt;
+//extern int *local_rank_lst;
+//extern int local_rank_cnt;
 extern int local_rank_idx;
-extern int local_del_cnt;
+//extern int local_del_cnt;
 extern int client_sockfd;
 extern struct pollfd cmd_fd;
 extern long shm_req_size;
 extern long shm_recv_size;
 extern char *shm_recvbuf;
 extern char *shm_reqbuf;
-extern fs_type_t fs_type;
+extern int fs_type;
 extern char cmd_buf[GEN_STR_LEN];
 extern char ack_msg[3];
 extern unifycr_fattr_buf_t unifycr_fattrs;
@@ -378,16 +364,8 @@ extern int recvbuf_fd;
 extern int superblock_fd;
 extern long unifycr_key_slice_range;
 
-/* -------------------------------
- * Common includes
- * ------------------------------- */
+extern F_FD_IFACE_t *fd_iface;
 
-/* TODO: move common includes to another file */
-#include "unifycr.h"
-#include "unifycr-stack.h"
-#include "unifycr-fixed.h"
-#include "unifycr-sysio.h"
-#include "unifycr-stdio.h"
 
 /* -------------------------------
  * Global varaible declarations
@@ -395,6 +373,16 @@ extern long unifycr_key_slice_range;
 
 /*definition for unifycr*/
 #define UNIFYCR_CLI_TIME_OUT 5000
+
+typedef enum {
+    COMM_MOUNT,
+    COMM_META,
+    COMM_READ,
+    COMM_UNMOUNT,
+    COMM_DIGEST,
+    COMM_SYNC_DEL,
+    COMM_MDGET,
+} cmd_lst_t;
 
 typedef enum {
     ACK_SUCCESS,
@@ -436,6 +424,7 @@ extern void *free_spillchunk_stack;
 extern char *unifycr_chunks;
 int unifycr_spilloverblock;
 
+
 /* -------------------------------
  * Common functions
  * ------------------------------- */
@@ -461,13 +450,11 @@ int unifycr_stack_lock();
 int unifycr_stack_unlock();
 
 /* normalize full path of a file or directory */
+char *posix_normalized_path(const char *path, char *buf, size_t buf_sz);
 char *normalized_path(const char *path, char *buf, size_t buf_sz);
 
 /* sets flag if the path is a special path */
 int unifycr_intercept_path(const char *path);
-
-int f_layout_of_path(char *path, char *ln);
-char *f_strip_layout(char *path);
 
 /* given an fd, return 1 if we should intercept this file, 0 otherwise,
  * convert fd to new fd value if needed */
@@ -479,9 +466,13 @@ int unifycr_intercept_stream(FILE *stream);
 
 /* given a path, return the file id */
 int unifycr_get_fid_from_path(const char *path);
+int unifycr_get_fid_from_norm_path(const char *norm_path);
 
 /* given a file descriptor, return the file id */
 int unifycr_get_fid_from_fd(int fd);
+
+/* given a file descriptor, calculate MD5 hash and return gfid */
+int unifycr_get_global_fid(const char *path, int *gfid);
 
 /* return address of file descriptor structure or NULL if fd is out
  * of range */
@@ -489,7 +480,11 @@ unifycr_fd_t *unifycr_get_filedesc_from_fd(int fd);
 
 /* given a file id, return a pointer to the meta data,
  * otherwise return NULL */
-unifycr_filemeta_t *unifycr_get_meta_from_fid(int fid);
+struct unifycr_filemeta_t_ *unifycr_get_meta_from_fid(int fid);
+
+/* insert file attribute to attributed share memory buffer */
+int ins_file_meta(unifycr_fattr_buf_t *ptr_f_meta_log,
+                  f_fattr_t *ins_fattr);
 
 /* given an UNIFYCR error code, return corresponding errno code */
 int unifycr_err_map_to_errno(int rc);
@@ -525,7 +520,7 @@ int unifycr_fid_free(int fid);
 
 /* add a new file and initialize metadata
  * returns the new fid, or negative value on error */
-int unifycr_fid_create_file(const char *path, int loid);
+//int unifycr_fid_create_file(const char *path, int loid);
 
 /* add a new directory and initialize metadata
  * returns the new fid, or a negative value on error */
@@ -536,24 +531,27 @@ int unifycr_fid_create_directory(const char *path);
  * done before calling this routine */
 int unifycr_fid_read(int fid, off_t pos, void *buf, size_t count);
 
+#if 0
 /* write count bytes from buf into file starting at offset pos,
  * all bytes are assumed to be allocated to file, so file should
  * be extended before calling this routine */
 int unifycr_fid_write(int fid, off_t pos, const void *buf, size_t count);
+#endif
 
 /* given a file id, write zero bytes to region of specified offset
  * and length, assumes space is already reserved */
 int unifycr_fid_write_zero(int fid, off_t pos, off_t count);
 
-/* increase size of file if length is greater than current size,
- * and allocate additional chunks as needed to reserve space for
- * length bytes */
-int unifycr_fid_extend(int fid, off_t length);
-
 /* truncate file id to given length, frees resources if length is
  * less than size and allocates and zero-fills new bytes if length
  * is more than size */
 int unifycr_fid_truncate(int fid, off_t length);
+
+#if 0 /* Moved to F_FD_IFACE_t */
+/* increase size of file if length is greater than current size,
+ * and allocate additional chunks as needed to reserve space for
+ * length bytes */
+int unifycr_fid_extend(int fid, off_t length);
 
 /* opens a new file id with specified path, access flags, and permissions,
  * fills outfid with file id and outpos with position for current file pointer,
@@ -562,6 +560,7 @@ int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
                      off_t *outpos);
 
 int unifycr_fid_close(int fid);
+#endif
 
 /* delete a file id and return file its resources to free pools */
 int unifycr_fid_unlink(int fid);
@@ -580,7 +579,7 @@ int unifycr_match_received_ack(read_req_t *read_req, int count,
                                read_req_t *match_req);
 int unifycr_locate_req(read_req_t *read_req, int count,
                        read_req_t *match_req);
-int lf_connect(char *addr, char *srvc);
-int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta);
+
+int compare_fattr(const void *a, const void *b);
 
 #endif /* UNIFYCR_INTERNAL_H */

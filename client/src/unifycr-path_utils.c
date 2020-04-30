@@ -18,7 +18,7 @@
 
 #include "unifycr-internal.h"
 
-char *normalized_path(const char *path, char *buf, size_t buf_sz)
+char *posix_normalized_path(const char *path, char *buf, size_t buf_sz)
 {
     size_t i, j, k;
     const char *p = path;

@@ -956,8 +956,8 @@ err1:
 		"BoS count:%lu, %u PU per BoS\n",
 	e, m->bosl_sz, m->bosl_entries, m->nr_bosl,
 	m->geometry.bosl_pu_count);
-    printf("  Test variables: rc=%d var=%d ul=%lu ui=%u\n",
-	rc, v, ul, ui);
+    printf("  Test variables: var=%d ul=%lu ui=%u\n",
+	v, ul, ui);
     printf("  Part %u of %u in %spartitioned %s map; interleave:%u entries, %u PUs\n",
 	m->part, m->parts, (m->parts<=1)?"non-":"",
 	f_map_has_globals(m)?"global":"local",
@@ -968,6 +968,7 @@ err0:
     if (tg == 2 || tg == 5)
 	printf("  slab map has %d extent(s)\n", ext);
 err:
+    printf("  rc=%d\n", rc);
     printf("Test %d.%d (pass %d) FAILED\n", tg, t, pass);
     return 1;
 }

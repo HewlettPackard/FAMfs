@@ -210,7 +210,6 @@ int meta_init_indices()
 * the delegator
 * @return success/error code
 */
-#if 0
 int meta_process_attr_set(char *buf, int qid)
 {
     int rc = ULFS_SUCCESS;
@@ -238,7 +237,6 @@ int meta_process_attr_set(char *buf, int qid)
 
     return rc;
 }
-#endif
 
 int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval) {
     int rc = ULFS_SUCCESS;
@@ -271,7 +269,6 @@ int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval) {
 * @param qid: the connection id in poll_set of the delegator
 * @return success/error code
 */
-#if 0
 int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val)
 {
     *fattr_keys[0] = *((int *)(buf + 2 * sizeof(int)));
@@ -300,7 +297,6 @@ int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val)
     mdhim_full_release_msg(bgrm);
     return rc;
 }
-#endif
 
 int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval) {
     *fattr_keys[0] = pcmd->fm_gfid;
@@ -401,7 +397,6 @@ int meta_famattr_get(int fam_id, fam_attr_val_t **val_p)
 * @param qid: the connection id in poll_set of the delegator
 * @return success/error code
 */
-#if 0
 int meta_process_fsync(int qid)
 {
     int i, ret = 0;
@@ -431,21 +426,11 @@ int meta_process_fsync(int qid)
         fsmd_keys[i]->offset = meta_payload[i].file_pos;
         fsmd_vals[i]->addr = meta_payload[i].mem_pos;
         fsmd_vals[i]->len = meta_payload[i].length;
-        if (fam_fs) {
-            fsmd_vals[i]->node  = meta_payload[i].nid;
-            fsmd_vals[i]->chunk = meta_payload[i].cid;
-/*
-        printf("srv: fsync k/v[%d] fid=%ld off=%ld/len=%ld addr=%lu node=%ld chunk=%ld\n", i,
-        fsmd_keys[i]->fid, fsmd_keys[i]->offset, 
-        fsmd_vals[i]->len, fsmd_vals[i]->addr, fsmd_vals[i]->node, fsmd_vals[i]->chunk);
-*/
 
-        } else {
-            fsmd_vals[i]->delegator_id = glb_rank;
-            memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
-            memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
-                   &client_side_id, sizeof(int));
-        }
+        fsmd_vals[i]->delegator_id = glb_rank;
+        memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
+        memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
+               &client_side_id, sizeof(int));
 
         fsmd_ley_lens[i] = sizeof(fsmd_key_t);
         unifycr_val_lens[i] = sizeof(fsmd_val_t);
@@ -557,7 +542,6 @@ _process_fattr:
 
     return ret;
 }
-#endif
 
 int f_do_fsync(f_svcrq_t *pcmd) {
     int i, ret = 0;
@@ -588,18 +572,17 @@ int f_do_fsync(f_svcrq_t *pcmd) {
     for (i = 0; i < num_entries; i++) {
         fsmd_keys[i]->fid = meta_payload[i].fid;
         fsmd_keys[i]->offset = meta_payload[i].file_pos;
-        fsmd_vals[i]->addr = meta_payload[i].mem_pos;
         fsmd_vals[i]->len = meta_payload[i].length;
         if (fam_fs) {
-            fsmd_vals[i]->node  = meta_payload[i].nid;
-            fsmd_vals[i]->chunk = meta_payload[i].cid;
+            fsmd_vals[i]->stripe  = meta_payload[i].sid;
 /*
-        printf("srv: fsync k/v[%d] fid=%ld off=%ld/len=%ld addr=%lu node=%ld chunk=%ld\n", i,
-        fsmd_keys[i]->fid, fsmd_keys[i]->offset, 
-        fsmd_vals[i]->len, fsmd_vals[i]->addr, fsmd_vals[i]->node, fsmd_vals[i]->chunk);
+        printf("srv: fsync k/v[%d] fid=%ld off=%ld/len=%ld stripe=%lu\n",
+        i, fsmd_keys[i]->fid, fsmd_keys[i]->offset,
+        fsmd_vals[i]->len, fsmd_vals[i]->stripe);
 */
 
         } else {
+            fsmd_vals[i]->addr = meta_payload[i].mem_pos;
             fsmd_vals[i]->delegator_id = glb_rank;
             memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
             memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
@@ -770,19 +753,11 @@ int meta_batch_get(int app_id, int client_id,
             tmp_key = (fsmd_key_t *)bgrm->keys[i];
             tmp_val = (fsmd_val_t *)bgrm->values[i];
 
-            if (fam_fs) {
-                /* TODO: Add support for app, client ids in FAMfs */
-                dest_app = 0;
-                dest_client = 0;
-                del_req_set->msg_meta[tot_num].fam_cid = tmp_val->chunk;
-                del_req_set->msg_meta[tot_num].fam_nid = tmp_val->node;
-            } else {
-                memcpy(&dest_app, (char *) & (tmp_val->app_rank_id), sizeof(int));
-                memcpy(&dest_client, (char *) & (tmp_val->app_rank_id)
-                       + sizeof(int), sizeof(int));
-                /* rank of the remote delegator*/
-                del_req_set->msg_meta[tot_num].dest_delegator_rank = tmp_val->delegator_id;
-            }
+            memcpy(&dest_app, (char *) & (tmp_val->app_rank_id), sizeof(int));
+            memcpy(&dest_client, (char *) & (tmp_val->app_rank_id)
+                   + sizeof(int), sizeof(int));
+            /* rank of the remote delegator*/
+            del_req_set->msg_meta[tot_num].dest_delegator_rank = tmp_val->delegator_id;
 
             /* physical offset of the requested file segment on the log file*/
             del_req_set->msg_meta[tot_num].dest_offset = tmp_val->addr;
@@ -855,14 +830,13 @@ int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
         *total_kv = tot_num;
     /*
     for (i = 0; i < *total_kv; i++)
-        printf("srv: got md k/v[%d] fid=%ld off=%jd/len=%jd addr=%jd node=%jd chunk=%jd\n", i, 
-        res_kv[i].k.fid, res_kv[i].k.offset, 
-        res_kv[i].v.len, res_kv[i].v.addr, res_kv[i].v.node, res_kv[i].v.chunk);
+        printf("srv: got md k/v[%d] fid=%ld off=%jd/len=%jd stripe=%lu\n",
+        i, res_kv[i].k.fid, res_kv[i].k.offset,
+        res_kv[i].v.len, res_kv[i].v.stripe);
     */
 
     return rc;
 }
-
 
 void print_bget_indices(int app_id, int cli_id,
                         send_msg_t *index_set, int tot_num)

@@ -12,7 +12,7 @@
 #define UNIFYCR_MAX_FILENAME     ( 128 )
 
 
-typedef struct {
+typedef struct f_fattr_t_ {
     int fid;
     int gfid;
     int loid;                               /* famfs layout id (from config file) */
@@ -57,8 +57,7 @@ typedef struct {
     off_t   mem_pos;
     size_t  length;
     int     fid;
-    int     nid;
-    int     cid;
+    uint64_t sid; /* global stripe number */
 } md_index_t;
 
 typedef struct {
@@ -67,7 +66,7 @@ typedef struct {
 } fsmd_key_t;
 
 typedef struct {
-    unsigned long addr;
+    unsigned long addr; /* famfs: data offset in stripe */
     unsigned long len;
     union {
         struct {
@@ -75,8 +74,8 @@ typedef struct {
             unsigned long app_rank_id; /*include both app and rank id*/
         };
         struct {
-            unsigned long node;
-            unsigned long chunk;
+	    //unsigned long node; /* deprecated */
+	    unsigned long stripe;
         };
     };
 } fsmd_val_t;

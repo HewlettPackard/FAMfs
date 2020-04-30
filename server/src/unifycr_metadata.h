@@ -50,26 +50,23 @@ typedef struct {
     long length;
 } cli_req_t;
 
-extern arraylist_t *ulfs_keys;
-extern arraylist_t *ulfs_vals;
-extern arraylist_t *ulfs_metas;
-
 int meta_sanitize();
 int meta_init_conf(unifycr_cfg_t *cfg, mdhim_options_t **db_opts_p);
 int meta_init_store(mdhim_options_t *db_opts);
+int meta_init_indices();
+int meta_free_indices();
+int meta_famattr_put(int fam_id, fam_attr_val_t *val);
+int meta_famattr_get(int fam_id, fam_attr_val_t **ptr_val);
+int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv);
+
 void print_bget_indices(int app_id, int cli_id,
                         send_msg_t *index_set, int tot_num);
 int meta_process_fsync(int qid);
 int meta_batch_get(int app_id, int client_id,
                    int thrd_id, int dbg_rank, char *shm_reqbuf, int num,
                    msg_meta_t *del_req_set);
-int meta_init_indices();
-int meta_free_indices();
 void print_fsync_indices(fsmd_key_t **keys, fsmd_val_t **vals, long num_entries);
 int meta_process_attr_set(char *ptr_cmd, int qid);
 int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val);
-int meta_famattr_put(int fam_id, fam_attr_val_t *val);
-int meta_famattr_get(int fam_id, fam_attr_val_t **ptr_val);
-int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv);
 
 #endif

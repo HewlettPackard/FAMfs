@@ -187,6 +187,19 @@ int main(int argc, char *argv[])
     if (rc < 0)
         exit(1);
 
+    local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
+
+    /* UNIFYCR_DEFAULT_LOG_FILE */
+    if (server_cfg.log_file == NULL)
+        exit(1);
+    sprintf(dbg_fname, "%s/%s-%d",
+            server_cfg.log_dir, server_cfg.log_file, glb_rank);
+    rc = dbg_open(dbg_fname);
+ fprintf(stderr," dbg_open %s rc:%d\n", dbg_fname, rc);
+    if (rc != ULFS_SUCCESS)
+        fprintf(stderr, "%s", ULFS_str_errno(rc));
+    LOG(LOG_INFO, "log started");
+
     if ((rc = f_set_layouts_info(&server_cfg)) ||
 	(rc = create_lfs_ctx(&lfs_ctx_p)))
     {
@@ -194,6 +207,7 @@ int main(int argc, char *argv[])
         return rc;
     }
     pool = lfs_ctx_p->pool;
+    assert( pool ); /* f_set_layouts_info() must set 'pool' or fail */
     /* DEBUG */
     if (log_print_level > 0 && glb_rank == 0) {
 	unifycr_config_print(&server_cfg, NULL);
@@ -207,17 +221,6 @@ int main(int argc, char *argv[])
 				NodeIsIOnode(&pool->mynode), 1,
 				glb_rank, glb_size);
     assert( pool->zero_ion_rank >= 0 );
-
-    local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
-
-    /* UNIFYCR_DEFAULT_LOG_FILE */
-    if (server_cfg.log_file == NULL)
-        exit(1);
-    sprintf(dbg_fname, "%s-%d", server_cfg.log_file, glb_rank);
-
-    rc = dbg_open(dbg_fname);
-    if (rc != ULFS_SUCCESS)
-        LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
 
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
@@ -237,54 +240,55 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    /* Create admin queue on all nodes */
-    sprintf(qname, "%s-admin", F_CMDQ_NAME);
-    if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &admq, 1))) {
-        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
-        exit(rc);
-    }
+    if (PoolFAMFS(pool)) {
+	/* Create admin queue on all nodes */
+	sprintf(qname, "%s-admin", F_CMDQ_NAME);
+	if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &admq, 1))) {
+	    LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
+	    exit(rc);
+	}
 
-    if (pool->info.layouts_count > F_CMDQ_MAX) {
-        LOG(LOG_ERR, "too many layouts, not enough work queues");
-        exit(1);
-    }
+	if (pool->info.layouts_count > F_CMDQ_MAX) {
+	    LOG(LOG_ERR, "too many layouts, not enough work queues");
+	    exit(1);
+	}
 
-    /* Create command queues and start layout threads only on compute nodes */
-    bzero(rplyq, sizeof(rplyq));
-    if (!f_host_is_ionode(NULL) || NodeForceHelper(&pool->mynode)) {
+	/* Create command queues and start layout threads only on compute nodes */
+	bzero(rplyq, sizeof(rplyq));
+	if (!f_host_is_ionode(NULL) || NodeForceHelper(&pool->mynode)) {
 
-        bzero(lo_thrd, sizeof(lo_thrd));
-        for (int i = 0; i < pool->info.layouts_count; i++) {
-            F_LAYOUT_t *lo = f_get_layout(i);
-            if (lo == NULL) {
-                LOG(LOG_ERR, "get layout [%d] info\n", i);
-                exit(1);
-            }
-            sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
-            if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &cmdq[i], 1))) {
-                LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
-                exit(rc);
-            }
-            LOG(LOG_INFO, "layout %d:%s queue %s created", i, lo->info.name, qname);
-            if ((rc = pthread_create(&lo_thrd[i], NULL, f_command_thrd, cmdq[i]))) {
-                LOG(LOG_ERR, "LO %s svc thread create failed", lo->info.name);
-                exit(rc);
-            }
+	    bzero(lo_thrd, sizeof(lo_thrd));
+	    for (int i = 0; i < pool->info.layouts_count; i++) {
+		F_LAYOUT_t *lo = f_get_layout(i);
 
-        }
-
+		if (lo == NULL) {
+		    LOG(LOG_ERR, "get layout [%d] info\n", i);
+		    exit(1);
+		}
+		sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
+		if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &cmdq[i], 1))) {
+		    LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
+		    exit(rc);
+		}
+		LOG(LOG_INFO, "layout %d:%s queue %s created", i, lo->info.name, qname);
+		if ((rc = pthread_create(&lo_thrd[i], NULL, f_command_thrd, cmdq[i]))) {
+		    LOG(LOG_ERR, "LO %s svc thread create failed", lo->info.name);
+		    exit(rc);
+		}
+	    }
+	}
     }
 
     /* we DO NOT support multiple instances of famfs demon on one node */
     ASSERT(local_rank_idx == 0);
 
-#if 0
-    rc = sock_init_server(local_rank_idx);
-    if (rc != 0) {
-        LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_SOCKET));
-        exit(1);
+    if (PoolUNIFYCR(pool)) {
+	rc = sock_init_server(local_rank_idx);
+	if (rc != 0) {
+	    LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_SOCKET));
+	    exit(1);
+	}
     }
-#endif
 
     if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank,
 			    NodeHasMDS(&pool->mynode))) > 0)
@@ -296,7 +300,6 @@ int main(int argc, char *argv[])
     } else {
         num_mds = 0;
     }
-
 
     /* Fork LF server process if FAM emulation is required */
     if (PoolFAMEmul(pool)) {
@@ -315,24 +318,26 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-/* f_rbq
-    rc = sock_wait_cli_cmd();
-    if (rc != ULFS_SUCCESS) {
-        int ret = sock_handle_error(rc);
-        if (ret != 0) {
-            LOG(LOG_ERR, "%s",
-                ULFS_str_errno(ret));
-            exit(1);
-        }
-    } else {
-        int qid = sock_get_id();
-        if (qid != 0) {
-            exit(1);
-        }
+    if (PoolUNIFYCR(pool)) {
+	rc = sock_wait_cli_cmd();
+	if (rc != ULFS_SUCCESS) {
+	    int ret = sock_handle_error(rc);
+	    if (ret != 0) {
+		LOG(LOG_ERR, "%s",
+		    ULFS_str_errno(ret));
+		exit(1);
+	    }
+	} else {
+	    int qid = sock_get_id();
+	    if (qid != 0) {
+		exit(1);
+	    }
+	}
     }
-*/
-    while (!sm_ready)
-        usleep(10);
+    if (PoolFAMFS(pool)) {
+	while (!sm_ready)
+	    usleep(10);
+    }
 
     /*wait for the service manager to connect to the
      *request manager so that they can exchange control
@@ -356,6 +361,7 @@ int main(int argc, char *argv[])
 
     MPI_Barrier(MPI_COMM_WORLD);
 
+    if (PoolFAMFS(pool)) {
     /* Open libfabric domain and connect to all pool devices */
     if ((rc = lf_clients_init(pool))) {
 	LOG(LOG_ERR, "%d: node %s failed to initialize libfabric device(s), error:%d",
@@ -384,6 +390,8 @@ int main(int argc, char *argv[])
 		LOG(LOG_ERR, "error %d in f_test_helper", rc);
     }
 */
+    }
+
     {
         char fname[256];
         sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
@@ -391,6 +399,7 @@ int main(int argc, char *argv[])
         close(flag);
     }
 
+    if (PoolFAMFS(pool)) {
      while (1) {
         if (exit_flag) {
             LOG(LOG_INFO, "exit flag set");
@@ -400,14 +409,16 @@ int main(int argc, char *argv[])
             LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(-rc), rc);
             exit(1);
         }
-        
+
         if ((rc = f_srv_process_cmd(&acmd, admq->rbq->name, 1))) {
             LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
             continue;
         }
     }
+    }
 
-#if 0
+    /* TODO: Support fs_type=both with delegator command handler thread */
+    if (PoolUNIFYCR(pool)) {
     while (1) {
         rc = sock_wait_cli_cmd();
         if (rc != ULFS_SUCCESS) {
@@ -417,6 +428,7 @@ int main(int argc, char *argv[])
                  * service manager
                  * thread.
                  * */
+ printf("Exit cmd!\n");
                 unifycr_exit();
                 break;
             }
@@ -444,7 +456,7 @@ int main(int argc, char *argv[])
         }
 
     }
-#endif
+    }
 
     unifycr_exit();
 

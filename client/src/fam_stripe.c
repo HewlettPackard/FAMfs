@@ -4,11 +4,7 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#include <malloc.h>
-
 #include "famfs_env.h"
-#include "famfs_stripe.h"
-#include "famfs_lf_connect.h"
 #include "fam_stripe.h"
 
 

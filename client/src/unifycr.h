@@ -68,34 +68,18 @@ typedef struct {
 #define MMAP_OPEN_FLAG O_RDWR|O_CREAT
 #define MMAP_OPEN_MODE 00777
 
-typedef struct {
-    char hostname[HOST_NAME_MAX];
-    int rank;
-} name_rank_pair_t;
+/* fs mount type */
+typedef enum {
+    UNIFYCRFS,
+    UNIFYCR_LOG,
+    FAMFS,
+} fs_type_t;
 
-#if 0
-/* TODO: Separate common code for server and client */
-static int get_del_cnt();
-static int compare_int(const void *a, const void *b);
-static int compare_name_rank_pair(const void *a, const void *b);
-static int find_rank_idx(int rank,
-                         int *local_rank_lst, int local_rank_cnt);
-static int unifycr_init_socket(int proc_id,
-                               int l_num_procs_per_node,
-                               int l_num_del_per_node);
-static int CountTasksPerNode(int rank, int numTasks);
-static int unifycr_init_req_shm(int local_rank_idx, int app_id);
-#endif
 
 int unifycr_mount(const char prefix[], int rank, size_t size,
                   int l_app_id, int subtype);
 int unifycr_unmount(void);
-int unifycr_shutdown(void);
-int compare_fattr(const void *a, const void *b);
 
-
-/* mount memfs at some prefix location */
-int unifycrfs_mount(const char prefix[], size_t size, int rank);
 
 /* get information about the chunk data region
  * for external async libraries to register during their init */
@@ -108,7 +92,10 @@ chunk_list_t *unifycr_get_chunk_list(char *path);
  * and to test above function*/
 void unifycr_print_chunk_list(char *path);
 
+/* FAMFS */
+int unifycr_shutdown(void);
 int famfs_buf_reg(char *buf, size_t len, void **ctx);
 int famfs_buf_unreg(void *ctx);
+int fs_supported(fs_type_t fs);
 
 #endif /* UNIFYCR_H */

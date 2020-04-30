@@ -188,6 +188,7 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define META_DEFAULT_RANGE_SZ MIB
 
 /* Pool and layout defaults */
+#define UNIFYCR_FS_TYPE "famfs"	/* Default fs type */
 #define FAMFS_PDEVS_UUID_DEF	"00000000-0000-4000-8000-000000000000"
 #define UNIFYCR_EXTENT_SIZE	(1 * GIB)
 #define UNIFYCR_EXTENT0_OFFSET	0
@@ -234,7 +235,6 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 
 /* Server */
 #define UNIFYCR_DEFAULT_LOG_FILE famfs.log
-
 #define MAX_META_PER_SEND 524288
 #define ULFS_MAX_FILENAME 128
 #define MAX_PATH_LEN 100

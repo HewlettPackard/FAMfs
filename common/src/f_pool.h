@@ -224,9 +224,13 @@ typedef struct f_pool_ {
 enum f_pool_flags {
     _POOL_BG_ACTIVE,	/* Background task is active. */
     _POOL_FAM_EMUL,	/* FAM device emulation enabled on IO nodes */
+    _POOL_FSTYPE_FAMFS,	/* Server support FAMFS mount option */
+    _POOL_FSTYPE_OLD,	/* Legacy: server support UNIFYCR mount option(s) */
 };
 BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
+BITOPS(Pool, FAMFS,	f_pool_, _POOL_FSTYPE_FAMFS)
+BITOPS(Pool, UNIFYCR,	f_pool_, _POOL_FSTYPE_OLD)
 
 
 //F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx);

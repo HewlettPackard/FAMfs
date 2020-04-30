@@ -61,9 +61,13 @@
 #include <limits.h>
 #define __USE_GNU
 #include <pthread.h>
-#include "famfs_global.h"
+
 #include "unifycr-stdio.h"
 #include "unifycr-internal.h"
+#include "unifycr-sysio.h"
+
+#include "famfs_global.h"
+
 
 static int unifycr_fpos_enabled = 1; /* whether we can use fgetpos/fsetpos */
 
@@ -318,20 +322,20 @@ static int unifycr_fopen(
          * returns UNIFYCR_ERR_NOENT if file does not exist w/o O_CREAT */
         if (plus) {
             /* r+ ==> open file for update (reading and writing) */
-            open_rc = unifycr_fid_open(path, O_RDWR, perms, &fid, &pos);
+            open_rc = fd_iface->fid_open(path, O_RDWR, perms, &fid, &pos);
         } else {
             /* r  ==> open file for reading */
-            open_rc = unifycr_fid_open(path, O_RDONLY, perms, &fid, &pos);
+            open_rc = fd_iface->fid_open(path, O_RDONLY, perms, &fid, &pos);
         }
     } else if (write) {
         if (plus) {
             /* w+ ==> truncate to zero length or create file for update
              * (read/write) */
-            open_rc = unifycr_fid_open(path, O_RDWR | O_CREAT | O_TRUNC, perms, &fid, &pos);
+            open_rc = fd_iface->fid_open(path, O_RDWR | O_CREAT | O_TRUNC, perms, &fid, &pos);
         } else {
             /* w  ==> truncate to zero length or create file for
              * writing */
-            open_rc = unifycr_fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, perms, &fid,
+            open_rc = fd_iface->fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, perms, &fid,
                                        &pos);
         }
     } else if (append) {
@@ -339,12 +343,12 @@ static int unifycr_fopen(
         if (plus) {
             /* a+ ==> append, open or create file for update, at end
              * of file */
-            open_rc = unifycr_fid_open(path, O_RDWR | O_CREAT | O_APPEND, perms, &fid,
+            open_rc = fd_iface->fid_open(path, O_RDWR | O_CREAT | O_APPEND, perms, &fid,
                                        &pos);
         } else {
             /* a  ==> append, open or create file for writing, at end
              * of file */
-            open_rc = unifycr_fid_open(path, O_WRONLY | O_CREAT | O_APPEND, perms, &fid,
+            open_rc = fd_iface->fid_open(path, O_WRONLY | O_CREAT | O_APPEND, perms, &fid,
                                        &pos);
         }
     }
@@ -1816,7 +1820,7 @@ int UNIFYCR_WRAP(fclose)(FILE *stream)
         }
 
         /* close the file */
-        int close_rc = unifycr_fid_close(fid);
+        int close_rc = fd_iface->fid_close(fid);
         if (close_rc != UNIFYCR_SUCCESS) {
             errno = unifycr_err_map_to_errno(close_rc);
             return EOF;
