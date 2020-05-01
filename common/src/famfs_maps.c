@@ -853,10 +853,11 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     if (pthread_rwlock_init(&lo->lock, NULL)) goto _nomem;
     if (pthread_spin_init(&lo->dict_lock, PTHREAD_PROCESS_PRIVATE)) goto _nomem;
     INIT_LIST_HEAD(&lo->list);
-    /* Parse this layout's configurator ID and name */
+    /* Parse this layout's configurator ID and parameters */
     info = &lo->info;
     if (configurator_int_val(c->layout_id[idx][0], &l)) goto _noarg;
     info->conf_id = (unsigned int)l;
+    info->name = strdup(c->layout_name[idx][0]);
     if (configurator_int_val(c->layout_sq_depth[idx][0], &l)) goto _noarg;
     info->sq_depth = (unsigned int)l;
     if (configurator_int_val(c->layout_sq_lwm[idx][0], &l)) goto _noarg;
@@ -885,8 +886,9 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    goto _noarg;
     }
     lo->devlist_sz = info->devnum = (unsigned)count;
-    info->name = strdup(c->layout_name[idx][0]);
+    /* parse layout's moniker */
     if (f_layout_parse_name(info)) goto _noarg;
+    info->stripe_sz = info->chunk_sz*info->data_chunks;
     lo->devlist = (F_POOLDEV_INDEX_t *) calloc(sizeof(F_POOLDEV_INDEX_t),
 	lo->devlist_sz);
     if (!lo->devlist) goto _nomem;

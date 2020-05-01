@@ -266,6 +266,7 @@ BITOPS(LP, RecoverQueued, f_layout_partition_, _LP_RECOVER_QUEUED)
 typedef struct f_layout_info_ {
     char		*name;		/* layout moniker */
     uint64_t		stripe_count;	/* total number of stripes */
+    size_t		stripe_sz;	/* stripe data size, bytes */
     uint32_t		conf_id;	/* layout ID in configuration file */
     uint32_t		chunk_sz;	/* chunk size in bytes */
     uint32_t		slab_stripes;	/* number of stripes in one slab, stripes_in_slab */
