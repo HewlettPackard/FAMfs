@@ -1812,7 +1812,7 @@ static int unifycr_init(int rank)
          * a void* in an fpos_t so check that there's room and at least
          * print a message if this won't work */
         if (sizeof(fpos_t) < sizeof(void *)) {
-            fprintf(stderr, "ERROR: fgetpos/fsetpos will not work correctly.\n");
+            ERROR("ERROR: fgetpos/fsetpos will not work correctly.");
             unifycr_fpos_enabled = 0;
         }
 
@@ -2153,7 +2153,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 
     if (fs_type == FAMFS) {
         if ((rc = f_srv_connect())) {
-            ERROR("rank %d couldn't connect to server: %d", dbg_rank, rc);
+            DEBUG("rank %d couldn't connect to server: %d", dbg_rank, rc);
             return UNIFYCR_FAILURE;
         }
 	rc = f_server_sync();
@@ -2945,7 +2945,7 @@ int fs_supported(fs_type_t fs)
 
     rc = unifycr_config_init(&cfg, 0, NULL);
     if (rc) {
-        ERROR("failed to initialize configuration:%d", rc);
+        DEBUG("failed to initialize configuration:%d", rc);
         return 0;
     }
 

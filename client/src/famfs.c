@@ -383,18 +383,28 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
 
     /* get meta for this file id */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    ASSERT( meta );
     ASSERT( meta->storage == FILE_STORAGE_LOGIO );
+    F_LAYOUT_t *lo = f_get_layout(meta->loid);
+    if (lo == NULL) {
+        DEBUG("fid:%d error: layout id:%d not found!",
+              fid, meta->loid);
+        return UNIFYCR_ERR_IO;
+    }
 
     /* TODO: Add memory region cache for libfabric and translate 'buf' to local descriptor */
 
     /* TODO: Store unifycr_filemeta_t in f-map */
+
     /* get pre-allocated stripe: meta->chunk_meta[chunk_id].id */
-    int chunk_id = meta->size >> unifycr_chunk_bits;
+    size_t stripe_sz = lo->info.stripe_sz;
+    //int chunk_id = meta->size >> unifycr_chunk_bits;
+    int chunk_id = meta->size / stripe_sz;
     /* get pointer to position within first chunk */
-    off_t chunk_offset = meta->size & unifycr_chunk_mask;
+    off_t chunk_offset = meta->size % stripe_sz;
 
     /* determine how many bytes remain in the current chunk */
-    size_t remaining = unifycr_chunk_size - chunk_offset;
+    size_t remaining = stripe_sz - chunk_offset;
     if (count <= remaining) {
         /* all bytes for this write fit within the current chunk */
         rc = f_chunk_write(fid, pos, meta, chunk_id, chunk_offset,
@@ -417,8 +427,8 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
 
             /* compute size to write to this chunk */
             size_t num = count - processed;
-            if (num > unifycr_chunk_size) {
-                num = unifycr_chunk_size;
+            if (num > stripe_sz) {
+                num = stripe_sz;
             }
 
             /* write data */
@@ -992,7 +1002,8 @@ int f_server_sync() {
 
     long data_offset =
         (void *)unifycr_chunks - unifycr_superblock;
-    long data_size = (long)unifycr_max_chunks * unifycr_chunk_size;
+    //long data_size = (long)unifycr_max_chunks * unifycr_chunk_size;
+    long data_size = 0;
 
     char external_spill_dir[UNIFYCR_MAX_FILENAME] = {0};
     strcpy(external_spill_dir, external_data_dir);
@@ -1415,7 +1426,7 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
         event = &chunk->w_event;
     }
 
-    ASSERT(chunk_offset + len <= unifycr_chunk_size);
+    ASSERT(chunk_offset + len <= lo->info.stripe_sz);
     //ASSERT(dst_node == 'chunk # in stripe');
     ASSERT(dst_node < pool->info.dev_count);
 //    if (trg_ni)
@@ -1793,14 +1804,26 @@ static int famfs_fid_extend(int fid, off_t length)
 {
     /* get meta data for this file */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    ASSERT( meta );
+    ASSERT( meta->storage == FILE_STORAGE_LOGIO );
+    F_LAYOUT_t *lo = f_get_layout(meta->loid);
+    if (lo == NULL) {
+        DEBUG("fid:%d error: layout id:%d not found!",
+              fid, meta->loid);
+        return UNIFYCR_ERR_IO;
+    }
+    size_t stripe_sz = lo->info.stripe_sz;
 
+    /* TODO: Get file max size */
     /* determine whether we need to allocate more chunks */
-    off_t maxsize = meta->chunks << unifycr_chunk_bits;
+    //off_t maxsize = meta->chunks << unifycr_chunk_bits;
+    off_t maxsize = meta->chunks*stripe_sz;
 //      printf("rank %d,meta->chunks is %d, length is %ld, maxsize is %ld\n", dbgrank, meta->chunks, length, maxsize);
     if (length > maxsize) {
         /* compute number of additional bytes we need */
         off_t additional = length - maxsize;
         while (additional > 0) {
+            /* TODO: Remove me! */
             /* check that we don't overrun max number of chunks for file */
             if (meta->chunks == unifycr_max_chunks + unifycr_spillover_max_chunks) {
                 return UNIFYCR_ERR_NOSPC;
@@ -1814,7 +1837,7 @@ static int famfs_fid_extend(int fid, off_t length)
 
             /* increase chunk count and subtract bytes from the number we need */
             meta->chunks++;
-            additional -= unifycr_chunk_size;
+            additional -= stripe_sz;
         }
     }
 
@@ -1826,13 +1849,20 @@ static int famfs_fid_shrink(int fid, off_t length)
 {
     /* get meta data for this file */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    ASSERT( meta );
+    ASSERT( meta->storage == FILE_STORAGE_LOGIO );
     F_LAYOUT_t *lo = f_get_layout(meta->loid);
-    ASSERT( lo );
+    if (lo == NULL) {
+        DEBUG("fid:%d error: layout id:%d not found!",
+              fid, meta->loid);
+        return UNIFYCR_ERR_IO;
+    }
+    size_t stripe_sz = lo->info.stripe_sz;
 
     /* determine the number of chunks to leave after truncating */
     off_t num_chunks = 0;
     if (length > 0) {
-        num_chunks = (length >> unifycr_chunk_bits) + 1;
+        num_chunks = DIV_CEIL(length, stripe_sz);
     }
 
     /* clear off any extra chunks */
@@ -1914,15 +1944,17 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     ASSERT( meta );
     F_LAYOUT_t *lo = f_get_layout(meta->loid);
     if (lo == NULL) {
-        ERROR("fid:%d error: layout id:%d not found!",
+        DEBUG("fid:%d error: layout id:%d not found!",
               lid, meta->loid);
-        return -EIO;
+        errno = EIO;
+        return -1;
     }
     for (i = 0; i < count; i++) {
         if (read_req[0].lid != lid) {
-            ERROR("read rqs on different layouts, expected %d, got %d",
+            DEBUG("read rqs on different layouts, expected %d, got %d",
                   read_req[0].lid, lid);
-            return -EIO;
+            errno = EIO;
+            return -1;
         }
 
         read_req[i].fid -= unifycr_fd_limit;
@@ -1934,9 +1966,10 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         if (ptr_meta_entry != NULL) {
             read_req[i].fid = ptr_meta_entry->gfid;
         } else {
-            ERROR("file %d has no gfid %d record in DB",
+            DEBUG("file %d has no gfid %d record in DB",
                   read_req[i].fid, ptr_meta_entry->gfid);
-            return -EBADF;
+            errno = EBADF;
+            return -1;
         }
     }
 
@@ -1958,7 +1991,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         memcpy(rq_ptr, read_req, sizeof(read_req_t)*count);
 //    }
 
-    size_t stripe_sz = lo->info.chunk_sz*lo->info.data_chunks;
+    size_t stripe_sz = lo->info.stripe_sz;
     md_rq = (shm_meta_t *)(shm_reqbuf);
     for (i = 0, j = 0; i < rq_cnt; i++) {
         tot_sz += rq_ptr[i].length;
