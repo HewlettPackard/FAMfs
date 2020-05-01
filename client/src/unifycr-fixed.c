@@ -149,11 +149,6 @@ static inline void *unifycr_compute_chunk_buf(
     return (void *)buf;
 }
 
-static inline f_stripe_t physical_stripe(const unifycr_filemeta_t *meta, int logical_id)
-{
-    return meta->chunk_meta[logical_id].id;
-}
-
 /* given a chunk id and an offset within that chunk, return the offset
  * in the spillover file corresponding to that location */
 static inline off_t unifycr_compute_spill_offset(

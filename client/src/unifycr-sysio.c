@@ -1500,26 +1500,6 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
     return rc;
 }
 
-void static split_reads_by_slice(read_req_t *rq, int n, read_req_set_t *rset) {
-    printf("SPLIT!!!\n");
-    memcpy(rset->read_reqs, rq, sizeof(read_req_t)*n);
-    rset->count = n;
-    return;
-}
-
-static inline off_t chunk_num(off_t off) {
-    return off >> unifycr_chunk_bits;
-}
-
-static inline off_t choff_cur(off_t off) {
-    return chunk_num(off) << unifycr_chunk_bits;
-}
-
-static inline off_t choff_nxt(off_t off) {
-    return (chunk_num(off) + 1) << unifycr_chunk_bits;
-}
-
-
 ssize_t UNIFYCR_WRAP(pread)(int fd, void *buf, size_t count, off_t offset)
 {
     /* equivalent to read(), except that it shall read from a given
