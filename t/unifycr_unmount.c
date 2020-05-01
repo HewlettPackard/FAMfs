@@ -23,7 +23,8 @@ int main(int argc, char *argv[])
     fs_type_t fs = FAMFS;
     if (!fs_supported(fs))
         fs = UNIFYCR_LOG;
-    ok(fs_supported(fs), "no support for FS - check configuration file!");
+    ok(fs_supported(fs), "support for %s - checking configuration file",
+       fs==FAMFS?"FAMFS":"UNIFYCR_LOG");
 
     /*
      * Verify unifycr_mount succeeds.
