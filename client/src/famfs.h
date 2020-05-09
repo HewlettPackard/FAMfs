@@ -31,7 +31,7 @@ int famfs_report_storage(int fid, size_t *total, size_t *free);
 int famfs_fid_create_file(const char *path, const char *fpath, int loid);
 
 int lf_connect(char *addr, char *srvc);
-int lf_fam_read(char *buf, size_t len, off_t fam_off, unsigned long sid);
+int lf_fam_read(F_LAYOUT_t *lo, char *buf, size_t len, off_t stripe_offset, f_stripe_t s);
 int famfs_read(struct read_req_t_ *read_req, int count);
 int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta);
 void famfs_merge_md();

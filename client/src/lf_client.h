@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018, HPE
+ * Copyright (c) 2017-2020, HPE
  *
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #include "famfs_lf_connect.h"
-//#include "famfs_stripe.h"
+#include "famfs_stripe.h"
 #include "famfs_stats.h"
 #include "f_pool.h"
 

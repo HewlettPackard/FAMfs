@@ -108,6 +108,13 @@ do { \
                __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
 } while (0)
 
+#define DEBUG_LVL(lvl, fmt, ...) \
+do { \
+    if (unifycr_debug_level >= lvl) \
+        printf("unifycr: %s:%d: %s: " fmt "\n", \
+               __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
+} while (0)
+
 /* define a macro to capture function name, file name, and line number
  * along with user-defined string */
 #define UNIFYCR_UNSUPPORTED(fmt, args...) \

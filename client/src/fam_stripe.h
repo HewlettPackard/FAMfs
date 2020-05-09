@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018, HPE
+ * Copyright (c) 2017-2020, HPE
  *
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
@@ -12,10 +12,12 @@
 
 #include "famfs_stripe.h"
 
+#include "f_layout.h"
 
-/* FAM API */
-N_CHUNK_t *get_fam_chunk(uint64_t ionode_chunk_id, struct n_stripe_ *stripe, int *dest_node_idx);
-//void map_stripe_chunks(N_STRIPE_t *stripe, unsigned int extent);
+
+/* FAM stripe API */
+N_CHUNK_t *get_fam_chunk(N_STRIPE_t *stripe, f_stripe_t s, uint64_t offset);
+int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s);
 void free_fam_stripe(N_STRIPE_t *stripe);
 
 #endif /* FAM_STRIPE_H */

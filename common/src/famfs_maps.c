@@ -101,16 +101,20 @@ int f_create_persistent_cv(int layout_id, int intl, F_MAP_INFO_t *mapinfo)
 }
 
 ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
-    uint64_t *off_p)
+    uint64_t *off_p, int op)
 {
 	ssize_t ret;
 
-	keys[0] = *off_p;
-	/* If size > 1 && keys[1] != 0, Op := MDHIM_GET_EQ,
-	otherwise Op := MDHIM_GET_NEXT */
-	ret = meta_iface->bget_fn(buf, map_id, size, keys);
-	if (ret > 0)
+	/* search key */
+	if (off_p)
+		keys[0] = *off_p;
+
+	ret = meta_iface->bget_fn(buf, map_id, size, keys, op);
+
+	/* store the next key */
+	if (off_p && ret > 0)
 		*off_p = keys[ret-1] + 1U;
+
 	return ret;
 }
 
@@ -221,6 +225,12 @@ struct f_pool_dev_ *f_find_pdev(unsigned int media_id) {
     return (media_id > p->info.pdev_max_idx)? NULL:
 	( (p->info.pdi_by_media[media_id] == F_PDI_NONE)? NULL:
 	  &p->devlist[ p->info.pdi_by_media[media_id] ]);
+}
+
+/* Convert the layout 'pdi' to pool device 'pdev' */
+struct f_pool_dev_ *f_pdi_to_pdev(struct f_pool_ *p, struct f_pooldev_index_ *pdi) {
+    return &((F_POOL_DEV_t (*)[p->ag_devs]) p->devlist)
+					    [pdi->idx_ag][pdi->idx_dev];
 }
 
 static int cmp_pdev_by_index(const void *a, const void *b)

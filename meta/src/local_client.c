@@ -38,32 +38,51 @@
 #include "mdhim.h"
 #include "local_client.h"
 
+#include "famfs_error.h"
+#include "list.h"
+
+
+/* the caller must hold receive_msg_mutex */
+static void *unqueue(struct list_head *msg_list, void *msg_tag) {
+	struct mdhim_basem_t *msg;
+
+	list_for_each_entry(msg, msg_list, rcv_msg_item) {
+		if (msg->rcv_msg_tag == msg_tag) {
+			list_del(&msg->rcv_msg_item);
+			return msg;
+		}
+	}
+	return NULL;
+}
+
 /**
  * get_msg_self
- * Gets a message from the range server if we are waiting to hear back from ourselves 
- * This means that the range server is running in the same process as the caller, 
- * but on a different thread  
+ * Gets a message from the range server if we are waiting to hear back from ourselves
+ * This means that the range server is running in the same process as the caller,
+ * but on a different thread
  *
  * @param md the main mdhim struct
  * @return a pointer to the message received or NULL
  */
-static void *get_msg_self(struct mdhim_t *md) {
+static void *get_msg_self(struct mdhim_t *md, void *msg_tag) {
 	void *msg;
-	
+
 	//Lock the receive msg mutex
 	pthread_mutex_lock(md->receive_msg_mutex);
 	//Wait until there is a message to receive
-	if (!md->receive_msg) {
+	while ((msg = unqueue(&md->receive_msg_list, msg_tag)) == NULL) {
 		pthread_cond_wait(md->receive_msg_ready_cv, md->receive_msg_mutex);
 	}
-	
+	ASSERT( md->receive_msg_cnt > 0 );
+	md->receive_msg_cnt--;
+
 	//Get the message
-	msg = md->receive_msg;
+	//msg = md->receive_msg;
 	//Set the message queue to null
-	md->receive_msg = NULL;
+	//md->receive_msg = NULL;
 	//unlock the mutex
 	pthread_mutex_unlock(md->receive_msg_mutex);
-	
+
 	return msg;
 }
 
@@ -78,6 +97,7 @@ struct mdhim_rm_t *local_client_put(struct mdhim_t *md, struct mdhim_putm_t *pm)
 	int ret;
 	struct mdhim_rm_t *rm;
 	work_item *item;
+	void *rcv_msg_tag = pm;
 
 	if ((item = malloc(sizeof(work_item))) == NULL) {
 		mlog(MDHIM_CLIENT_CRIT, "Error while allocating memory for client");
@@ -91,8 +111,8 @@ struct mdhim_rm_t *local_client_put(struct mdhim_t *md, struct mdhim_putm_t *pm)
 		mlog(MDHIM_CLIENT_CRIT, "Error adding work to range server in local_client_put");
 		return NULL;
 	}
-	
-	rm = (struct mdhim_rm_t *) get_msg_self(md);
+
+	rm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
 	// Return response
 
 	return rm;
@@ -109,7 +129,8 @@ struct mdhim_rm_t *local_client_bput(struct mdhim_t *md, struct mdhim_bputm_t *b
 	int ret;
 	struct mdhim_rm_t *brm;
 	work_item *item;
-        
+	void *rcv_msg_tag = bpm;
+
 	if ((item = malloc(sizeof(work_item))) == NULL) {
 		mlog(MDHIM_CLIENT_CRIT, "Error while allocating memory for client");
 		return NULL;
@@ -121,8 +142,8 @@ struct mdhim_rm_t *local_client_bput(struct mdhim_t *md, struct mdhim_bputm_t *b
 		mlog(MDHIM_CLIENT_CRIT, "Error adding work to range server in local_client_put");
 		return NULL;
 	}
-	
-	brm = (struct mdhim_rm_t *) get_msg_self(md);
+
+	brm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
 
 	// Return response
 	return brm;
@@ -139,6 +160,7 @@ struct mdhim_bgetrm_t *local_client_bget(struct mdhim_t *md, struct mdhim_bgetm_
 	int ret;
 	struct mdhim_bgetrm_t *rm;
 	work_item *item;
+	void *rcv_msg_tag = bgm;
 
 	if ((item = malloc(sizeof(work_item))) == NULL) {
 		mlog(MDHIM_CLIENT_CRIT, "Error while allocating memory for client");
@@ -151,8 +173,8 @@ struct mdhim_bgetrm_t *local_client_bget(struct mdhim_t *md, struct mdhim_bgetm_
 		mlog(MDHIM_CLIENT_CRIT, "Error adding work to range server in local_client_put");
 		return NULL;
 	}
-	
-	rm = (struct mdhim_bgetrm_t *) get_msg_self(md);
+
+	rm = (struct mdhim_bgetrm_t *) get_msg_self(md, rcv_msg_tag);
 
 	// Return response
 	return rm;
@@ -169,6 +191,7 @@ struct mdhim_bgetrm_t *local_client_bget_op(struct mdhim_t *md, struct mdhim_get
 	int ret;
 	struct mdhim_bgetrm_t *rm;
 	work_item *item;
+	void *rcv_msg_tag = gm;
 
 	if ((item = malloc(sizeof(work_item))) == NULL) {
 		mlog(MDHIM_CLIENT_CRIT, "Error while allocating memory for client");
@@ -181,8 +204,8 @@ struct mdhim_bgetrm_t *local_client_bget_op(struct mdhim_t *md, struct mdhim_get
 		mlog(MDHIM_CLIENT_CRIT, "Error adding work to range server in local_client_put");
 		return NULL;
 	}
-	
-	rm = (struct mdhim_bgetrm_t *) get_msg_self(md);
+
+	rm = (struct mdhim_bgetrm_t *) get_msg_self(md, rcv_msg_tag);
 
 	// Return response
 	return rm;
@@ -199,6 +222,7 @@ struct mdhim_rm_t *local_client_commit(struct mdhim_t *md, struct mdhim_basem_t 
 	int ret;
 	struct mdhim_rm_t *rm;
 	work_item *item;
+	void *rcv_msg_tag = cm;
 
 	if ((item = malloc(sizeof(work_item))) == NULL) {
 		mlog(MDHIM_CLIENT_CRIT, "Error while allocating memory for client");
@@ -211,8 +235,8 @@ struct mdhim_rm_t *local_client_commit(struct mdhim_t *md, struct mdhim_basem_t 
 		mlog(MDHIM_CLIENT_CRIT, "Error adding work to range server in local_client_put");
 		return NULL;
 	}
-	
-	rm = (struct mdhim_rm_t *) get_msg_self(md);
+
+	rm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
 	// Return response
 
 	return rm;
@@ -229,6 +253,7 @@ struct mdhim_rm_t *local_client_delete(struct mdhim_t *md, struct mdhim_delm_t *
 	int ret;
 	struct mdhim_rm_t *rm;
 	work_item *item;
+	void *rcv_msg_tag = dm;
 
 	if ((item = malloc(sizeof(work_item))) == NULL) {
 		mlog(MDHIM_CLIENT_CRIT, "Error while allocating memory for client");
@@ -241,8 +266,8 @@ struct mdhim_rm_t *local_client_delete(struct mdhim_t *md, struct mdhim_delm_t *
 		mlog(MDHIM_CLIENT_CRIT, "Error adding work to range server in local_client_put");
 		return NULL;
 	}
-	
-	rm = (struct mdhim_rm_t *) get_msg_self(md);
+
+	rm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
 
 	// Return response
 	return rm;
@@ -260,6 +285,7 @@ struct mdhim_rm_t *local_client_bdelete(struct mdhim_t *md, struct mdhim_bdelm_t
 	int ret;
 	struct mdhim_rm_t *brm;
 	work_item *item;
+	void *rcv_msg_tag = bdm;
 
 	if ((item = malloc(sizeof(work_item))) == NULL) {
 		mlog(MDHIM_CLIENT_CRIT, "Error while allocating memory for client");
@@ -272,8 +298,9 @@ struct mdhim_rm_t *local_client_bdelete(struct mdhim_t *md, struct mdhim_bdelm_t
 		mlog(MDHIM_CLIENT_CRIT, "Error adding work to range server in local_client_put");
 		return NULL;
 	}
-	
-	brm = (struct mdhim_rm_t *) get_msg_self(md);
+
+	brm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
+	ASSERT( brm->basem.mtype == MDHIM_RECV );
 
 	// Return response
 	return brm;

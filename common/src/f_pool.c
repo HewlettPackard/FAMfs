@@ -31,6 +31,23 @@ F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx)
 }
 #endif
 
+/* Convert pool device index in devlist[] to this device index in info.pdev_indexes[],
+  i.e. reverse lookup in info.pdev_indexes[] */
+int f_pdev_to_indexes(F_POOL_t *p, int pdev_idx) {
+    F_POOL_INFO_t *info = &p->info;
+    uint16_t *pd_idx = info->pdev_indexes;
+    uint32_t i, dev_count = info->dev_count;
+
+    if (!IN_RANGE(pdev_idx, 0, (int)(p->pool_devs-1)))
+	return -1;
+
+    for (i = 0; i < dev_count; i++, pd_idx++) {
+	if (*pd_idx == pdev_idx)
+	    return i;
+    }
+    return -1;
+}
+
 F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id)
 {
     uint16_t idx;
@@ -185,22 +202,6 @@ int lf_servers_init(F_POOL_t *p)
 	}
     }
 
-#if 0
-    if (params->lf_mr_flags.prov_key) {
-	/* For each partition */
-	for (part = 0; part < srv_cnt; part++) {
-	    lf_client_idx = node_id;
-	    params->mr_prov_keys[lf_client_idx] = lf_servers[part]->lf_client->mr_key;
-	}
-    }
-    if (params->lf_mr_flags.virt_addr) {
-	/* For each partition */
-	for (part = 0; part < srv_cnt; part++) {
-	    lf_client_idx = node_id;
-	    params->mr_virt_addrs[lf_client_idx] = (uint64_t) lf_servers[part]->virt_addr;
-	}
-    }
-#endif
     if (verbose) {
 	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
 		lf_info->mrreg.scalable, lf_info->mrreg.local, lf_info->mrreg.basic,

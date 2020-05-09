@@ -235,6 +235,7 @@ BITOPS(Pool, UNIFYCR,	f_pool_, _POOL_FSTYPE_OLD)
 
 //F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx);
 F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id);
+int f_pdev_to_indexes(F_POOL_t *p, int pdev_idx);
 
 int lf_clients_init(F_POOL_t *p);
 void lf_clients_free(F_POOL_t *p);

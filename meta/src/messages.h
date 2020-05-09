@@ -43,6 +43,7 @@ extern "C"
 {
 #endif
 #include "range_server.h"
+#include "list.h"
 
 /* Message Types */
 
@@ -101,12 +102,15 @@ struct mdhim_t;
 /* Base message */
 struct mdhim_basem_t {
 	//Message type
-	int mtype; 
+	int mtype;
 	int server_rank;
 	int size;
 	int index;
 	int index_type;
 	char *index_name;
+	//RS response queue
+	void *rcv_msg_tag;
+	struct list_head rcv_msg_item;
 };
 typedef struct mdhim_basem_t mdhim_basem_t;
 

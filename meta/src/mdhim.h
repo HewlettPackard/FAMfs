@@ -50,6 +50,8 @@
 #include "indexes.h"
 #include "mdhim_private.h"
 
+#include "list.h"
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -102,7 +104,10 @@ struct mdhim_t {
 	pthread_cond_t *receive_msg_ready_cv;
 	/* The receive msg, which is sent to the client by the
 	   range server running in the same process */
-	void *receive_msg;
+	//void *receive_msg;
+	int receive_msg_cnt;
+	struct list_head receive_msg_list;
+
         //Options for DB creation
         mdhim_options_t *db_opts;
 };
@@ -162,7 +167,6 @@ struct mdhim_brm_t *mdhimDelete(struct mdhim_t *md, struct index_t *index,
 struct mdhim_brm_t *mdhimBDelete(struct mdhim_t *md, struct index_t *index,
 				 void **keys, int *key_lens,
 				 int num_keys);
-void mdhim_release_recv_msg(void *msg);
 struct secondary_info *mdhimCreateSecondaryInfo(struct index_t *secondary_index,
 						void **secondary_keys, int *secondary_key_lens,
 						int num_keys, int info_type);
@@ -177,7 +181,7 @@ int mdhimSanitize(char *dbfilename, char *statfilename, char *manifestfilename);
 int rmrf(char *path);
 
 ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *buf,
-    size_t size, uint64_t *keys);
+    size_t size, uint64_t *keys, int op);
 int mdhim_ps_bput(struct mdhim_t *md, struct index_t *index, unsigned long *buf,
     size_t size, void **keys, size_t value_len);
 int mdhim_ps_bdel(struct mdhim_t *md, struct index_t *index, size_t size,

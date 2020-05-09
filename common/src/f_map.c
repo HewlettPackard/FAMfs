@@ -589,10 +589,9 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 				   map_id, part, *off);
 
 			/* BGET/MDHIM_GET_NEXT pu_per_bos entries */
-			if (pu_per_bos > 1)
-				keys[1] = 0;
 			size = pu_per_bos;
-			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, off);
+			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, off,
+					    F_PS_GET_NEXT);
 			if (rcv_cnt < 0) {
 				ret = (int) rcv_cnt;
 				goto _exit;
@@ -719,7 +718,7 @@ int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *keyset)
 	size_t size;
 	size_t total = 0, pu_cnt = 0;
 	ssize_t rcv_cnt;
-	uint64_t offset, *keys;
+	uint64_t *keys;
 	int map_id, ret = -ENOMEM;
 
 	if (map == NULL)
@@ -729,7 +728,7 @@ int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *keyset)
 
 	parts = map->parts;
 	pu_per_bos = map->geometry.bosl_pu_count;
-	keys = (uint64_t *) calloc(pu_per_bos, sizeof(uint64_t));
+	keys = (uint64_t *) malloc(pu_per_bos*sizeof(uint64_t));
 	kset_parted = (F_MAP_KEYSET_t *) calloc(1, sizeof(F_MAP_KEYSET_t));
 	/* Allocate I/O buffer */
 	bos_buf = bosl_page_alloc(map->bosl_sz);
@@ -756,27 +755,21 @@ int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *keyset)
 
 		while (count > 0) {
 
-			/* BGET/MDHIM_GET_EQ size entries */
-			offset = kset_parted->keys_64[k++]; /* key[0] */
+			/* BGET/MDHIM_GET_EQ 'size' keys */
 			size = count>pu_per_bos? pu_per_bos:count;
-			for (i = 1; i < size; i++)
+
+			dbg_printf("update map id:%d part:%u %zu keys:",
+				   map_id, part, size);
+			for (i = 0; i < size; i++) {
 				keys[i] = kset_parted->keys_64[k++];
+				dbg_printf(" %lu", keys[i]);
+			}
+			dbg_printf("\n");
 
-			dbg_printf("update map id:%d part:%u %zu keys: %lu..\n",
-				   map_id, part, size, offset);
-
-			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, &offset);
+			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, NULL,
+					    F_PS_GET_EQ);
 			if (rcv_cnt != (ssize_t)size) {
 				ret = rcv_cnt<0? rcv_cnt:-ENOENT;
-				goto _exit;
-			}
-			/* TODO: Remove me! */
-			if (size == 1 && offset-1 != kset_parted->keys_64[k-1])
-			{
-				err("ENOENT! key:%lu %lu",
-				    kset_parted->keys_64[k-1], offset-1);
-				assert( 0 );
-				ret = -ENOENT;
 				goto _exit;
 			}
 			count -= size;
@@ -1087,8 +1080,11 @@ int f_map_flush(F_MAP_t *map)
 			    ret = f_db_bput(buf, map_id, &keysp[st],
 					    bunch, value_len);
 			}
-			if (ret)
+			if (ret) {
+			    printf("map id:%d flush DB error:%d on %s\n",
+				   map_id, ret, clean?"bdel":"bput");
 			    goto _err;
+			}
 
 			clean = !clean;
 			st = i;

@@ -453,13 +453,14 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
     F_POOL_t *pool = lo->pool;
     struct cb_data cbdata;
     int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
-    int e_sz, chunks, rc;
+    int e_sz, rc;
 
     LOG(LOG_DBG, "%s: loading global slabmap", lo->info.name);
 
-    chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
-    e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
-    lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
+    //chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk
+    //e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
+    e_sz = F_SLABMAP_ENTRY_SZ(lo->info.chunks);
+    lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, F_SLABMAP_BOSL_SZ, 0);
     if (!lo->slabmap) return -EINVAL;
 
     rc = f_map_init_prt(lo->slabmap, lo->part_count, part, 0, 1);

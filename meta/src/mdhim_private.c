@@ -387,7 +387,6 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 		if ((op == MDHIM_GET_EQ || op == MDHIM_GET_PRIMARY_EQ || op == MDHIM_RANGE_BGET) &&
 		    index->type != LOCAL_INDEX &&
 		    (rl = get_range_servers(md, index, keys[i], key_lens[i])) == NULL) {
-			printf("here\n"); fflush(stdout);
 			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
 			     "Error while determining range server in mdhimBget",
 			     md->mdhim_rank);
@@ -434,7 +433,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 					lbgm = bgm;
 				}
 			}
-		
+
 			//Add the key, lengths, and data to the message
 			bgm->keys[bgm->num_keys] = keys[i];
 			bgm->key_lens[bgm->num_keys] = key_lens[i];
@@ -685,6 +684,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 	if (lbdm) {
 		rm = local_client_bdelete(md, lbdm);
 		brm = malloc(sizeof(struct mdhim_brm_t));
+		/* TODO: Add check for brm==NULL when ENOMEM */
 		brm->error = rm->error;
 		brm->basem.mtype = rm->basem.mtype;
 		brm->basem.index = rm->basem.index;

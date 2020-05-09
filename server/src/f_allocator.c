@@ -2650,7 +2650,7 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	int chunk_size_factor   = F_CHUNK_SIZE_MAX / lo->info.chunk_sz;
 	size_t slab_usage_size, cv_bmap_size;
 	unsigned int cv_intl_factor = ilog2(lo->info.slab_stripes);
-	int e_sz, chunks, rc = -ENOMEM;
+	int e_sz, rc = -ENOMEM;
 
 	rcu_register_thread();
 	if (pthread_mutex_init(&lp->a_thread_lock, NULL)) goto _err;
@@ -2691,9 +2691,9 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	if (!lp->slab_bmap) goto _err;
 
 	/* Initialize layout partition maps */
-	chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk 
-	e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
-	lp->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, 0, 0);
+	// Pad to the next even chunk
+	e_sz = F_SLABMAP_ENTRY_SZ(lo->info.chunks);
+	lp->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, F_SLABMAP_BOSL_SZ, 0);
 	lp->claimvec = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
 	if (!lp->slabmap || !lp->claimvec) goto _err;
 	/* 

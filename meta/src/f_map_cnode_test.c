@@ -85,7 +85,8 @@ static int mpi_size = 0;
 static MPI_Comm rs_comm = MPI_COMM_NULL;
 
 static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name);
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys,
+    int op);
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
     size_t value_len);
 static int ps_bdel(int map_id, size_t size, void **keys);
@@ -261,11 +262,12 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
     return 0;
 }
 
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys,
+    int op)
 {
         struct index_t *primary_index = unifycr_indexes[map_id + 1];
 
-        return mdhim_ps_bget(md, primary_index, buf, size, keys);
+        return mdhim_ps_bget(md, primary_index, buf, size, keys, op);
 }
 
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,

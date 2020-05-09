@@ -8,15 +8,16 @@
 #include "famfs_env.h"
 #include "famfs_error.h"
 #include "famfs_global.h"
-#include "lf_client.h"
-//#include "fam_stripe.h"
-#include "unifycr-internal.h" /* DEBUG() macro; UNIFYCR_SUCCESS */
-#include "famfs.h"
 #include "famfs_maps.h"
 #include "f_pool.h"
 #include "f_layout.h"
 #include "f_map.h"
 #include "f_helper.h"
+
+#include "lf_client.h"
+#include "fam_stripe.h"
+#include "unifycr-internal.h" /* DEBUG() macro; UNIFYCR_SUCCESS */
+#include "famfs.h"
 
 
 static int get_lf_meta(F_POOL_t *pool)
@@ -90,9 +91,9 @@ static int load_slab_maps(F_POOL_t *pool)
 	printf("  This layout has %u device(s), including %u missing.\n",
 	    info->devnum, info->misdevnum);
 
-	sm_entry_sz = F_SLABMAP_ENTRY_SZ(info->chunks);
 	/* Init map struct */
-	sm = f_map_init(F_MAPTYPE_STRUCTURED, sm_entry_sz, F_SMAP_BOSL_SZ, 0);
+	sm_entry_sz = F_SLABMAP_ENTRY_SZ(info->chunks);
+	sm = f_map_init(F_MAPTYPE_STRUCTURED, sm_entry_sz, F_SLABMAP_BOSL_SZ, 0);
 	if (sm == NULL) {
 	    r = -ENOMEM;
 	    goto _cont;
@@ -147,13 +148,10 @@ int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
 {
     F_POOL_t *pool;
     F_POOL_INFO_t *info;
-    LF_INFO_t *lf_info;
-//    N_STRIPE_t *stripe = NULL;
+    F_LAYOUT_t *lo;
+    N_STRIPE_t *stripe = NULL;
     LFS_CTX_t *lfs_ctx_p;
-    F_LAYOUT_INFO_t *lo_info;
-//    N_CHUNK_t *chunk, *chunks = NULL;
     struct famsim_stats *stats_fi_wr;
-    int i, nchunks;
     int rc = 1; /* OOM error */
 
     lfs_ctx_p = (LFS_CTX_t *)malloc(sizeof(LFS_CTX_t));
@@ -163,7 +161,6 @@ int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
     pool = f_get_pool();
     assert( pool );
     info = &pool->info;
-    lf_info = pool->lf_info;
 
     if ((rc = get_lf_meta(pool))) {
 	DEBUG("rank:%d failed to get LF metadata from the delegator on mount, error:%d",
@@ -193,79 +190,41 @@ int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
 	goto _free;
     }
 
-#if 0
-    stripe = (N_STRIPE_t *)malloc(sizeof(N_STRIPE_t));
-    if (stripe == NULL)
-	goto _free;
-
     /* default layout */
-    lo_info = f_get_layout_info(0);
-    assert( lo_info );
+    lo = f_get_layout(0);
+    assert( lo );
 
-    nchunks = lo_info->chunks;
-    /* array of chunks */
-    chunks = (N_CHUNK_t *)malloc(nchunks * sizeof(N_CHUNK_t));
-    if (chunks == NULL)
+    rc = f_map_fam_stripe(lo, &lo->fam_stripe, 0);
+    if (rc == -ENOMEM)
 	goto _free;
 
-    chunk = chunks;
-    for (i = 0; i < nchunks; i++, chunk++) {
-	chunk->r_event = 0;
-	chunk->w_event = 0;
-    }
-    stripe->p	= lo_info->chunks - lo_info->data_chunks;
-    stripe->d	= lo_info->data_chunks;
-    stripe->chunk_sz		= lo_info->chunk_sz;
-    stripe->extent_stipes	= info->extent_sz / lo_info->chunk_sz;
-    stripe->srv_extents		= info->size_def / info->extent_sz;
-    /* TODO: Allocate stripes to clients. Now the clients must me evenly distributed. */
-    //stripe->node_id		= my_srv_rank * local_rank_cnt + local_rank_idx;
-    //stripe->node_size		= my_srv_size * local_rank_cnt;
-    stripe->node_id		= rank;
-    stripe->node_size		= rank_size;
-
-    /* Find the lowest media id */
-    for (unsigned int j = 0; j <= pool->info.pdev_max_idx; j++) {
-	uint16_t pdi;
-	F_POOL_DEV_t *pdev;
-
-	pdi = pool->info.pdi_by_media[j];
-	if (pdi == F_PDI_NONE)
-	    continue;
-	pdev = &pool->devlist[pdi];
-	stripe->media_id_0 = pdev->pool_index;
-	break;
-    }
-
-    stripe->chunks = chunks;
-    /* initial mapping */
-    get_fam_chunk(0, stripe, NULL);
-
-    lfs_ctx_p->fam_stripe = stripe;
-#endif
     lfs_ctx_p->pool = pool;
     lfs_ctx_p->famsim_stats_fi_wr = stats_fi_wr;
     *lfs_ctx_pp = lfs_ctx_p;
     return 0;
 
 _free:
-//    free(chunks);
-//    free(stripe);
     free_lfc_ctx(&lfs_ctx_p);
-//    lf_clients_free(pool);
-//    free(lfs_ctx_p);
     return rc;
 }
 
 void free_lfc_ctx(LFS_CTX_t **lfs_ctx_pp) {
     LFS_CTX_t *lfs_ctx_p = *lfs_ctx_pp;
+    F_POOL_t *pool = lfs_ctx_p->pool;
+    F_LAYOUT_t *lo;
+    struct list_head *l;
 
     famsim_stats_stop(lfs_ctx_p->famsim_stats_fi_wr, 1);
 
-//    free_fam_stripe(lfs_ctx_p->fam_stripe);
-    exit_lo_maps(lfs_ctx_p->pool);
+    list_for_each(l, &pool->layouts) {
+	lo = container_of(l, struct f_layout_, list);
+	free_fam_stripe(lo->fam_stripe);
+    }
+
+    exit_lo_maps(pool);
     f_ah_detach();
-    lf_clients_free(lfs_ctx_p->pool);
+
+    lf_clients_free(pool); /* called free_fam_stripe() */
     free(lfs_ctx_p);
     *lfs_ctx_pp = NULL;
 }

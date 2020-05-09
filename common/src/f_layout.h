@@ -24,6 +24,8 @@
 #define F_DEVMAP_SIZE  BITS_TO_LONGS(F_STRIPE_DEV_COUNT)
 
 
+struct n_stripe_;
+
 typedef uint64_t	f_stripe_t;
 typedef uint32_t	f_slab_t;
 
@@ -316,6 +318,9 @@ typedef struct f_layout_ {
     /* Dynamically allocated array of pool device indexes */
     F_POOLDEV_INDEX_t	*devlist;	/* pool device indexes */
     uint32_t		devlist_sz;	/* size of the pool device indexes array */
+
+    /* I/O client only */
+    struct n_stripe_	*fam_stripe;	/* FAM stripe attributes */
 } F_LAYOUT_t;
 
 enum f_layout_flags {

@@ -129,8 +129,8 @@ static int allow_merge = 0; /* disabled until we come up with liniaresation algo
 
 static int commit_wrtn_stripes(int fd, int loid, int chunks,
     unifycr_chunkmeta_t *stripes);
-static int f_chunk_write(int fid, long pos, unifycr_filemeta_t *meta, int chunk_id,
-    off_t chunk_offset, const void *buf, size_t count);
+static int f_stripe_write(int fid, long pos, unifycr_filemeta_t *meta, uint64_t strpe_id,
+    off_t stripe_offset, const void *buf, size_t count);
 
 //
 // ===========================================
@@ -272,12 +272,12 @@ static int f_create_file_global(f_fattr_t *f_meta)
     ASSERT(cq);
 
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push 'cretae file' command onto layout %d queue: %s", f_meta->loid, strerror(-rc));
+        ERROR("can't push 'create file' command onto layout %d queue: %s", f_meta->loid, strerror(-rc));
         return rc;
     }
 
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for 'cretae file' from layout %d queue: %s", f_meta->loid, strerror(-rc));
+        ERROR("couldn't get response for 'create file' from layout %d queue: %s", f_meta->loid, strerror(-rc));
         return rc;
     }
 
@@ -399,21 +399,21 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
     /* get pre-allocated stripe: meta->chunk_meta[chunk_id].id */
     size_t stripe_sz = lo->info.stripe_sz;
     //int chunk_id = meta->size >> unifycr_chunk_bits;
-    int chunk_id = meta->size / stripe_sz;
+    uint64_t stripe_id = meta->size / stripe_sz;
     /* get pointer to position within first chunk */
-    off_t chunk_offset = meta->size % stripe_sz;
+    off_t stripe_offset = meta->size % stripe_sz;
 
     /* determine how many bytes remain in the current chunk */
-    size_t remaining = stripe_sz - chunk_offset;
+    size_t remaining = stripe_sz - stripe_offset;
     if (count <= remaining) {
         /* all bytes for this write fit within the current chunk */
-        rc = f_chunk_write(fid, pos, meta, chunk_id, chunk_offset,
-                                       buf, count);
+        rc = f_stripe_write(fid, pos, meta, stripe_id, stripe_offset,
+                            buf, count);
     } else {
         /* otherwise, fill up the remainder of the current chunk */
         char *ptr = (char *) buf;
-        rc = f_chunk_write(fid, pos, meta, chunk_id, chunk_offset,
-                                       (void *)ptr, remaining);
+        rc = f_stripe_write(fid, pos, meta, stripe_id, stripe_offset,
+                            (void *)ptr, remaining);
 
         ptr += remaining;
         pos += remaining;
@@ -423,7 +423,7 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
         size_t processed = remaining;
         while (processed < count && rc == UNIFYCR_SUCCESS) {
             /* get pointer to start of next chunk */
-            chunk_id++;
+            stripe_id++;
 
             /* compute size to write to this chunk */
             size_t num = count - processed;
@@ -432,8 +432,8 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
             }
 
             /* write data */
-            rc = f_chunk_write(fid, pos, meta, chunk_id, 0,
-                                           (void *)ptr, num);
+            rc = f_stripe_write(fid, pos, meta, stripe_id, 0,
+                                (void *)ptr, num);
             ptr += num;
             pos += num;
 
@@ -499,11 +499,7 @@ static int famfs_fid_open(const char *path, int flags, mode_t mode, int *outfid,
         gfid = abs(gfid);
 
         f_fattr_t *ptr_meta = NULL;
-#if 0
-            rc = get_global_file_meta(gfid, &ptr_meta);
-            if (ptr_meta == NULL) {
-                fid = -1;
-#endif
+        //rc = get_global_file_meta(gfid, &ptr_meta);
         if (f_find_file_global(gfid, loid, &ptr_meta)) {
             // file not found in global DB
             fid = -1;
@@ -642,6 +638,8 @@ static int famfs_fid_close(int fid)
 		      fid, s, lo->info.name, rc);
 		return UNIFYCR_FAILURE;
 	    }
+	    DEBUG_LVL(7, "fd:%d release stripe %lu on close in layout %s",
+		      fid, s, lo->info.name);
 	}
 	stripe->flags = 0;
     }
@@ -1137,11 +1135,14 @@ static int famfs_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
         DEBUG("layout (%d) getting stripe error:%d\n", meta->loid, rc);
         return UNIFYCR_FAILURE;
     }
+    DEBUG_LVL(7, "layout %s (%d) get_stripe %lu",
+                 lo->info.name, meta->loid, s);
 
     /* got one from spill over */
     chunk_meta->location = CHUNK_LOCATION_SPILLOVER;
     chunk_meta->id = s;
     chunk_meta->flags = 0;
+    chunk_meta->f.in_use = 1;
 
     return UNIFYCR_SUCCESS;
 }
@@ -1173,12 +1174,16 @@ static int famfs_chunk_free(int fid, unifycr_filemeta_t *meta, int chunk_id,
                   s, lo->info.name, rc);
             return UNIFYCR_FAILURE;
         }
+        DEBUG_LVL(7, "fid:%d release stripe %lu in layout %s",
+                     fid, s, lo->info.name);
     } else if (!chunk_meta->f.committed) {
         if ((rc = f_ah_commit_stripe(lo, s))) {
             ERROR("failed to report committed stripe %lu in layout %s, error:%d",
                   s, lo->info.name, rc);
             return UNIFYCR_FAILURE;
         }
+        DEBUG_LVL(7, "fid:%d commit stripe %lu in layout %s",
+                     fid, s, lo->info.name);
     }
     chunk_meta->flags = 0;
 
@@ -1382,7 +1387,7 @@ off_t           saved_off;
 int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, off_t stripe_offset)
 {
     F_POOL_t *pool = lfs_ctx->pool;
-    N_STRIPE_t *fam_stripe = NULL;
+    N_STRIPE_t *fam_stripe;
     LF_INFO_t *lf_info = pool->lf_info;
     F_POOL_DEV_t *pdev;
     FAM_DEV_t *fdev;
@@ -1395,27 +1400,40 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
     void *local_desc;
     off_t off, chunk_offset;
     ssize_t wcnt;
+    size_t chunk_sz;
     uint64_t *event, evnt;
-    int dst_node, rc = 0;
+    unsigned int media_id;
+    int rc = 0;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
-    /* to physical stripe */
-    chunk = get_fam_chunk(stripe_phy_id, fam_stripe, &dst_node);
-    if (chunk == NULL) {
-	DEBUG("%s: stripe:%lu - ENOSPC\n",
-	    pool->mynode.hostname, stripe_phy_id);
-	errno = ENOSPC;
-	return UNIFYCR_ERR_NOSPC;
+    /* new physical stripe? */
+    if (!lo->fam_stripe ||
+	lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != stripe_phy_id)
+    {
+	/* map to physical stripe */
+	if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, stripe_phy_id))) {
+	    DEBUG("%s: stripe:%lu in layout %s - mapping error:%d\n",
+		  pool->mynode.hostname, stripe_phy_id, lo->info.name, rc);
+	    errno = EIO;
+	    return UNIFYCR_FAILURE;
+	}
     }
+    fam_stripe = lo->fam_stripe;
+    chunk_sz = fam_stripe->chunk_sz;
 
-    chunk_offset = 0;
-    assert( pdev = f_find_pdev_by_media_id(pool, chunk->lf_client_idx) );
+    /* map data offset to physical chunk */
+    chunk = get_fam_chunk(fam_stripe, stripe_phy_id, stripe_offset);
+    pdev = chunk->pdev;
+    media_id = pdev->pool_index;
+    chunk_offset = stripe_offset % chunk_sz;
+    ASSERT(chunk_offset + len <= chunk_sz); /* aligned to chunk boundary */
+
+    /* Do RMA synchronous write to fdev */
     fdev = &pdev->dev->f;
-
-    /* Do RMA synchronous write */
     tgt_srv_addr = &fdev->fi_addr;
     tx_ep = fdev->ep;
 
+    /* use lifabric CQ or counters */
     if (lf_info->opts.use_cq) {
         tx_cq = fdev->cq;
         evnt = 0;
@@ -1426,24 +1444,19 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
         event = &chunk->w_event;
     }
 
-    ASSERT(chunk_offset + len <= lo->info.stripe_sz);
-    //ASSERT(dst_node == 'chunk # in stripe');
-    ASSERT(dst_node < pool->info.dev_count);
-//    if (trg_ni)
-//        *trg_ni = /* dst_node; */ chunk->lf_client_idx; /* media id */
-    off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * fam_stripe->chunk_sz;
-    off += fdev->virt_addr;
+    /* remote address */
+    off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * chunk_sz;
+    off += chunk->p_stripe0_off; /* +fdev->offset +fdev->virt_addr */
     local_desc = lookup_mreg(buf, len, chunk->lf_client_idx);
 
     stats_fi_wr = lfs_ctx->famsim_stats_fi_wr;
     STATS_START(start);
 
     //for (i = 0; i < blocks; i++) {
-    DEBUG("%s: write stripe:%lu @%jd to %u/%u/%s(@%lu) on FAM module %d len:%zu desc:%p off:%016lx mr_key:%lu",
+    DEBUG("%s: write stripe:%lu @%jd to %u/%u/%s(@%lu) on device %u len:%zu desc:%p off:%016lx mr_key:%lu",
         pool->mynode.hostname, stripe_phy_id, chunk_offset,
         fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
-        dst_node,
-        len, local_desc, off, fdev->mr_key);
+        media_id, len, local_desc, off, fdev->mr_key);
 
     famsim_stats_start(famsim_ctx, stats_fi_wr);
 
@@ -1471,8 +1484,8 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
         }
     } while (rc == -FI_EAGAIN);
     /* TODO: Return I/O error */
-    ON_FI_ERROR(rc, "%s: fi_write failed on FAM module %d",
-                    pool->mynode.hostname, dst_node);
+    ON_FI_ERROR(rc, "%s: fi_write failed on device %u",
+                    pool->mynode.hostname, media_id);
 
     if (fam_stripe->extent == 0 && fam_stripe->stripe_in_part == 0)
         famsim_stats_stop(stats_fi_wr, 1);
@@ -1482,17 +1495,16 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
     if (!lf_info->opts.use_cq) {
         rc = fi_cntr_wait(cntr, *event, lf_info->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
-            err("%s: lf_write timeout stripe:%lu to %u/%u/%s on FAM module %d len:%zu off:%016lx",
+            err("%s: lf_write timeout stripe:%lu to %u/%u/%s on device %u len:%zu off:%016lx",
                 pool->mynode.hostname, stripe_phy_id,
                 fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                dst_node, len, off);
+                media_id, len, off);
         } else if (rc) {
-            err("%s: lf_write stripe:%lu has %lu error(s):%d to %u/%u/%s on FAM module %d cnt:%lu/%lu",
+            err("%s: lf_write stripe:%lu has %lu error(s):%d to %u/%u/%s on device %u cnt:%lu/%lu",
                     pool->mynode.hostname, stripe_phy_id,
                     fi_cntr_readerr(cntr), rc,
                     fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                    dst_node,
-                    fi_cntr_read(cntr), *event);
+                    media_id, fi_cntr_read(cntr), *event);
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
     } else {
@@ -1500,7 +1512,6 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
         do {
             rc = lf_check_progress(tx_cq, &wcnt);
         } while (rc == 0 && wcnt > 0);
-        // if (rc == 0) *event = 0;
     }
 
     UPDATE_STATS(lf_wr_stat, 1, len, start);
@@ -1508,43 +1519,51 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
     return rc;
 }
 
-int lf_fam_read(char *buf, size_t len, off_t fam_off, unsigned long sid)
+int lf_fam_read(F_LAYOUT_t *lo, char *buf, size_t len, off_t stripe_offset, f_stripe_t s)
 {
     F_POOL_t *pool = lfs_ctx->pool;
-    N_STRIPE_t *fam_stripe = NULL;
+    N_STRIPE_t *fam_stripe;
     LF_INFO_t *lf_info = pool->lf_info;
     F_POOL_DEV_t *pdev;
     FAM_DEV_t *fdev;
     N_CHUNK_t *chunk;
+    //struct famsim_stats *stats_fi_rd;
     struct fid_cntr *cntr = NULL;
     fi_addr_t *tgt_srv_addr;
     struct fid_ep *tx_ep = NULL;
     struct fid_cq *tx_cq = NULL;
-    //size_t transfer_sz;
-    //int i, blocks;
-    ssize_t wcnt;
-    uint64_t *event, evnt;
     void *local_desc;
-    int src_node, rc = 0;
+    off_t off, chunk_offset;
+    ssize_t wcnt;
+    size_t chunk_sz;
+    uint64_t *event, evnt;
+    unsigned int media_id;
+    int rc = 0;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
-    /* to physical stripe */
-    chunk = get_fam_chunk(sid, fam_stripe, &src_node);
-    if (chunk == NULL) {
-	DEBUG("%s: stripe:%lu - not found\n",
-	    pool->mynode.hostname, sid);
-	errno = EIO;
-	return UNIFYCR_FAILURE;
+    /* new physical stripe? */
+    if (!lo->fam_stripe ||
+        lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != s) {
+        /* map to physical stripe */
+        if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, s))) {
+            DEBUG("%s: stripe:%lu in layout %s - mapping error:%d\n",
+                  pool->mynode.hostname, s, lo->info.name, rc);
+            errno = EIO;
+            return UNIFYCR_FAILURE;
+        }
     }
+    fam_stripe = lo->fam_stripe;
+    chunk_sz = fam_stripe->chunk_sz;
 
- int nid = 0;
-    assert( pdev = f_find_pdev_by_media_id(pool, nid) );
-    fdev = &pdev->dev->f;
-
-    ASSERT(src_node <= pool->info.dev_count);
-    // ASSERT(src_node == nid); src_node: chunk # in stripe; nid: media_id
+    /* map data offset to physical chunk */
+    chunk = get_fam_chunk(fam_stripe, s, stripe_offset);
+    pdev = chunk->pdev;
+    media_id = pdev->pool_index;
+    chunk_offset = stripe_offset % chunk_sz;
+    ASSERT(chunk_offset + len <= chunk_sz); /* aligned to chunk boundary */
 
     /* Do RMA synchronous read */
+    fdev = &pdev->dev->f;
     tgt_srv_addr = &fdev->fi_addr;
     tx_ep = fdev->ep;
 
@@ -1557,23 +1576,25 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, unsigned long sid)
         chunk->r_event = fi_cntr_read(cntr);
         event = &chunk->r_event;
     }
-    local_desc = lookup_mreg(buf, len, nid);
-    //transfer_sz = params->transfer_sz;
-    //int blocks = len / transfer_sz;
 
+    /* remote address */
+    off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * chunk_sz;
+    off += chunk->p_stripe0_off; /* +fdev->offset +fdev->virt_addr */
+    local_desc = lookup_mreg(buf, len, chunk->lf_client_idx);
+
+    //stats_fi_rd = lfs_ctx->famsim_stats_fi_rd;
     STATS_START(start);
 
-    off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*fam_stripe->chunk_sz;
-    fam_off += fdev->virt_addr;
-    DEBUG("%s: read stripe %lu @%lu to %u/%u/%s(@%lu) on FAM module %d len:%zu desc:%p off:%016lx mr_key:%lu",
-	  pool->mynode.hostname, sid, coff,
+    DEBUG("%s: read stripe %lu @%lu to %u/%u/%s(@%lu) on device %u len:%zu desc:%p off:%016lx mr_key:%lu",
+	  pool->mynode.hostname, s, chunk_offset,
 	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
-	  src_node,
-	  len, local_desc, fam_off, fdev->mr_key);
+	  media_id, len, local_desc, off, fdev->mr_key);
+
+    //famsim_stats_start(famsim_ctx, stats_fi_rd);
 
     do {
         rc = fi_read(tx_ep, buf, len, local_desc,
-                     *tgt_srv_addr, fam_off, fdev->mr_key, (void*)buf);
+                     *tgt_srv_addr, off, fdev->mr_key, (void*)buf);
         if (rc == 0) {
             (*event)++;
             break;
@@ -1596,23 +1617,29 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, unsigned long sid)
         }
     } while (rc == -FI_EAGAIN);
     /* TODO: Return I/O error */
-    ON_FI_ERROR(rc, "%s: fi_read failed on FAM module %d",
-                pool->mynode.hostname, src_node);
+    ON_FI_ERROR(rc, "%s: fi_read failed on device %u",
+                pool->mynode.hostname, media_id);
+
+    /*
+    if (fam_stripe->extent == 0 && fam_stripe->stripe_in_part == 0)
+        famsim_stats_stop(stats_fi_rd, 1);
+    else
+        famsim_stats_pause(stats_fi_rd);
+    */
 
     if (!lf_info->opts.use_cq) {
         rc = fi_cntr_wait(cntr, *event, lf_info->io_timeout_ms);
         if (rc == -FI_ETIMEDOUT) {
-            err("%s: lf_read timeout stripe %lu to %u/%u/%s on FAM module %d len:%zu off:%jd",
-                pool->mynode.hostname, sid,
+            err("%s: lf_read timeout stripe %lu to %u/%u/%s on device %u len:%zu off:%jd",
+                pool->mynode.hostname, s,
                 fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                src_node, len, fam_off);
+                media_id, len, off);
         } else if (rc) {
-            err("%s: lf_read stripe %lu has %lu error(s):%d to %u/%u/%s on FAM module %d cnt:%lu/%lu",
-                    pool->mynode.hostname, sid,
+            err("%s: lf_read stripe %lu has %lu error(s):%d to %u/%u/%s on device %u cnt:%lu/%lu",
+                    pool->mynode.hostname, s,
                     fi_cntr_readerr(cntr), rc,
                     fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                    src_node,
-                    fi_cntr_read(cntr), *event);
+                    media_id, fi_cntr_read(cntr), *event);
             ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
         }
     } else {
@@ -1620,7 +1647,6 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, unsigned long sid)
         do {
             rc = lf_check_progress(tx_cq, &wcnt);
         } while (rc == 0 && wcnt > 0);
-        // if (rc == 0) *event = 0;
     }
 
     UPDATE_STATS(lf_rd_stat, 1, len, start);
@@ -1631,34 +1657,32 @@ int lf_fam_read(char *buf, size_t len, off_t fam_off, unsigned long sid)
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,
  * count should fit within chunk starting from specified offset */
-static int f_chunk_write(
+static int f_stripe_write(
     int fid,
     long pos,                /* write offset inside the file */
     unifycr_filemeta_t *meta, /* pointer to file meta data */
-    int chunk_id,            /* logical chunk id to write to */
-    off_t chunk_offset,      /* logical offset within chunk to write to */
+    uint64_t stripe_id,            /* logical chunk id to write to */
+    off_t stripe_offset,      /* logical offset within chunk to write to */
     const void *buf,         /* buffer holding data to be written */
     size_t count)            /* number of bytes to write */
 {
     int i;
 
     /* get chunk meta data */
-    unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
+    unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[stripe_id]);
     ASSERT( chunk_meta->f.in_use == 1 ); /* got allocated stripe from Helper */
 
-    f_stripe_t stripe_phy_id = chunk_meta->id;
-
     /* spill over to a file, so write to file descriptor */
-    MAP_OR_FAIL(pwrite);
+    //MAP_OR_FAIL(pwrite);
 
     F_LAYOUT_t *lo = f_get_layout(meta->loid);
     ASSERT(lo);
 
     /*  FAMFS: FAM global stripe number */
-    stripe_phy_id = physical_stripe(meta, chunk_id);
-    DEBUG("%s: write %zu bytes chunk:%d stripe:%lu @%lu\n",
-          lfs_ctx->pool->mynode.hostname, count, chunk_id, stripe_phy_id, chunk_offset);
-    int rc = lf_write(lo, (char *)buf, count, stripe_phy_id, chunk_offset);
+    f_stripe_t stripe_phy_id = physical_stripe(meta, stripe_id);
+    DEBUG("%s: write %zu bytes logical stripe:%lu to %lu @%lu\n",
+          lfs_ctx->pool->mynode.hostname, count, stripe_id, stripe_phy_id, stripe_offset);
+    int rc = lf_write(lo, (char *)buf, count, stripe_phy_id, stripe_offset);
     if (rc) {
         /* Print the real error code */
         ioerr("lf-write failed ret:%d", rc);
@@ -1682,7 +1706,7 @@ static int f_chunk_write(
     cur_idx.fid = ptr_meta_entry->gfid;
     cur_idx.file_pos = pos;
     cur_idx.length = count;
-
+    cur_idx.mem_pos = stripe_offset;
     cur_idx.sid = stripe_phy_id;
 
     /*split the write requests larger than unifycr_key_slice_range into
@@ -1710,6 +1734,8 @@ static int f_chunk_write(
         for (; i < tmp_index_set.count; i++) {
             unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].file_pos =
                 tmp_index_set.idxes[i].file_pos;
+            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].mem_pos =
+                tmp_index_set.idxes[i].mem_pos;
             unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
                 tmp_index_set.idxes[i].length;
 
@@ -1737,12 +1763,6 @@ static int cmp_md(const void *ap, const void *bp) {
         return 1;
     else if (mda->fid < mdb->fid)
         return -1;
-    /*
-    if (mda->nid > mdb->nid)
-        return 1;
-    else if (mda->nid < mdb->nid)
-        return -1;
-    */
     if (mda->sid > mdb->sid)
         return 1;
     else if (mda->sid < mdb->sid)
@@ -1755,7 +1775,7 @@ static int cmp_md(const void *ap, const void *bp) {
 }
 
 static inline int same_stripe(md_index_t *a,  md_index_t *b) {
-    return (a->fid == b->fid  && a->sid == b->sid);
+    return (a->fid == b->fid && a->sid == b->sid);
 }
 
 void famfs_merge_md() {
@@ -1874,7 +1894,7 @@ static int famfs_fid_shrink(int fid, off_t length)
     return UNIFYCR_SUCCESS;
 }
 
-static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt,
+static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
     fsmd_kv_t *md, int md_cnt, size_t ttl)
 {
     int i, rc;
@@ -1896,13 +1916,13 @@ static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt,
             if (rq_b >= md_b && rq_b < md_e) {
                 // [MD_b ... (rq_b ... MD_e] ... rq_e)
                 // [MD_b ... (rq_b ... rq_e) ... MD_e]
-                fam_off = (rq_b - md_b);
+                fam_off = md[j].v.addr + (rq_b - md_b);
                 fam_len = min(md_e, rq_e) - rq_b;
                 bufp = rq[i].buf;
             } else if (rq_e > md_b && rq_b <= md_b) {
                 // (rq_b ... [MD_b ... rq_e) ... MD_e]
                 // (rq_b ... [MD_b ... MD_e] ... rq_e)
-                fam_off = 0;
+                fam_off = md[j].v.addr;
                 fam_len = min(rq_e, md_e) - md_b;
                 bufp = rq[i].buf + (md_b - rq_b);
             } else {
@@ -1911,9 +1931,10 @@ static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt,
             }
 
             if (fam_len) {
-                DEBUG("rq read %lu[%lu]@%lu, sid=%lu \n", fam_len, bufp - rq[i].buf, fam_off,
+                DEBUG("rq read %lu[%lu]@%lu, sid=%lu", fam_len, bufp - rq[i].buf, fam_off,
                     md[j].v.stripe);
-                if ((rc = lf_fam_read(bufp, fam_len, fam_off, md[j].v.stripe))) {
+                if ((rc = lf_fam_read(lo, bufp, fam_len, fam_off, md[j].v.stripe)))
+                {
                     ioerr("lf_fam_read failed ret:%d", rc);
                     return (ssize_t)rc;
                 }
@@ -2017,7 +2038,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     int *rc_ptr = (int *)shm_recvbuf;
     if (*rc_ptr) {
         // Have prev MD in cache, see if anything matches
-        tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
+        tot_sz = match_rq_and_read(lo, read_req, count, md_ptr, *rc_ptr, tot_sz);
         if (tot_sz < 0) {
             printf("lf_read error\n");
             return (int)tot_sz;
@@ -2055,7 +2076,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     }
     UPDATE_STATS(md_fg_stat, *rc_ptr, *rc_ptr*sizeof(fsmd_kv_t), start);
 
-    tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
+    tot_sz = match_rq_and_read(lo, read_req, count, md_ptr, *rc_ptr, tot_sz);
     if (tot_sz < 0) {
         printf("lf_read error\n");
         return (int)tot_sz;
@@ -2107,6 +2128,8 @@ static int famfs_fd_fsync(int fd) {
                   fd, s, lo->info.name, rc);
             goto io_err;
         }
+        DEBUG_LVL(7, "fd:%d commit stripe %lu in layout %s",
+                     fd, s, lo->info.name);
         stripe->f.committed = 1;
     }
 
@@ -2117,12 +2140,12 @@ static int famfs_fd_fsync(int fd) {
     ASSERT(cq);
 
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push cretae file command onto layout %d queue: %s", meta->loid, strerror(-rc));
+        ERROR("can't push create file command onto layout %d queue: %s", meta->loid, strerror(-rc));
         return rc;
     }
 
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for cretae file from layout %d queue: %s", meta->loid, strerror(-rc));
+        ERROR("couldn't get response for create file from layout %d queue: %s", meta->loid, strerror(-rc));
         return rc;
     }
 
@@ -2163,6 +2186,8 @@ static int commit_wrtn_stripes(int fd, int loid, int chunks, unifycr_chunkmeta_t
 		  fd, s, lo->info.name, rc);
 	    return UNIFYCR_FAILURE;
 	}
+        DEBUG_LVL(7, "fd:%d commit full stripe %lu in layout %s",
+                     fd, s, lo->info.name);
 	stripe->f.committed = 1;
     }
     return UNIFYCR_SUCCESS;
@@ -2174,6 +2199,7 @@ static F_FD_IFACE_t f_fd_iface = {
     .fid_close          = &famfs_fid_close,
     .fid_extend		= &famfs_fid_extend,
     .fid_shrink		= &famfs_fid_shrink,
+    .fid_write		= &famfs_fid_write,
     /* read fn used in unifycr-sysio.c */
     .fd_logreadlist	= &famfs_fd_logreadlist,
     .fd_fsync		= &famfs_fd_fsync,

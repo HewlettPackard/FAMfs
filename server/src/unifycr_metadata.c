@@ -63,7 +63,7 @@ extern char *mds_vec;
 extern int  num_mds;
 
 static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name);
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys, int op);
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
     size_t value_len);
 static int ps_bdel(int map_id, size_t size, void **keys);
@@ -450,6 +450,7 @@ int meta_process_fsync(int qid)
             ret = ULFS_SUCCESS;
         }
         mdhim_full_release_msg(brm);
+
     } else {
 
         brm = mdhimBPut(md, (void **)(&fsmd_keys[0]), fsmd_ley_lens,
@@ -460,20 +461,18 @@ int meta_process_fsync(int qid)
             ret = ULFS_ERROR_MDHIM;
             LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
                 md->mdhim_rank);
-    }
-
-    while (brmp) {
-        if (brmp->error < 0) {
-            ret = ULFS_ERROR_MDHIM;
-            break;
         }
 
-        brm = brmp;
-        brmp = brmp->next;
-        mdhim_full_release_msg(brm);
+        while (brmp) {
+            if (brmp->error < 0) {
+                ret = ULFS_ERROR_MDHIM;
+                break;
+            }
 
-    }
-
+            brm = brmp;
+            brmp = brmp->next;
+            mdhim_full_release_msg(brm);
+        }
     }
 
 _process_fattr:
@@ -514,30 +513,29 @@ _process_fattr:
             ret = ULFS_SUCCESS;
         }
         mdhim_full_release_msg(brm);
+
     } else {
 
-    brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
-                    (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
-                    NULL, NULL);
-    brmp = brm;
-    if (!brmp || brmp->error) {
-        ret = ULFS_ERROR_MDHIM;
-        LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
-            md->mdhim_rank);
-    }
-
-    while (brmp) {
-        if (brmp->error < 0) {
+        brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
+                        (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
+                        NULL, NULL);
+        brmp = brm;
+        if (!brmp || brmp->error) {
             ret = ULFS_ERROR_MDHIM;
-            break;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
         }
 
-        brm = brmp;
-        brmp = brmp->next;
-        mdhim_full_release_msg(brm);
+        while (brmp) {
+            if (brmp->error < 0) {
+                ret = ULFS_ERROR_MDHIM;
+                break;
+            }
 
-    }
-
+            brm = brmp;
+            brmp = brmp->next;
+            mdhim_full_release_msg(brm);
+        }
     }
 
     return ret;
@@ -569,25 +567,19 @@ int f_do_fsync(f_svcrq_t *pcmd) {
 
     md->primary_index = unifycr_indexes[0];
 
+    LOG(LOG_DBG3, "srv fsync k/v[%d] cl_id=%d num=%lu meta_offset=%ld",
+        qid, client_side_id, num_entries, app_config->meta_offset);
+
     for (i = 0; i < num_entries; i++) {
         fsmd_keys[i]->fid = meta_payload[i].fid;
         fsmd_keys[i]->offset = meta_payload[i].file_pos;
+        fsmd_vals[i]->addr = meta_payload[i].mem_pos;
         fsmd_vals[i]->len = meta_payload[i].length;
-        if (fam_fs) {
-            fsmd_vals[i]->stripe  = meta_payload[i].sid;
-/*
-        printf("srv: fsync k/v[%d] fid=%ld off=%ld/len=%ld stripe=%lu\n",
-        i, fsmd_keys[i]->fid, fsmd_keys[i]->offset,
-        fsmd_vals[i]->len, fsmd_vals[i]->stripe);
-*/
+        fsmd_vals[i]->stripe  = meta_payload[i].sid;
 
-        } else {
-            fsmd_vals[i]->addr = meta_payload[i].mem_pos;
-            fsmd_vals[i]->delegator_id = glb_rank;
-            memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
-            memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
-                   &client_side_id, sizeof(int));
-        }
+        LOG(LOG_DBG3, "  k/v[%d] fid=%ld off=%ld/addr=%ld len=%ld s=%lu",
+            i, fsmd_keys[i]->fid, fsmd_keys[i]->offset,
+            fsmd_vals[i]->addr, fsmd_vals[i]->len, fsmd_vals[i]->stripe);
 
         fsmd_ley_lens[i] = sizeof(fsmd_key_t);
         unifycr_val_lens[i] = sizeof(fsmd_val_t);
@@ -607,6 +599,7 @@ int f_do_fsync(f_svcrq_t *pcmd) {
             ret = ULFS_SUCCESS;
         }
         mdhim_full_release_msg(brm);
+
     } else {
 
         brm = mdhimBPut(md, (void **)(&fsmd_keys[0]), fsmd_ley_lens,
@@ -627,7 +620,6 @@ int f_do_fsync(f_svcrq_t *pcmd) {
             brm = brmp;
             brmp = brmp->next;
             mdhim_full_release_msg(brm);
-
         }
     }
 
@@ -671,6 +663,7 @@ _process_fattr:
             ret = ULFS_SUCCESS;
         }
         mdhim_full_release_msg(brm);
+
     } else {
 
         brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
@@ -691,9 +684,7 @@ _process_fattr:
             brm = brmp;
             brmp = brmp->next;
             mdhim_full_release_msg(brm);
-
         }
-
     }
 
     LOG(LOG_DBG, "fsync sts=%d", ret);
@@ -922,11 +913,11 @@ int meta_free_indices()
     return 0;
 }
 
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys, int op)
 {
 	struct index_t *primary_index = unifycr_indexes[F_MD_IDX_MAPS_START + map_id];
 
-	return mdhim_ps_bget(md, primary_index, buf, size, keys);
+	return mdhim_ps_bget(md, primary_index, buf, size, keys, op);
 }
 
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,

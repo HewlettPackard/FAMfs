@@ -232,7 +232,10 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 	md->primary_index = primary_index;
 
 	//Set the local receive queue to NULL - used for sending and receiving to/from ourselves
-	md->receive_msg = NULL;
+	//md->receive_msg = NULL;
+	INIT_LIST_HEAD(&md->receive_msg_list);
+	md->receive_msg_cnt = 0;
+
 	MPI_Barrier(md->mdhim_client_comm);
 
 
@@ -1028,10 +1031,10 @@ void mdhimReleaseSecondaryBulkInfo(struct secondary_bulk_info *si) {
 }
 
 ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *buf,
-    size_t size, uint64_t *keys)
+    size_t size, uint64_t *keys, int op)
 {
 	struct mdhim_bgetrm_t *bgrm;
-	int i, key_len, op, num_keys;
+	int i, key_len, num_keys;
 	int *key_lens = NULL;
 	void **keys_p = NULL;
 	unsigned long *p = buf;
@@ -1040,26 +1043,28 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 	/* TODO: Pass buffer through _bget_records() */
 	key_len = sizeof(uint64_t);
 
-	/* If size > 1 && keys[1] != 0, Op := MDHIM_GET_EQ,
-	otherwise Op := MDHIM_GET_NEXT */
-	if (size > 1 && keys[1]) {
-		op = MDHIM_GET_EQ;
+	switch (op) {
+	case MDHIM_GET_EQ:
 		num_keys = size;
-		key_lens = (int *) calloc(size, sizeof(int));
-		keys_p = (void **) calloc(size, sizeof(int *));
+		key_lens = (int *) malloc(size*sizeof(int));
+		keys_p = (void **) malloc(size*sizeof(void *));
 		for (unsigned j = 0; j < size; j++) {
 			key_lens[j] = key_len;
 			keys_p[j] = &keys[j];
 		}
 		bgrm = _bget_records(md, index, keys_p, key_lens, num_keys,
-				     size, op);
-	} else {
-		op = MDHIM_GET_NEXT;
+				     size, MDHIM_GET_EQ);
+		break;
+
+	case MDHIM_GET_NEXT:
 		num_keys = 1;
 		bgrm = _bget_records(md, index, (void **)&keys, &key_len, num_keys,
-				     size, op);
-	}
+				     size, MDHIM_GET_NEXT);
+		break;
 
+	default:
+		return MDHIM_ERROR;
+	}
 	mlog(MDHIM_CLIENT_DBG, "bget op:%s %zu keys [0]:%lu %s",
 	     (op==MDHIM_GET_EQ)?"EQ":"NEXT", size, keys[0],
 	     (!bgrm || bgrm->error)?"ERR":"");
@@ -1074,8 +1079,10 @@ ssize_t mdhim_ps_bget(struct mdhim_t *md, struct index_t *index, unsigned long *
 	assert (IN_RANGE(bgrm->num_keys, 0, (int)size));
 
 	for (i = 0; i < bgrm->num_keys; i++) {
-		keys[i] = *((unsigned long*) bgrm->keys[i]);
+		assert( bgrm->key_lens[i] == sizeof(long) );
+		keys[i] = *(unsigned long *)bgrm->keys[i];
 		memcpy(p, bgrm->values[i], bgrm->value_lens[i]);
+		assert( bgrm->value_lens[i] % sizeof(*p) == 0 );
 		p += bgrm->value_lens[i]/sizeof(*p);
 		mlog(MDHIM_CLIENT_DBG, "MDHIM Rank %d: get %d key:%lu",
 		     md->mdhim_rank, i, keys[i]);

@@ -133,7 +133,11 @@ typedef struct f_slabmap_entry_ {
     F_SLAB_ENTRY_t	slab_rec;
     F_EXTENT_ENTRY_t	extent_rec[0];
 } F_SLABMAP_ENTRY_t;
-#define F_SLABMAP_ENTRY_SZ(extents)	(sizeof(F_SLAB_ENTRY_t)+(extents)*sizeof(F_EXTENT_ENTRY_t))
+/* Pad to the next even chunk */
+#define F_SLABMAP_ENTRY_SZ(chunks)	(sizeof(F_SLAB_ENTRY_t) + \
+		     ROUND_UP(chunks, 2)*sizeof(F_EXTENT_ENTRY_t))
+/* Slab map must have this data page (BoS) size if shared in memory */
+#define F_SLABMAP_BOSL_SZ		(4*KIB)
 
 
 /*
@@ -319,11 +323,13 @@ struct f_pool_;
 struct f_layout_;
 struct f_layout_info_;
 struct unifycr_cfg_t_;
+struct f_pooldev_index_;
 
 int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
 int f_set_layouts_info(struct unifycr_cfg_t_ *cfg);
 void f_free_layouts_info(void);
 struct f_pool_dev_ *f_find_pdev(unsigned int index);
+struct f_pool_dev_ *f_pdi_to_pdev(struct f_pool_ *p, struct f_pooldev_index_ *pdi);
 struct f_pool_ *f_get_pool(void);
 struct f_layout_ *f_get_layout(int layout_id);
 struct f_layout_ *f_get_layout_by_name(const char *moniker);
@@ -339,7 +345,7 @@ void f_print_layouts(void);
 typedef int (*F_CREATE_PERSISTENT_MAP_fn)(F_MAP_INFO_t *i, int intl, char *name);
 /* ps_bget() function type: BGET_NEXT */
 typedef ssize_t (*F_PS_BGET_fn)(unsigned long *buf, int map_id, size_t size,
-    uint64_t *keys);
+    uint64_t *keys, int op);
 /* ps_bput() function type: */
 typedef int (*F_PS_BPUT_fn)(unsigned long *buf, int map_id, size_t size,
     void **keys, size_t value_len);
@@ -352,13 +358,15 @@ typedef struct f_meta_iface_ {
 	F_PS_BPUT_fn			bput_fn;
 	F_PS_BDEL_fn			bdel_fn;
 } F_META_IFACE_t;
+#define F_PS_GET_EQ	0	/* BGET Op: GET_EQ */
+#define F_PS_GET_NEXT	1	/* BGET Op: GET_NEXT */
 
 /* Map API: persistent KV store interface */
 void f_set_meta_iface(F_META_IFACE_t *iface);
 int f_create_persistent_sm(int layout_id, int intl, F_MAP_INFO_t *info_p);
 int f_create_persistent_cv(int layout_id, int intl, F_MAP_INFO_t *info_p);
 ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
-    uint64_t *off_p);
+    uint64_t *off_p, int op);
 int f_db_bput(unsigned long *buf, int map_id, void **keys, size_t size,
     size_t value_len);
 int f_db_bdel(int map_id, void **keys, size_t size);

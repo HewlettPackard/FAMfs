@@ -51,10 +51,8 @@
 #include "ds_leveldb.h"
 #include "uthash.h"
 
-//#define UNIFYCR_FID(key) *(long *)key
-//#define UNIFYCR_OFFSET(key) *((long *)key + 1)
-//#define UNIFYCR_ADDR(val) *((long *)val + 2)
-//#define UNIFYCR_LEN(val) *((long *)val + 1)
+#include "list.h"
+
 
 int recv_counter = 0;
 
@@ -140,9 +138,10 @@ void add_timing(struct timeval start, struct timeval end, int num,
  * @param md       Pointer to the main MDHIM structure
  * @param dest     Destination rank
  * @param message  pointer to message to send
+ * @param tag      client response queue tag
  * @return MDHIM_SUCCESS or MDHIM_ERROR on error
  */
-int send_locally_or_remote(struct mdhim_t *md, int dest, void *message) {
+int send_locally_or_remote(struct mdhim_t *md, int dest, void *message, void *tag) {
 	int ret = MDHIM_SUCCESS;
 
 	if (md->mdhim_rank != dest) {
@@ -153,10 +152,18 @@ int send_locally_or_remote(struct mdhim_t *md, int dest, void *message) {
 			&sizebuf, &sendbuf);
 		mdhim_full_release_msg(message);
 	} else {
+		struct mdhim_basem_t *msg = (struct mdhim_basem_t *) message;
+
 		//Sends the message locally
+		INIT_LIST_HEAD(&msg->rcv_msg_item);
+		msg->rcv_msg_tag = tag;
+
 		pthread_mutex_lock(md->receive_msg_mutex);
-		md->receive_msg = message;
-		pthread_cond_signal(md->receive_msg_ready_cv);
+		//md->receive_msg = message;
+		list_add(&msg->rcv_msg_item, &md->receive_msg_list);
+		md->receive_msg_cnt++;
+		//pthread_cond_signal(md->receive_msg_ready_cv);
+		pthread_cond_broadcast(md->receive_msg_ready_cv);
 		pthread_mutex_unlock(md->receive_msg_mutex);
 	}
 
@@ -202,8 +209,8 @@ int range_server_add_work(struct mdhim_t *md, work_item *item) {
 	//Lock the work queue mutex
 	pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);
 	item->next = NULL;
-	item->prev = NULL;       
-	
+	item->prev = NULL;
+
 	//Add work to the tail of the work queue
 	if (md->mdhim_rs->work_queue->tail) {
 		md->mdhim_rs->work_queue->tail->next = item;
@@ -425,10 +432,10 @@ done:
 	rm->error = error;
 	//Set the server's rank
 	rm->basem.server_rank = md->mdhim_rank;
-	
+
 	//Send response
-	gettimeofday(&resp_put_comm_start, NULL);	
-	ret = send_locally_or_remote(md, source, rm);
+	gettimeofday(&resp_put_comm_start, NULL);
+	ret = send_locally_or_remote(md, source, rm, im);
  /*
  struct timeval en, tm, tm2;
  gettimeofday(&en, NULL);
@@ -448,7 +455,7 @@ done:
 	if (source != md->mdhim_rank) {
 		free(im->key);
 		free(im->value);
-	} 
+	}
 	free(im);
 	return MDHIM_SUCCESS;
 }
@@ -602,11 +609,11 @@ int range_server_bput(struct mdhim_t *md, struct mdhim_bputm_t *bim, int source)
 	free(bim->key_lens);
 	free(bim->values);
 	free(bim->value_lens);
-	free(bim);
 
 	//Send response
-	gettimeofday(&resp_put_comm_start, NULL);	
-	ret = send_locally_or_remote(md, source, brm);
+	gettimeofday(&resp_put_comm_start, NULL);
+	ret = send_locally_or_remote(md, source, brm, bim);
+	free(bim);
 
 	return MDHIM_SUCCESS;
 }
@@ -653,7 +660,7 @@ int range_server_del(struct mdhim_t *md, struct mdhim_delm_t *dm, int source) {
 	rm->basem.server_rank = md->mdhim_rank;
 
 	//Send response
-	ret = send_locally_or_remote(md, source, rm);
+	ret = send_locally_or_remote(md, source, rm, dm);
 	free(dm);
 
 	return MDHIM_SUCCESS;
@@ -708,7 +715,7 @@ done:
 	brm->basem.server_rank = md->mdhim_rank;
 
 	//Send response
-	ret = send_locally_or_remote(md, source, brm);
+	ret = send_locally_or_remote(md, source, brm, bdm);
 	free(bdm->keys);
 	free(bdm->key_lens);
 	free(bdm);
@@ -758,7 +765,7 @@ int range_server_commit(struct mdhim_t *md, struct mdhim_basem_t *im, int source
 	rm->basem.server_rank = md->mdhim_rank;
 
 	//Send response
-	ret = send_locally_or_remote(md, source, rm);
+	ret = send_locally_or_remote(md, source, rm, im);
 	free(im);
 
 	return MDHIM_SUCCESS;
@@ -956,7 +963,7 @@ done:
 
 	//Send response
 	gettimeofday(&resp_get_comm_start, NULL);
-	ret = send_locally_or_remote(md, source, bgrm);
+	ret = send_locally_or_remote(md, source, bgrm, bgm);
 
 	//Release the bget message
 	free(bgm);
@@ -1189,16 +1196,16 @@ respond:
 	bgrm->num_keys = num_records;
 	bgrm->basem.index = index->id;
 	bgrm->basem.index_type = index->type;
-       
+
 	//Send response
 	gettimeofday(&resp_get_comm_start, NULL);
-	ret = send_locally_or_remote(md, source, bgrm);
+	ret = send_locally_or_remote(md, source, bgrm, bgm);
 	//Free stuff
 	if (source == md->mdhim_rank) {
-		/* If this message is not coming from myself, 
+		/* If this message is not coming from myself,
 		   free the keys and values from the get message */
 		mdhim_partial_release_msg(bgm);
-	} 
+	}
 
 	free(get_key);
 	free(get_key_len);
@@ -1212,7 +1219,7 @@ respond:
  * listener_thread
  * Function for the thread that listens for new messages
  */
-void *listener_thread(void *data) {	
+void *listener_thread(void *data) {
 	//Mlog statements could cause a deadlock on range_server_stop due to canceling of threads
 	
 
@@ -1309,9 +1316,9 @@ void *worker_thread(void *data) {
 		pthread_mutex_lock(md->mdhim_rs->work_queue_mutex);
 
 		//Wait until there is work to be performed
-		if ((item = get_work(md)) == NULL) {
+		while ((item = get_work(md)) == NULL && !md->shutdown) {
 			pthread_cond_wait(md->mdhim_rs->work_ready_cv, md->mdhim_rs->work_queue_mutex);
-			item = get_work(md);
+			//item = get_work(md);
 		}
 
 		pthread_mutex_unlock(md->mdhim_rs->work_queue_mutex);
