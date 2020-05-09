@@ -18,30 +18,6 @@
 #include "famfs_lf_connect.h"
 
 
-/*
- * Map stripe offset to FAM chunk.
- * Return the pointer to the corresponding N_CHUNK_t structure in stripe->chunks[]
- **/
-N_CHUNK_t *get_fam_chunk(N_STRIPE_t *stripe, f_stripe_t s, uint64_t offset)
-{
-    N_CHUNK_t *chunk;
-    unsigned int i, data, n, stripe_chunk;
-
-    data = stripe->d;
-    ASSERT( offset < data*stripe->chunk_sz);
-    n = data + stripe->p;
-
-    /* find chunk index by D# */
-    stripe_chunk = offset / stripe->chunk_sz;
-    chunk = stripe->chunks;
-    for (i = 0; i < n; i++, chunk++) {
-	if (chunk->data == stripe_chunk)
-	    break;
-    }
-    ASSERT(i < n);
-    return chunk;
-}
-
 static N_STRIPE_t *alloc_fam_stripe(F_LAYOUT_t *lo)
 {
     N_STRIPE_t *stripe;
@@ -70,7 +46,13 @@ _free:
     return NULL;
 }
 
-/* Set references to pool devices in stripe->chunks[] and sort them by d+P */
+/*
+ * Map to physical stripe.
+ * Set references to pool devices in stripe->chunks[] with D and P chunk order,
+ * following Slab map for given layout 'lo' and [global] stripe 's'.
+ * Allocate N_STRIPE_t on demand.
+ * Return -1 if no slab in map or unmapped, -ENOMEM or 0 for success.
+ **/
 int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
 {
     N_STRIPE_t *stripe = *stripe_p;

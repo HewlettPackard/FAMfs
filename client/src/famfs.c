@@ -58,8 +58,6 @@
 #include <sys/mman.h>
 #include <search.h>
 #include <pthread.h>
-//#include <mpi.h>
-//#include <openssl/md5.h>
 
 #include "unifycr-runtime-config.h"
 #include "unifycr-internal.h"
@@ -1422,7 +1420,7 @@ int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,  f_stripe_t stripe_phy_id, o
     chunk_sz = fam_stripe->chunk_sz;
 
     /* map data offset to physical chunk */
-    chunk = get_fam_chunk(fam_stripe, stripe_phy_id, stripe_offset);
+    chunk = get_fam_chunk(fam_stripe, stripe_offset);
     pdev = chunk->pdev;
     media_id = pdev->pool_index;
     chunk_offset = stripe_offset % chunk_sz;
@@ -1543,7 +1541,8 @@ int lf_fam_read(F_LAYOUT_t *lo, char *buf, size_t len, off_t stripe_offset, f_st
 
     /* new physical stripe? */
     if (!lo->fam_stripe ||
-        lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != s) {
+        lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != s)
+    {
         /* map to physical stripe */
         if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, s))) {
             DEBUG("%s: stripe:%lu in layout %s - mapping error:%d\n",
@@ -1556,17 +1555,18 @@ int lf_fam_read(F_LAYOUT_t *lo, char *buf, size_t len, off_t stripe_offset, f_st
     chunk_sz = fam_stripe->chunk_sz;
 
     /* map data offset to physical chunk */
-    chunk = get_fam_chunk(fam_stripe, s, stripe_offset);
+    chunk = get_fam_chunk(fam_stripe, stripe_offset);
     pdev = chunk->pdev;
     media_id = pdev->pool_index;
     chunk_offset = stripe_offset % chunk_sz;
     ASSERT(chunk_offset + len <= chunk_sz); /* aligned to chunk boundary */
 
-    /* Do RMA synchronous read */
+    /* Do RMA synchronous read from fdev */
     fdev = &pdev->dev->f;
     tgt_srv_addr = &fdev->fi_addr;
     tx_ep = fdev->ep;
 
+    /* use lifabric CQ or counters */
     if (lf_info->opts.use_cq) {
         tx_cq = fdev->cq;
         evnt = 0;

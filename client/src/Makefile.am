@@ -31,9 +31,7 @@ libfamfs_la_SOURCES = \
   lf_client.h \
   f_helper.c \
   famfs.c \
-  famfs.h \
-  fam_stripe.c \
-  fam_stripe.h
+  famfs.h
 
 libfamfs_la_CPPFLAGS = \
   $(AM_CPPFLAGS) \
@@ -68,9 +66,7 @@ libfamfs_gotcha_la_SOURCES = \
   lf_client.h \
   f_helper.c \
   famfs.c \
-  famfs.h \
-  fam_stripe.c \
-  fam_stripe.h
+  famfs.h
 
 libfamfs_gotcha_la_CPPFLAGS = \
   -DUNIFYCR_GOTCHA \
