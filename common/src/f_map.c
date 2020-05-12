@@ -2163,15 +2163,77 @@ static int shmem_create(void **shm_p, const char *name,
     return 0;
 }
 #else
+#include <time.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
+
+static long ticks = 0;
+
+static time_t get_proc_starttime(pid_t pid)
+{
+    struct sysinfo s_info;
+    time_t uptime;
+    FILE *fp;
+    char stat_fn[18], *p;
+    char *stat_str = NULL;
+    long starttime = 0;
+    unsigned long ul;
+    int i;
+
+    --starttime; /* max number */
+
+    /* uptime? */
+    if (sysinfo(&s_info))
+	goto _err;
+    /* since epoch */
+    uptime = time(0) - s_info.uptime;
+
+    /* jiffies per sec */
+    if (!ticks)
+	ticks = sysconf(_SC_CLK_TCK);
+
+    /* the time the process started after system boot */
+    stat_str = (char *) malloc(2048);
+    if (stat_str == NULL)
+	goto _err;
+    sprintf(stat_fn, "/proc/%u/stat", (unsigned) pid);
+
+    if (-1 == access(stat_fn, R_OK))
+	goto _err;
+
+    if ((fp = fopen (stat_fn, "r")) == NULL)
+	goto _err;
+
+    if (fgets(stat_str, 2048, fp) == NULL)
+	goto _close;
+
+    /* to field 3 */
+    p = strchr(stat_str, ')') +2;
+    /* to field 22 */
+    for (i = 0; i < 19 && p; i++)
+	p = strchr(p, ' ') +1;
+    /* parse starttime */
+    if (!p || !(ul = strtoul(p, NULL, 10)))
+	goto _close;
+
+    /* to time_t */
+    starttime = uptime + ul/ticks;
+
+_close:
+    fclose(fp);
+_err:
+    free(stat_str);
+    return starttime;
+}
 
 /* Given process PID and last attach time
   return true if owner is still alive. */
-static int shmem_verify_owner(unsigned short pid, time_t time)
+static int shmem_verify_owner(pid_t pid, time_t time)
 {
     char proc_pid[12];
+    time_t ctime;
     struct stat sts;
 
     sprintf(proc_pid, "/proc/%u", pid);
@@ -2179,17 +2241,21 @@ static int shmem_verify_owner(unsigned short pid, time_t time)
 	if (errno != ENOENT)
 	    err("shmem_verify_owner %s error - %m", proc_pid);
 
-	dbg_printf(" verify_owner pid:%u FALSE\n", pid);
+	dbg_printf(" verify_owner pid:%u not found\n", pid);
 	return 0;
     }
+
+    /* PID creation time */
+    ctime = get_proc_starttime(pid);
+
+#ifdef DEBUG_MAP
+    if (difftime(ctime, time) > 0)
+	dbg_printf(" verify_owner pid:%u is old, difftime:%.1fs\n",
+		   pid, difftime(ctime, time));
+#endif
+
     /* owner had to be alive when last attach */
-    /*
-    if (sts.st_atime > time)
-	printf(" verify_owner pid:%u FALSE (old)\n", pid);
-    else
-	printf(" verify_owner pid:%u TRUE\n", pid);
-    */
-    return (sts.st_atime > time)? 0:1;
+    return (difftime(ctime, time) > 0)? 0:1;
 }
 
 /* Open and attach to shared memory segment.
@@ -2258,7 +2324,7 @@ static int shmem_open(void **shm_p, const char *name,
 	if (rd && sbuf.shm_nattch > 0 &&
 	    !(sbuf.shm_perm.mode & SHM_DEST)) {
 	    /* verify segment owner */
-	    if (shmem_verify_owner(sbuf.shm_cpid, sbuf.shm_atime))
+	    if (shmem_verify_owner(sbuf.shm_cpid, sbuf.shm_ctime))
 		break; /* RD: ready to attach the segment */
 	/*  only for map owner: segment to be destroyed soon */
 	} else if (!rd && sbuf.shm_nattch == 0)
