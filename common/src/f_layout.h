@@ -18,6 +18,7 @@
 #include "famfs_lfa.h"
 #include "f_map.h"
 #include "f_dict.h"
+#include "f_wpool.h"
 #include "list.h"
 
 
@@ -237,6 +238,9 @@ typedef struct f_layout_partition_ {
     int			alloc_error;	/* last allocation error */
 
     F_PDI_MATRIX_t	*dmx; 		/* device allocation matrix (by AG/dev in AG) */
+
+    int			w_thread_cnt;	/* worker threads count */
+    F_WPOOL_t 		*wpool;		/* worker threads pool for background tasks */
 
     /* REMOVEME: devel stats counters. */
     atomic_t		stats[FL_NR_STATS];
