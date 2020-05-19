@@ -39,7 +39,7 @@ int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id)
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t s = ss->stripes[i];
 
-		LOG(LOG_DBG2, "%s[%d]-w%d: recovering stripe %lu (%d of %d)", 
+		LOG(LOG_DBG3, "%s[%d]-w%d: recovering stripe %lu (%d of %d)", 
 			lo->info.name, lp->part_num, thread_id, s, i, ecw_data->ss.count);
 		usleep(500);
 
@@ -63,7 +63,7 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id)
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t s = ss->stripes[i];
 
-		LOG(LOG_DBG2, "%s[%d]-w%d: encoding stripe %lu (%d of %d)", 
+		LOG(LOG_DBG3, "%s[%d]-w%d: encoding stripe %lu (%d of %d)", 
 			lo->info.name, lp->part_num, thread_id, s, i, ecw_data->ss.count);
 		usleep(500);
 
