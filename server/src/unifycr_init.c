@@ -389,8 +389,7 @@ int main(int argc, char *argv[])
 	if ((rc = f_test_helper(pool)))
 		LOG(LOG_ERR, "error %d in f_test_helper", rc);
     }
-*/
-    }
+*/  }
 
     {
         char fname[256];

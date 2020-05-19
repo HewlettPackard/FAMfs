@@ -256,6 +256,7 @@ enum layout_partition_flags {
     _LP_NOSPC,		/* Layout is out of space */
     _LP_RECOVER,	/* Layout is being recovered */
     _LP_SM_FLUSH,	/* Slabmap needs to be flushed */
+    _LP_CV_FLUSH,	/* Claim vector needs to be flushed */
     _LP_SPCERR_LOGGED,	/* Layout out of space error logged */
     _LP_RECOVER_QUEUED,	/* A Recovery request is queued */
 };
@@ -263,6 +264,7 @@ BITOPS(LP, Active, 	f_layout_partition_, _LP_ACTIVE)
 BITOPS(LP, NoSpace,	f_layout_partition_, _LP_NOSPC)
 BITOPS(LP, Recover,	f_layout_partition_, _LP_RECOVER)
 BITOPS(LP, SMFlush,	f_layout_partition_, _LP_SM_FLUSH)
+BITOPS(LP, CVFlush,	f_layout_partition_, _LP_CV_FLUSH)
 BITOPS(LP, SpcErrLogged, f_layout_partition_, _LP_SPCERR_LOGGED)
 BITOPS(LP, RecoverQueued, f_layout_partition_, _LP_RECOVER_QUEUED)
 

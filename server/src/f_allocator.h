@@ -68,6 +68,17 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss);
  */
 int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss);
 
+/*
+ * Set stripe laminated (set CVE_LAMINATED) 
+ *
+ *  Params
+ *  	lo		FAMfs layout pointer
+ *  	s		Stripe to laminate
+ *  Returns
+ *  	0		success
+ *  	<>0		error
+ */
+int f_laminate_stripe(F_LAYOUT_t *lo, f_stripe_t s);
 
 /* Device extents allocation/release routines */
 
@@ -95,5 +106,19 @@ int f_alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext);
  *	none
  */
 void f_release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext);
+
+/*
+ * Get a bitmap representing devices used in that slab.
+ *
+ *  Params
+ *  	lp		FAMfs layout partition
+ *  	slab		Slab number
+ *  	devmap		bitmap representing devices used in that slab 
+ *
+ *  Returns
+ *  	0		success
+ *  	<>0		error
+ */
+int f_get_slab_devmap(F_LO_PART_t *lp, f_slab_t slab, unsigned long *devmap);
 
 #endif

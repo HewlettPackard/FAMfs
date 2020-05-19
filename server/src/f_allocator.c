@@ -20,13 +20,21 @@
 #include "f_map.h"
 #include "f_pool.h"
 #include "f_layout.h"
+#include "f_wpool.h"
 #include "famfs_lf_connect.h"
 #include "f_layout_ctl.h"
+#include "f_encode_recovery.h"
 #include "f_allocator.h"
 
 
 static void *f_allocator_thread(void *ctx);
 
+static f_wfunc_ wp_farray[F_WP_NR] = 
+{
+	f_recover_stripes,
+	f_encode_stripes,
+	f_verify_stripes
+};
 
 /*
  * Destroy pool devices shared structs array LFA
@@ -332,7 +340,7 @@ static f_slab_t find_free_slab(F_LO_PART_t *lp)
 	return s;
 }
 
-static int get_slab_devmap(F_LO_PART_t *lp, f_slab_t slab, unsigned long *devmap)
+int f_get_slab_devmap(F_LO_PART_t *lp, f_slab_t slab, unsigned long *devmap)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_POOL_t *pool = lo->pool;
@@ -516,6 +524,8 @@ static struct f_stripe_bucket *add_stripe_bucket(F_LO_PART_t *lp, unsigned long 
 	if (atomic_read(&lp->bucket_count_max) < atomic_read(&lp->bucket_count))
 		atomic_set(&lp->bucket_count_max, atomic_read(&lp->bucket_count));
 
+	LOG(LOG_DBG2, "%s[%d]: added alloc bucket, count: %d", 
+		lo->info.name, lp->part_num, atomic_read(&lp->bucket_count));
 	return sb;
 }
 
@@ -551,7 +561,7 @@ static struct f_stripe_entry *find_stripe(F_LO_PART_t *lp, f_stripe_t stripe)
 	f_slab_t slab = stripe_to_slab(lo, stripe);
 	int rc;
 
-	rc = get_slab_devmap(lp, slab, devmap);
+	rc = f_get_slab_devmap(lp, slab, devmap);
 	ASSERT(!rc);
 	ASSERT(!bitmap_empty(devmap, pool->info.pdev_max_idx+1));
 
@@ -1709,7 +1719,7 @@ static inline bool can_allocate_from_slab(F_LO_PART_t *lp, f_slab_t slab)
 /* 
  * Pre-allocate stripe (set CVE_PREALLOC) 
  */
-static int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
+static inline int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	unsigned long old;
@@ -1736,7 +1746,7 @@ static int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
 /* 
  * Commit stripe (set CVE_ALLOCATED) 
  */
-static int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
+static inline int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	unsigned long old;
@@ -1745,7 +1755,8 @@ static int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
 	LOG(LOG_DBG3, "%s[%d]: committing stripe %lu", lo->info.name, lp->part_num, s);
 
 	if (!p) {
-		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
+		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", 
+			lo->info.name, lp->part_num, s);
 		return -ENOENT;
 	}
 
@@ -1754,6 +1765,34 @@ static int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
 
 	/* Check the previous state */
 	ASSERT(old == CVE_PREALLOC || old == CVE_ALLOCATED);
+
+	/* Set the dirty bit */
+	f_map_mark_dirty(lp->claimvec, s);
+	return 0;
+}
+
+/* 
+ * Set stripe laminated (set CVE_LAMINATED) 
+ */
+static inline int laminate_stripe(F_LO_PART_t *lp, f_stripe_t s)
+{
+	F_LAYOUT_t *lo = lp->layout;
+	unsigned long old;
+	void *p = f_map_get_p(lp->claimvec, s);
+
+	LOG(LOG_DBG3, "%s[%d]: setting stripe %lu laminated", lo->info.name, lp->part_num, s);
+
+	if (!p) {
+		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", 
+			lo->info.name, lp->part_num, s);
+		return -ENOENT;
+	}
+
+	/* Set the stripe preallocated */
+	old = atomic_test_and_set_bbit(BBIT_NR_IN_LONG(s), CVE_LAMINATED, p);
+
+	/* Check the previous state */
+	ASSERT(old == CVE_ALLOCATED);
 
 	/* Set the dirty bit */
 	f_map_mark_dirty(lp->claimvec, s);
@@ -1945,6 +1984,13 @@ static int purge_prealloc_stripes(F_LO_PART_t *lp)
 	return 0;
 }
 
+/* Claim Vector iterator condition: entry is free */
+/*
+static F_COND_t cv_free = {
+    .pset = CV_FREE_P,
+};
+*/
+
 /*
  * Find unused stripes in the slab and add them to the preallocated
  * stripes tree. 
@@ -1976,19 +2022,25 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 	if (log_print_level > LOG_DBG2)
 		f_print_cv(dbg_stream, lp->claimvec);
 
-	rc = get_slab_devmap(lp, slab, devmap);
+	rc = f_get_slab_devmap(lp, slab, devmap);
 	ASSERT(rc == 0);
 	ASSERT(!bitmap_empty(devmap, pool->info.pdev_max_idx+1));
 
 	cv_it = f_map_new_iter(lp->claimvec, F_NO_CONDITION, 0);
+//	cv_it = f_map_new_iter(lp->claimvec, cv_free, 0);
 	assert(cv_it);
 	for (n = 0, i = 0; i < lo->info.slab_stripes && n < count; i++) {
 		int v;
 		/* Probe if the entry is in memory and force its creation if not */
 		if (!f_map_probe_iter_at(cv_it, s0 + i, (void*)&v)) {
 			cv_it = f_map_seek_iter(cv_it, s0 + i);
+		} /*else {
+			cv_it = f_map_next(cv_it);
 		}
+		assert(cv_it);
 
+		i = cv_it->entry - s0;
+*/
 		if (v != CVE_FREE) {
 			LOG(LOG_DBG3, "%s[%d]: stripe %lu in slab %u: %d", 
 				lo->info.name, lp->part_num, s0 + i, slab, v);
@@ -2027,8 +2079,8 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 	if (rc) {
 		LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
 		list_for_each_entry_safe(se, next, &alloclist, list) {
-			list_del(&se->list);
 			release_stripe(lp, se->stripe, false);
+			list_del_init(&se->list);
 			free_stripe_entry(se);
 		}
 		return 0;
@@ -2143,7 +2195,7 @@ static int __get_stripe(F_LO_PART_t *lp, f_stripe_t match_stripe, f_stripe_t *st
 	/* Get the stripe bitmap to match */
 	if (match_stripe != F_STRIPE_INVALID) {
 		match_slab = stripe_to_slab(lo, match_stripe);
-		rc = get_slab_devmap(lp, match_slab, match_map);
+		rc = f_get_slab_devmap(lp, match_slab, match_map);
 		ASSERT(!rc && !bitmap_empty(match_map, bmap_size));
 	}
 
@@ -2460,7 +2512,7 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t stripe;
-		
+
 		ASSERT(f_map_prt_my_global(lp->claimvec, ss->stripes[i]));
 		stripe = f_map_prt_to_local(lp->claimvec, ss->stripes[i]);
 		rc += commit_stripe(lp, stripe);
@@ -2468,11 +2520,23 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	
 	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 
 
+	rc = f_submit_encode_stripes(lo, ss);
+	if (rc) LOG(LOG_ERR, "%s[%d]: error %d submitting stripes for encoding", 
+		lo->info.name, lp->part_num, rc);
+
 	rc = f_map_flush(lp->claimvec);
 	if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
 
 	LOG(LOG_DBG2, "%s[%d]: committed %d stripes rc=%d", lo->info.name, lp->part_num, i, rc);
 	return rc;
+}
+
+/* 
+ * Set stripe laminated (set CVE_LAMINATED) 
+ */
+int f_laminate_stripe(F_LAYOUT_t *lo, f_stripe_t s)
+{
+	return laminate_stripe(lo->lp, s);
 }
 
 /* Gauge the layout I/O pressure */
@@ -2625,6 +2689,7 @@ static void check_layout_devices(F_LAYOUT_t *lo)
  */
 static inline void layout_partition_free(F_LO_PART_t *lp)
 {
+	if (lp->wpool) f_wpool_exit(lp->wpool, 0);
 	if (lp->slabmap) f_map_exit(lp->slabmap);
 	if (lp->claimvec) f_map_exit(lp->claimvec);
 	rcu_unregister_thread();
@@ -2667,6 +2732,10 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	atomic_set(&lp->allocated_stripes, 0);
 	atomic_set(&lp->bucket_count, 0);
 	atomic_set(&lp->bucket_count_max, 0);
+
+	lp->w_thread_cnt = 16;
+	lp->wpool = f_wpool_init(lp->w_thread_cnt, wp_farray, NULL);
+	if (!lp->wpool) goto _err;
 
 	lo->info.slab_count	= get_layout_slab_count(lo);
 	lp->lwm_stripes		= F_LWM_ALLOC_STRIPES * chunk_size_factor;
@@ -2751,15 +2820,26 @@ int f_stripe_allocator(F_LO_PART_t *lp)
 	loglevel alloc_err_lvl = !LayoutNoSpace(lo) ? LOG_ERR : LOG_DBG;
 	int stripes_threshold = F_LWM_ALLOC_STRIPES / 2;
 
-	/* Flush slab map if requested */
+	/* Flush the slab map if requested */
 	if (LPSMFlush(lp)) {
 		rc = f_map_flush(lp->slabmap);
 		if (rc) {
 			LOG(LOG_ERR, "%s[%d]: error %s flushing slabmap", 
-				lo->info.name, lp->part_num, strerror(rc));
+				lo->info.name, lp->part_num, strerror(-rc));
 		} else {
 			atomic_inc(&lp->slabmap_version);
 			ClearLPSMFlush(lp);
+		}
+	}
+
+	/* Flush the claim vector map if requested */
+	if (LPCVFlush(lp)) {
+		rc = f_map_flush(lp->claimvec);
+		if (rc) {
+			LOG(LOG_ERR, "%s[%d]: error %s flushing claim vector", 
+				lo->info.name, lp->part_num, strerror(-rc));
+		} else {
+			ClearLPCVFlush(lp);
 		}
 	}
 
