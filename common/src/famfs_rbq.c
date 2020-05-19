@@ -85,10 +85,17 @@ int f_rbq_open(char *name, f_rbq_t **qp) {
     int         fd;
     f_rbq_hdr_t *hp;
     char        sem_name[MAX_RBQ_NAME + 8];
-    size_t    size;
+    size_t      size;
+    useconds_t  usec = 1000000;
 
-    if (-1 == (fd = shm_open(name, O_RDWR, 0))) 
-        return -errno;
+    while (-1 == (fd = shm_open(name, O_RDWR, 0))) {
+        if (errno != ENOENT)
+            return -errno;
+        usleep(usec);
+        usec <<= 1;
+        if (usec > 60*1000000)
+            return -(errno = ENOENT);
+    }
 
     if (NULL == (hp = mmap(NULL, sizeof(f_rbq_hdr_t), PROT_WRITE | PROT_READ, MAP_SHARED, fd, SEEK_SET))) 
         return -errno;

@@ -863,15 +863,18 @@ static void *drainer(void *arg) {
 
     LOG(LOG_DBG, "helper commit thread %s is up", qname);
 
+    int do_more = 0;
     while (!quit) {
-        // wait until queue is sufficiently full 
-        if ((rc = f_rbq_waithwm(scmq, tmo)) == -ETIMEDOUT) {
-            LOG(LOG_DBG, "rbq %s: HW TMO\n", qname);
-        } else if (rc == -ECANCELED) {
-            if (!f_rbq_isempty(scmq))
-                LOG(LOG_INFO, "rbq %s: wake-up signal received", qname);
-        } else if (rc) {
-            LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(-rc));
+        if (!do_more) {
+            // wait until queue is sufficiently full 
+            if ((rc = f_rbq_waithwm(scmq, tmo)) == -ETIMEDOUT) {
+                LOG(LOG_DBG, "rbq %s: HW TMO\n", qname);
+            } else if (rc == -ECANCELED) {
+                if (!f_rbq_isempty(scmq))
+                    LOG(LOG_INFO, "rbq %s: wake-up signal received", qname);
+            } else if (rc) {
+                LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(-rc));
+            }
         }
         if (quit)
             break;
@@ -923,9 +926,13 @@ static void *drainer(void *arg) {
             }
 
             // send them out if too many
-            if (ssa[lid].count >= F_MAX_IPC_ME)
+            if (ssa[lid].count >= F_MAX_IPC_ME) {
+                do_more++;
                 break;
+            }
         }
+        if (f_rbq_isempty(scmq))
+            do_more = 0;
 
         for (int i = 0; i <  N; i++) {
             if (ssa[i].count) {

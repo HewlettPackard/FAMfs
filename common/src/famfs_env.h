@@ -199,8 +199,8 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define LAYOUT_SQ_LWM		25	/* low water mark for preallocated queue */
 
 #define UNIFYCR_LFA_PORT	30000	/* port for lf_atomics */
-#define UNIFYCR_CQ_HWM		75	/* high water mark for committed stripes queue */
-#define UNIFYCR_CQ_HWM_TMO	30	/* high water mark TMO for stripes queue, sec */
+#define UNIFYCR_CQ_HWM		50	/* high water mark for committed stripes queue, % */
+#define UNIFYCR_CQ_HWM_TMO	3	/* high water mark TMO for stripes queue, sec */
 
 /* Limits: slab, stripe, device and layout */
 #define F_DEVICES_MAX		4096	/* Maximum number of FAMs, divisible by 8 */
