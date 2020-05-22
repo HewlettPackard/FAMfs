@@ -87,18 +87,11 @@ extern void *unifycr_superblock;
 extern unsigned long unifycr_max_index_entries;
 extern long unifycr_spillover_max_chunks;
 
-/* FAM */
-
-extern f_rbq_t *adminq;
-extern f_rbq_t *rplyq;
-extern f_rbq_t *lo_cq[F_CMDQ_MAX];
-
-//static uint64_t wevents = 1;
 
 //
 // =================================
 //
-
+#if 0
 /* given a file id and logical chunk id, return pointer to meta data
  * for specified chunk, return NULL if not found */
 static unifycr_chunkmeta_t *unifycr_get_chunkmeta(int fid, int cid)
@@ -116,6 +109,7 @@ static unifycr_chunkmeta_t *unifycr_get_chunkmeta(int fid, int cid)
     /* failed to find file or chunk id is out of range */
     return (unifycr_chunkmeta_t *)NULL;
 }
+#endif
 
 /* ---------------------------------------
  * Operations on file chunks
@@ -177,7 +171,7 @@ static inline off_t unifycr_compute_spill_offset(
 }
 
 /* allocate a new chunk for the specified file and logical chunk id */
-static int unifycr_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
+static int unifycr_chunk_alloc(unifycr_filemeta_t *meta, int chunk_id)
 {
     /* get pointer to chunk meta data */
     unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
@@ -243,7 +237,7 @@ static int unifycr_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
     return UNIFYCR_SUCCESS;
 }
 
-static int unifycr_chunk_free(int fid, unifycr_filemeta_t *meta, int chunk_id)
+static int unifycr_chunk_free(unifycr_filemeta_t *meta, int chunk_id)
 {
     /* get pointer to chunk meta data */
     unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
@@ -427,14 +421,14 @@ static int unifycr_logio_chunk_write(
 
         int i = 0;
         if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
-            < unifycr_max_index_entries) {
+            < (long)unifycr_max_index_entries) {
             /*coalesce contiguous indices*/
 
             if (*unifycr_indices.ptr_num_entries >= 1) {
                 md_index_t *ptr_last_idx =
                     &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
                 if (ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
-                    ptr_last_idx->file_pos + ptr_last_idx->length
+                    ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length
                     == tmp_index_set.idxes[0].file_pos) {
                     if (ptr_last_idx->file_pos / unifycr_key_slice_range
                         == tmp_index_set.idxes[0].file_pos / unifycr_key_slice_range) {
@@ -464,7 +458,6 @@ static int unifycr_logio_chunk_write(
 
     } else if (chunk_meta->location == CHUNK_LOCATION_SPILLOVER) {
 	int i;
-        f_stripe_t stripe_phy_id = 0;
         off_t spill_offset = 0;
 
         /* spill over to a file, so write to file descriptor */
@@ -503,14 +496,14 @@ static int unifycr_logio_chunk_write(
                             unifycr_key_slice_range);
         i = 0;
         if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
-            < unifycr_max_index_entries) {
+            < (long)unifycr_max_index_entries) {
             /*coalesce contiguous indices*/
 
             if (*unifycr_indices.ptr_num_entries >= 1) {
                 md_index_t *ptr_last_idx =
                     &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
                 if (ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
-                    ptr_last_idx->file_pos + ptr_last_idx->length
+                    ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length
                     == tmp_index_set.idxes[0].file_pos) {
                     if (ptr_last_idx->file_pos / unifycr_key_slice_range
                         == tmp_index_set.idxes[0].file_pos / unifycr_key_slice_range) {
@@ -546,24 +539,6 @@ static int unifycr_logio_chunk_write(
 
     /* assume read was successful if we get to here */
     return UNIFYCR_SUCCESS;
-}
-
-static int cmp_md(const void *ap, const void *bp) {
-    md_index_t *mda = (md_index_t *)ap, *mdb = (md_index_t *)bp;
-
-    if (mda->fid > mdb->fid)
-        return 1;
-    else if (mda->fid < mdb->fid)
-        return -1;
-    if (mda->sid > mdb->sid)
-        return 1;
-    else if (mda->sid < mdb->sid)
-        return -1;
-    if (mda->file_pos > mdb->file_pos)
-        return 1;
-    else if (mda->file_pos < mdb->file_pos)
-        return -1;
-    return 0;
 }
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,
@@ -610,8 +585,8 @@ static int unifycr_chunk_write(
  * --------------------------------------- */
 
 /* if length is greater than reserved space, reserve space up to length */
-int unifycr_fid_store_fixed_extend(int fid, unifycr_filemeta_t *meta,
-                                   off_t length)
+int unifycr_fid_store_fixed_extend(int fid __attribute__((unused)),
+    unifycr_filemeta_t *meta, off_t length)
 {
     /* determine whether we need to allocate more chunks */
     off_t maxsize = meta->chunks << unifycr_chunk_bits;
@@ -625,7 +600,7 @@ int unifycr_fid_store_fixed_extend(int fid, unifycr_filemeta_t *meta,
                 return UNIFYCR_ERR_NOSPC;
             }
             /* allocate a new chunk */
-            int rc = unifycr_chunk_alloc(fid, meta, meta->chunks);
+            int rc = unifycr_chunk_alloc(meta, meta->chunks);
             if (rc != UNIFYCR_SUCCESS) {
                 DEBUG("failed to allocate chunk\n");
                 return UNIFYCR_ERR_NOSPC;
@@ -641,8 +616,8 @@ int unifycr_fid_store_fixed_extend(int fid, unifycr_filemeta_t *meta,
 }
 
 /* if length is shorter than reserved space, give back space down to length */
-int unifycr_fid_store_fixed_shrink(int fid, unifycr_filemeta_t *meta,
-                                   off_t length)
+int unifycr_fid_store_fixed_shrink(int fid __attribute__((unused)),
+    unifycr_filemeta_t *meta, off_t length)
 {
     /* determine the number of chunks to leave after truncating */
     off_t num_chunks = 0;
@@ -653,15 +628,15 @@ int unifycr_fid_store_fixed_shrink(int fid, unifycr_filemeta_t *meta,
     /* clear off any extra chunks */
     while (meta->chunks > num_chunks) {
         meta->chunks--;
-        unifycr_chunk_free(fid, meta, meta->chunks);
+        unifycr_chunk_free(meta, meta->chunks);
     }
 
     return UNIFYCR_SUCCESS;
 }
 
 /* read data from file stored as fixed-size chunks */
-int unifycr_fid_store_fixed_read(int fid, unifycr_filemeta_t *meta, off_t pos,
-                                 void *buf, size_t count)
+int unifycr_fid_store_fixed_read(int fid __attribute__((unused)),
+    unifycr_filemeta_t *meta, off_t pos, void *buf, size_t count)
 {
     int rc;
 

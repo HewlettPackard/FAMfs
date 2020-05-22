@@ -25,6 +25,7 @@
    F_POOL_t *p, F_POOL_DEV_t *pd */
 #define for_each_pool_dev(p, pd)				\
 	pd = p->devlist + p->info.pdev_indexes[0];		\
+	(void)pd;						\
 	for (unsigned int _i = 0;				\
 	     p->devlist && _i < p->info.dev_count;		\
 	     pd = p->devlist + p->info.pdev_indexes[++_i])

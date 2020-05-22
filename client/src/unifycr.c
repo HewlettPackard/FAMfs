@@ -154,7 +154,7 @@ int dbgrank;
 int    unifycr_max_files;  /* maximum number of files to store */
 size_t unifycr_chunk_mem;  /* number of bytes in memory to be used for chunk storage */
 int    unifycr_chunk_bits; /* we set chunk size = 2^unifycr_chunk_bits */
-off_t  unifycr_chunk_size; /* chunk size in bytes */
+size_t unifycr_chunk_size; /* chunk size in bytes */
 off_t  unifycr_chunk_mask; /* mask applied to logical offset to determine physical offset within chunk */
 long    unifycr_max_chunks; /* maximum number of chunks that fit in memory */
 
@@ -462,7 +462,7 @@ inline int unifycr_intercept_fd(int *fd)
         return 0;
     }
 
-    if (oldfd < unifycr_fd_limit) {
+    if (oldfd < (int)unifycr_fd_limit) {
         /* this fd is a real system fd, so leave it as is */
         return 0;
     } else if (oldfd < 0) {
@@ -597,10 +597,10 @@ static int unifycr_fid_store_alloc(int fid)
 }
 
 /* free data management resource for file */
-static int unifycr_fid_store_free(int fid)
+static int unifycr_fid_store_free(int fid __attribute__((unused)))
 {
     /* get meta data for this file */
-    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    //unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
 
     return UNIFYCR_SUCCESS;
 }
@@ -1046,7 +1046,6 @@ int unifycr_get_global_fid(const char *path, int *gfid)
     unsigned char md[16];
     memset(md, 0, 16);
 
-    int i;
     MD5_Init(&ctx);
     MD5_Update(&ctx, path, strlen(path));
     MD5_Final(md, &ctx);
@@ -1229,8 +1228,9 @@ int ins_file_meta(unifycr_fattr_buf_t *ptr_f_meta_log,
 /* opens a new file id with specified path, access flags, and permissions,
  * fills outfid with file id and outpos with position for current file pointer,
  * returns UNIFYCR error code */
-static int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
-                     off_t *outpos)
+static int unifycr_fid_open(const char *path, int flags,
+    mode_t mode __attribute__((unused)),
+    int *outfid, off_t *outpos)
 {
     char *norm_path, buf[PATH_MAX];
     norm_path = normalized_path(path, buf, PATH_MAX);
@@ -1389,7 +1389,7 @@ static int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfi
     return UNIFYCR_SUCCESS;
 }
 
-static int unifycr_fid_close(int fid)
+static int unifycr_fid_close(int fid __attribute__((unused)))
 {
     /* TODO: clear any held locks */
 
@@ -1531,7 +1531,6 @@ static int unifycr_init_structures()
 
 static int unifycr_get_spillblock(size_t size, const char *path)
 {
-    void *scr_spillblock = NULL;
     int spillblock_fd;
 
     mode_t perms = unifycr_getmode(0);
@@ -1626,7 +1625,7 @@ static void *unifycr_superblock_shmget(size_t size, key_t key)
                 /* superblock already exists, attach to it */
                 scr_shmblock_shmid = shmget(key, size, 0);
                 scr_shmblock = shmat(scr_shmblock_shmid, NULL, 0);
-                if (scr_shmblock < 0) {
+                if (scr_shmblock == (void *) -1) {
                     perror("shmat() failed");
                     return NULL;
                 }
@@ -1642,7 +1641,7 @@ static void *unifycr_superblock_shmget(size_t size, key_t key)
         } else {
             /* brand new superblock created, attach to it */
             scr_shmblock = shmat(scr_shmblock_shmid, NULL, 0);
-            if (scr_shmblock == (void *) - 1) {
+            if (scr_shmblock == (void *) -1) {
                 perror("shmat() failed");
             }
             DEBUG("Superblock created at %p!\n", scr_shmblock);
@@ -1674,7 +1673,6 @@ static void *unifycr_superblock_shmget(size_t size, key_t key)
     } else {
         /* Use mmap to allocated share memory for UnifyCR*/
         int ret = -1;
-        int fd = -1;
         char shm_name[GEN_STR_LEN] = {0};
         sprintf(shm_name, "%d-super-%d", app_id, key);
         superblock_fd = shm_open(shm_name, MMAP_OPEN_FLAG, MMAP_OPEN_MODE);
@@ -1701,84 +1699,8 @@ static void *unifycr_superblock_shmget(size_t size, key_t key)
     return scr_shmblock;
 }
 
-/* converts string like 10mb to unsigned long long integer value of 10*1024*1024 */
-static int unifycr_abtoull(char *str, unsigned long long *val)
-{
-    /* check that we have a string */
-    if (str == NULL) {
-        DEBUG("scr_abtoull: Can't convert NULL string to bytes @ %s:%d",
-              __FILE__, __LINE__);
-        return UNIFYCR_FAILURE;
-    }
 
-    /* check that we have a value to write to */
-    if (val == NULL) {
-        DEBUG("scr_abtoull: NULL address to store value @ %s:%d",
-              __FILE__, __LINE__);
-        return UNIFYCR_FAILURE;
-    }
-
-    /* pull the floating point portion of our byte string off */
-    errno = 0;
-    char *next = NULL;
-    double num = strtod(str, &next);
-    if (errno != 0) {
-        DEBUG("scr_abtoull: Invalid double: %s @ %s:%d",
-              str, __FILE__, __LINE__);
-        return UNIFYCR_FAILURE;
-    }
-
-    /* now extract any units, e.g. KB MB GB, etc */
-    unsigned long long units = 1;
-    if (*next != '\0') {
-        switch (*next) {
-        case 'k':
-        case 'K':
-            units = 1024;
-            break;
-        case 'm':
-        case 'M':
-            units = 1024 * 1024;
-            break;
-        case 'g':
-        case 'G':
-            units = 1024 * 1024 * 1024;
-            break;
-        default:
-            DEBUG("scr_abtoull: Unexpected byte string %s @ %s:%d",
-                  str, __FILE__, __LINE__);
-            return UNIFYCR_FAILURE;
-        }
-
-        next++;
-
-        /* handle optional b or B character, e.g. in 10KB */
-        if (*next == 'b' || *next == 'B') {
-            next++;
-        }
-
-        /* check that we've hit the end of the string */
-        if (*next != 0) {
-            DEBUG("scr_abtoull: Unexpected byte string: %s @ %s:%d",
-                  str, __FILE__, __LINE__);
-            return UNIFYCR_FAILURE;
-        }
-    }
-
-    /* check that we got a positive value */
-    if (num < 0) {
-        DEBUG("scr_abtoull: Byte string must be positive: %s @ %s:%d",
-              str, __FILE__, __LINE__);
-        return UNIFYCR_FAILURE;
-    }
-
-    /* multiply by our units and set out return value */
-    *val = (unsigned long long)(num * (double) units);
-
-    return UNIFYCR_SUCCESS;
-}
-
-static int unifycr_init(int rank)
+static int unifycr_init(void)
 {
     if (! unifycr_initialized) {
         long l;
@@ -1797,7 +1719,7 @@ static int unifycr_init(int rank)
             DEBUG("gotcha_wrap returned %d\n", (int) result);
         }
 
-        int i;
+        unsigned int i;
         for (i = 0; i < GOTCHA_NFUNCS; i++) {
             if (*(void **)(wrap_unifycr_list[i].function_address_pointer) == 0) {
                 DEBUG("This function name failed to be wrapped: %s\n",
@@ -1805,8 +1727,6 @@ static int unifycr_init(int rank)
             }
         }
 #endif
-        char *env;
-        unsigned long long bytes;
 
         /* as a hack to support fgetpos/fsetpos, we store the value of
          * a void* in an fpos_t so check that there's room and at least
@@ -2124,7 +2044,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 
     /* TODO: Separate FAMFS code from unifycr_init */
     /* initialize our library */
-    rc = unifycr_init(rank);
+    rc = unifycr_init();
     if (rc != UNIFYCR_SUCCESS)
         return rc;
 
@@ -2152,6 +2072,9 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     }
 
     if (fs_type == FAMFS) {
+        /* TODO: Remove this line! */
+        *((int *)shm_recvbuf) = 0; /* metadata read cache size */
+
         if ((rc = f_srv_connect())) {
             DEBUG("rank %d couldn't connect to server: %d", dbg_rank, rc);
             return UNIFYCR_FAILURE;
@@ -2236,14 +2159,17 @@ static int _unifycr_shutdown()
 
 int unifycr_shutdown()
 {
-    int rc = unifycr_unmount();
-    if (rc)
-        return rc;
+    int rc;
 
     if (fs_type == FAMFS)
         rc = famfs_shutdown();
     else
         rc = _unifycr_shutdown();
+    if (rc) {
+        DEBUG("shutdown failed:%d", rc);
+    } else {
+        rc = unifycr_unmount();
+    }
     return rc;
 }
 
@@ -2258,8 +2184,6 @@ static int _unifycr_unmount() {
 }
 
 int unifycr_unmount() {
-    int rc;
-
     if (fs_type == FAMFS)
         return famfs_unmount();
     return _unifycr_unmount();
@@ -2273,11 +2197,8 @@ int unifycr_unmount() {
 */
 static int unifycr_sync_to_del()
 {
-    int rc = -1;
-
     int cmd = COMM_MOUNT;
 
-    int superblock_start = UNIFYCR_SUPERBLOCK_KEY;
     int num_procs_per_node = local_rank_cnt;
     int req_buf_sz = shm_req_size;
     int recv_buf_sz = shm_recv_size;
@@ -2399,7 +2320,6 @@ static int unifycr_sync_to_del()
 static int unifycr_init_recv_shm(int local_rank_idx, int app_id)
 {
     int rc = -1;
-    long l;
 
     /* UNIFYCR_SHMEM_RECV_SIZE */
     (void)configurator_int_val(client_cfg.shmem_recv_size, &shm_recv_size);
@@ -2423,7 +2343,7 @@ static int unifycr_init_recv_shm(int local_rank_idx, int app_id)
         return UNIFYCR_FAILURE;
     }
 
-    *((int *)shm_recvbuf) = app_id + 3;
+    *((int *)shm_recvbuf) = 0 /* app_id + 3 */;
     return 0;
 }
 
@@ -2674,8 +2594,7 @@ static int CountTasksPerNode(int rank, int numTasks)
 {
     char       hostname[UNIFYCR_MAX_FILENAME],
                localhost[UNIFYCR_MAX_FILENAME];
-    int        count               = 1,
-               resultsLen          = 30,
+    int        resultsLen          = 30,
                i;
 
     MPI_Status status;
@@ -2853,7 +2772,9 @@ static int CountTasksPerNode(int rank, int numTasks)
 
 
 /* mount memfs at some prefix location */
-static int unifycrfs_mount(const char prefix[], size_t size, int rank)
+static int unifycrfs_mount(const char prefix[] __attribute__((unused)),
+    size_t size __attribute__((unused)),
+    int rank)
 {
     if (fs_type == UNIFYCR_LOG) {
         char host_name[UNIFYCR_MAX_FILENAME] = {0};
@@ -2927,14 +2848,14 @@ size_t unifycr_get_data_region(void **ptr)
 }
 
 /* get a list of chunks for a given file (useful for RDMA, etc.) */
-chunk_list_t *unifycr_get_chunk_list(char *path)
+chunk_list_t *unifycr_get_chunk_list(char *path __attribute__((unused)))
 {
     return NULL;
 }
 
 /* debug function to print list of chunks constituting a file
  * and to test above function*/
-void unifycr_print_chunk_list(char *path)
+void unifycr_print_chunk_list(char *path __attribute__((unused)))
 {
 }
 

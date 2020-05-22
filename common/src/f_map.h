@@ -263,7 +263,7 @@ typedef struct f_map_sb_ {
  * Readers should hold the lock while reading SB and
  * should never dereference super_bosl->bosses.
  */
-#define F_SHMAP_NAME_PREFIX	"shm_sb"
+#define F_SHMAP_NAME_PREFIX	"shm_s"
 #define F_SHMAP_NAME_LEN	ROUND_UP(FVAR_MONIKER_MAX+8, 8)
 typedef struct f_shmap_sb_ {
     char		name[F_SHMAP_NAME_LEN];	/* SHMEM SB file name */
@@ -272,7 +272,7 @@ typedef struct f_shmap_sb_ {
     F_MAP_t		super_map;	/* collection of super BoSses */
 } __attribute__((aligned(PAGE_SIZE))) F_SHMAP_SB_t;
 
-#define F_SHMAP_DATA_NAME	"shm_"
+#define F_SHMAP_DATA_NAME	"shm_d"
 typedef struct f_shmap_data_ {
     char		name[F_SHMAP_NAME_LEN];	/* SHMEM data file name */
     F_BOSL_t		super_bosl;	/* super BoS */

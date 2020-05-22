@@ -71,7 +71,7 @@ struct mdhim_options_t *mdhim_options_init()
 	opts->dbs_upswd = "pass";		
 	
         
-	opts->debug_level = 1;
+	opts->debug_level = 0x00500000; /* MLOG_CRIT */
         opts->rserver_factor = 1;
         opts->max_recs_per_slice = 100000;
 	opts->db_paths = NULL;

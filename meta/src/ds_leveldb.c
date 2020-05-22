@@ -45,8 +45,6 @@
 #include "famfs_error.h"
 
 
-static int famfs = 1; /* DEBUG: 1 - turn on extra check for FAMfs only */
-
 struct timeval dbputstart, dbputend;
 struct timeval dbgetstart, dbgetend;
 double dbputtime=0, dbgettime=0;
@@ -1334,19 +1332,10 @@ int add_kv(
 		*tmp_out_cap *= 2;
 	}
 
-	if (famfs && *tmp_records_cnt) {
-	    int prev = *tmp_records_cnt -1;
-	    unsigned long s = FAMFS_STRIPE((*out_key)[prev]);
-
-	    /* Check same stripe here; the consumer must check ADDR+LEN <= stripe size! */
-	    if (FAMFS_STRIPE(ret_val) != s) {
-		ERROR("fid=%lu md[%d] st/len=%ld/%ld stripe=%lu cross prev st/len=%ld/%ld stripe=%lu",
-		    UNIFYCR_FID(ret_key), prev+1,
-		    UNIFYCR_OFFSET(ret_key), UNIFYCR_LEN(ret_key), FAMFS_STRIPE(ret_val),
-		    UNIFYCR_OFFSET((*out_key)[prev]), UNIFYCR_LEN((*out_key)[prev]), s);
-		ASSERT(0);
-	    }
-	}
+	mlog(MDHIM_SERVER_DBG, "add_kv [%d] lid=%d fid=%d off/len=%lu/%lu sid=%lu addr=%lu",
+	     *tmp_records_cnt, FAMFS_PK_FID(ret_key), FAMFS_PK_LID(ret_key),
+	     UNIFYCR_OFFSET(ret_key), UNIFYCR_LEN(ret_val),
+	     FAMFS_STRIPE(ret_val), UNIFYCR_ADDR(ret_val));
 
 	(*out_key)[*tmp_records_cnt] = ret_key;
 	(*out_val)[*tmp_records_cnt] = ret_val;

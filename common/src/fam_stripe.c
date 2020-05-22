@@ -16,6 +16,10 @@
 #include "f_pool.h"
 #include "f_layout.h"
 #include "famfs_lf_connect.h"
+#include "famfs_lf_cqprogress.h"
+
+/* If defined: limit send queue depth when CQ is used */
+//#define IBV_SQ_WR_DEPTH 0 /* 1..8; 0 - sync I/O */
 
 
 static N_STRIPE_t *alloc_fam_stripe(F_LAYOUT_t *lo)
@@ -79,13 +83,15 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
     /* read Slab map */
     se = (F_SLAB_ENTRY_t *)f_map_get_p(lo->slabmap, stripe->extent);
     if (se == NULL) {
-	ERROR("failed to get Slab map record for %lu in slab %u",
-	      s, stripe->extent);
+	ERROR("%s: failed to get Slab map record for %lu in slab %u",
+	      lo->info.name, s, stripe->extent);
 	return -1;
     }
+ if (se->stripe_0 != stripe_0) ERROR("%s: Slab map record:%lu != s:%lu",lo->info.name,se->stripe_0,stripe_0);
     ASSERT( se->stripe_0 == stripe_0 ); /* Slab map entry key */
     if (se->mapped == 0) {
-	ERROR("failed to get Slab map record:%lu - not mapped!", stripe_0);
+	ERROR("%s: failed to get Slab map record:%lu - not mapped!",
+	      lo->info.name, stripe_0);
 	return -1;
     }
 
@@ -125,6 +131,10 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
 	chunk->p_stripe0_off = (pdev->extent_start + chunk->extent)*pdev->extent_sz;
 	FAM_DEV_t *fdev = &pdev->dev->f;
 	chunk->p_stripe0_off += fdev->offset + fdev->virt_addr;
+	if (!pool->lf_info->opts.use_cq) {
+	    chunk->r_event = fi_cntr_read(fdev->rcnt);
+	    chunk->w_event = fi_cntr_read(fdev->wcnt);
+	}
     }
     stripe->stripe_0 = stripe_0;
     stripe->stripe_in_part = stripe_in_ext;
@@ -132,8 +142,258 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
     return 0;
 }
 
+/* Map logical I/O (offset in stripe and length) to stripe's physical chunks */
+void map_fam_chunks(N_STRIPE_t *stripe, char *buf,
+		    off_t offset, size_t length,
+		    void* (*lookup_mreg_fn)(const char *buf, size_t len, int nid))
+{
+    unsigned int d, k, nchunks = stripe->p + stripe->d;
+    N_CHUNK_t *chunk;
+    size_t chunk_sz = stripe->chunk_sz;
+    char *usr_buf = buf;
+    uint32_t off;
+
+    off = offset % chunk_sz;
+    k = offset/chunk_sz;
+    for (d = 0; d < nchunks; d++) {
+	FAM_DEV_t *fdev;
+
+	/* chunk Dn then Pn */
+	chunk = get_fam_chunk(stripe, d);
+	if (d < k || chunk->data < 0) {
+	    /* before stripe I/O start or parity chunk */
+	    chunk->length = 0;
+	    chunk->offset = 0;
+	} else {
+	    /* map data to chunk 'd' */
+	    chunk->length = min(length, chunk_sz);
+	    length -= chunk->length;
+	    chunk->offset = off;
+	    off = 0;
+	    if (lookup_mreg_fn)
+		fdev->local_desc = lookup_mreg_fn(buf, chunk->length, chunk->lf_client_idx);
+	    fdev = &chunk->pdev->dev->f;
+	    fdev->usr_buf = usr_buf;
+	    usr_buf += chunk->length;
+	}
+    }
+}
+
 void free_fam_stripe(N_STRIPE_t *stripe) {
-    free(stripe->chunks);
-    free(stripe);
+    if (stripe) {
+	free(stripe->chunks);
+	free(stripe);
+    }
+}
+
+static inline ssize_t _fi_write(struct fid_ep *ep, void *buf, size_t len, void *desc,
+    fi_addr_t dest_addr, uint64_t addr, uint64_t key, void *context)
+{
+    return fi_write(ep, buf, len, desc, dest_addr, addr, key, context);
+}
+
+/* Start I/O to stripe's data chunks */
+int chunk_rma_start(N_STRIPE_t *stripe, int use_cq, int wr)
+{
+    N_CHUNK_t *chunk;
+    F_POOL_DEV_t *pdev;
+    FAM_DEV_t *fdev;
+    f_stripe_t s;
+    ssize_t (*fi_rma)(struct fid_ep*, void*, size_t, void*,
+		      fi_addr_t, uint64_t, uint64_t, void*);
+    fi_addr_t *tgt_srv_addr;
+    struct fid_ep *tx_ep = NULL;
+    struct fid_cq *tx_cq = NULL;
+    void *local_desc, *buf;
+    off_t off, chunk_offset;
+    ssize_t wcnt;
+    size_t chunk_sz;
+    uint64_t *event;
+    uint32_t len;
+    unsigned int i, nchunks, media_id;
+    int rc = 0;
+    ALLOCA_CHUNK_PR_BUF(pr_buf);
+
+    chunk_sz = stripe->chunk_sz;
+    s = stripe->stripe_0 + stripe->stripe_in_part;
+    fi_rma = wr? &_fi_write : &fi_read;
+
+    nchunks = stripe->d + stripe->p;
+    for (i = 0; i < nchunks; i++) {
+	uint64_t cnt = 0;
+
+	chunk = get_fam_chunk(stripe, i);
+	len = chunk->length;
+	if (len == 0)
+	    continue;
+
+	pdev = chunk->pdev;
+	media_id = pdev->pool_index;
+	chunk_offset = chunk->offset;
+	ASSERT(chunk_offset + len <= (off_t)chunk_sz); /* aligned to chunk boundary */
+
+	/* Do RMA synchronous write/read to/from fdev */
+	fdev = &pdev->dev->f;
+	tgt_srv_addr = &fdev->fi_addr;
+	local_desc = fdev->local_desc;
+	buf = fdev->usr_buf;
+	tx_ep = fdev->ep;
+
+	/* use lifabric CQ or counters */
+	event = wr? &chunk->w_event : &chunk->r_event;
+	if (use_cq) {
+	    tx_cq = fdev->cq;
+	/* } else {
+	    struct fid_cntr *cntr = wr? fdev->wcnt : fdev->rcnt;
+	    *event = fi_cntr_read(cntr); */
+	}
+
+	/* remote address */
+	off = chunk_offset + 1ULL * stripe->stripe_in_part * chunk_sz;
+	off += chunk->p_stripe0_off; /* +fdev->offset +fdev->virt_addr */
+
+	DEBUG_LVL(7, "%s: %s stripe:%lu @%jd - %u/%u/%s(@%lu) "
+		  "on device %u len:%u desc:%p off:0x%016lx mr_key:%lu",
+		  f_get_pool()->mynode.hostname,
+		  wr?"write":"read", s, chunk_offset,
+		  stripe->extent, stripe->stripe_in_part,
+		  pr_chunk(pr_buf, chunk->data, chunk->parity),
+		  (unsigned long)*tgt_srv_addr,
+		  media_id, len, local_desc, off, fdev->mr_key);
+
+	do {
+	    rc = fi_rma(tx_ep, buf, len, local_desc,
+			*tgt_srv_addr, off, fdev->mr_key, (void*)buf);
+	    if (rc == 0) {
+		(*event)++;
+	    } else if (rc < 0 && rc != -FI_EAGAIN)
+		break;
+
+	    if (use_cq) {
+		int ret;
+
+#ifdef IBV_SQ_WR_DEPTH
+		if (rc == 0 && *event <= IBV_SQ_WR_DEPTH + cnt)
+#else
+		if (rc == 0)
+#endif
+		    break;
+
+		/* If we got FI_EAGAIN, check LF progress to free some slot(s) in send queue */
+		do {
+		    wcnt = 0;
+		    ret = lf_check_progress(tx_cq, &wcnt);
+		    if (ret < 0) {
+			rc = ret;
+			fi_err(rc, "lf_check_progress cnt:%ld error", wcnt);
+			break;
+		    }
+		    if (wcnt)
+			cnt += (unsigned)wcnt;
+#ifdef IBV_SQ_WR_DEPTH
+		} while (*event > IBV_SQ_WR_DEPTH + cnt);
+#else
+		} while (0);
+#endif
+	    }
+	} while (rc == -FI_EAGAIN);
+
+	fi_err(rc, "%s: fi_%s failed on device %u error",
+	       f_get_pool()->mynode.hostname, wr?"write":"read", media_id);
+
+	/* Some I/O already finished due to the limited send queue depth: cnt */
+	ASSERT( cnt <= *event );
+	*event -= cnt;
+    }
+
+    return rc;
+}
+
+/* Wait for I/O that has been started by chunk_rma_start() */
+int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_ms)
+{
+    N_CHUNK_t *chunk;
+    F_POOL_DEV_t *pdev;
+    FAM_DEV_t *fdev;
+    f_stripe_t s;
+    struct fid_cntr *cntr = NULL;
+    struct fid_cq *tx_cq = NULL;
+    ssize_t wcnt;
+    uint64_t *event;
+    unsigned int i, nchunks, media_id;
+    uint32_t len;
+    int rc = 0;
+    ALLOCA_CHUNK_PR_BUF(pr_buf);
+
+    s = stripe->stripe_0 + stripe->stripe_in_part;
+    nchunks = stripe->d + stripe->p;
+
+    for (i = 0; i < nchunks; i++) {
+	chunk = get_fam_chunk(stripe, i);
+	len = chunk->length;
+	if (len == 0)
+	    continue;
+
+	event = wr? &chunk->w_event : &chunk->r_event;
+	if (*event == 0)
+	    continue;
+
+	pdev = chunk->pdev;
+	media_id = pdev->pool_index;
+	fdev = &pdev->dev->f;
+
+	/* use lifabric CQ or counters */
+	if (use_cq) {
+	    tx_cq = fdev->cq;
+	    wcnt = *event;
+	    /* TODO: Implement timeout */
+	    do {
+		rc = lf_check_progress(tx_cq, &wcnt);
+	    } while (rc >= 0 && wcnt > 0);
+	    if (rc == 0)
+		*event = 0;
+	} else {
+	    cntr = wr? fdev->wcnt : fdev->rcnt;
+	    rc = fi_cntr_wait(cntr, *event, io_timeout_ms);
+	}
+
+	if (rc == -FI_ETIMEDOUT) {
+	    err("%s: fi_%s timeout stripe:%lu - %u/%u/%s on device %u len:%u",
+		f_get_pool()->mynode.hostname, wr?"write":"read",
+		s, stripe->extent, stripe->stripe_in_part,
+		pr_chunk(pr_buf, chunk->data, chunk->parity),
+		media_id, len);
+	    break;
+#if 0
+	} else if (rc == -FI_EAVAIL) { /* 259 */
+	    err("FI_EAVAIL on %s", f_get_pool()->mynode.hostname);
+	    break;
+#endif
+	} else if (rc) {
+	    uint64_t count;
+	    int err;
+
+	    if (use_cq) {
+		count = *event - (uint64_t)wcnt;
+		err = errno;
+	    } else {
+		count = fi_cntr_read(cntr);
+		err = (int)fi_cntr_readerr(cntr);
+		/* reset counter error */
+		int ret = fi_cntr_seterr(cntr, 0);
+		if (ret)
+		    err("failed to reset counter error!");
+	    }
+	    err("%s: fi_%s stripe:%lu has %lu error(s):%d/%d "
+		    "- %u/%u/%s on device %u count:%lu/%lu",
+		    f_get_pool()->mynode.hostname, wr?"write":"read",
+		    s, count, rc, err,
+		    stripe->extent, stripe->stripe_in_part,
+		    pr_chunk(pr_buf, chunk->data, chunk->parity),
+		    media_id, count, *event);
+	    break;
+	}
+    }
+    return rc;
 }
 

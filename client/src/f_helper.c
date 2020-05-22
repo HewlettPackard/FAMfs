@@ -37,10 +37,10 @@ int f_ah_attach() {
 
     F_POOL_t    *pool = f_get_pool();
 
-    for (int i = 0; i < pool->info.layouts_count; i++) {
+    for (unsigned int i = 0; i < pool->info.layouts_count; i++) {
         F_LAYOUT_t *lo = f_get_layout(i);
         if (lo == NULL) {
-            ERROR("bad layout id: %d", i);
+            ERROR("bad layout id: %u", i);
             return -EINVAL;
         }
 
@@ -62,7 +62,7 @@ int f_ah_attach() {
 int f_ah_detach() {
     F_POOL_t    *pool = f_get_pool();
 
-    for (int i = 0; i < pool->info.layouts_count; i++) 
+    for (unsigned int i = 0; i < pool->info.layouts_count; i++)
         f_rbq_close(calq[i]);
 
     f_rbq_close(ccmq);
@@ -74,11 +74,11 @@ int f_ah_get_stripe(F_LAYOUT_t *lo, f_stripe_t *str) {
     F_POOL_t    *pool = f_get_pool();
     int rc;
 
-    if (str == NULL || lo->info.conf_id >= pool->info.layouts_count || lo->info.conf_id < 0) {
+    if (str == NULL || lo->info.conf_id >= pool->info.layouts_count) {
         ERROR("bad call parameteres");
         return -EINVAL;
     }
-    
+
     int rt = 0;
     do {
         rc = f_rbq_pop(calq[lo->info.conf_id], str, 10*RBQ_TMO_1S);
@@ -98,7 +98,7 @@ static int _push_stripe(F_LAYOUT_t *lo, f_stripe_t str, int release) {
     F_POOL_t    *pool = f_get_pool();
     f_ah_scme_t scme;
 
-    if (lo->info.conf_id >= pool->info.layouts_count || lo->info.conf_id < 0) {
+    if (lo->info.conf_id >= pool->info.layouts_count) {
         ERROR("bad call parameteres");
         return -EINVAL;
     }

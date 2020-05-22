@@ -77,6 +77,7 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 	struct mdhim_t *md;
 	struct index_t *primary_index;
 	MPI_Comm comm;
+	char *mlog_fn = "/dev/shm/mdhimDb.log";
 
 	if (!opts) {
 		//Set default options if no options were passed
@@ -90,11 +91,13 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
                 mdhim_options_set_debug_level(opts, MLOG_CRIT);
 		mdhim_options_set_num_worker_threads(opts, 30);
 	}
+	if ((opts->debug_level & MLOG_PRIMASK) == MLOG_EMERG)
+	    mlog_fn = NULL;
 
 	//Open mlog - stolen from plfs
 	ret = mlog_open((char *)"mdhim", 0,
 	        //MLOG_INFO, opts->debug_level, "/opt/ramdisk/mdhimDb.log", 0, MLOG_LOGPID, 0);
-	        opts->debug_level, opts->debug_level, NULL, 0, MLOG_LOGPID, 0);
+	        opts->debug_level, MLOG_EMERG, mlog_fn, 0, MLOG_LOGPID, 0);
 
 	//Check if MPI has been initialized
 	if ((ret = MPI_Initialized(&flag)) != MPI_SUCCESS) {

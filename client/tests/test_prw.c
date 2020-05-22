@@ -89,8 +89,9 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 
-    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:VU";
+    static const char * opts = "b:s:t:f:p:u:M:m:D:S:w:r:i:v:W:GRC:VU";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
+    char mount_point[GEN_STR_LEN] = { 0 };
     long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
     //long num_reqs;
     int pat = 0, c, rank_num, rank, fd, \
@@ -102,7 +103,7 @@ int main(int argc, char *argv[]) {
     void *rid;
     int vmax = 0;
     int vfy = 0;
-    ssize_t warmup = 0;
+    ssize_t ret, warmup = 0;
     struct famsim_stats *famsim_stats_send, *famsim_stats_recv;
     int carbon_stats = 0; /* Only on Carbon: CPU instruction stats */
     int fam_cnt = 0; /* Number of FAMs */
@@ -155,6 +156,8 @@ int main(int argc, char *argv[]) {
                to_unmount = atoi(optarg); break; /*0: not unmount after finish 1: unmount*/
             case 'M':
                mount_burstfs = atoi(optarg); break; /* 0: Don't mount burstfs */
+            case 'm':
+               strcpy(mount_point, optarg); break;
             case 'D':
                direct_io = atoi(optarg); break; /* 1: Open with O_DIRECT */
             case 'S':
@@ -212,13 +215,40 @@ int main(int argc, char *argv[]) {
 
     int rc = 0;
     if (mount_burstfs) {
-        sprintf(tmpfname, "%s", MOUNT_POINT);
+
+        /* mount point is given as a part of file name? */
+        char *p = strstr(fname, "::");
+        if (p) {
+            strcpy(tmpfname, fname);
+            p = strrchr(tmpfname, '/');
+            if (!p) {
+                print0("Bad file name!\n");
+                exit(1);
+            }
+            *p = 0;
+            strcpy(mount_point, tmpfname);
+
+        } else if (!*mount_point) {
+            /* use defaults */
+            sprintf(tmpfname, "%s", MOUNT_POINT);
 #ifdef FAMFS_EXPLICIT_LO
-        if (fs == FAMFS)
-            sprintf(tmpfname, "%s::%s", LAYOUT, MOUNT_POINT);
+            if (fs == FAMFS)
+                sprintf(tmpfname, "%s::%s", LAYOUT, MOUNT_POINT);
 #endif
-        print0("mount unifycr at %s\n", tmpfname);
-        rc = unifycr_mount(tmpfname, rank, rank_num, 0, fs);
+            strcpy(mount_point, tmpfname);
+        } else
+            strcpy(tmpfname, mount_point);
+        /* insert layout prefix to file name */
+        if (p == NULL && fs == FAMFS) {
+            p = strstr(tmpfname, "::");
+            if (p) {
+                strcpy(p+2, fname);
+                strcpy(fname, tmpfname);
+            }
+        }
+
+        print0("mount unifycr at %s\n", mount_point);
+        rc = unifycr_mount(mount_point, rank, rank_num, 0, fs);
         if (rc) {
             fprintf(stderr, "mount (fs:%d) error:%d - %m\n", fs, rc);
             exit(1);
@@ -229,12 +259,6 @@ int main(int argc, char *argv[]) {
         to_unmount = 0;
 
     /* Add layout name if FAMFS */
-#ifdef FAMFS_EXPLICIT_LO
-    if (fs == FAMFS) {
-        sprintf(tmpfname, "%s::%s", LAYOUT, fname);
-        strcpy(fname, tmpfname);
-    }
-#endif
     print0("File name is %s\n", fname);
 
     char *buf;
@@ -309,8 +333,8 @@ int main(int argc, char *argv[]) {
     }
     if (direct_io)
         fsync(fd);
-   
-    long i, j; 
+
+    long i, j;
     unsigned long offset, lw_off = 0, *p;
     char *bufp = buf;
     offset = 0;
@@ -337,11 +361,11 @@ int main(int argc, char *argv[]) {
             int k;
             lw_off = 0;
 
-            if (gbuf) 
+            if (gbuf)
                 bufp = buf + i*blk_sz + j*tran_sz;
 
             for (k = 0; vfy && k < tran_sz/sizeof(unsigned long); k++) {
-                if (gbuf) 
+                if (gbuf)
                     p = &(((unsigned long *)bufp)[k]);
                 else
                     p = &(((unsigned long*)buf)[k]);
@@ -500,23 +524,27 @@ int main(int argc, char *argv[]) {
             int k;
             lw_off = 0;
 
-            if (gbuf) 
+            if (gbuf)
                 bufp = buf + i*blk_sz + j*read_sz;
 
             famsim_stats_start(famsim_ctx, famsim_stats_recv);
-            rc = pread(fd, bufp, read_sz, offset);
+            ret = pread(fd, bufp, read_sz, offset);
             famsim_stats_pause(famsim_stats_recv);
-            if (rc < 0) {
-                printf("%02d read failure\n", rank);
+            if (ret < 0) {
+                printf("%02d read failure - %m\n", rank);
                 fflush(stdout);
-                return -1;
+                exit(1);
+            } else if (ret != read_sz) {
+                printf("%02d read failure, %zd bytes read\n", rank, ret);
+                fflush(stdout);
+                exit(1);
             }
 
             vcnt = 0;
             for (k = 0; vfy && k < read_sz/sizeof(unsigned long); k++) {
                 //unsigned long *p = &(((unsigned long*)(read_buf + cursor))[k]);
-               
-                if (gbuf) 
+
+                if (gbuf)
                     p = &(((unsigned long *)bufp)[k]);
                 else
                     p = &(((unsigned long*)buf)[k]);

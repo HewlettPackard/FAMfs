@@ -238,7 +238,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             }
         }
         rply.rc = f_setup_client(pcmd);
-        rply.max_rps = max_recs_per_slice;
+        //rply.max_rps = max_recs_per_slice;
         break;
 
     case CMD_META:

@@ -108,13 +108,6 @@ do { \
                __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
 } while (0)
 
-#define DEBUG_LVL(lvl, fmt, ...) \
-do { \
-    if (unifycr_debug_level >= lvl) \
-        printf("unifycr: %s:%d: %s: " fmt "\n", \
-               __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
-} while (0)
-
 /* define a macro to capture function name, file name, and line number
  * along with user-defined string */
 #define UNIFYCR_UNSUPPORTED(fmt, args...) \
@@ -283,19 +276,14 @@ typedef struct {
 
 /*unifycr structures*/
 typedef struct read_req_t_ {
+    /* --> this substructure must match shm_meta_t */
     int fid;
     int lid;                        /* layout id */
     long offset;
     long length;
+    /* <-- */
     char *buf;
-
 } read_req_t;
-
-typedef struct {
-    int src_fid;
-    long offset;
-    long length;
-} shm_meta_t; /*metadata format in the shared memory*/
 
 typedef struct {
     off_t *ptr_num_entries;
@@ -420,7 +408,7 @@ extern int    unifycr_max_files;  /* maximum number of files to store */
 extern size_t
 unifycr_chunk_mem;  /* number of bytes in memory to be used for chunk storage */
 extern int    unifycr_chunk_bits; /* we set chunk size = 2^unifycr_chunk_bits */
-extern off_t  unifycr_chunk_size; /* chunk size in bytes */
+extern size_t  unifycr_chunk_size; /* chunk size in bytes */
 extern off_t
 unifycr_chunk_mask; /* mask applied to logical offset to determine physical offset within chunk */
 extern long
@@ -579,9 +567,6 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
 int unifycr_split_read_requests(read_req_t *cur_read_req,
                                 read_req_set_t *read_req_set,
                                 long slice_range);
-int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
-                               read_req_set_t *tmp_read_req_set, long unifycr_key_slice_range,
-                               read_req_set_t *read_req_set);
 int unifycr_match_received_ack(read_req_t *read_req, int count,
                                read_req_t *match_req);
 int unifycr_locate_req(read_req_t *read_req, int count,

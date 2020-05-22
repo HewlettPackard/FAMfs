@@ -134,6 +134,7 @@ int UNIFYCR_WRAP(mkdir)(const char *path, mode_t mode)
      * mkdir simply puts an entry into the filelist for the
      * requested directory (assuming it does not exist)
      * It doesn't check to see if parent directory exists */
+    int fid;
 
     /* determine whether we should intercept this path */
     if (unifycr_intercept_path(path)) {
@@ -144,17 +145,19 @@ int UNIFYCR_WRAP(mkdir)(const char *path, mode_t mode)
         }
 
         /* add directory to file list */
-        int fid = unifycr_fid_create_directory(path);
-        return 0;
+        fid = unifycr_fid_create_directory(path);
     } else {
         MAP_OR_FAIL(mkdir);
-        int ret = UNIFYCR_REAL(mkdir)(path, mode);
-        return ret;
+        fid = UNIFYCR_REAL(mkdir)(path, mode);
     }
+    /* errno is set on error */
+    return (fid < 0)? -1:0;
 }
 
 int UNIFYCR_WRAP(rmdir)(const char *path)
 {
+    int ret;
+
     /* determine whether we should intercept this path */
     if (unifycr_intercept_path(path)) {
         /* check if the mount point itself is being deleted */
@@ -183,13 +186,12 @@ int UNIFYCR_WRAP(rmdir)(const char *path)
         }
 
         /* remove the directory from the file list */
-        int ret = unifycr_fid_unlink(fid);
-        return 0;
+        ret = unifycr_fid_unlink(fid);
     } else {
         MAP_OR_FAIL(rmdir);
-        int ret = UNIFYCR_REAL(rmdir)(path);
-        return ret;
+        ret = UNIFYCR_REAL(rmdir)(path);
     }
+    return (ret < 0)? -1:0;
 }
 
 int UNIFYCR_WRAP(rename)(const char *oldpath, const char *newpath)
@@ -1006,8 +1008,10 @@ ssize_t UNIFYCR_WRAP(writev)(int fd, const struct iovec *iov, int iovcnt)
     }
 }
 
-int UNIFYCR_WRAP(lio_listio)(int mode, struct aiocb *const aiocb_list[],
-                             int nitems, struct sigevent *sevp)
+int UNIFYCR_WRAP(lio_listio)(int mode __attribute__((unused)),
+                             struct aiocb *const aiocb_list[],
+                             int nitems,
+                             struct sigevent *sevp __attribute__((unused)))
 {
 
     int ret = 0, i;
@@ -1029,26 +1033,6 @@ int UNIFYCR_WRAP(lio_listio)(int mode, struct aiocb *const aiocb_list[],
     ret = fd_iface->fd_logreadlist(glb_read_reqs, nitems);
     free(glb_read_reqs);
     return ret;
-}
-
-int compare_index_entry(const void *a, const void *b)
-{
-    const md_index_t *ptr_a = a;
-    const md_index_t *ptr_b = b;
-
-    if (ptr_a->fid - ptr_b->fid > 0)
-        return 1;
-
-    if (ptr_a->fid - ptr_b->fid < 0)
-        return -1;
-
-    if (ptr_a->file_pos - ptr_b->file_pos > 0)
-        return 1;
-
-    if (ptr_a->file_pos - ptr_b->file_pos < 0)
-        return -1;
-
-    return 0;
 }
 
 int compare_read_req(const void *a, const void *b)
@@ -1210,7 +1194,7 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
  * @return read_req_set: the coalesced read requests
  *
  * */
-int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
+static int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
                                read_req_set_t *tmp_read_req_set, long unifycr_key_slice_range,
                                read_req_set_t *read_req_set)
 {
@@ -1378,10 +1362,9 @@ int unifycr_match_received_ack(read_req_t *read_req, int count,
  * */
 int unifycr_fd_logreadlist(read_req_t *read_req, int count)
 {
-    int i, j, tot_sz = 0, rc = UNIFYCR_SUCCESS,
-              bytes_read = 0, num = 0, bytes_write = 0;
+    int i, tot_sz = 0, num = 0;
     int *ptr_size = NULL, *ptr_num = NULL;
-    int tmp_counter = 0;
+    int rc = UNIFYCR_SUCCESS;
 
     /*
      * Todo: When the number of read requests exceed the
@@ -1393,6 +1376,7 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
     f_fattr_t tmp_meta_entry;
     f_fattr_t *ptr_meta_entry;
     for (i = 0; i < count; i++) {
+        read_req[i].lid = 0;
         read_req[i].fid -= unifycr_fd_limit;
         tmp_meta_entry.fid = read_req[i].fid;
 
@@ -1412,7 +1396,7 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
                                &read_req_set);
 
 
-    shm_meta_t *tmp_sh_meta;
+    shm_meta_t *tmp_sh_meta = (shm_meta_t *)shm_reqbuf;
 
     int cmd = COMM_READ;
     memcpy(cmd_buf, &cmd, sizeof(int));
@@ -1424,13 +1408,15 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
     for (i = 0; i < read_req_set.count; i++) {
         tot_sz += read_req_set.read_reqs[i].length;
 
-        tmp_sh_meta = (shm_meta_t *)(shm_reqbuf + i * sizeof(shm_meta_t));
+        memcpy(tmp_sh_meta++, &read_req_set.read_reqs[i], sizeof(shm_meta_t));
+        /*
         tmp_sh_meta->src_fid = read_req_set.read_reqs[i].fid;
         tmp_sh_meta->offset = read_req_set.read_reqs[i].offset;
         tmp_sh_meta->length = read_req_set.read_reqs[i].length;
 
         memcpy(shm_reqbuf + i * sizeof(shm_meta_t),
                tmp_sh_meta, sizeof(shm_meta_t));
+        */
     }
     __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
 
@@ -1457,7 +1443,10 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
             if (cmd_fd.revents != 0) {
                 if (cmd_fd.revents == POLLIN) {
                     int sh_cursor = 0;
-                    bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
+                    ssize_t bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
+                    if (bytes_read == -1)
+                        return -1;
+
                     ptr_size = (int *)shm_recvbuf;
                     num = *((int *)shm_recvbuf + 1); /*The first int spared out for size*/
                     ptr_num = (int *)((char *)shm_recvbuf + sizeof(int));
@@ -1470,6 +1459,7 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
                         sh_cursor += sizeof(shm_meta_t);
                         *ptr_size -= sizeof(shm_meta_t);
 
+                        tmp_read_req.lid = 0;
                         tmp_read_req.fid = tmp_req->src_fid;
                         tmp_read_req.offset = tmp_req->offset;
                         tmp_read_req.length = tmp_req->length;
@@ -1640,7 +1630,7 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
     }
 }
 
-int unifycr_fsync(int fd)
+int unifycr_fsync(int fd __attribute__((unused)))
 {
     if (!*unifycr_indices.ptr_num_entries)
         return 0;
@@ -1858,7 +1848,9 @@ int UNIFYCR_WRAP(munmap)(void *addr, size_t length)
     return ENODEV;
 }
 
-int UNIFYCR_WRAP(msync)(void *addr, size_t length, int flags)
+int UNIFYCR_WRAP(msync)(void *addr __attribute__((unused)),
+    size_t length __attribute__((unused)),
+    int flags __attribute__((unused)))
 {
     /* TODO: need to keep track of all the mmaps that are linked to
      * a given file before this function can be implemented*/

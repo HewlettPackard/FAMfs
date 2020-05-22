@@ -18,7 +18,7 @@
 #include "f_layout.h"
 
 /* TEST options */
-//#define DEBUG			/* be very verbosive */
+//#define DEBUG_TST			/* be very verbosive */
 #define RND_REPS	1000	/* number of passes for random test */
 #define BOS_PAGE_MAX	4	/* max BoS page size, in kernel pages */
 //#define MEM_KEY_BITS	64	/* in-memory maps: max global entry bits */
@@ -42,10 +42,9 @@
 	}					\
 	ul; })
 
-#define err(str, ...) fprintf(stderr, #str "\n", ## __VA_ARGS__)
 #define msg0(str, ...) if (rank==0) printf( str "\n", ## __VA_ARGS__)
 #define msg(str, ...) printf("%d: " str "\n", rank, ## __VA_ARGS__)
-#ifdef DEBUG
+#ifdef DEBUG_TST
 #define dbg(fmt, args...)			\
 	fprintf(stderr, "%d: " fmt "\n",	\
 		rank, ## args)
@@ -163,7 +162,7 @@ int main(int argc, char *argv[])
   MPI_Comm_get_parent(&parentcomm);
   if (parentcomm == MPI_COMM_NULL) {
     /* Create MPI processes: NR_READERS plus one writer */
-#ifdef DEBUG
+#ifdef DEBUG_TST
     /* Don't forget to create gdb file like this:
     file ./f_shmap_test
     run

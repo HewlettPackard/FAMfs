@@ -64,7 +64,6 @@
 	}					\
 	ul; })
 
-#define err(str, ...) fprintf(stderr, #str "\n", ## __VA_ARGS__)
 #define msg0(str, ...) if (rank==0) printf( str "\n", ## __VA_ARGS__)
 #define msg(str, ...) printf("%d: " str "\n", rank, ## __VA_ARGS__)
 
@@ -1237,6 +1236,7 @@ t_3_del:
      */
     tg = 4;
     msg0("Running group %d tests: update of structured map", tg);
+    global = 0;
 
     t = 1;
     /* Read default metadata (db_opts, layouts) config */

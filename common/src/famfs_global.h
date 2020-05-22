@@ -57,11 +57,26 @@ typedef struct {
     off_t   mem_pos;
     size_t  length;
     int     fid;
+    int     loid;
     uint64_t sid; /* global stripe number */
 } md_index_t;
 
+/*metadata format in the shared memory*/
+typedef struct shm_meta_t_ {
+    int src_fid;
+    int loid; /* layout id */
+    long offset;
+    long length;
+} shm_meta_t;
+
 typedef struct {
-    unsigned long fid;
+    union {
+        unsigned long fid;
+        struct {
+            int       fid;  /* actual fid */
+            int       loid; /* Little endian: sort by layout id first */
+        } pk;
+    };
     unsigned long offset;
 } fsmd_key_t;
 
@@ -161,7 +176,7 @@ typedef struct {
             off_t       data_off;
             size_t      data_size;
         };
-        uint64_t        max_rps;
+//        uint64_t        max_rps;
         LFS_EXCG_t      prt_atr[KA_PAIR_MAX];
         f_fattr_t       fattr;
     };

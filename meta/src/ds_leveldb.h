@@ -53,6 +53,8 @@
 #define UNIFYCR_ADDR(val)   (*(long *)(&(((fsmd_val_t*)(val))->addr)))
 #define UNIFYCR_LEN(val)    (*(long *)(&(((fsmd_val_t*)(val))->len)))
 #define FAMFS_STRIPE(val)   (*(unsigned long *)(&(((fsmd_val_t*)(val))->stripe)))
+#define FAMFS_PK_FID(key)   (*&((fsmd_key_t*)(key))->pk.fid)
+#define FAMFS_PK_LID(key)   (*&((fsmd_key_t*)(key))->pk.loid)
 
 /* Function pointer for comparator in C */
 typedef int (*mdhim_store_cmp_fn_t)(void* arg, const char* a, size_t alen,

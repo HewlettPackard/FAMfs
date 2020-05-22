@@ -25,8 +25,7 @@ static int get_lf_meta(F_POOL_t *pool)
     LF_INFO_t *lf_info = pool->lf_info;
     F_POOL_DEV_t *pdev;
     fam_attr_val_t *fam_meta = NULL;
-    int fam_cnt, i;
-    int rc = 0;
+    int i, rc = 0;
 
     if (lf_info->mrreg.scalable ||
         (!lf_info->mrreg.prov_key && !lf_info->mrreg.virt_addr))
@@ -77,7 +76,6 @@ static int load_slab_maps(F_POOL_t *pool)
     list_for_each_prev(l, &pool->layouts) {
 	F_LAYOUT_t *lo;
 	F_LAYOUT_INFO_t *info;
-	F_POOLDEV_INDEX_t *pdi;
 	F_MAP_t *sm, *file_ids;
 	int sm_entry_sz;
 	int r = 0;
@@ -103,7 +101,8 @@ static int load_slab_maps(F_POOL_t *pool)
 	f_map_init_prt(sm, pool->ionode_count, 0, 0, 1);
 
 	/* This map was attached to persistent KV store in Helper process */
-	sm->reg_id = info->conf_id;
+	sm->reg_id = info->conf_id; /* layout id */
+	//sm->id = LO_TO_SM_ID(sm->reg_id); /* map id */
 
 	/* Attach to the shared (RO) registered map in SHMEM */
 	r = f_map_shm_attach(sm, F_MAPMEM_SHARED_RD);
@@ -123,6 +122,7 @@ static int load_slab_maps(F_POOL_t *pool)
 	lo->file_ids = file_ids;
 
 #if 0
+	F_POOLDEV_INDEX_t *pdi;
 	pdi = lo->devlist;
 	for (u = 0; u < lo->devlist_sz; u++, pdi++) {
 	    if (pdi->pool_index == F_PDI_NONE)
@@ -144,12 +144,10 @@ _cont:
     return rc;
 }
 
-int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
+int lfs_connect(LFS_CTX_t **lfs_ctx_pp)
 {
     F_POOL_t *pool;
     F_POOL_INFO_t *info;
-    F_LAYOUT_t *lo;
-    N_STRIPE_t *stripe = NULL;
     LFS_CTX_t *lfs_ctx_p;
     struct famsim_stats *stats_fi_wr;
     int rc = 1; /* OOM error */
@@ -184,19 +182,23 @@ int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp)
 	goto _free;
     }
 
+    rcu_register_thread();
+
     if ((rc = load_slab_maps(pool))) {
 	DEBUG("rank:%d failed to load slab map(s), error:%d",
 	      dbg_rank, rc);
 	goto _free;
     }
 
+#if 0
     /* default layout */
-    lo = f_get_layout(0);
+    F_LAYOUT_t *lo = f_get_layout(0);
     assert( lo );
 
     rc = f_map_fam_stripe(lo, &lo->fam_stripe, 0);
     if (rc == -ENOMEM)
 	goto _free;
+#endif
 
     lfs_ctx_p->pool = pool;
     lfs_ctx_p->famsim_stats_fi_wr = stats_fi_wr;
@@ -212,16 +214,16 @@ void free_lfc_ctx(LFS_CTX_t **lfs_ctx_pp) {
     LFS_CTX_t *lfs_ctx_p = *lfs_ctx_pp;
     F_POOL_t *pool = lfs_ctx_p->pool;
     F_LAYOUT_t *lo;
-    struct list_head *l;
 
     famsim_stats_stop(lfs_ctx_p->famsim_stats_fi_wr, 1);
 
-    list_for_each(l, &pool->layouts) {
-	lo = container_of(l, struct f_layout_, list);
+    list_for_each_entry(lo, &pool->layouts, list) {
 	free_fam_stripe(lo->fam_stripe);
     }
 
     exit_lo_maps(pool);
+    rcu_unregister_thread();
+
     f_ah_detach();
 
     lf_clients_free(pool); /* called free_fam_stripe() */

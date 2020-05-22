@@ -27,6 +27,8 @@
 #include "famfs_lf_cqprogress.h"
 
 
+static int lf_verbosity = 0;
+
 void f_domain_close(LF_DOM_t **dom_p)
 {
     LF_DOM_t *dom = *dom_p;
@@ -107,6 +109,8 @@ int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
     char		port[6] = { 0 };
     uint64_t		flags;
     int			rc;
+
+    lf_verbosity = info->verbosity;
 
     dom = (LF_DOM_t *) calloc(1, sizeof(LF_DOM_t));
     if (!dom) {
@@ -353,7 +357,7 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 	buf = mmap(NULL, fdev->mr_size, PROT_READ | PROT_WRITE,
 		   MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
 	if (buf == MAP_FAILED) {
-	    err("%d: Memory allocation/map failed on %s",
+	    err("%d: Memory allocation/map failed for %s",
 		id, node);
 	    rc = -ENOMEM;
 	    goto _err;
@@ -402,8 +406,9 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 		rc = -ENXIO;
 		goto _err;
 	    }
-	    /* printf("CL attached to FAM node %d(p%d) id:%Lu %s on %s\n",
-	       id, fam_part, fam_id, url, node); */
+	    DEBUG_LF(3, "CL attached to FAM device %d url:%s (%s)",
+		     id, zfm->url, node);
+
 	} else {
 	    // Perform address translation
 	    if (1 != (i = fi_av_insertsvc(av, node, port, &srv_addr, 0, NULL))) {
@@ -411,8 +416,9 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 		rc = -ENXIO;
 		goto _err;
 	    }
-	    /* printf("CL attached to node %d(p%d) on %s:%s\n",
-		   id, fam_part, node, port); */
+	    DEBUG_LF(3, "CL attached to device %d on %s:%s",
+		     id, node, port);
+
 	}
 	fdev->fi_addr = srv_addr;
     }
@@ -440,13 +446,15 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 	}
 	name[n] = 0;
 
-	printf("%d: Registered %zuMB of memory on %s:%s if:%s\n",
-	       id, fdev->mr_size/1024/1024, node, port, fi->domain_attr->name);
-#if 1
-	printf("%d: server addr is %zu:\n", id, n);
-	for (int i = 0; i < (int)n; i++)
-	    printf("%02x ", (unsigned char)name[i]);
-#endif
+	DEBUG_LF(3, "%d: Registered %zuMB of memory on %s:%s if:%s",
+		 id, fdev->mr_size/1024/1024, node, port, fi->domain_attr->name);
+
+	if (lf_verbosity >= 7) {
+	    printf("%d: server addr is %zu:\n", id, n);
+	    for (int i = 0; i < (int)n; i++)
+		printf("%02x ", (unsigned char)name[i]);
+	    printf("\n");
+	}
     }
 
     return 0;

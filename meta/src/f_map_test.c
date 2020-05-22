@@ -89,6 +89,7 @@ static void meta_init_store(mdhim_options_t *db_opts) {
 #if TEST_MDHIM_DBG > 0
 	mdhim_options_set_debug_level(db_opts, MLOG_DBG); /* Uncomment for DB DEBUG! */
 #endif
+	db_opts->db_key_type = MDHIM_INT_KEY;
 	md = mdhimInit(NULL, db_opts);
 	unifycr_indexes[0] = md->primary_index;
 	for (i = 1; i <= 2*F_LAYOUTS_MAX; i++)

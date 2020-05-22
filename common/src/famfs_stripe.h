@@ -27,9 +27,12 @@ typedef struct n_chunk_ {
 
 	int		lf_client_idx;	/* libfabric client index, see to_lf_client_id();
 					FAMFS: pool device index in info.pdev_indexes[] */
-			/* only FAMFS: pdev, extent */
+			/* only FAMFS: pdev, extent, length, offset */
 	unsigned int	extent;		/* extent number (from Slab map) */
 	struct f_pool_dev_ *pdev;	/* reference to pool device in devlist */
+			/* stripe I/O mapping to a chunk */
+	uint32_t	length;		/* length, bytes */
+	uint32_t	offset;		/* offset in chunk, bytes */
 
 	/* TODO: Remove me! */
 	off_t		p_stripe0_off;	/* libfabric offset of the first stripe in partition */

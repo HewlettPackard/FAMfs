@@ -512,6 +512,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
     if (!lf_info) goto _nomem;
+    lf_info->verbosity = p->verbose;
     if (configurator_int_val(c->devices_extent_size, &l)) goto _noarg;
     pool_info->extent_sz = (unsigned long)l;
     if (configurator_int_val(c->devices_offset, &l)) goto _noarg;
@@ -1168,5 +1169,23 @@ int f_host_is_mds(const char *hostname)
 	return info && info->mds;
     }
     return pool && NodeHasMDS(&pool->mynode);
+}
+
+int f_get_lo_stripe_sizes(F_POOL_t *p, size_t **stripe_sz_per_lo) {
+    F_LAYOUT_t *lo;
+    size_t *stripe_sizes = *stripe_sz_per_lo;
+    int rc = 0;
+
+    if (stripe_sizes == NULL)
+	stripe_sizes = malloc(p->info.layouts_count * sizeof(size_t));
+    if (stripe_sizes == NULL)
+	return -ENOMEM;
+
+    list_for_each_entry(lo, &p->layouts, list) {
+	stripe_sizes[rc++] = lo->info.stripe_sz;
+    }
+    if (*stripe_sz_per_lo == NULL && rc > 0)
+	*stripe_sz_per_lo = stripe_sizes;
+    return rc;
 }
 

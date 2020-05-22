@@ -170,6 +170,7 @@ int unifycr_unsupported_stream(
     return rc;
 }
 
+#if 0
 static int unifycr_stream_set_pointers(unifycr_stream_t *s)
 {
     /* get pointer to file descriptor structure */
@@ -209,6 +210,7 @@ static int unifycr_stream_set_pointers(unifycr_stream_t *s)
 
     return UNIFYCR_SUCCESS;
 }
+#endif
 
 /* TODO: support other modes as listed in
  * http://www.gnu.org/software/libc/manual/html_node/Opening-Streams.html#Opening-Streams */
@@ -2119,6 +2121,8 @@ wint_t UNIFYCR_WRAP(ungetwc)(wint_t c, FILE *stream)
  * SUCH DAMAGE.
  */
 
+#include <ctype.h>
+#if 0 /* Don't implemented yet -- Enable the wrapper when done in configure.ac */
 #include <sys/cdefs.h>
 #include <ctype.h>
 #include <inttypes.h>
@@ -3202,3 +3206,5 @@ parsedone:
     return (commit - buf);
 }
 #endif
+#endif /* Don't implemented yet */
+

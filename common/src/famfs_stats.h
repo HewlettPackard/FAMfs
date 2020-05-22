@@ -23,7 +23,7 @@
 #define mSec (1000L)
 #define uSec (mSec*1000L)
 
-//#define FAMFS_STATS 1
+#define FAMFS_STATS 1
 extern int do_lf_stats;
 
 #if FAMFS_STATS
@@ -53,7 +53,7 @@ extern int do_lf_stats;
 }
 
 #define UPDATE_STATS(sb, n, s, ts) if (do_lf_stats) {\
-    int _n_ = (n), _s_ = (s);\
+    uint64_t _n_ = (n), _s_ = (s);\
     uint64_t _e_ = elapsed(&(ts));\
     if (_n_) {\
         pthread_mutex_lock(&sb.lck);\

@@ -21,8 +21,7 @@ typedef struct lfs_ctx_ {
 	struct famsim_stats *famsim_stats_fi_wr; /* Carbion stats: fi_write */
 } LFS_CTX_t;
 
-
-int lfs_connect(int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_pp);
+int lfs_connect(LFS_CTX_t **lfs_ctx_pp);
 void free_lfc_ctx(LFS_CTX_t **lfs_ctx_p);
 
 #endif /* LF_CLIENT_H */

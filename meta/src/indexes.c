@@ -1309,10 +1309,13 @@ int indexes_release(struct mdhim_t *md) {
 			free(stat->max);
 			free(stat->min);
 			free(stat);
-		}			
-	
+		}
+
+		if (cur_indx->lo_count > 0)
+			free(cur_indx->key_slice_size_per_lo);
 		free(cur_indx);
 	}
+
 	return rc;
 }
 
@@ -1811,3 +1814,26 @@ int get_stat_flush(struct mdhim_t *md, struct index_t *index) {
 
 	return ret;
 }
+
+int mdhimSetSliceSizes(struct index_t *gi, size_t *sizes, int len) {
+	if (gi->key_type != MDHIM_UNIFYCR_KEY || len < 0)
+ {
+ printf("SetSliceSizes key_type:%d not %d len=%d\n", gi->key_type, MDHIM_UNIFYCR_KEY, len);
+		return -1;
+ }
+
+	free(gi->key_slice_size_per_lo);
+	if (len == 0)
+		return 0;
+
+	gi->key_slice_size_per_lo = malloc(len*sizeof(size_t));
+	if (!gi->key_slice_size_per_lo)
+		return -1;
+
+	for (int i = 0; i < len; i++)
+		gi->key_slice_size_per_lo[i] = sizes[i];
+
+	gi->lo_count = len;
+	return 0;
+}
+

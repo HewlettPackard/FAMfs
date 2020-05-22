@@ -18,8 +18,6 @@ static inline const char *famfs_strip_layout(const char *path) {
 }
 
 struct fam_attr_val_t;
-struct unifycr_chunkmeta_t_;
-struct read_req_t_;
 
 int famfs_mount(const char prefix[], size_t size, int rank);
 int f_server_sync();
@@ -31,8 +29,6 @@ int famfs_report_storage(int fid, size_t *total, size_t *free);
 int famfs_fid_create_file(const char *path, const char *fpath, int loid);
 
 int lf_connect(char *addr, char *srvc);
-int lf_fam_read(F_LAYOUT_t *lo, char *buf, size_t len, off_t stripe_offset, f_stripe_t s);
-int famfs_read(struct read_req_t_ *read_req, int count);
 int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta);
 void famfs_merge_md();
 
@@ -40,3 +36,4 @@ void famfs_merge_md();
 int f_srv_connect();
 
 #endif /* FAMFS_CL_H */
+

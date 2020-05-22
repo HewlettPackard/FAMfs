@@ -758,13 +758,16 @@ int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *keyset)
 			/* BGET/MDHIM_GET_EQ 'size' keys */
 			size = count>pu_per_bos? pu_per_bos:count;
 
-			dbg_printf("update map id:%d part:%u %zu keys:",
-				   map_id, part, size);
+			dbg_printf("update map id:%d (reg#%d) part:%u\r\n%zu keys:",
+				   map_id, map->reg_id, part, size);
+
 			for (i = 0; i < size; i++) {
 				keys[i] = kset_parted->keys_64[k++];
-				dbg_printf(" %lu", keys[i]);
+#ifdef DEBUG_MAP
+				printf(" %lu", keys[i]);
+#endif
 			}
-			dbg_printf("\n");
+			dbg_printf("");
 
 			rcv_cnt = f_db_bget(bos_buf, map_id, keys, size, NULL,
 					    F_PS_GET_EQ);
@@ -1225,9 +1228,11 @@ _get_bosl:
 	bosl = container_of(node, F_BOSL_t, node);
 	rcu_read_unlock();
 
+	/*
 	dbg_printf("e0:%lu bosl:%p page:%p nr_bosl:%lu\n",
 		   ROUND_DOWN(entry, map->bosl_entries),
 		   bosl, bosl->page, bosl->map->nr_bosl);
+	*/
 	assert( map == bosl->map );
 	return bosl;
 }
@@ -2083,8 +2088,8 @@ void f_map_fprint_desc(FILE *f, F_MAP_t *m)
 			(m->geometry.entry_sz==1?"bitmap":"bbitmap"));
     }
     if (m->shm)
-	fprintf(f, ", shared (%s)",
-	    f_shmap_owner(m)?"WR":(f_shmap_reader(m)?"RD":"SM"));
+	fprintf(f, ", shared (%s #%d)",
+	    f_shmap_owner(m)?"WR":(f_shmap_reader(m)?"RD":"SM"), m->reg_id);
     if (m->loaded)
 	fprintf(f, ", loaded");
     if (dirty_count)
@@ -2258,6 +2263,17 @@ static int shmem_verify_owner(pid_t pid, time_t time)
     return (difftime(ctime, time) > 0)? 0:1;
 }
 
+static int hf_shm_id(const char *name) {
+    const char *p = name;
+    unsigned char l, i, id;
+
+    assert(p && *p);
+    i = *(p+strlen(p)-1) - '0';
+    l = *(p+strlen(p)-3) - '0';
+    id = (l << 4) + i;
+    return id;
+}
+
 /* Open and attach to shared memory segment.
   shm_id_p not NULL ("reader") - check for REMID and verify creator/PID time;
 	   is NULL ("owner") - set REMID and loop until shmget returns ENOENT.
@@ -2268,7 +2284,6 @@ static int shmem_open(void **shm_p, const char *name,
     void *shm;
     key_t key;
     struct shmid_ds sbuf = { .shm_nattch = 0, };
-    const char *p = name;
     int shm_id, id;
     int flags = SHM_NORESERVE;
     unsigned int slp;
@@ -2276,8 +2291,7 @@ static int shmem_open(void **shm_p, const char *name,
     int w_f = 0;
     int rc = -1;
 
-    assert(p && *p);
-    id = *(p+strlen(p)-1);
+    id = hf_shm_id(name);
     key = ftok(F_SHM_INODE, id);
     if (key == -1) {
 	err("ftok - %m");
@@ -2295,7 +2309,8 @@ static int shmem_open(void **shm_p, const char *name,
 			goto _retry;
 		    return -ENOENT; /* WR: Success */
 	    }
-	    err("shmget error - %m");
+	    err("map %s id:%d key:0x%08x shmget error - %m",
+		name, id, key);
 	    goto _err;
 	}
 
@@ -2371,7 +2386,6 @@ static int shmem_create(void **shm_p, const char *name,
 {
     void *shm;
     key_t key;
-    const char *p = name;
     int shm_id, id;
     int w_f = 0;
     int flags = IPC_CREAT | SHM_NORESERVE;
@@ -2379,8 +2393,7 @@ static int shmem_create(void **shm_p, const char *name,
     /* Fail shmget if segment exists */
     flags |= IPC_EXCL;
 
-    assert(p && *p);
-    id = *(p+strlen(p)-1);
+    id = hf_shm_id(name);
     key = ftok(F_SHM_INODE, id);
     if (key == -1) {
 	err("ftok - %m\n");
@@ -2394,7 +2407,8 @@ static int shmem_create(void **shm_p, const char *name,
 	    break;
 
 	if (errno != EEXIST) {
-	    err("shmem_create %s shmget error - %m", name);
+	    err("map %s id:%d new key:0x%08x shmget error - %m",
+		name, id, key);
 	    goto _err;
 	}
 
@@ -2525,7 +2539,7 @@ static int sbosl_add_pages(F_MAP_t *m)
 
 	assert( nr_bosl <= id ); /* TODO: Add support for BoS deletion */
 	if (nr_bosl == id)
-	    goto _err; /* Success: nothing to do */
+	    goto _unlock; /* Success: nothing to do */
 	count = id - nr_bosl;
 	id = nr_bosl; /* SBoS IDs starts with zero */
     }
@@ -2542,7 +2556,7 @@ static int sbosl_add_pages(F_MAP_t *m)
 	INIT_LIST_HEAD(&sboss->node);
 
 	/* memory region name */
-	//entry = id*F_SHMAP_SZ(1);
+	assert( id > 0 );
 	l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%c_%1.1lu",
 		     F_SHMAP_DATA_NAME, (char)priv_sb->id, id);
 	strncpy(sb_name+l, sb->name+l, F_SHMAP_NAME_LEN-l);
@@ -2603,6 +2617,7 @@ static int sbosl_add_pages(F_MAP_t *m)
 	id++;
     } while (--count);
 
+_unlock:
     rc = pthread_rwlock_unlock(&sb->sb_rwlock);
     if (rc)
 	err("shmap add_page unlock error:%d", rc);
@@ -2780,7 +2795,7 @@ int f_map_shm_attach(F_MAP_t *m, F_MAPMEM_t rw)
     reg_id = (signed char)m->reg_id;
     priv_sb->id = (reg_id + 0x30) & 0xff; /* IPC shared memory region signature */
 
-    snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%c",
+    snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%c_0",
 	     F_SHMAP_NAME_PREFIX, (char)priv_sb->id);
     priv_sb->name = strdup(sb_name);
     priv_sb->shm = rw;

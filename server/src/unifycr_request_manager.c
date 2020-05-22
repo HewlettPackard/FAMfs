@@ -145,8 +145,8 @@ int rm_fetch_md(int qid, int req_num) {
     /* get the locations of all the read requests from the key-value store*/
     int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
     fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1);
-    //printf("srv: md fetch for client %d %p %p %p\n", client_id, app_config->shm_recv_bufs[client_id], pcnt, pmd);
-    rc = famfs_md_get(app_config->shm_req_bufs[client_id], req_num, pmd, pcnt);
+
+    rc = meta_md_get(app_config->shm_req_bufs[client_id], req_num, pmd, pcnt);
 
     pthread_mutex_unlock(&thrd_ctrl->thrd_lock);
 
@@ -455,6 +455,7 @@ int rm_process_received_msg(int app_id, int qid,
             (shm_meta_t *)(((char *)app_config->shm_recv_bufs[client_id]
                             + *ptr_size) + 2 * sizeof(int));
 
+        tmp_sh_msg->loid = 0; /* famfs compatibility: UNIFYCR read Rq has no 'loid' */
         tmp_sh_msg->src_fid = tmp_recv_msg->src_fid;
         tmp_sh_msg->offset = tmp_recv_msg->src_offset;
         tmp_sh_msg->length = tmp_recv_msg->length;

@@ -4,7 +4,7 @@ AM_CPPFLAGS =	-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -fms-extensions \
 		-I$(top_srcdir)/userspace-rcu/include \
 		-I$(top_srcdir)/userspace-rcu/src
 
-AM_CFLAGS =	-Wall -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable
+AM_CFLAGS =	-Wall -Wextra
 
 lib_LTLIBRARIES = libfamfs.la libfamfs_gotcha.la
 
@@ -37,6 +37,7 @@ libfamfs_la_CPPFLAGS = \
   $(AM_CPPFLAGS) \
   -funroll-loops --param max-completely-peel-times=64 \
   $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+# libfamfs_la_CFLAGS = $(AM_CFLAGS)
 libfamfs_la_LDFLAGS = \
   -static -version-info $(LIBUNIFYCR_LT_VERSION) \
   $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
@@ -72,11 +73,11 @@ libfamfs_gotcha_la_CPPFLAGS = \
   -DUNIFYCR_GOTCHA \
   $(AM_CPPFLAGS) \
   $(GOTCHA_CFLAGS) $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+# libfamfs_gotcha_la_CFLAGS = $(AM_CFLAGS)
 libfamfs_gotcha_la_LDFLAGS = \
   -shared -version-info $(LIBUNIFYCR_LT_VERSION) \
   $(GOTCHA_LDFLAGS) $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
   -lgotcha
 libfamfs_gotcha_la_LIBADD = $(top_builddir)/common/src/libfamfs_common.la \
 		-lurcu-qsbr -lurcu-cds -lcrypto -lrt -lpthread
-#		$(top_builddir)/common/src/libfamfs_meta.la
 

@@ -774,7 +774,7 @@ int range_server_commit(struct mdhim_t *md, struct mdhim_basem_t *im, int source
 /**
  * range_server_bget
  * Handles the bulk get message, retrieves the data from the database, and sends the results back
- * 
+ *
  * @param md        Pointer to the main MDHIM struct
  * @param bgm       pointer to the bulk get message to handle
  * @param source    source of the message
@@ -960,6 +960,9 @@ done:
 	bgrm->num_keys = bgm->num_keys;
 	bgrm->basem.index = index->id;
 	bgrm->basem.index_type = index->type;
+
+	mlog(MDHIM_SERVER_DBG, ".  [%d] found %d keys for [%d]",
+		md->mdhim_rank, bgm->num_keys, source);
 
 	//Send response
 	gettimeofday(&resp_get_comm_start, NULL);
@@ -1331,7 +1334,7 @@ void *worker_thread(void *data) {
 			mtype = ((struct mdhim_basem_t *) item->message)->mtype;
 
 #ifdef DEBUG_WRK_THREAD
-			mlog(MDHIM_SERVER_INFO, ". worker[%d] - msg from rank:%d of type:%d (%s), current time:%ld",
+			mlog(MDHIM_SERVER_INFO, ". RS worker[%d] - msg from rank:%d of type:%d (%s), current time:%ld",
 			     worker_id, item->source, mtype,
 			     (mtype==MDHIM_PUT)?"PUT":(mtype==MDHIM_BULK_GET)?"BGET":
 				(mtype==MDHIM_BULK_PUT)?"BPUT":"?",
@@ -1367,6 +1370,8 @@ void *worker_thread(void *data) {
 				op = ((struct mdhim_bgetm_t *) item->message)->op;
 				num_records = ((struct mdhim_bgetm_t *) item->message)->num_recs;
 				num_keys = ((struct mdhim_bgetm_t *) item->message)->num_keys;
+ mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_GET op:%d num_records:%d num_keys:%d",
+ worker_id, op, num_records, num_keys);
 				//The client is sending one key, but requesting the retrieval of more than one
 				if (num_records > 1 && num_keys == 1) {
 					range_server_bget_op(md,
@@ -1381,8 +1386,8 @@ void *worker_thread(void *data) {
 				gettimeofday(&worker_get_end, NULL);
 				worker_get_time += 1000000*(worker_get_end.tv_sec-worker_get_start.tv_sec)+worker_get_end.tv_usec-worker_get_start.tv_usec;
 #ifdef DEBUG_WRK_THREAD
-				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_GET num_records:%d num_keys:%d time:%ld",
-				worker_id, num_records, num_keys,
+				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_GET op:%d num_records:%d num_keys:%d time:%ld",
+				worker_id, op, num_records, num_keys,
 				1000000L*(worker_get_end.tv_sec-worker_get_start.tv_sec)+worker_get_end.tv_usec-worker_get_start.tv_usec);
 #endif
 				break;

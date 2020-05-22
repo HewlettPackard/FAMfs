@@ -347,11 +347,10 @@ BITOPS(Layout, ThreadFailed,	f_layout_, _L_THREAD_FAILED)
 BITOPS(Layout, Quit,		f_layout_, _L_QUIT)
 
 
-struct f_map_;
 F_POOLDEV_INDEX_t *f_find_pdi_by_media_id(F_LAYOUT_t *lo, unsigned int media_id);
 void f_print_sm(FILE *f, struct f_map_ *sm, uint16_t chunks, uint32_t slab_stripes);
 void f_print_cv(FILE *f, struct f_map_ *cv);
-int f_slabmap_update(F_MAP_t *sm, F_MAP_KEYSET_u *set);
+int f_slabmap_update(struct f_map_ *sm, F_MAP_KEYSET_u *set);
 
 #endif /* F_LAYOUT_H_ */
 

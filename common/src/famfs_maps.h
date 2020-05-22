@@ -12,6 +12,7 @@
 #include <inttypes.h>
 
 #include "famfs_env.h"
+#include "famfs_error.h"
 #include "famfs_ktypes.h"
 #include "famfs_bbitmap.h"
 #include "f_dict.h"
@@ -337,6 +338,7 @@ struct f_layout_info_ *f_get_layout_info(int layout_id);
 int f_host_is_ionode(const char *hostname);
 int f_host_is_mds(const char *hostname);
 void f_print_layouts(void);
+int f_get_lo_stripe_sizes(struct f_pool_ *p, size_t **stripe_sz_per_lo);
 
 /*
  * DB-independent persistent KV store interface
@@ -370,6 +372,9 @@ ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
 int f_db_bput(unsigned long *buf, int map_id, void **keys, size_t size,
     size_t value_len);
 int f_db_bdel(int map_id, void **keys, size_t size);
+
+/* TODO: Move me to debug.h */
+#define DEBUG_LVL(lvl, fmt, ...) DEBUG_LVL_(f_get_pool()->verbose, lvl, fmt, ## __VA_ARGS__)
 
 
 /* Validate structure's size and/or alignment */

@@ -97,7 +97,7 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 		if ((rl = get_range_servers(md, lookup_index, value, value_len)) == 
 		    NULL) {
 			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
-			     "Error while determining range server in mdhimBPut", 
+			     "Error while determining range server in _put_record",
 			     md->mdhim_rank);
 			return NULL;
 		}

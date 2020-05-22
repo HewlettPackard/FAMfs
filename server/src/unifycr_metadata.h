@@ -44,12 +44,6 @@
 #define F_MD_IDX_MAPS_START 3 /* map indexes start with 3 (unifycr_indexes) */
 
 
-typedef struct {
-    int fid;
-    long offset;
-    long length;
-} cli_req_t;
-
 int meta_sanitize();
 int meta_init_conf(unifycr_cfg_t *cfg, mdhim_options_t **db_opts_p);
 int meta_init_store(mdhim_options_t *db_opts);
@@ -57,7 +51,7 @@ int meta_init_indices();
 int meta_free_indices();
 int meta_famattr_put(int fam_id, fam_attr_val_t *val);
 int meta_famattr_get(int fam_id, fam_attr_val_t **ptr_val);
-int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv);
+int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv);
 
 void print_bget_indices(int app_id, int cli_id,
                         send_msg_t *index_set, int tot_num);

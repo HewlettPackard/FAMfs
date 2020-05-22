@@ -89,7 +89,6 @@ int meta_init_store(mdhim_options_t *db_opts)
 {
     int i, rc;
 
-    db_opts->debug_level = MLOG_CRIT;
     db_opts->db_key_type = MDHIM_UNIFYCR_KEY;
     if (mds_vec)
 	db_opts->rserver_factor = 1;
@@ -98,6 +97,7 @@ int meta_init_store(mdhim_options_t *db_opts)
 
     /*this index is created for storing index metadata*/
     unifycr_indexes[0] = md->primary_index;
+
 
     /*this index is created for storing file attribute metadata*/
     unifycr_indexes[1] = create_global_index(md, md->db_opts->rserver_factor, 1,
@@ -422,7 +422,8 @@ int meta_process_fsync(int qid)
     md->primary_index = unifycr_indexes[0];
 
     for (i = 0; i < num_entries; i++) {
-        fsmd_keys[i]->fid = meta_payload[i].fid;
+        fsmd_keys[i]->pk.fid = meta_payload[i].fid;
+        fsmd_keys[i]->pk.loid = 0;
         fsmd_keys[i]->offset = meta_payload[i].file_pos;
         fsmd_vals[i]->addr = meta_payload[i].mem_pos;
         fsmd_vals[i]->len = meta_payload[i].length;
@@ -571,14 +572,15 @@ int f_do_fsync(f_svcrq_t *pcmd) {
         qid, client_side_id, num_entries, app_config->meta_offset);
 
     for (i = 0; i < num_entries; i++) {
-        fsmd_keys[i]->fid = meta_payload[i].fid;
+        fsmd_keys[i]->pk.fid = meta_payload[i].fid;
+        fsmd_keys[i]->pk.loid = meta_payload[i].loid;
         fsmd_keys[i]->offset = meta_payload[i].file_pos;
         fsmd_vals[i]->addr = meta_payload[i].mem_pos;
         fsmd_vals[i]->len = meta_payload[i].length;
         fsmd_vals[i]->stripe  = meta_payload[i].sid;
 
-        LOG(LOG_DBG3, "  k/v[%d] fid=%ld off=%ld/addr=%ld len=%ld s=%lu",
-            i, fsmd_keys[i]->fid, fsmd_keys[i]->offset,
+        LOG(LOG_DBG3, "  k/v[%d] loid=%d fid=%d off=%ld/addr=%ld len=%ld s=%lu",
+            i, fsmd_keys[i]->pk.loid, fsmd_keys[i]->pk.fid, fsmd_keys[i]->offset,
             fsmd_vals[i]->addr, fsmd_vals[i]->len, fsmd_vals[i]->stripe);
 
         fsmd_ley_lens[i] = sizeof(fsmd_key_t);
@@ -711,16 +713,16 @@ int meta_batch_get(int app_id, int client_id,
                    int thrd_id, int dbg_rank, char *shm_reqbuf, int num,
                    msg_meta_t *del_req_set)
 {
-    cli_req_t *tmp_cli_req = (cli_req_t *) shm_reqbuf;
+    shm_meta_t *tmp_cli_req = (shm_meta_t *) shm_reqbuf;
 
     int i, rc = 0;
     for (i = 0; i < num; i++) {
-        fsmd_keys[2 * i]->fid = tmp_cli_req[i].fid;
+        fsmd_keys[2 * i]->fid = \
+        fsmd_keys[2 * i + 1]->fid = tmp_cli_req[i].src_fid;
         fsmd_keys[2 * i]->offset = tmp_cli_req[i].offset;
-        fsmd_ley_lens[2 * i] = sizeof(fsmd_key_t);
-        fsmd_keys[2 * i + 1]->fid = tmp_cli_req[i].fid;
         fsmd_keys[2 * i + 1]->offset =
             tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
+        fsmd_ley_lens[2 * i] = \
         fsmd_ley_lens[2 * i + 1] = sizeof(fsmd_key_t);
 
     }
@@ -782,19 +784,40 @@ int meta_batch_get(int app_id, int client_id,
     return rc;
 }
 
-int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
+int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
 
     int tot_num = 0;
-    cli_req_t *tmp_cli_req = (cli_req_t *)shm_reqbuf;
+    shm_meta_t *tmp_cli_req = (shm_meta_t *)shm_reqbuf;
+    int legacy = (fam_fs == 0);
 
     int i, rc = 0;
     for (i = 0; i < num; i++) {
-        fsmd_keys[2*i]->fid        = tmp_cli_req[i].fid;
-        fsmd_keys[2*i + 1]->fid    = tmp_cli_req[i].fid;
-        fsmd_keys[2*i]->offset     = tmp_cli_req[i].offset;
-        fsmd_keys[2*i + 1]->offset = tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
-        fsmd_ley_lens[2*i]         = sizeof(fsmd_key_t);
-        fsmd_ley_lens[2*i + 1]     = sizeof(fsmd_key_t);
+        /* legacy delegator shall not set layout id */
+        if (legacy && tmp_cli_req[i].loid) {
+            LOG(LOG_FATAL, " srv: md req %d of %d: loid=%d? fid=%d",
+                i+1, num, tmp_cli_req[i].loid, tmp_cli_req[i].src_fid);
+            return ULFS_ERROR_MDHIM;
+        }
+        /* pack loid, fid into MD key 'fid' */
+        fsmd_keys[2*i]->pk.loid     = \
+        fsmd_keys[2*i + 1]->pk.loid = tmp_cli_req[i].loid;
+        fsmd_keys[2*i]->pk.fid      = \
+        fsmd_keys[2*i + 1]->pk.fid  = tmp_cli_req[i].src_fid;
+
+        fsmd_keys[2*i]->offset      = tmp_cli_req[i].offset;
+        fsmd_keys[2*i + 1]->offset  = tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
+        fsmd_ley_lens[2*i]          = sizeof(fsmd_key_t);
+        fsmd_ley_lens[2*i + 1]      = sizeof(fsmd_key_t);
+    }
+
+    IF_LOG(LOG_DBG3) {
+	LOG(LOG_DBG3, "srv: md req %d keys:", num);
+	for (i = 0; i < num; i++) {
+	    LOG(LOG_DBG3, "  [%d] lo %d fid=%d off=%jd/%jd len=%d",
+		i, fsmd_keys[2*i]->pk.loid, fsmd_keys[2*i]->pk.fid,
+		fsmd_keys[2*i]->offset,
+		fsmd_keys[2*i + 1]->offset, fsmd_ley_lens[2*i]);
+	}
     }
 
     md->primary_index = unifycr_indexes[0];
@@ -819,12 +842,15 @@ int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
 
     if (total_kv)
         *total_kv = tot_num;
-    /*
-    for (i = 0; i < *total_kv; i++)
-        printf("srv: got md k/v[%d] fid=%ld off=%jd/len=%jd stripe=%lu\n",
-        i, res_kv[i].k.fid, res_kv[i].k.offset,
-        res_kv[i].v.len, res_kv[i].v.stripe);
-    */
+
+    IF_LOG(LOG_DBG3) {
+	LOG(LOG_DBG3, "srv: got %d k/v pairs:", tot_num);
+	for (i = 0; i < tot_num; i++) {
+	    LOG(LOG_DBG3, "  k/v[%d] lo %d fid=%d off=%jd/len=%jd stripe=%lu",
+		i, res_kv[i].k.pk.loid, res_kv[i].k.pk.fid,
+		res_kv[i].k.offset, res_kv[i].v.len, res_kv[i].v.stripe);
+	}
+    }
 
     return rc;
 }

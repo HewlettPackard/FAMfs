@@ -82,6 +82,7 @@ static LFS_CTX_t *lfs_ctx_p = NULL;
 
 extern char *mds_vec;
 extern int  num_mds;
+extern struct mdhim_t *md;
 
 f_rbq_t *rplyq[MAX_NUM_CLIENTS];
 f_rbq_t *cmdq[F_CMDQ_MAX];
@@ -318,6 +319,9 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    /*wait for the service manager to connect to the
+     *request manager so that they can exchange control
+     *information*/
     if (PoolUNIFYCR(pool)) {
 	rc = sock_wait_cli_cmd();
 	if (rc != ULFS_SUCCESS) {
@@ -339,11 +343,16 @@ int main(int argc, char *argv[])
 	    usleep(10);
     }
 
-    /*wait for the service manager to connect to the
-     *request manager so that they can exchange control
-     *information*/
-    if (log_print_level > 0) {
-        printf("unifycrd is running\n");
+    if (pool->verbose > 0) {
+	printf("unifycrd is running\n");
+
+	/* set MDHIM debug level */
+	int mlog_priority = pool->verbose;
+	if (mlog_priority > 7)
+	    mlog_priority = 7;
+	mlog_priority = 7 - mlog_priority;
+	db_opts->debug_level &= ~MLOG_PRIMASK;
+	db_opts->debug_level |= mlog_priority << MLOG_PRISHIFT;
     }
 
     rc = meta_init_store(db_opts);
@@ -351,7 +360,15 @@ int main(int argc, char *argv[])
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
         exit(1);
     }
+    /* Set MDHIM slicing and key hash stripe size lookup table */
     max_recs_per_slice = db_opts->max_recs_per_slice;
+    size_t *stripe_sizes = NULL;
+    if ((rc = f_get_lo_stripe_sizes(pool, &stripe_sizes)) < 0) {
+	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
+	exit(1);
+    }
+    mdhimSetSliceSizes(md->primary_index, stripe_sizes, rc);
+    free(stripe_sizes);
 
     rc = meta_register_fam(lfs_ctx_p);
     if (rc != ULFS_SUCCESS) {
@@ -445,7 +462,7 @@ int main(int argc, char *argv[])
             if (qid != 0) {
                 char *cmd = sock_get_cmd_buf(qid);
                 int cmd_rc = delegator_handle_command(cmd, qid,
-						db_opts->max_recs_per_slice);
+						      max_recs_per_slice);
                 if (cmd_rc != ULFS_SUCCESS) {
                     LOG(LOG_ERR, "%s",
                         ULFS_str_errno(cmd_rc));
