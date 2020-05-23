@@ -170,9 +170,9 @@ void map_fam_chunks(N_STRIPE_t *stripe, char *buf,
 	    length -= chunk->length;
 	    chunk->offset = off;
 	    off = 0;
+	    fdev = &chunk->pdev->dev->f;
 	    if (lookup_mreg_fn)
 		fdev->local_desc = lookup_mreg_fn(buf, chunk->length, chunk->lf_client_idx);
-	    fdev = &chunk->pdev->dev->f;
 	    fdev->usr_buf = usr_buf;
 	    usr_buf += chunk->length;
 	}
