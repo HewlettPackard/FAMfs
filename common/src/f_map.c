@@ -636,8 +636,9 @@ int f_map_load_cb(F_MAP_t *map, F_MAP_LOAD_CB_fn cb, void *cb_arg)
 				pu = e_to_bosl(it->bosl, e) >> pu_factor;
 				buf = bos_buf + f_map_pu_p_sz(map, i, buf);
 				copy_pu_to_bosl(it->bosl, pu, buf);
-				/* Clear PU dirty bit */
-				// _f_map_clear_pu_dirty_bosl(it->bosl, pu);
+				/* Set PU dirty bit */
+				if (map->true0)
+				    _f_map_mark_pu_dirty_bosl(it->bosl, pu);
 				/* Callback */
 				if (cb)
 					cb(e, cb_arg, (F_PU_VAL_t *)it->word_p);
@@ -871,8 +872,8 @@ static F_ITER_t *iter_next_dirty_pu(F_ITER_t *iter)
 	factor = map->geometry.intl_factor - pu_factor;
 	pu_per_bos = map->geometry.bosl_pu_count;
 	/* Dirty PU bitmap size, bytes */
-	dirty_sz = BITS_TO_LONGS(pu_per_bos)*sizeof(*dirty);
-	assert(dirty_sz <= sizeof(*dirty)*F_BOSL_DIRTY_SZ);
+	dirty_sz = F_BOSL_DIRTY_SZ(map);
+	assert(dirty_sz <= sizeof(*dirty)*F_BOSL_DIRTY_MAX);
 
 	dirty = (unsigned long *) malloc(dirty_sz);
 	if (dirty == NULL) return NULL;
@@ -1353,16 +1354,6 @@ static void set_value_bosl(F_BOSL_t *bosl, uint64_t e, F_SETTER_t setter)
 	}
 }
 
-/* Get bitmap value under long pointer */
-static inline int _get_bit_value(uint64_t e, unsigned long *p, unsigned int bbits)
-{
-	switch (bbits) {
-	case 1:	return test_bit((int)e % BITS_PER_LONG, p);
-	case 2: return (int)BBIT_GET_VAL(p, e % BBITS_PER_LONG);
-	default: assert (0);
-	}
-}
-
 
 /*
  * Iterator
@@ -1377,13 +1368,25 @@ static inline bool _check_iter_cond_bbit(const F_ITER_t *it)
 				  it->cond.pset, bosl->page);
 }
 
-/* Is bit clear (if cond.pset:0) or set (otherwise)? */
+static inline bool test_bit_patterns(int bit, int pset, unsigned long *page)
+{
+	switch (pset) {
+	/* test zero */
+	case 1: return !test_bit(bit, page);
+	/* test one */
+	case 2: return test_bit(bit, page);
+	/* any */
+	default: return true;
+	}
+}
+
+/* Apply the bit pattern (B_PAT0, B_PAT1) to iterator value and return boolean */
 static inline bool _check_iter_cond_bit(const F_ITER_t *it)
 {
 	F_BOSL_t *bosl = it->bosl;
 
-	return !(it->cond.pset) ==
-		!test_bit64(e_to_bosl(bosl, it->entry), bosl->page);
+	return test_bit_patterns((int)e_to_bosl(bosl, it->entry),
+				 (int)it->cond.pset, bosl->page);
 }
 
 static inline bool __check_iter_cond_vf(const F_ITER_t *it, const F_PU_VAL_t *v)
@@ -1396,54 +1399,90 @@ static inline bool _check_iter_cond_vf(const F_ITER_t *it)
 	return __check_iter_cond_vf(it, (F_PU_VAL_t *)it->word_p);
 }
 
-static inline bool check_iter_cond(const F_ITER_t *iter)
+static inline bool _check_iter_cond(const F_ITER_t *it)
 {
-	return ((iter->cond.pset == 0U) ||
-		(f_map_is_structured(iter->map)? &_check_iter_cond_vf :
-		 (f_map_is_bbitmap(iter->map)? &_check_iter_cond_bbit :
-				&_check_iter_cond_bit))(iter));
+	return (f_map_is_structured(it->map)? &_check_iter_cond_vf :
+		 f_map_is_bbitmap(it->map)? &_check_iter_cond_bbit :
+				&_check_iter_cond_bit)(it);
+}
+
+static inline bool check_iter_cond(const F_ITER_t *it)
+{
+	if (f_map_has_true_zeros(it->map)) {
+		F_MAP_t *m = it->map;
+		uint64_t pu = e_to_bosl(it->bosl, it->entry) >> m->geometry.pu_factor;
+
+		if (!test_bit64(pu, it->bosl->dirty))
+			return false;
+	}
+	return (it->cond.pset == F_NO_CONDITION.pset || _check_iter_cond(it));
 }
 
 /* Find entry in this BoS that matches the iterator's condition */
 static F_ITER_t *bosl_find_cond(F_ITER_t *it)
 {
     F_BOSL_t *bosl = it->bosl;
-    uint64_t e, length;
+    F_MAP_t *m = it->map;
+    unsigned int pu_count = m->geometry.bosl_pu_count;
+    unsigned int pu_factor = m->geometry.pu_factor;
+    uint64_t pset = it->cond.pset;
+    int true0 = f_map_has_true_zeros(it->map);
+    uint64_t e, end, length;
 
-    /* fast path */
-    if (check_iter_cond(it))
-	return it; /* this one */
+    e = e_to_bosl(bosl, it->entry);
+    end = length = m->bosl_entries;
 
-    e = e_to_bosl(bosl, it->entry) + 1;
-    length = it->map->bosl_entries;
-    if (e >= length)
-	return NULL; /* not in this BoS */
+    do {
+	/* true zeros mode: don't assume missing PU are zeros */
+	if (true0) {
+	    uint64_t pu = e >> pu_factor;
 
-    /* find from 'e' */
-    if (f_map_is_structured(it->map)) {
-	for (; e < length; e++) {
-	    it->word_p = _bosl_ffind(bosl, e);
-	    if (_check_iter_cond_vf(it))
-		goto _found;
+	    if (!test_bit64(pu, bosl->dirty)) {
+		pu = find_next_bit(bosl->dirty, pu_count, pu);
+		if (pu >= pu_count)
+		    return NULL; /* no PU */
+
+		e = pu << pu_factor;
+		end = (pu+1) << pu_factor;
+	    }
 	}
-    } else {
-	if (f_map_is_bbitmap(it->map)) {
-	    e = find_next_bbit(bosl->page, it->cond.pset, length, e);
+
+	end = min(end, length);
+	if (e >= end)
+	    return NULL; /* not in this BoS */
+
+	if (pset == F_NO_CONDITION.pset)
+	    goto _found; /* this one */
+
+	/* find from 'e' */
+	if (f_map_is_structured(m)) {
+	    for (; e < end; e++) {
+		it->word_p = _bosl_ffind(bosl, e);
+		if (_check_iter_cond_vf(it))
+		    goto _found;
+	    }
 	} else {
-	    if (it->cond.pset)
-		e = find_next_bit(bosl->page, length, e);
-	    else
-		e = find_next_zero_bit(bosl->page, length, e);
+	    if (f_map_is_bbitmap(m)) {
+		e = find_next_bbit(bosl->page, pset, end, e);
+	    } else {
+		if (pset & B_PAT1)
+		    e = find_next_bit(bosl->page, end, e);
+		else
+		    e = find_next_zero_bit(bosl->page, end, e);
+	    }
+	    if (e < end) {
+		it->word_p = _bosl_ffind(bosl, e);
+		goto _found;
+	    }
 	}
-	if (e < length) {
-	    it->word_p = _bosl_ffind(bosl, e);
-	    goto _found;
-	}
-    }
+	/* e: end */
+    } while(e < length);
+
     return NULL;
 
 _found:
     it->entry = e + bosl->entry0;
+    /* TODO: Make this Extracheck! */
     assert(check_iter_cond(it));
     return it;
 }
@@ -1460,12 +1499,14 @@ F_ITER_t *f_map_new_iter(F_MAP_t *map, F_COND_t cond, int arg)
 	/* sanity check */
 	assert(map);
 	entry_sz = map->geometry.entry_sz;
-	if (!f_map_is_structured(map))
+	if (!f_map_is_structured(map)) {
 		assert(entry_sz == 1 || entry_sz == 2);
-	else
+		if (f_map_is_bbitmap(map))
+			assert(!bb_pset_chk(c) || c == F_NO_CONDITION.pset);
+		else
+			assert( c <= B_PAT1 );
+	} else
 		assert(entry_sz % 8 == 0);
-	if (f_map_is_bbitmap(map))
-		assert(!bb_pset_chk(c) || c == 0U);
 
 	iter = (F_ITER_t *) calloc(sizeof(F_ITER_t), 1);
 	if (!iter)
@@ -1658,24 +1699,25 @@ bool f_map_probe_iter_at(const F_ITER_t *it, uint64_t entry, void *value_p)
 	F_MAP_t *map = it->map;
 	F_BOSL_t *bosl;
 	unsigned long *p;
-	uint64_t e;
+	uint64_t e, pu;
+	int true0 = f_map_has_true_zeros(map);
+	bool ret = false;
 
 	if (f_map_entry_in_bosl(it->bosl, entry))
 		bosl = it->bosl;
 	else
 		bosl = f_map_get_bosl(map, entry);
 	if (bosl == NULL) {
-		if (value_p) {
-			if (f_map_is_structured(map))
-				*(void**)value_p = NULL;
-			else
-				*(int*)value_p = -1;
-		}
-		return false;
+		ret = (!true0 && it->cond.pset == F_NO_CONDITION.pset);
+		goto _no_entry;
 	}
 
 	e = e_to_bosl(bosl, entry);
 	p = _bosl_ffind(bosl, e);
+	pu = e >> map->geometry.pu_factor;
+	if (true0 && !test_bit64(pu, bosl->dirty))
+		goto _no_entry;
+
 	/* structured map? */
 	if (f_map_is_structured(map)) {
 		if (value_p)
@@ -1683,16 +1725,32 @@ bool f_map_probe_iter_at(const F_ITER_t *it, uint64_t entry, void *value_p)
 		return __check_iter_cond_vf(it, (F_PU_VAL_t *)p);
 	}
 	/* bitmaps */
-	if (value_p)
-		*(int*)value_p = _get_bit_value(e, p, map->geometry.entry_sz);
-	/* bitmap */
-	if (map->geometry.entry_sz == 1)
-		return !(it->cond.pset) ==
-			!test_bit((int)e % BITS_PER_LONG, p);
-	/* bbitmap */
-	return it->cond.pset == 0U ||
-		test_bbit_patterns(e % BBITS_PER_LONG,
-				   it->cond.pset, p);
+	if (it->cond.pset == F_NO_CONDITION.pset)
+		ret = true;
+	if (map->geometry.entry_sz == 1) {
+		/* bitmap */
+		int bit = e % BITS_PER_LONG;
+		ret = test_bit_patterns(bit, (int)it->cond.pset, p);
+		if (value_p)
+			*(int*)value_p = test_bit(bit, p);
+	} else {
+		/* bbitmap */
+		int bit = e % BBITS_PER_LONG;
+		ret = test_bbit_patterns(bit, (int)it->cond.pset, p);
+		if (value_p)
+			*(int*)value_p = (int)BBIT_GET_VAL(p, bit);
+	}
+	return ret;
+
+_no_entry:
+	if (value_p) {
+		/* special value stands for "no entry" */
+		if (f_map_is_structured(map))
+			*(void**)value_p = NULL;
+		else
+			*(int*)value_p = -1;
+	}
+	return ret;
 }
 
 static uint64_t bosl_weight_vf(const F_ITER_t *it, const unsigned long *p,
@@ -1712,22 +1770,78 @@ static uint64_t bosl_weight_vf(const F_ITER_t *it, const unsigned long *p,
 	return w;
 }
 
-static uint64_t bosl_weight(const F_ITER_t *it, const unsigned long *p,
+static inline uint64_t _bosl_weight(const F_ITER_t *it, const unsigned long *page,
+    uint64_t start, uint64_t nr, int pset)
+{
+	if (f_map_is_structured(it->map))
+		return bosl_weight_vf(it, page, start, nr);
+
+	if (it->map->geometry.entry_sz == 1) {
+		uint64_t w = __bitmap_weight64(page, start, nr);
+
+		switch (pset) {
+		case B_PAT0: return nr-w;
+		case B_PAT1: return w;
+		default: return nr;
+		}
+	} else {
+		return __bbitmap_weight64(page, pset, start, nr);
+	}
+}
+
+static uint64_t bosl_weight_true0(const F_ITER_t *it, const F_BOSL_t *bosl,
     uint64_t start, uint64_t nr)
 {
-	if (f_map_is_structured(it->map)) {
-		return bosl_weight_vf(it, p, start, nr);
-	} else {
-		if (it->map->geometry.entry_sz == 1) {
-			uint64_t w = __bitmap_weight64(p, start, nr);
+    F_MAP_t *m = it->map;
+    unsigned int pu_count = m->geometry.bosl_pu_count;
+    unsigned int pu_factor = m->geometry.pu_factor;
+    uint64_t e, end, length;
+    uint64_t w = 0;
+    const unsigned long *page = bosl->page;
 
-			return (it->cond.pset)? w : (nr-w);
-		} else {
-			return (it->cond.pset)?
-			    __bbitmap_weight64(p, it->cond.pset, start, nr) :
-			    nr; /* F_NO_CONDITION */
-		}
+    e = start;
+    end = length = min(m->bosl_entries, start+nr);
+
+    do {
+	/* true zeros mode: don't assume missing PU are zeros */
+	uint64_t pu = e >> pu_factor;
+
+	if (!test_bit64(pu, bosl->dirty)) {
+	    /* next PU */
+	    pu = find_next_bit(bosl->dirty, pu_count, pu);
+	    if (pu >= pu_count)
+		break; /* no PU */
+
+	    e = pu << pu_factor;
+	    end = (pu+1) << pu_factor;
 	}
+
+	end = min(end, length);
+	if (e >= end)
+	    break; /* e: not in this BoS */
+
+	/* count from 'e' */
+	if (it->cond.pset == F_NO_CONDITION.pset)
+	    w += end - e;
+	else
+	    w += _bosl_weight(it, page, e, end-e, it->cond.pset);
+
+	e = end;
+    } while(e < length);
+
+    return w;
+}
+
+static uint64_t bosl_weight(const F_ITER_t *it, const F_BOSL_t *bosl,
+    uint64_t start, uint64_t nr)
+{
+	if (f_map_has_true_zeros(it->map))
+		return bosl_weight_true0(it, bosl, start, nr);
+
+	if (it->cond.pset == F_NO_CONDITION.pset)
+		return nr;
+
+	return _bosl_weight(it, bosl->page, start, nr, (int)it->cond.pset);
 }
 
 /*
@@ -1768,7 +1882,7 @@ uint64_t f_map_weight(const F_ITER_t *iter, size_t size)
 		cnt = length - e;
 		if (cnt > size)
 			cnt = size;
-		weight = bosl_weight(iter, bosl->page, e, cnt);
+		weight = bosl_weight(iter, bosl, e, cnt);
 		size -= cnt;
 		if (size == 0)
 			return weight;
@@ -1798,7 +1912,7 @@ uint64_t f_map_weight(const F_ITER_t *iter, size_t size)
 
 		/* Add weight of entries in this BoS */
 		cnt = min(size, length);
-		weight += bosl_weight(iter, bosl->page, 0, cnt);
+		weight += bosl_weight(iter, bosl, 0, cnt);
 		size -= cnt;
 
 		node_idx = idx + 1;
@@ -1822,7 +1936,6 @@ int map_clone(F_MAP_t *clone, F_SETTER_t setter, F_MAP_t *orig, F_COND_t cond)
 	int ret = -ENOMEM;
 
 	/* TODO: Add support for all BoSses copy */
-	assert (cond.pset);
 	c = f_map_new_iter_all(clone);
 	if (c == NULL)
 		return ret;
@@ -1873,6 +1986,10 @@ int map_reduce(F_MAP_t *clone, F_MAP_t *orig, F_COND_t cond, int arg)
 
 	oe_sz = orig->geometry.entry_sz;
 	bbitmap = f_map_is_bbitmap(orig);
+
+	/* True zero featute not supported! */
+	assert (bbitmap && !f_map_has_true_zeros(orig));
+
 	orig_e = 1 << orig->geometry.pu_factor;
 	cbe = clone->bosl_entries;
 
@@ -1916,7 +2033,7 @@ int map_reduce(F_MAP_t *clone, F_MAP_t *orig, F_COND_t cond, int arg)
 		    if (bbitmap) {
 			unsigned int *cl_p = (void *)c->word_p;
 
-			/* Bbitmap's PU start entry is aligned to KEY_FACTOR_MIN-3 */
+			/* bbitmap's PU start entry is aligned to KEY_FACTOR_MIN-3 */
 			assert (oe % BBITS_PER_LONG == 0);
 			/* Check pu_factor if assertion fails! */
 			assert (ce % BITS_PER_LONG == 0);
@@ -1989,6 +2106,10 @@ int f_map_reshape(F_MAP_t **clone_p, F_SETTER_t setter, F_MAP_t *orig, F_COND_t 
 		goto _err;
 	}
 	origin_bbits = f_map_is_bbitmap(orig);
+
+	/* True zero featute not supported! */
+	assert (origin_bbits && !f_map_has_true_zeros(orig));
+
 	clone_bbits = f_map_is_bbitmap(clone);
 	if (clone_bbits > origin_bbits) {
 		/* Expand */

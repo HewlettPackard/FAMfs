@@ -579,6 +579,7 @@ int main (int argc, char *argv[]) {
 
 	/* One and two-bits bitmaps */
 	for (e_sz = 1; e_sz <= 2; e_sz++) {
+	    F_COND_t cond_1 = (e_sz==1)?laminated:cv_laminated;
 	    pass = rc = v = 0;
 	    e = 0;
 	    p = NULL; it = NULL;
@@ -624,10 +625,7 @@ int main (int argc, char *argv[]) {
 		    f_map_free_iter(it); it = NULL;
 
 		    t = 7; /* Count entries in loaded map */
-		    /* Note: For bitmap (e_sz:1) the condition evaluated
-		    as a boolean, cv_laminated is 'true' so that is the same
-		    as F_BIT_CONDITION, i.e. iterate over set bits */
-		    it = bitmap_new_iter(m, cv_laminated);
+		    it = bitmap_new_iter(m, cond_1);
 		    it = f_map_seek_iter(it, 0);
 		    if (!it) goto err2;
 		    v = (int)f_map_weight(it, F_MAP_WHOLE);
@@ -654,7 +652,7 @@ int main (int argc, char *argv[]) {
 			if (v != ((1 << e_sz) - 1)) goto err3;
 		    }
 		    rc = i;
-		    if (i >= ii) goto err3; /* failed to generate the key */
+		    if (i >= ii) goto err2; /* failed to generate the key */
 		    /* set entry @e */
 		    bosl = f_map_new_bosl(m, e); /* create BoS on demand */
 		    ul = e - bosl->entry0;
@@ -701,7 +699,7 @@ int main (int argc, char *argv[]) {
 
 		t = 13; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(m);
-		it = f_map_get_iter(m, cv_laminated, 0);
+		it = f_map_get_iter(m, cond_1, 0);
 		for_each_iter(it) {
 		    /* clear PU of 'it->entry' in map */
 		    bosl = it->bosl;

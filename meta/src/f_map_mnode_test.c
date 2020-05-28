@@ -251,9 +251,10 @@ static F_COND_t cv_laminated = {
 /* The [simple] bitmap condition: a bit is set */
 static F_COND_t laminated = F_BIT_CONDITION;
 
-/* These conditions shall match any non-zero value */
-/* PSET_NON_ZERO - any non-zero value in [b]bitmap */
-#define PSET_NON_ZERO	((F_COND_t)(BB_PAT01|BB_PAT10|BB_PAT11))
+/* These conditions shall match any non-zero value in bitmaps */
+#define PSET_B_NON_ZERO		F_BIT_CONDITION
+#define PSET_BB_NON_ZERO	((F_COND_t)(BB_PAT01|BB_PAT10|BB_PAT11))
+
 /* Return the number of 1-bits in 'entry' */
 static int sm_se_or_ee_not_zero(void *arg, const F_PU_VAL_t *entry)
 {
@@ -424,6 +425,10 @@ int main (int argc, char *argv[]) {
 
 	/* One and two-bits bitmaps */
 	for (e_sz = 1; e_sz <= 2; e_sz++) {
+	    /* cond_1: 1 if bitmap, 11 if bbitmap */
+	    F_COND_t cond_1 = (e_sz==1)?laminated:cv_laminated;
+	    /* cond_non_zero: 1 if bitmap, 01, 10 or 11 if bbitmap */
+	    F_COND_t cond_non_zero = (e_sz==1)?PSET_B_NON_ZERO:PSET_BB_NON_ZERO;
 	    pass = rc = v = 0;
 	    e = 0;
 	    p = NULL; it = NULL;
@@ -469,7 +474,7 @@ int main (int argc, char *argv[]) {
 			max_globals += (node_size - 1)*RND_REPS;
 
 		    t = 6; /* Count entries in loaded map */
-		    it = bitmap_new_iter(m,(e_sz==1)?laminated:cv_laminated);
+		    it = bitmap_new_iter(m,cond_1);
 		    it = f_map_seek_iter(it, 0); /* create BoS zero */
 		    if (!it) goto err2;
 		    actual = v = (int)f_map_weight(it, F_MAP_WHOLE);
@@ -553,7 +558,7 @@ int main (int argc, char *argv[]) {
 		t = 14; /* Check my entries in loaded map */
 		e = 0;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    if (global && !f_map_prt_my_global(map, e))
@@ -572,7 +577,10 @@ int main (int argc, char *argv[]) {
 		    ul++;
 		}
 		t = 15; /* Check number of entries in my partition */
-		if (ul != RND_REPS) goto err3;
+		if (ul != RND_REPS) goto err2;
+		it = f_map_seek_iter(it, 0);
+		rc = (int)f_map_weight(it, F_MAP_WHOLE);
+		if (rc != RND_REPS) goto err3;
 		f_map_free_iter(it); it = NULL;
 
 		t = 16; /* Check all log entries are in loaded map */
@@ -600,10 +608,7 @@ int main (int argc, char *argv[]) {
 
 		t = 18; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(map);
-		/* Note: For bitmap (e_sz:1) the condition evaluated
-		  as a boolean, cv_laminated is 'true' so that is the same
-		  as F_BIT_CONDITION, i.e. iterate over set bits */
-		it = f_map_get_iter(map, cv_laminated, 0);
+		it = f_map_get_iter(map, cond_1, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    if (global && !f_map_prt_my_global(map, e))
@@ -662,7 +667,7 @@ int main (int argc, char *argv[]) {
 		rc = f_map_load(map);
 		if (rc != 0) goto err1;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    ul++;
@@ -742,7 +747,12 @@ int main (int argc, char *argv[]) {
 
 	/* One and two-bits bitmaps */
 	for (e_sz = 1; e_sz <= 2; e_sz++) {
+	    /* cond_1: 1 if bitmap, 11 if bbitmap */
+	    F_COND_t cond_1 = (e_sz==1)?laminated:cv_laminated;
+	    /* cond_non_zero: 1 if bitmap, 01, 10 or 11 if bbitmap */
+	    F_COND_t cond_non_zero = (e_sz==1)?PSET_B_NON_ZERO:PSET_BB_NON_ZERO;
 	    pass = rc = v = 0;
+	    e = 0;
 	    p = NULL; it = NULL;
 
 	    t = 1; /* Create one-bit (e_sz:1) or bifold (e_sz:2) map */
@@ -782,7 +792,7 @@ int main (int argc, char *argv[]) {
 		    if (rc != 0) goto err1;
 
 		    t = 6; /* Count entries in loaded map */
-		    it = bitmap_new_iter(m,(e_sz==1)?laminated:cv_laminated);
+		    it = bitmap_new_iter(m,cond_1);
 		    it = f_map_seek_iter(it, 0); /* create BoS zero */
 		    if (!it) goto err2;
 		    v = (int)f_map_weight(it, F_MAP_WHOLE);
@@ -841,7 +851,7 @@ int main (int argc, char *argv[]) {
 		t = 14; /* Check my entries in loaded map */
 		e = 0;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    /* present in log? */
@@ -886,10 +896,7 @@ int main (int argc, char *argv[]) {
 
 		t = 18; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(map);
-		/* Note: For bitmap (e_sz:1) the condition evaluated
-		  as a boolean, cv_laminated is 'true' so that is the same
-		  as F_BIT_CONDITION, i.e. iterate over set bits */
-		it = f_map_get_iter(map, cv_laminated, 0);
+		it = f_map_get_iter(map, cond_1, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    /* clear PU of 'it->entry' in map */
@@ -941,7 +948,7 @@ int main (int argc, char *argv[]) {
 		rc = f_map_load(map);
 		if (rc != 0) goto err1;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    ul++;

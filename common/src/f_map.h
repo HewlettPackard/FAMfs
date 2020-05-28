@@ -175,6 +175,7 @@ typedef struct f_map_ {
 	    unsigned int	ronly:1;	/* 1: read-only flag: there isn't any
 						   partition on this node */
 	    unsigned int	shm:2;		/* memory model(F_MAPMEM_t): private/shared */
+	    unsigned int	true0:1;	/* don't assume zeros in non-existing KVs (and BoSSes); set dirty bit for every KV on load */
 	};
     };
     /* Shared map only */
@@ -184,12 +185,13 @@ typedef struct f_map_ {
 #define f_map_is_partitioned(map_p)	(map_p->parts > 1U)
 #define f_map_has_globals(map_p)	(map_p->own_part == 0U)
 #define f_map_is_ro(map_p)		(map_p->ronly == 1U) /* read-only map on Client */
+#define f_map_has_true_zeros(map_p)	(map_p->true0 == 1U)
 
 
 /*
  * Block of slabs (BoS)
  */
-#define F_BOSL_DIRTY_SZ	(F_MAP_MAX_BOS_PUS/(8*sizeof(unsigned long))) /* 4 */
+#define F_BOSL_DIRTY_MAX	(F_MAP_MAX_BOS_PUS/(8*sizeof(unsigned long))) /* 4 */
 /* Judy node */
 typedef struct f_bosl_ {
     struct cds_ja_node		node;
@@ -200,7 +202,7 @@ typedef struct f_bosl_ {
     F_MAP_t			*map;		/* backreference to map */
     pthread_rwlock_t		rwlock;		/* protect iterators on BoS deletion */
     pthread_spinlock_t		dirty_lock;	/* dirty bitmap lock */
-    unsigned long		dirty[F_BOSL_DIRTY_SZ];	/* dirty bitmap */
+    unsigned long		dirty[F_BOSL_DIRTY_MAX]; /* dirty bitmap */
     union {
 	uint32_t		_flags;
 	struct {
@@ -210,6 +212,8 @@ typedef struct f_bosl_ {
     };
     atomic_t			claimed;	/* atomic count of being used by iterators */
 } F_BOSL_t;
+/* current size of dirty[] - the number of PU in BoS */
+#define F_BOSL_DIRTY_SZ(m)	(BITS_TO_LONGS(m->geometry.bosl_pu_count)*sizeof(long))
 
 
 /*
@@ -316,8 +320,12 @@ typedef union {
     uint64_t			pset;		/* BBIT pattern set: [0..BB_PAT_MASK] */
     uint64_t			partition;	/* dirty PU Iterator partiton */
 } F_COND_t;
+/* All maps: */
 #define F_NO_CONDITION		((F_COND_t)0LU)	/* Iterator will iterate ALL entries */
-#define F_BIT_CONDITION		((F_COND_t)1LU) /* Iterate over set bits in bitmaps */
+/* Simple (one-bit) bitmaps only: */
+#define B_PAT0			1LU		/* Iterate over clear bits in bitmaps */
+#define B_PAT1			2LU		/* Iterate over set bits in bitmaps */
+#define F_BIT_CONDITION		((F_COND_t)B_PAT1) /* Iterate over set bits in bitmaps */
 
 /*
  * Map clone function needs an entry setter. That is similiar to F_COND_t condition,
