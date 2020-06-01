@@ -1752,18 +1752,18 @@ bool f_map_probe_iter_at(const F_ITER_t *it, uint64_t entry, void *value_p)
 		return __check_iter_cond_vf(it, (F_PU_VAL_t *)p);
 	}
 	/* bitmaps */
-	if (it->cond.pset == F_NO_CONDITION.pset)
-		ret = true;
 	if (map->geometry.entry_sz == 1) {
 		/* bitmap */
 		int bit = e % BITS_PER_LONG;
-		ret = test_bit_patterns(bit, (int)it->cond.pset, p);
+		ret = (it->cond.pset == F_NO_CONDITION.pset)?true:
+			test_bit_patterns(bit, (int)it->cond.pset, p);
 		if (value_p)
 			*(int*)value_p = test_bit(bit, p);
 	} else {
 		/* bbitmap */
 		int bit = e % BBITS_PER_LONG;
-		ret = test_bbit_patterns(bit, (int)it->cond.pset, p);
+		ret = (it->cond.pset == F_NO_CONDITION.pset)?true:
+			test_bbit_patterns(bit, (int)it->cond.pset, p);
 		if (value_p)
 			*(int*)value_p = (int)BBIT_GET_VAL(p, bit);
 	}

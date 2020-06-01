@@ -2032,8 +2032,11 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 	for (n = 0, i = 0; i < lo->info.slab_stripes && n < count; i++) {
 		int v;
 		/* Probe if the entry is in memory and force its creation if not */
-		if (!f_map_probe_iter_at(cv_it, s0 + i, (void*)&v)) {
+		assert (f_map_probe_iter_at(cv_it, s0 + i, (void*)&v));
+		if (v < 0) {
+			/* create zeroed BoS in memory */
 			cv_it = f_map_seek_iter(cv_it, s0 + i);
+			v = 0;
 		} /*else {
 			cv_it = f_map_next(cv_it);
 		}
