@@ -616,6 +616,7 @@ int main (int argc, char *argv[]) {
 
 		    t = 5; /* Create BoS for entry #0 */
 		    it = f_map_new_iter_all(m);
+		    if (!f_map_probe_iter_at(it, pass, NULL)) goto err1;
 		    it = f_map_seek_iter(it, 0);
 		    if (!it || !((bosl = it->bosl))) goto err2;
 		    if (bosl->entry0 != 0) goto err3;
