@@ -1131,6 +1131,33 @@ void f_map_mark_dirty(F_MAP_t *map, uint64_t entry)
 		f_map_mark_dirty_bosl(bosl, entry);
 }
 
+/* Clear KV dirty bit */
+void f_map_clear_dirty(F_MAP_t *map, uint64_t entry) {
+    F_BOSL_t *bosl = f_map_get_bosl(map, entry);
+
+    if (bosl)
+	_f_map_clear_pu_dirty_bosl(bosl,
+		e_to_bosl(bosl, entry) >> map->geometry.pu_factor);
+}
+
+/* Test KV dirty bit */
+int f_map_is_dirty(F_MAP_t *map, uint64_t entry) {
+    F_BOSL_t *bosl = f_map_get_bosl(map, entry);
+    uint64_t e = e_to_bosl(bosl, entry);
+    int b;
+
+    if (!bosl)
+	return 0; /* no BoS */
+
+    e >>= map->geometry.pu_factor; /* to PU number */
+    pthread_spin_lock(&bosl->dirty_lock);
+    b = test_bit64(e, bosl->dirty);
+    pthread_spin_unlock(&bosl->dirty_lock);
+
+    return b;
+}
+
+
 /*
  * Low-level data access
  */
@@ -1795,30 +1822,34 @@ static uint64_t bosl_weight_true0(const F_ITER_t *it, const F_BOSL_t *bosl,
     F_MAP_t *m = it->map;
     unsigned int pu_count = m->geometry.bosl_pu_count;
     unsigned int pu_factor = m->geometry.pu_factor;
-    uint64_t e, end, length;
+    uint64_t e, end, length, pu_l;
     uint64_t w = 0;
     const unsigned long *page = bosl->page;
 
     e = start;
-    end = length = min(m->bosl_entries, start+nr);
+    length = min(m->bosl_entries, start+nr);
+    pu_l = DIV_CEIL(length, 1U << pu_factor);
+    assert (pu_l <= pu_count);
 
     do {
 	/* true zeros mode: don't assume missing PU are zeros */
-	uint64_t pu = e >> pu_factor;
+	uint64_t pu, pu_e;
+	pu = e >> pu_factor;
 
 	if (!test_bit64(pu, bosl->dirty)) {
-	    /* next PU */
-	    pu = find_next_bit(bosl->dirty, pu_count, pu);
-	    if (pu >= pu_count)
+	    /* the nearest marked PU */
+	    pu = find_next_bit(bosl->dirty, pu_l, pu);
+	    if (pu >= pu_l)
 		break; /* no PU */
 
 	    e = pu << pu_factor;
-	    end = (pu+1) << pu_factor;
 	}
 
+	/* last continiously set PU */
+	pu_e = find_next_zero_bit(bosl->dirty, pu_l, pu);
+	end = pu_e << pu_factor;
 	end = min(end, length);
-	if (e >= end)
-	    break; /* e: not in this BoS */
+	assert (e < end);
 
 	/* count from 'e' */
 	if (it->cond.pset == F_NO_CONDITION.pset)
@@ -1827,7 +1858,7 @@ static uint64_t bosl_weight_true0(const F_ITER_t *it, const F_BOSL_t *bosl,
 	    w += _bosl_weight(it, page, e, end-e, it->cond.pset);
 
 	e = end;
-    } while(e < length);
+    } while (e < length);
 
     return w;
 }

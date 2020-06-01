@@ -404,8 +404,12 @@ static inline int f_map_load(F_MAP_t *map) { return f_map_load_cb(map, NULL, NUL
 int f_map_flush(F_MAP_t *map);
 /* Update (load from KV store) only map entries given in the stripe list */
 int f_map_update(F_MAP_t *map, F_MAP_KEYSET_t *set);
-/* Mark KV dirty */
+/* Mark KV dirty bit */
 void f_map_mark_dirty(F_MAP_t *map, uint64_t entry);
+/* Clear KV dirty bit */
+void f_map_clear_dirty(F_MAP_t *map, uint64_t entry);
+/* Test KV dirty bit */
+int f_map_is_dirty(F_MAP_t *map, uint64_t entry);
 
 /* Note: Please use this function from common library to read the layout configuration
  * for a map: F_LAYOUT_INFO_t *f_get_layout_info(int layout_id);
