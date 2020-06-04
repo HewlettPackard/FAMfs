@@ -25,7 +25,7 @@ static int get_lf_meta(F_POOL_t *pool)
     LF_INFO_t *lf_info = pool->lf_info;
     F_POOL_DEV_t *pdev;
     fam_attr_val_t *fam_meta = NULL;
-    int i, rc = 0;
+    int rc = 0;
 
     if (lf_info->mrreg.scalable ||
         (!lf_info->mrreg.prov_key && !lf_info->mrreg.virt_addr))
@@ -43,7 +43,7 @@ static int get_lf_meta(F_POOL_t *pool)
 	fdev->pkey = fam_meta->part_attr[0].prov_key;
 	fdev->virt_addr = fam_meta->part_attr[0].virt_addr;
 	DEBUG("get_lf_meta id:%d prov_key:%lu virt_addr:%lu\n",
-		i, fdev->pkey, fdev->virt_addr);
+	      _i, fdev->pkey, fdev->virt_addr);
 
         free(fam_meta);
     }

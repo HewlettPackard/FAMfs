@@ -339,6 +339,7 @@ int mdhim_leveldb_open(void **dbh, void **dbs, char *path,
 	case MDHIM_UNIFYCR_KEY:
 		mdhimdb->cmp = leveldb_comparator_create(NULL, cmp_destroy, cmp_unifycr_compare, cmp_name);
 		mdhimdb->compare = cmp_unifycr_compare;
+		break;
 	default:
 		mdhimdb->cmp = leveldb_comparator_create(NULL, cmp_destroy, cmp_byte_compare, cmp_name);
 		mdhimdb->compare = cmp_byte_compare;
