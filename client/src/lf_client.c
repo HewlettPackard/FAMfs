@@ -159,6 +159,7 @@ int lfs_connect(LFS_CTX_t **lfs_ctx_pp)
     pool = f_get_pool();
     assert( pool );
     info = &pool->info;
+    lfs_ctx_p->pool = pool;
 
     if ((rc = get_lf_meta(pool))) {
 	DEBUG("rank:%d failed to get LF metadata from the delegator on mount, error:%d",
@@ -175,6 +176,7 @@ int lfs_connect(LFS_CTX_t **lfs_ctx_pp)
     stats_fi_wr = famsim_stats_create(famsim_ctx, FAMSIM_STATS_FI_WR);
     if (stats_fi_wr)
 	famsim_ctx->fam_cnt = info->dev_count;
+    lfs_ctx_p->famsim_stats_fi_wr = stats_fi_wr;
 
     if ((rc = f_ah_attach())) {
 	DEBUG("rank:%d failed to attach to helper, error:%d",
@@ -200,8 +202,6 @@ int lfs_connect(LFS_CTX_t **lfs_ctx_pp)
 	goto _free;
 #endif
 
-    lfs_ctx_p->pool = pool;
-    lfs_ctx_p->famsim_stats_fi_wr = stats_fi_wr;
     *lfs_ctx_pp = lfs_ctx_p;
     return 0;
 
