@@ -123,19 +123,6 @@ static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
     return n;
 }
 
-/* Common code at close that is called both on server normal shutdown and abort */
-static void famfs_exit()
-{
-    /* Close FAM emulation fabric */
-    free_lfs_ctx(&lfs_ctx_p);
-
-    /* Close all pool connections, free pool and all layout structures */
-    f_free_layouts_info();
-
-    /* Allocated at main(): free unifycr_cfg_t */
-    unifycr_config_free(&server_cfg);
-}
-
 volatile int sm_ready = 0;
 extern int num_fds;
 long max_recs_per_slice;
@@ -168,31 +155,31 @@ int main(int argc, char *argv[])
     rc = configurator_bool_val(server_cfg.unifycr_daemonize, &daemon);
     if (rc != 0)
 	exit(1);
+    if (server_cfg.log_file == NULL)
+        exit(1);
     if (daemon)
 	daemonize();
 
     rc = MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
 
     if (rc != MPI_SUCCESS)
-        exit(1);
+        goto _err;
 
     rc = MPI_Comm_rank(MPI_COMM_WORLD, &glb_rank);
     if (rc != MPI_SUCCESS)
-        exit(1);
+        goto _err;
 
     rc = MPI_Comm_size(MPI_COMM_WORLD, &glb_size);
     if (rc != MPI_SUCCESS)
-        exit(1);
+        goto _err;
 
     rc = CountTasksPerNode(glb_rank, glb_size);
     if (rc < 0)
-        exit(1);
+        goto _err;
 
     local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
     /* UNIFYCR_DEFAULT_LOG_FILE */
-    if (server_cfg.log_file == NULL)
-        exit(1);
     sprintf(dbg_fname, "%s/%s-%d",
             server_cfg.log_dir, server_cfg.log_file, glb_rank);
     rc = dbg_open(dbg_fname);
@@ -226,19 +213,19 @@ int main(int argc, char *argv[])
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
-        exit(1);
+        goto _err;
     }
 
     app_config_list = arraylist_create();
     if (app_config_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
-        exit(1);
+        goto _err;
     }
 
     thrd_list = arraylist_create();
     if (thrd_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
-        exit(1);
+        goto _err;
     }
 
     if (PoolFAMFS(pool)) {
@@ -246,12 +233,12 @@ int main(int argc, char *argv[])
 	sprintf(qname, "%s-admin", F_CMDQ_NAME);
 	if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &admq, 1))) {
 	    LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
-	    exit(rc);
+	    goto _err;
 	}
 
 	if (pool->info.layouts_count > F_CMDQ_MAX) {
 	    LOG(LOG_ERR, "too many layouts, not enough work queues");
-	    exit(1);
+	    goto _err;
 	}
 
 	/* Create command queues and start layout threads only on compute nodes */
@@ -264,17 +251,17 @@ int main(int argc, char *argv[])
 
 		if (lo == NULL) {
 		    LOG(LOG_ERR, "get layout [%d] info\n", i);
-		    exit(1);
+		    goto _err;
 		}
 		sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
 		if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &cmdq[i], 1))) {
 		    LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
-		    exit(rc);
+		    goto _err;
 		}
 		LOG(LOG_INFO, "layout %d:%s queue %s created", i, lo->info.name, qname);
 		if ((rc = pthread_create(&lo_thrd[i], NULL, f_command_thrd, cmdq[i]))) {
 		    LOG(LOG_ERR, "LO %s svc thread create failed", lo->info.name);
-		    exit(rc);
+		    goto _err;
 		}
 	    }
 	}
@@ -287,7 +274,7 @@ int main(int argc, char *argv[])
 	rc = sock_init_server(local_rank_idx);
 	if (rc != 0) {
 	    LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_SOCKET));
-	    exit(1);
+	    goto _err;
 	}
     }
 
@@ -316,7 +303,7 @@ int main(int argc, char *argv[])
     rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
-        exit(1);
+        goto _err;
     }
 
     /*wait for the service manager to connect to the
@@ -329,12 +316,12 @@ int main(int argc, char *argv[])
 	    if (ret != 0) {
 		LOG(LOG_ERR, "%s",
 		    ULFS_str_errno(ret));
-		exit(1);
+		goto _err;
 	    }
 	} else {
 	    int qid = sock_get_id();
 	    if (qid != 0) {
-		exit(1);
+		goto _err;
 	    }
 	}
     }
@@ -358,14 +345,14 @@ int main(int argc, char *argv[])
     rc = meta_init_store(db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
-        exit(1);
+        goto _err;
     }
     /* Set MDHIM slicing and key hash stripe size lookup table */
     max_recs_per_slice = db_opts->max_recs_per_slice;
     size_t *stripe_sizes = NULL;
     if ((rc = f_get_lo_stripe_sizes(pool, &stripe_sizes)) < 0) {
 	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
-	exit(1);
+	goto _err;
     }
     mdhimSetSliceSizes(md->primary_index, stripe_sizes, rc);
     free(stripe_sizes);
@@ -373,7 +360,7 @@ int main(int argc, char *argv[])
     rc = meta_register_fam(lfs_ctx_p);
     if (rc != ULFS_SUCCESS) {
 	LOG(LOG_ERR, "%s reg FAM", ULFS_str_errno(rc));
-	exit(1);
+	goto _err;
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -423,7 +410,7 @@ int main(int argc, char *argv[])
         }
         if ((rc = f_rbq_pop(admq, &acmd, RBQ_TMO_4EVER))) {
             LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(-rc), rc);
-            exit(1);
+            goto _err;
         }
 
         if ((rc = f_srv_process_cmd(&acmd, admq->rbq->name, 1))) {
@@ -445,7 +432,6 @@ int main(int argc, char *argv[])
                  * thread.
                  * */
  printf("Exit cmd!\n");
-                unifycr_exit();
                 break;
             }
 
@@ -453,7 +439,7 @@ int main(int argc, char *argv[])
             if (ret != 0) {
                 LOG(LOG_ERR, "%s",
                     ULFS_str_errno(ret));
-                exit(1);
+                goto _err;
             }
 
         } else {
@@ -481,8 +467,9 @@ int main(int argc, char *argv[])
     return rc;
 
 _err:
-    /* Close LF devices and free pool resources */
-    famfs_exit();
+    unifycr_exit();
+
+    LOG(LOG_FATAL, "Exiting with error:%d - %s", rc, ULFS_str_errno(rc));
     MPI_Abort(MPI_COMM_WORLD, (rc>0)?rc:-rc);
     exit(1); /* never reach this point */
 }
@@ -776,30 +763,30 @@ static int unifycr_exit()
         }
     }
 
-    exit_flag = 1;
-    f_svcrq_t c = {.opcode = CMD_QUIT, .cid = 0};
-    F_POOL_t *pool;
-    pool = lfs_ctx_p->pool;
-    for (int i = 0; i < pool->info.layouts_count; i++)
-        if (cmdq[i])
-            f_rbq_push(cmdq[i], &c, RBQ_TMO_1S);
+    F_POOL_t *pool = lfs_ctx_p->pool;
+    if (PoolFAMFS(pool)) {
+        exit_flag = 1;
+        f_svcrq_t c = {.opcode = CMD_QUIT, .cid = 0};
+        for (int i = 0; i < pool->info.layouts_count; i++)
+            if (cmdq[i])
+                f_rbq_push(cmdq[i], &c, RBQ_TMO_1S);
 
-    for (int i = 0; i < pool->info.layouts_count; i++)
-        if (cmdq[i])
-            if ((rc = f_rbq_destroy(cmdq[i]))) 
-    
+        for (int i = 0; i < pool->info.layouts_count; i++)
+            if (cmdq[i])
+                if ((rc = f_rbq_destroy(cmdq[i]))) 
 
-    for (int i = 0; i < MAX_NUM_CLIENTS; i++)
-        if (rplyq[i])
-            f_rbq_close(rplyq[i]);
+        for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+            if (rplyq[i])
+                f_rbq_close(rplyq[i]);
 
-    f_rbq_destroy(admq);
+        f_rbq_destroy(admq);
 
-    if (f_ah_shutdown(pool))
-        LOG(LOG_ERR, "helper did not exit cleanly");
+        if (f_ah_shutdown(pool))
+            LOG(LOG_ERR, "helper did not exit cleanly");
 
-    if (NodeIsIOnode(&pool->mynode)) {
-	f_stop_allocator_threads();
+        if (NodeIsIOnode(&pool->mynode)) {
+	    f_stop_allocator_threads();
+        }
     }
 
     /* shutdown the metadata service */
@@ -810,8 +797,14 @@ static int unifycr_exit()
      * for acks*/
     sock_sanitize();
 
-    /* Close LF; free pool resources */
-    famfs_exit();
+    /* Signal child to quit (if FAM emulation) */
+    free_lfs_ctx(&lfs_ctx_p);
+
+    /* Free pool and all layout structures */
+    f_free_layouts_info();
+
+    /* Allocated at main(): free unifycr_cfg_t */
+    unifycr_config_free(&server_cfg);
 
     return rc;
 }
