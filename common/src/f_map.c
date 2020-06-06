@@ -2389,7 +2389,7 @@ _err:
   return true if owner is still alive. */
 static int shmem_verify_owner(pid_t pid, time_t time)
 {
-    char proc_pid[12];
+    char proc_pid[16];
     time_t ctime;
     struct stat sts;
 
@@ -2514,7 +2514,7 @@ _sleep:
 	*shm_id_p = shm_id;
 
     if ((void*)-1 == (shm = shmat(shm_id, NULL, ro?SHM_RDONLY:0))) {
-	err("shmat - %m");
+	err("shmat id:%d - %m", shm_id);
 	goto _err;
     }
 
