@@ -964,8 +964,8 @@ static void *drainer(void *arg) {
 _abort:
 
     for (int i = 0; i < pool->info.layouts_count; i++)
-        if (ssa[i].stripes)
-            free(ssa[i].stripes);
+        if (crq[i])
+            free(crq[i]);
 
     f_rbq_destroy(scmq);
     return NULL;
