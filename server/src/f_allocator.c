@@ -2412,7 +2412,7 @@ _retry:
 		pthread_spin_unlock(&lp->alloc_lock);
 		if (out_of_space(lp)) {
 			atomic_inc(lo->stats + FL_STRIPE_GET_NOSPC_ERR);
-			return -ENOSPC;
+			return LayoutActive(lo) ? -ENOSPC : -ESRCH;
 		} 
 /*
 		if (!lp->increase_prealloc) {
@@ -2425,7 +2425,8 @@ _retry:
 
 		if (!atomic_read(&lp->prealloced_stripes)) {
 			rc = wait_stripes(lp);
-			if (rc == -ETIMEDOUT && !atomic_read(&lp->prealloced_stripes)) return -ENOMEM;
+			if (rc == -ETIMEDOUT && !atomic_read(&lp->prealloced_stripes)) 
+				return LayoutActive(lo) ? -ENOMEM : -ESRCH;
 		} else { /* Return what we have for now */
 			ss->count = min(ss->count, atomic_read(&lp->prealloced_stripes));
 			LOG(LOG_DBG, "%s[%d]: adjusted stripe count to %d", 
@@ -2467,13 +2468,19 @@ _err:
 /*
  * Release a set of stripes (set claim vector to FREE).
  * All stripe #s n the set are expected to be global and to belong to the local allocator partition.
- * Returns 0 or error
+ * Returns 0 or error, -ESRCH if layout thread exited
  */
 int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 {
 	F_LO_PART_t *lp = lo->lp;
 	struct f_stripe_entry *se;
 	int i, rc = 0;
+
+	if (!LayoutActive(lo)) {
+		LOG(LOG_ERR, "%s[%d]: lp thread exiting, rejecting %d stripes to release", 
+			lo->info.name, lp->part_num, ss->count);
+		return -ESRCH;
+	}
 
 	LOG(LOG_DBG2, "%s[%d]: releasing %d stripes", lo->info.name, lp->part_num, ss->count);
 
@@ -2501,7 +2508,7 @@ int f_put_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 /*
  * Commit a set of preallocated stripes (set claim vector to ALLOCATED).
  * All stripe #s n the set are expected to be global and to belong to the local allocator partition.
- * Returns 0 or error
+ * Returns 0 or error code, -ESRCH if layout thread exited
  */
 int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 {
@@ -2510,6 +2517,12 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 
 	ASSERT(lp);
 	atomic_inc(lo->stats + FL_STRIPE_COMMIT_REQ);
+
+	if (!LayoutActive(lo)) {
+		LOG(LOG_ERR, "%s[%d]: lp thread exiting, rejecting %d stripes to commit", 
+			lo->info.name, lp->part_num, ss->count);
+		return -ESRCH;
+	}
 
 	LOG(LOG_DBG2, "%s[%d]: committing %d stripes", lo->info.name, lp->part_num, ss->count);
 
@@ -3052,7 +3065,6 @@ static void *f_allocator_thread(void *ctx)
 			printf("%s[%d]: allocator thread is ready\n", lo->info.name, lp->part_num);
 	}
 
-//	SetLayoutQuit(lo);
 	while (!LayoutQuit(lo) && !rc) {
 		struct timespec to, wait;
 		
@@ -3083,13 +3095,17 @@ static void *f_allocator_thread(void *ctx)
 			}
 			pthread_rwlock_unlock(&lp->lock);
 		}
-//		SetLayoutQuit(lo);
+//		if (i++ > 10) SetLayoutQuit(lo);
 	}
 
 _ret:
 	ClearLayoutActive(lo);
 
+	/* Release pre-allocated stripes and check the release queue */
 	ASSERT(!release_prealloc_stripes(lp, 0));
+	ASSERT(!process_releaseq(lp));
+
+	/* Update maps */
 	flush_maps(lp);
 	layout_partition_free(lp);
 
