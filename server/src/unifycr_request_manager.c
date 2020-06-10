@@ -171,6 +171,7 @@ int f_rm_fetch_md(int cid, int rcnt) {
     pthread_mutex_lock(&thrd_ctrl->thrd_lock);
     */
     /* get the locations of all the read requests from the key-value store*/
+    /* FIXME: We are safe here unless the client does multiple I/O to different layouts! */
     int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
     fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1);
 
