@@ -446,7 +446,7 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 	}
 	name[n] = 0;
 
-	DEBUG_LF(3, "%d: Registered %zuMB of memory on %s:%s if:%s",
+	DEBUG_LF(3, "%d: Emulated %zuMB FAM on %s:%s if:%s",
 		 id, fdev->mr_size/1024/1024, node, port, fi->domain_attr->name);
 
 	if (lf_verbosity >= 7) {
