@@ -86,11 +86,17 @@ F_LFA_DESC_t *f_lfa_mydom(struct fi_info *fi, char *my_name, char *my_svc) {
         return NULL;
 
     struct fi_info *fo;
-    ON_FIERR(fi_getinfo(FI_VERSION(1, 5), my_name, my_svc, FI_SOURCE, fi, &fo), 
+    struct fi_info *hints = fi_dupinfo(fi);
+
+    hints->rx_attr->size = 0; /* W/A for zhpe */
+    hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
+
+    ON_FIERR(fi_getinfo(FI_VERSION(1, 5), my_name, my_svc, FI_SOURCE, hints, &fo), 
              return NULL, "fi_getinfo failed");
     ON_FIERR(fi_fabric(fo->fabric_attr, &lfa->fab, NULL), return NULL, "fi_fabric err");
     ON_FIERR(fi_domain(lfa->fab, fo, &lfa->dom, NULL), return NULL, "fi_domain err");
 
+    fi_freeinfo(hints);
     lfa->fi = fo; 
     return lfa;
 }
