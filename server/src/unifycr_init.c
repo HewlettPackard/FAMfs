@@ -421,7 +421,7 @@ int main(int argc, char *argv[])
     }
 
     /* TODO: Support fs_type=both with delegator command handler thread */
-    if (PoolUNIFYCR(pool)) {
+  if (PoolUNIFYCR(pool)) {
     while (1) {
         rc = sock_wait_cli_cmd();
         if (rc != ULFS_SUCCESS) {
@@ -431,7 +431,7 @@ int main(int argc, char *argv[])
                  * service manager
                  * thread.
                  * */
- printf("Exit cmd!\n");
+                LOG(LOG_INFO, "Exit cmd!");
                 break;
             }
 
@@ -458,7 +458,7 @@ int main(int argc, char *argv[])
         }
 
     }
-    }
+  }
 
     unifycr_exit();
 
@@ -686,41 +686,44 @@ static int compare_name_rank_pair(const void *a, const void *b)
 
 static int unifycr_exit()
 {
+    int i, j;
     int rc = ULFS_SUCCESS;
 
-    /* notify the threads of request manager to exit*/
-    int i, j;
-    for (i = 0; i < arraylist_size(thrd_list); i++) {
-        thrd_ctrl_t *tmp_ctrl =
-            (thrd_ctrl_t *)arraylist_get(thrd_list, i);
-        pthread_mutex_lock(&tmp_ctrl->thrd_lock);
+    F_POOL_t *pool = lfs_ctx_p->pool;
+    if (PoolUNIFYCR(pool)) {
+	/* notify the threads of request manager to exit*/
+	for (i = 0; i < arraylist_size(thrd_list); i++) {
+	    thrd_ctrl_t *tmp_ctrl =
+		(thrd_ctrl_t *)arraylist_get(thrd_list, i);
+	    pthread_mutex_lock(&tmp_ctrl->thrd_lock);
 
-        if (!tmp_ctrl->has_waiting_delegator) {
-            tmp_ctrl->has_waiting_dispatcher = 1;
-            pthread_cond_wait(&tmp_ctrl->thrd_cond, &tmp_ctrl->thrd_lock);
-            tmp_ctrl->exit_flag = 1;
-            tmp_ctrl->has_waiting_dispatcher = 0;
-            free(tmp_ctrl->del_req_set);
-            free(tmp_ctrl->del_req_stat->req_stat);
-            free(tmp_ctrl->del_req_stat);
-            pthread_cond_signal(&tmp_ctrl->thrd_cond);
+	    if (!tmp_ctrl->has_waiting_delegator) {
+		tmp_ctrl->has_waiting_dispatcher = 1;
+		pthread_cond_wait(&tmp_ctrl->thrd_cond, &tmp_ctrl->thrd_lock);
+		tmp_ctrl->exit_flag = 1;
+		tmp_ctrl->has_waiting_dispatcher = 0;
+		free(tmp_ctrl->del_req_set);
+		free(tmp_ctrl->del_req_stat->req_stat);
+		free(tmp_ctrl->del_req_stat);
+		pthread_cond_signal(&tmp_ctrl->thrd_cond);
 
-        } else {
-            tmp_ctrl->exit_flag = 1;
+	    } else {
+		tmp_ctrl->exit_flag = 1;
 
-            free(tmp_ctrl->del_req_set);
-            free(tmp_ctrl->del_req_stat->req_stat);
-            free(tmp_ctrl->del_req_stat);
+		free(tmp_ctrl->del_req_set);
+		free(tmp_ctrl->del_req_stat->req_stat);
+		free(tmp_ctrl->del_req_stat);
 
-            pthread_cond_signal(&tmp_ctrl->thrd_cond);
-        }
-        pthread_mutex_unlock(&tmp_ctrl->thrd_lock);
+		pthread_cond_signal(&tmp_ctrl->thrd_cond);
+	    }
+	    pthread_mutex_unlock(&tmp_ctrl->thrd_lock);
 
-        void *status;
-        pthread_join(tmp_ctrl->thrd, &status);
+	    void *status;
+	    pthread_join(tmp_ctrl->thrd, &status);
+	}
+
+	arraylist_free(thrd_list);
     }
-
-    arraylist_free(thrd_list);
 
     /* sanitize the shared memory and delete the log files
      * */
@@ -763,7 +766,6 @@ static int unifycr_exit()
         }
     }
 
-    F_POOL_t *pool = lfs_ctx_p->pool;
     if (PoolFAMFS(pool)) {
         exit_flag = 1;
         f_svcrq_t c = {.opcode = CMD_QUIT, .cid = 0};
