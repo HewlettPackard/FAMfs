@@ -145,17 +145,17 @@ int main(int argc, char *argv[])
 
   if ((rc = MPI_Initialized(&flag)) != MPI_SUCCESS) {
 	err("Error while calling MPI_Initialized");
-	goto err0;
+	exit(1);
   }
   if (!flag) {
 	rc = MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
 	if (rc != MPI_SUCCESS) {
 	    err("Error while calling MPI_Init_thread");
-	    goto err0;
+	    goto _err;
 	}
 	if (provided != MPI_THREAD_MULTIPLE) {
 	    err("Error while initializing MPI with threads");
-	    goto err0;
+	    goto _err;
 	}
   }
 
@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
 			MPI_COMM_WORLD, &intercomm, errcodes /* MPI_ERRCODES_IGNORE */);
     if (rc != MPI_SUCCESS) {
 	err("failed to spawn f_shmap_test processes");
-	return 1;
+	exit(1);
     }
     for (i=0, rc=0; i<np; i++)
 	rc = (rc)? :errcodes[i];
@@ -193,16 +193,16 @@ int main(int argc, char *argv[])
     tg = 0;
     if ((rc = MPI_Comm_size(MPI_COMM_WORLD, &mpi_size)) != MPI_SUCCESS) {
 	err("Error getting the size of the communicator:%d", rc);
-	goto err0;
+	goto _err;
     }
     if ((rc = MPI_Comm_rank(MPI_COMM_WORLD, &rank)) != MPI_SUCCESS) {
 	err("Error getting the rank:%d", rc);
-	goto err0;
+	goto _err;
     }
 
     srand((unsigned int)time(NULL));
     page = getpagesize();
-    pass = rc = v = 0;
+    pass = rc = v = vv = 0;
     e = ul = 0;
     ui = ext = 0;
     p = NULL; it = NULL;
@@ -721,6 +721,7 @@ err0:
     msg("Test %d.%d (pass %d) FAILED rc:%d", tg, t, pass, rc);
 
     free(entries);
+_err:
     MPI_Abort(MPI_COMM_WORLD, 1);
     return 1;
 }
