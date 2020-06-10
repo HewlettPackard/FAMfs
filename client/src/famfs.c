@@ -1927,7 +1927,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     for (i = 0, j = 0; i < rq_cnt; i++) {
         long offset;
 
-        /* request the wholw stripe */
+        /* request the whole stripe */
         while ((rq_ptr[i].offset % stripe_sz) + rq_ptr[i].length > stripe_sz) {
             offset = ROUND_DOWN(rq_ptr[i].offset, stripe_sz);
             /* if rq matches a new stripe, add a new md_rq */
@@ -1938,8 +1938,11 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
                 md_rq[j].offset  = offset;
                 j++;
             }
-            rq_ptr[i].length -= md_rq[j].length;
-            rq_ptr[i].offset += md_rq[j].length;
+            /* go to next stripe */
+            offset += stripe_sz;
+            offset -= rq_ptr[i].offset;
+            rq_ptr[i].length -= offset;
+            rq_ptr[i].offset += offset;
         }
         offset = ROUND_DOWN(rq_ptr[i].offset, stripe_sz);
         /* skip the same stripe */
