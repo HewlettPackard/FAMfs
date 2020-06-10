@@ -162,13 +162,9 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
         /* Close fabric and exit */
 	lf_servers_free(pool);
 
-	/* Unmap shared memory */
-	munmap(lfs_ctx->lfs_shm,
-	       sizeof(LFS_SHM_t) + lfs_shm->node_servers*sizeof(LFS_EXCG_t));
-        free(lfs_ctx);
-
 	/* Free pool and all layout structures */
 	f_free_layouts_info();
+        free(lfs_ctx);
 
         exit(0);
     }
