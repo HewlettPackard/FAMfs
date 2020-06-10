@@ -35,6 +35,7 @@
 
 struct shm_meta_t_; /* defined in famfs_global.h */
 
+int f_rm_fetch_md(int cid, int rcnt);
 int rm_fetch_md(int qid, int num);
 void *rm_delegate_request_thread(void *arg);
 int rm_read_remote_data(int qid, int num);

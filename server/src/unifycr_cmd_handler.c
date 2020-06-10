@@ -307,7 +307,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
             return EINVAL;
         }
-        if ((rply.rc = rm_fetch_md(pcmd->cid, pcmd->md_rcnt)))
+        if ((rply.rc = f_rm_fetch_md(pcmd->cid, pcmd->md_rcnt)))
             LOG(LOG_ERR, "md_get err %d\n", rc);
         break;
 
@@ -630,6 +630,7 @@ int f_setup_client(f_svcrq_t *pcmd) {
         tmp_config = (app_config_t *)arraylist_get(app_config_list,
                      app_id);
     }
+#if 0
     /* The following code attach a delegator thread
      * to this new connection */
     thrd_ctrl_t *thrd_ctrl =
@@ -679,6 +680,7 @@ int f_setup_client(f_svcrq_t *pcmd) {
     }
 
     tmp_config->thrd_idxs[qid] = arraylist_size(thrd_list) - 1;
+#endif
     tmp_config->client_ranks[qid] = local_rank_idx;
     tmp_config->dbg_ranks[qid] = dbg_rank; /*add debug rank*/
 

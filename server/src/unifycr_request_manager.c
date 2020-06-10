@@ -153,6 +153,34 @@ int rm_fetch_md(int qid, int req_num) {
     return rc;
 }
 
+int f_rm_fetch_md(int cid, int rcnt) {
+
+    int rc;
+
+    int app_id = invert_qids[cid];
+    app_config_t *app_config =
+        (app_config_t *)arraylist_get(app_config_list, app_id);
+
+    int client_id = app_config->client_ranks[cid];
+    //int dbg_rank = app_config->dbg_ranks[cid];
+
+    /*
+    int thrd_id = app_config->thrd_idxs[cid];
+    thrd_ctrl_t *thrd_ctrl = (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
+
+    pthread_mutex_lock(&thrd_ctrl->thrd_lock);
+    */
+    /* get the locations of all the read requests from the key-value store*/
+    int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
+    fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1);
+
+    rc = meta_md_get(app_config->shm_req_bufs[client_id], rcnt, pmd, pcnt);
+
+    //pthread_mutex_unlock(&thrd_ctrl->thrd_lock);
+
+    return rc;
+}
+
 /**
 * pack the the requests to be sent to the same
 * delegator.
