@@ -48,9 +48,6 @@
 #include "unifycr_global.h"
 #include "arraylist.h"
 
-#include "f_pool.h"	/* F_POOL_t: configuration FS mode */
-#include "famfs_maps.h"	/* f_get_pool() */
-
 
 service_msgs_t service_msgs;
 task_set_t read_task_set;
@@ -72,10 +69,6 @@ long dbg_sent_cnt = 0;
 char req_msg_buf[REQ_BUF_LEN];
 char *mem_buf;
 
-static F_POOL_t *pool = NULL;
-
-extern volatile int sm_ready;
-
 
 /**
 * Service the read requests received from the requesting delegators
@@ -86,16 +79,11 @@ void *sm_service_reads(void *ctx)
     int return_code, irecv_flag = 0;
     int rc, cmd, flag = 0;
 
-    if (pool == NULL)
-        pool = f_get_pool();
-    if (PoolUNIFYCR(pool)) {
-        rc = sm_init_socket();
-        if (rc < 0) {
-            sm_rc = ULFS_ERROR_SOCKET;
-            return (void *)&sm_rc;
-        }
+    rc = sm_init_socket();
+    if (rc < 0) {
+        sm_rc = ULFS_ERROR_SOCKET;
+        return (void *)&sm_rc;
     }
-    sm_ready = 1;
 
     dbg_rank = glb_rank;
 
@@ -1022,9 +1010,7 @@ int sm_exit()
     for (i = 0; i < rank_ack_task.num; i++) {
         arraylist_free(rank_ack_task.ack_metas[i].ack_list);
     }
-/* f_rbq */
     close(sm_sockfd);
-/**/
     return rc;
 }
 

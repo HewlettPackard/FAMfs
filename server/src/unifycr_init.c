@@ -123,7 +123,6 @@ static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
     return n;
 }
 
-volatile int sm_ready = 0;
 extern int num_fds;
 long max_recs_per_slice;
 
@@ -161,7 +160,6 @@ int main(int argc, char *argv[])
 	daemonize();
 
     rc = MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
-
     if (rc != MPI_SUCCESS)
         goto _err;
 
@@ -183,7 +181,6 @@ int main(int argc, char *argv[])
     sprintf(dbg_fname, "%s/%s-%d",
             server_cfg.log_dir, server_cfg.log_file, glb_rank);
     rc = dbg_open(dbg_fname);
- fprintf(stderr," dbg_open %s rc:%d\n", dbg_fname, rc);
     if (rc != ULFS_SUCCESS)
         fprintf(stderr, "%s", ULFS_str_errno(rc));
     LOG(LOG_INFO, "log started");
@@ -208,23 +205,30 @@ int main(int argc, char *argv[])
     pool->zero_ion_rank = mpi_split_world(&pool->ionode_comm,
 				NodeIsIOnode(&pool->mynode), 1,
 				glb_rank, glb_size);
-    assert( pool->zero_ion_rank >= 0 );
+    if (pool->zero_ion_rank < 0) {
+	err("Check IO node config: node hostname or IP!");
+	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOENV));
+	rc = ULFS_ERROR_NOENV;
+    }
 
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
-        LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
+        LOG(LOG_ERR, "meta_init_conf error:%d - %s", rc, ULFS_str_errno(ULFS_ERROR_MDINIT));
+        rc = ULFS_ERROR_MDINIT;
         goto _err;
     }
 
     app_config_list = arraylist_create();
     if (app_config_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
+        rc = ULFS_ERROR_NOMEM;
         goto _err;
     }
 
     thrd_list = arraylist_create();
     if (thrd_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
+        rc = ULFS_ERROR_NOMEM;
         goto _err;
     }
 
@@ -233,11 +237,14 @@ int main(int argc, char *argv[])
 	sprintf(qname, "%s-admin", F_CMDQ_NAME);
 	if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &admq, 1))) {
 	    LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
+	    rc = ULFS_ERROR_GENERAL;
 	    goto _err;
 	}
 
 	if (pool->info.layouts_count > F_CMDQ_MAX) {
-	    LOG(LOG_ERR, "too many layouts, not enough work queues");
+	    LOG(LOG_ERR, "too many layouts: %d - not enough work queues",
+		pool->info.layouts_count);
+	    rc = ULFS_ERROR_NOENV;
 	    goto _err;
 	}
 
@@ -251,6 +258,7 @@ int main(int argc, char *argv[])
 
 		if (lo == NULL) {
 		    LOG(LOG_ERR, "get layout [%d] info\n", i);
+		    rc = ULFS_ERROR_NOENV;
 		    goto _err;
 		}
 		sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
@@ -273,7 +281,7 @@ int main(int argc, char *argv[])
     if (PoolUNIFYCR(pool)) {
 	rc = sock_init_server(local_rank_idx);
 	if (rc != 0) {
-	    LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_SOCKET));
+	    LOG(LOG_ERR, "sock_init_server error:%d - %s", rc, ULFS_str_errno(ULFS_ERROR_SOCKET));
 	    goto _err;
 	}
     }
@@ -285,6 +293,8 @@ int main(int argc, char *argv[])
         num_mds = rc;
     } else if (rc < 0) {
         LOG(LOG_ERR, "Error obtaining MDS vector");
+	rc = ULFS_ERROR_GENERAL;
+	goto _err;
     } else {
         num_mds = 0;
     }
@@ -299,17 +309,19 @@ int main(int argc, char *argv[])
 	}
     }
 
-    /*launch the service manager*/
-    rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
-    if (rc != 0) {
-        LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
-        goto _err;
-    }
-
-    /*wait for the service manager to connect to the
-     *request manager so that they can exchange control
-     *information*/
     if (PoolUNIFYCR(pool)) {
+	/* launch the service manager */
+	rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
+	if (rc != 0) {
+	    LOG(LOG_ERR, "pthread_create error:%d - %s",
+		rc, ULFS_str_errno(ULFS_ERROR_THRDINIT));
+	    rc = ULFS_ERROR_THRDINIT;
+	    goto _err;
+	}
+
+	/*wait for the service manager to connect to the
+	 *request manager so that they can exchange control
+	 *information*/
 	rc = sock_wait_cli_cmd();
 	if (rc != ULFS_SUCCESS) {
 	    int ret = sock_handle_error(rc);
@@ -324,10 +336,6 @@ int main(int argc, char *argv[])
 		goto _err;
 	    }
 	}
-    }
-    if (PoolFAMFS(pool)) {
-	while (!sm_ready)
-	    usleep(10);
     }
 
     if (pool->verbose > 0) {
@@ -359,106 +367,106 @@ int main(int argc, char *argv[])
 
     rc = meta_register_fam(lfs_ctx_p);
     if (rc != ULFS_SUCCESS) {
-	LOG(LOG_ERR, "%s reg FAM", ULFS_str_errno(rc));
+	LOG(LOG_ERR, "meta_register_fam error:%d - %s", rc, ULFS_str_errno(rc));
 	goto _err;
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
 
     if (PoolFAMFS(pool)) {
-    /* Open libfabric domain and connect to all pool devices */
-    if ((rc = lf_clients_init(pool))) {
-	LOG(LOG_ERR, "%d: node %s failed to initialize libfabric device(s), error:%d",
-	    glb_rank, pool->mynode.hostname, rc);
-	goto _err;
-    }
+	/* Open libfabric domain and connect to all pool devices */
+	if ((rc = lf_clients_init(pool))) {
+	    LOG(LOG_ERR, "%d: node %s failed to initialize libfabric device(s), error:%d",
+		glb_rank, pool->mynode.hostname, rc);
+	    goto _err;
+	}
 
-    /* Start allocator threads on IO nodes only */
-    if (NodeIsIOnode(&pool->mynode)) {
-	rc = f_start_allocator_threads();
-    	if (rc != ULFS_SUCCESS) {
-	    LOG(LOG_WARN, "%s starting allocator threads", ULFS_str_errno(rc));
-    	}
-    }
+	/* Start allocator threads on IO nodes only */
+	if (NodeIsIOnode(&pool->mynode)) {
+	    rc = f_start_allocator_threads();
+	    if (rc != ULFS_SUCCESS) {
+		LOG(LOG_WARN, "%s starting allocator threads", ULFS_str_errno(rc));
+	    }
+	}
 
-    /* Perform f_ah_init on all nodes, it will start appropriate threads for that node */
-    if ((rc = f_ah_init(pool))) {
-        LOG(LOG_ERR, "error startting helper threads");
-    } else {
-        LOG(LOG_DBG, "helper threads started");
-    }
+	/* Perform f_ah_init on all nodes, it will start appropriate threads for that node */
+	if ((rc = f_ah_init(pool))) {
+	    LOG(LOG_ERR, "error startting helper threads");
+	    rc = ULFS_ERROR_GENERAL;
+	    goto _err;
+	}
+	LOG(LOG_DBG, "helper threads started");
 /*
-    if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
-	usleep(500);
-	if ((rc = f_test_helper(pool)))
+	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
+	    usleep(500);
+	    if ((rc = f_test_helper(pool)))
 		LOG(LOG_ERR, "error %d in f_test_helper", rc);
+	}
+*/
     }
-*/  }
 
-    {
-        char fname[256];
-        sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
-        int flag = open(fname, O_RDWR | O_CREAT, 0644);
-        close(flag);
-    }
+    /* Create file for automated testing */
+    char fname[256];
+    sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
+    int flag = open(fname, O_RDWR | O_CREAT, 0644);
+    close(flag);
 
     if (PoolFAMFS(pool)) {
-     while (1) {
-        if (exit_flag) {
-            LOG(LOG_INFO, "exit flag set");
-            break;
-        }
-        if ((rc = f_rbq_pop(admq, &acmd, RBQ_TMO_4EVER))) {
-            LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(-rc), rc);
-            goto _err;
-        }
+	while (1) {
+	    if (exit_flag) {
+		LOG(LOG_INFO, "exit flag set");
+		break;
+	    }
+	    if ((rc = f_rbq_pop(admq, &acmd, RBQ_TMO_4EVER))) {
+		LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(-rc), rc);
+		goto _err;
+	    }
 
-        if ((rc = f_srv_process_cmd(&acmd, admq->rbq->name, 1))) {
-            LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
-            continue;
-        }
-    }
+	    if ((rc = f_srv_process_cmd(&acmd, admq->rbq->name, 1))) {
+		LOG(LOG_ERR, "srv_process_cmd error:%d - %s", rc, ULFS_str_errno(rc));
+		continue;
+	    }
+	}
     }
 
     /* TODO: Support fs_type=both with delegator command handler thread */
-  if (PoolUNIFYCR(pool)) {
-    while (1) {
-        rc = sock_wait_cli_cmd();
-        if (rc != ULFS_SUCCESS) {
-            int qid = sock_get_error_id();
-            if (qid == 1) {
-                /* received exit command from the
-                 * service manager
-                 * thread.
-                 * */
-                LOG(LOG_INFO, "Exit cmd!");
-                break;
-            }
+    if (PoolUNIFYCR(pool)) {
+	while (1) {
+	    rc = sock_wait_cli_cmd();
+	    if (rc != ULFS_SUCCESS) {
+		int qid = sock_get_error_id();
+		if (qid == 1) {
+		    /* received exit command from the
+		     * service manager
+		     * thread.
+		     * */
+		    LOG(LOG_INFO, "Exit cmd!");
+		    break;
+		}
 
-            int ret = sock_handle_error(rc);
-            if (ret != 0) {
-                LOG(LOG_ERR, "%s",
-                    ULFS_str_errno(ret));
-                goto _err;
-            }
+		int ret = sock_handle_error(rc);
+		if (ret != 0) {
+		    LOG(LOG_ERR, "%s",
+			ULFS_str_errno(ret));
+		    goto _err;
+		}
 
-        } else {
-            int qid = sock_get_id();
-            /*qid is 0 if it is a listening socket*/
-            if (qid != 0) {
-                char *cmd = sock_get_cmd_buf(qid);
-                int cmd_rc = delegator_handle_command(cmd, qid,
-						      max_recs_per_slice);
-                if (cmd_rc != ULFS_SUCCESS) {
-                    LOG(LOG_ERR, "%s",
-                        ULFS_str_errno(cmd_rc));
-                    return cmd_rc;
-                }
-            }
-        }
-
+	    } else {
+		int qid = sock_get_id();
+		/*qid is 0 if it is a listening socket*/
+		if (qid != 0) {
+		    char *cmd = sock_get_cmd_buf(qid);
+		    int cmd_rc = delegator_handle_command(cmd, qid,
+							  max_recs_per_slice);
+		    if (cmd_rc != ULFS_SUCCESS) {
+			LOG(LOG_ERR, "%s",
+			    ULFS_str_errno(cmd_rc));
+			return cmd_rc;
+		    }
+		}
+	    }
+	}
     }
-  }
 
     unifycr_exit();
 
