@@ -228,6 +228,7 @@ int meta_process_attr_set(char *buf, int qid)
                    fattr_vals[0], sizeof(fattr_val_t),
                    NULL, NULL);
     if (!brm || brm->error) {
+        LOG(LOG_ERR, "client %d, no such gfid:%d", qid, *fattr_keys[0]);
         rc = ULFS_ERROR_MDHIM;
     } else {
         rc = ULFS_SUCCESS;
@@ -250,7 +251,7 @@ int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval) {
     brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
             fattr_vals[0], sizeof(fattr_val_t), NULL, NULL);
     if (!brm || brm->error) {
-        LOG(LOG_DBG, "client %d, no such file:%d\n", pcmd->cid, *fattr_keys[0]);
+        LOG(LOG_ERR, "client %d, no such file:%d\n", pcmd->cid, *fattr_keys[0]);
         rc = ULFS_ERROR_MDHIM;
     } else {
         LOG(LOG_DBG, "client %d, setting fattr key:%d\n", pcmd->cid, *fattr_keys[0]);
@@ -281,6 +282,7 @@ int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val)
                     sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
+        LOG(LOG_ERR, "client %d, no such file id:%d", qid, *fattr_keys[0]);
         rc = ULFS_ERROR_MDHIM;
     } else {
         tmp_ptr_attr = (fattr_val_t *)bgrm->values[0];
@@ -309,7 +311,8 @@ int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval) {
                     sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
-        LOG(LOG_DBG, "client %d, no such file %d", pcmd->cid, *fattr_keys[0]);
+        LOG(LOG_ERR, "client %d, fid %d - error %d getting file attributes",
+	    pcmd->cid, *fattr_keys[0], bgrm?bgrm->error:0);
         rc = ULFS_ERROR_MDHIM;
     } else {
         tmp_ptr_attr = (fattr_val_t *)bgrm->values[0];
@@ -347,9 +350,10 @@ int meta_famattr_put(int fam_id, fam_attr_val_t *val)
     brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
 		   val, val_sz, NULL, NULL);
 
-    if (!brm || brm->error)
+    if (!brm || brm->error) {
+        LOG(LOG_ERR, "error storing FAM %d attributes:%d", fam_id, brm?brm->error:0);
 	rc = ULFS_ERROR_MDHIM;
-    else
+    } else
 	rc = ULFS_SUCCESS;
 
     mdhim_full_release_msg(brm);
@@ -369,6 +373,7 @@ int meta_famattr_get(int fam_id, fam_attr_val_t **val_p)
 		    sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
+        LOG(LOG_ERR, "error getting FAM %d attributes:%d", fam_id, brm?brm->error:0);
 	*val_p = NULL;
 	rc = ULFS_ERROR_MDHIM;
     } else {
