@@ -487,7 +487,7 @@ int main(int argc, char *argv[]) {
 
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        printf("%02d open file failure\n", rank);
+        printf("%02d open file '%s' failure - %m\n", rank, tmpfname);
         fflush(stdout);
         return -1;
     }
