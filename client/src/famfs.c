@@ -161,11 +161,17 @@ const char *famfs_intercept_path(const char *path)
     /* if the path starts with our mount point, intercept it */
     const char *fpath = strstr(path, "::");
     if (fpath) {
-        char lo_name[FVAR_MONIKER_MAX];
-        strncpy(lo_name, path, min(fpath - path, FVAR_MONIKER_MAX));
+        char lo_name[FVAR_MONIKER_MAX+1];
+        size_t len = (size_t)(fpath - path);
+        strncpy(lo_name, path, FVAR_MONIKER_MAX);
+        if (len > FVAR_MONIKER_MAX)
+            len = FVAR_MONIKER_MAX;
+        lo_name[len] = '\0';
         F_LAYOUT_t *lo = f_get_layout_by_name(lo_name);
-        if (!lo)
+        if (!lo) {
+            DEBUG("layout not found '%s'", lo_name);
             return NULL;
+        }
         fpath += 2;
     } else {
         fpath = path;
@@ -467,7 +473,7 @@ static int famfs_fid_open(const char *path, int flags,
     mode_t mode __attribute__((unused)),
     int *outfid, off_t *outpos)
 {
-    int loid = 0;
+    int loid;
     char *norm_path, buf[PATH_MAX];
     char lo_name[FVAR_MONIKER_MAX];
 
@@ -487,7 +493,8 @@ static int famfs_fid_open(const char *path, int flags,
     }
     if ((loid = layout_of_path(path, lo_name)) < 0) {
         ERROR("non-exisitng layout %s secified: %s", lo_name, norm_path);
-        return EINVAL;
+        errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NOENT);
+        return -1;
     }
 
     /* assume that we'll place the file pointer at the start of the file */
@@ -518,7 +525,8 @@ static int famfs_fid_open(const char *path, int flags,
             ERROR("file %s exists in different layout globally: got %d, expected %d",
                   norm_path, ptr_meta->loid, loid);
             free(ptr_meta);
-            return ENOENT;
+            errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NOENT);
+            return -1;
         } else {
             /* other process has created this file, but its
              * attribute is not cached locally,
