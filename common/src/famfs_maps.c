@@ -875,10 +875,12 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
     info->sq_lwm = (unsigned int)l;
 
     /* Partition */
+    lo->part_count = p->ionode_count;
     lo->lp = (F_LO_PART_t *) calloc(sizeof(F_LO_PART_t), 1);
     if (!lo->lp) goto _nomem;
     lp = lo->lp;
     lp->layout = lo;
+    lp->part_num = p->mynode.ionode_idx;
     if (pthread_rwlock_init(&lp->claimdec_lock, NULL)) goto _nomem;
     if (pthread_spin_init(&lp->alloc_lock, PTHREAD_PROCESS_PRIVATE))
 	goto _nomem;
@@ -897,9 +899,12 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    goto _noarg;
     }
     lo->devlist_sz = info->devnum = (unsigned)count;
+
     /* parse layout's moniker */
     if (f_layout_parse_name(info)) goto _noarg;
     info->stripe_sz = info->chunk_sz*info->data_chunks;
+    info->cv_intl_factor = ilog2(lo->info.slab_stripes);
+
     lo->devlist = (F_POOLDEV_INDEX_t *) calloc(sizeof(F_POOLDEV_INDEX_t),
 	lo->devlist_sz);
     if (!lo->devlist) goto _nomem;

@@ -281,6 +281,7 @@ typedef struct f_layout_info_ {
     uint32_t		slab_count;	/* total number of slabs */
     uint32_t		devnum;		/* total number of devices */
     uint32_t		misdevnum;	/* number of missing devices */
+    uint32_t		cv_intl_factor;	/* claim vector interleave factor */
     uint16_t		chunks;		/* number of chunks constituting a stripe */
     uint16_t		data_chunks;	/* number of data chunks in stripe */
 
