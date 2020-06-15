@@ -58,20 +58,16 @@ static void *alloc_srv(void *arg);
 static void *commit_srv(void *arg);
 
 int f_ah_init(F_POOL_t *pool) {
-    int rc = 0;
+    F_LAYOUT_t *lo;
+    int i, rc = 0;
 
     // Only for "pure" IONs
     if (f_host_is_ionode(NULL) && !NodeForceHelper(&pool->mynode)) {
 
         // start alloc srv threads
-        for (int i = 0; i < pool->info.layouts_count; i++) {
-            F_LAYOUT_t *lo = f_get_layout(i);
-            if (lo == NULL) {
-                LOG(LOG_ERR, "get layout [%d] info\n", i);
-                continue;
-            }
-
-            if ((rc = pthread_create(&hs_athrd[i], NULL, alloc_srv, lo))) {
+	i = 0;
+	list_for_each_entry(lo, &pool->layouts, list) {
+            if ((rc = pthread_create(&hs_athrd[i++], NULL, alloc_srv, lo))) {
                 LOG(LOG_ERR, "helper alloc srv thread create failed on LO %s", lo->info.name);
                 return rc;
             }
@@ -95,20 +91,21 @@ int f_ah_init(F_POOL_t *pool) {
 	}
     }
 
-    for (int i = 0; i < pool->info.layouts_count; i++) {
-        F_LAYOUT_t *lo = f_get_layout(i);
-        if (lo == NULL) {
-            LOG(LOG_ERR, "get layout [%d] info\n", i);
-            return EIO;
-        }
+    /* Init global slabmap and claim vector (f_map_init, f_map_register) in all layouts */
+    rc = f_prepare_layouts_maps(pool, true);
+    if (rc) {
+	LOG(LOG_ERR, "error %d in prepare_layouts_maps", rc);
+	return rc;
+    }
 
-        lo->part_count = pool->ionode_count;
-        if ((rc = pthread_create(&al_thrd[i], NULL, stoker, lo))) {
+    i = 0;
+    list_for_each_entry(lo, &pool->layouts, list) {
+        if ((rc = pthread_create(&al_thrd[i++], NULL, stoker, lo))) {
             LOG(LOG_ERR, "helper alloc thread create failed on LO %s", lo->info.name);
             return rc;
         }
     }
-    
+
     if ((rc = pthread_create(&cm_thrd, NULL, drainer, pool))) {
         LOG(LOG_ERR, "helper str commit thread create failed");
         return rc;
@@ -450,32 +447,12 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
  */
 static int read_global_slabmap(F_LAYOUT_t *lo)
 {
-    F_POOL_t *pool = lo->pool;
     struct cb_data cbdata;
-    int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
-    int e_sz, rc;
+    int rc;
 
     LOG(LOG_DBG, "%s: loading global slabmap", lo->info.name);
 
-    //chunks = lo->info.chunks%2 +  lo->info.chunks; // Pad to the next even chunk
-    //e_sz = sizeof(F_SLAB_ENTRY_t) + chunks*sizeof(F_EXTENT_ENTRY_t);
-    e_sz = F_SLABMAP_ENTRY_SZ(lo->info.chunks);
-    lo->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, F_SLABMAP_BOSL_SZ, 0);
-    if (!lo->slabmap) return -EINVAL;
-
-    rc = f_map_init_prt(lo->slabmap, lo->part_count, part, 0, 1);
-    if (rc) {
-        LOG(LOG_ERR, "%s: error %d initializing global slabmap", lo->info.name, rc);
-        return rc;
-    }
-
-    rc = f_map_register(lo->slabmap, lo->info.conf_id);
-    if (rc) {
-        LOG(LOG_ERR, "%s: error %d registering global slabmap", lo->info.name, rc);
-        return rc;
-    }
-
-    rc = f_map_shm_attach(lo->slabmap, F_MAPMEM_SHARED_WR);
+     rc = f_map_shm_attach(lo->slabmap, F_MAPMEM_SHARED_WR);
     if (rc) {
         LOG(LOG_ERR, "%s: error %d attaching to global slabmap", lo->info.name, rc);
         return rc;
@@ -498,35 +475,6 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
         f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 
     return rc;
-}
-
-/*
- * Open global claim vector (all partitions). Not used by the helper, done only to work around
- * the global index creation barrier. Hence, we do not load the claim vector here.
- */
-static int open_global_claimvec(F_LAYOUT_t *lo)
-{
-    F_POOL_t *pool = lo->pool;
-    int part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
-    int rc;
-
-    LOG(LOG_DBG, "%s: opening global claim vector", lo->info.name);
-
-    lo->claimvec  = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
-    if (!lo->claimvec) return -EINVAL;
-
-    rc = f_map_init_prt(lo->claimvec, lo->part_count, part, 0, 1);
-    if (rc) {
-        LOG(LOG_ERR, "%s: error %d initializing global claim vector", lo->info.name, rc);
-        return rc;
-    }
-
-    rc = f_map_register(lo->claimvec, lo->info.conf_id);
-    if (rc) {
-        LOG(LOG_ERR, "%s: error %d registering global claim vector", lo->info.name, rc);
-        return rc;
-    }
-    return 0;
 }
 
 /*
@@ -568,10 +516,7 @@ static void *stoker(void *arg) {
         goto _abort;
     }
 
-    if ((rc = open_global_claimvec(lo))) {
-	LOG(LOG_ERR, "%s: claim vector load failed: %s", lo->info.name, strerror(-rc));
-        goto _abort;
-    }
+    // rc = open_global_claimvec(lo);
 
     if (NodeForceHelper(&pool->mynode)) {
         F_LO_PART_t *lp = lo->lp;
@@ -1091,7 +1036,7 @@ int f_test_helper(F_POOL_t *pool)
 		for (int i = 0; i < pool->info.layouts_count; i++) {
 			f_stripe_t s;
 			F_LAYOUT_t *lo = f_get_layout(i);
-		
+
 			rc = f_ah_get_stripe(lo, &s);
 			if (rc == -ETIMEDOUT) {
 				sleep(1);
@@ -1107,6 +1052,6 @@ int f_test_helper(F_POOL_t *pool)
 _ret:
 	printf("flushing commit queue\n");
 	f_ah_flush();
-	f_ah_dettach();	
+	f_ah_dettach();
 	return rc;
 }

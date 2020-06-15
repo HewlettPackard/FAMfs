@@ -108,6 +108,17 @@ int f_alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext);
 void f_release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext);
 
 /*
+ * For all pool layouts:
+ *   init and register slab map and claim vector maps.
+ *
+ *  Params
+ *      global		global: true - Initialize a global map
+ *
+ * On error returns non-zero and calls MPI_Abort on MDHIM index rs communicator
+ */
+int f_prepare_layouts_maps(F_POOL_t *pool, int global);
+
+/*
  * Get a bitmap representing devices used in that slab.
  *
  *  Params

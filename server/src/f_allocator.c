@@ -244,7 +244,6 @@ int f_start_allocator_threads(void)
 {
 	F_POOL_t *pool = f_get_pool();
 	F_LAYOUT_t *lo;
-	struct list_head *l, *tmp;
 	int rc = 0;
 
 	ASSERT(pool);
@@ -262,8 +261,14 @@ int f_start_allocator_threads(void)
 	}
 
 	sleep(1);
-	list_for_each_safe(l, tmp, &pool->layouts) {
-		lo = container_of(l, struct f_layout_, list);
+	/* Init local slabmap and claim vector (f_map_init, f_map_register) in all layouts */
+	rc = f_prepare_layouts_maps(pool, false);
+	if (rc) {
+	    LOG(LOG_ERR, "error %d in prepare_layouts_maps", rc);
+	    return rc;
+	}
+
+	list_for_each_entry(lo, &pool->layouts, list) {
 		rc = start_allocator_thread(lo);
 		if (rc) {
 			LOG(LOG_ERR, "%s[%d]: error %s starting allocator", 
@@ -297,8 +302,82 @@ int f_stop_allocator_threads(void)
 	return rc;
 }
 
-/* 
- * Slab allocation helper routines 
+/*
+ * Initialize layout's maps
+ */
+int f_prepare_layouts_maps(F_POOL_t *pool, int global)
+{
+    F_LAYOUT_t *lo;
+    int part, msg_partid;
+    int e_sz, rc = 0;
+
+    part = NodeIsIOnode(&pool->mynode) ? pool->mynode.ionode_idx : 0;
+
+    list_for_each_entry(lo, &pool->layouts, list) {
+	msg_partid = global? lo->part_count:lo->lp->part_num;
+
+	/* slabmap */
+	e_sz = F_SLABMAP_ENTRY_SZ(lo->info.chunks);
+	lo->slabmap = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, F_SLABMAP_BOSL_SZ, 0);
+	if (!lo->slabmap) {
+	    rc = -ENOMEM;
+	    goto _err;
+	}
+
+	rc = f_map_init_prt(lo->slabmap, lo->part_count, part, 0, global);
+	if (rc) {
+	    LOG(LOG_ERR, "%s[%d]: error %d initializing %sslabmap",
+		lo->info.name, msg_partid, rc, global?"global ":"");
+	    goto _err;
+	}
+
+	rc = f_map_register(lo->slabmap, lo->info.conf_id);
+	if (rc) {
+	    LOG(LOG_ERR, "%s[%d]: error %d registering %sslabmap",
+		lo->info.name, msg_partid, rc, global?"global ":"");
+	    goto _err;
+	}
+
+	/* claim vector */
+	lo->claimvec  = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
+	if (!lo->claimvec) {
+	    rc = -ENOMEM;
+	    goto _err;
+	}
+
+	/*
+	 * Reset the claim vector interleave to one slab worth of stripes.
+	 * This is neccessary in order to align slab map and claim vector partition.
+	 */
+	if (lo->info.cv_intl_factor < lo->claimvec->geometry.intl_factor) {
+	    rc = -EINVAL;
+	    goto _err;
+	}
+	lo->claimvec->geometry.intl_factor = lo->info.cv_intl_factor;
+
+	rc = f_map_init_prt(lo->claimvec, lo->part_count, part, 0, 1);
+	if (rc) {
+	    LOG(LOG_ERR, "%s[%d]: error %d initializing %sclaim vector",
+		lo->info.name, msg_partid, rc, global?"global ":"");
+	    goto _err;
+	}
+
+	rc = f_map_register(lo->claimvec, lo->info.conf_id);
+	if (rc) {
+	    LOG(LOG_ERR, "%s[%d]: error %d registering %sclaim vector",
+		lo->info.name, msg_partid, rc, global?"global ":"");
+	    goto _err;
+	}
+    }
+    return rc;
+
+_err:
+    /* TODO: Call MPI_Abort(index->rs_comm); */
+    return rc;
+}
+
+/*
+ * Slab allocation helper routines
  */
 static inline bool all_slabs_full(F_LO_PART_t *lp)
 {
@@ -356,7 +435,7 @@ int f_get_slab_devmap(F_LO_PART_t *lp, f_slab_t slab, unsigned long *devmap)
 		LOG(LOG_ERR, "%s[%d]: error on SM entry %u", lo->info.name, lp->part_num, slab);
 		return -EINVAL;
 	}
-	
+
 	/* Sanity check */
 	if (!sme->slab_rec.mapped) {
 		LOG(LOG_ERR, "%s[%d]: slab %u s not mapped", lo->info.name, lp->part_num, slab);
@@ -514,7 +593,7 @@ static struct f_stripe_bucket *add_stripe_bucket(F_LO_PART_t *lp, unsigned long 
 	F_POOL_t *pool = lo->pool;
 	struct f_stripe_bucket *sb;
 
- 	sb = alloc_stripe_bucket(lp);
+	sb = alloc_stripe_bucket(lp);
 	if (IS_ERR(sb))
 		return sb;
 	bitmap_copy(sb->devmap, devmap, pool->info.pdev_max_idx+1);
@@ -823,30 +902,20 @@ static int read_maps(F_LO_PART_t *lp)
 	ASSERT(lp->slabmap && lp->claimvec);
 
 	LOG(LOG_DBG, "%s[%d]: loading slabmap", lo->info.name, lp->part_num);
-	rc = f_map_init_prt(lp->slabmap, lo->part_count, lp->part_num, 0, 0);
-	if (rc) {
-		LOG(LOG_ERR, "%s[%d]: error %d initializing SM", lo->info.name, lp->part_num, rc);
-		return rc;
-	}
-
-	rc = f_map_register(lp->slabmap, lo->info.conf_id);
-	if (rc || f_map_is_ro(lp->slabmap)) {
-		LOG(LOG_ERR, "%s[%d]: error %d registering SM", lo->info.name, lp->part_num, rc);
-		return rc;
-	}
 
 	cbdata.lp = lp;
 	cbdata.err = 0;
 	cbdata.loaded = 0;
-	cbdata.dsize = pool->pds_lfa->global_size; 
+	cbdata.dsize = pool->pds_lfa->global_size;
 	cbdata.data = calloc(1, cbdata.dsize);
 	if (!cbdata.data) {
 		LOG(LOG_ERR, "%s[%d]: error allocating data area", lo->info.name, lp->part_num);
 		return  -ENOMEM;
-	}		
+	}
+
 	rc = f_map_load_cb(lp->slabmap, slabmap_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
-		LOG(LOG_ERR, "%s[%d]: error %d loading SM, %d load errors", 
+		LOG(LOG_ERR, "%s[%d]: error %d loading SM, %d load errors",
 			lo->info.name, lp->part_num, rc, cbdata.err);
 		f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
 		return rc ? rc : cbdata.err;
@@ -869,27 +938,22 @@ static int read_maps(F_LO_PART_t *lp)
 		f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
 
 	LOG(LOG_DBG, "%s[%d]: loading claim vector", lo->info.name, lp->part_num);
-	rc = f_map_init_prt(lp->claimvec, lo->part_count, lp->part_num, 0, 0);
-	if (rc) {
-		LOG(LOG_ERR, "%s[%d]: error %d initializing CV", lo->info.name, lp->part_num, rc);
-		return rc;
-	}
-
-	rc = f_map_register(lp->claimvec, lo->info.conf_id);
-	if (rc || f_map_is_ro(lp->claimvec)) {
+	if (f_map_is_ro(lp->claimvec)) {
 		LOG(LOG_ERR, "%s[%d]: error %d registering CV", lo->info.name, lp->part_num, rc);
 		return rc;
 	}
 
 	cbdata.err = 0;
 	cbdata.loaded = 0;
+
 	rc = f_map_load_cb(lp->claimvec, claimvec_load_cb, (void *)&cbdata);
 	if (rc || cbdata.err) {
-		LOG(LOG_ERR, "%s[%d]: error %d loading CV, %d load errors", 
+		LOG(LOG_ERR, "%s[%d]: error %d loading CV, %d load errors",
 			lo->info.name, lp->part_num, rc, cbdata.err);
 		return rc ? rc : cbdata.err;
 	}
-	LOG(LOG_DBG, "%s[%d]: %u stripes loaded: %d errors", 
+
+	LOG(LOG_DBG, "%s[%d]: %u stripes loaded: %d errors",
 		lo->info.name, lp->part_num, cbdata.loaded, cbdata.err);
 
 	if (log_print_level > 0)
@@ -904,7 +968,7 @@ static int read_maps(F_LO_PART_t *lp)
 	}
 	return rc;
 }
-	
+
 static void flush_maps(F_LO_PART_t *lp)
 {
 	F_LAYOUT_t *lo = lp->layout;
@@ -2057,7 +2121,7 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 			}
 		}
 		n++;
- 		se = alloc_stripe_entry(lp);
+		se = alloc_stripe_entry(lp);
 		se->stripe = s0 + i;
 		se->slab = slab;
 		LOG(LOG_DBG3, "%s[%d]: stripe %lu allocated in slab %u", 
@@ -2356,7 +2420,7 @@ err:
 	return rc;
 }
 
- /* ms to timespec */
+/* ms to timespec */
 static inline void  msec2timespec(struct timespec *ts,uint64_t msec)
 {
 	ts->tv_sec = msec / 1000;
@@ -2730,10 +2794,15 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	F_POOL_t *pool = lo->pool;
 	int chunk_size_factor   = F_CHUNK_SIZE_MAX / lo->info.chunk_sz;
 	size_t slab_usage_size, cv_bmap_size;
-	unsigned int cv_intl_factor = ilog2(lo->info.slab_stripes);
-	int e_sz, rc = -ENOMEM;
+	int rc = -ENOMEM;
 
 	rcu_register_thread();
+	/* maps have initialized in f_prepare_layouts_maps() */
+	lp->claimvec = lo->claimvec;
+	lo->claimvec = NULL;
+	lp->slabmap = lo->slabmap;
+	lo->slabmap = NULL;
+
 	if (pthread_mutex_init(&lp->a_thread_lock, NULL)) goto _err;
 	if (pthread_cond_init(&lp->a_thread_cond, NULL)) goto _err;
 	if (pthread_mutex_init(&lp->stripes_wait_lock, NULL)) goto _err;
@@ -2775,20 +2844,7 @@ static inline int layout_partition_init(F_LO_PART_t *lp)
 	lp->cv_bmap = calloc(1, cv_bmap_size);
 	if (!lp->slab_bmap) goto _err;
 
-	/* Initialize layout partition maps */
-	// Pad to the next even chunk
-	e_sz = F_SLABMAP_ENTRY_SZ(lo->info.chunks);
-	lp->slabmap  = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, F_SLABMAP_BOSL_SZ, 0);
-	lp->claimvec = f_map_init(F_MAPTYPE_BITMAP, 2, 0, 0);
-	if (!lp->slabmap || !lp->claimvec) goto _err;
-	/* 
-	 * Reset the claim vector interleave to one slab worth of stripes.
-	 * This is neccessary in order to align slab map and claim vector partition.
-	 */  
-	if (cv_intl_factor < lp->claimvec->geometry.intl_factor) { rc = -EINVAL; goto _err; }
-	lp->claimvec->geometry.intl_factor = cv_intl_factor; 
-
-	LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes", 
+	LOG(LOG_DBG, "%s[%d]: part initialized: %u/%lu slabs/stripes",
 		lo->info.name, lp->part_num, lp->slab_count, lp->stripe_count);
 	return 0;
 
@@ -3004,9 +3060,6 @@ static void *f_allocator_thread(void *ctx)
 	rcbuf = alloca(ion_cnt*sizeof(rc));
 	ASSERT(rcbuf);
 	memset(rcbuf, 0, ion_cnt*sizeof(rc));
-
-	lp->part_num = pool->mynode.ionode_idx;
-	lo->part_count = pool->ionode_count;
 
 	LOG(LOG_INFO, "%s[%d]: starting allocator on %s", lo->info.name, lp->part_num, pool->mynode.hostname);
 
