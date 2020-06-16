@@ -364,7 +364,7 @@ int mdhimCommit(struct mdhim_t *md, struct index_t *index) {
                              inserting secondary global and local keys
  * @return                   mdhim_brm_t * or NULL on error
  */
-struct mdhim_brm_t *mdhimPut(struct mdhim_t *md,
+struct mdhim_brm_t *mdhimPut(struct mdhim_t *md, struct index_t *index,
 			     /*Primary key */
 			     void *primary_key, int primary_key_len,
 			     void *value, int value_len,
@@ -388,7 +388,13 @@ struct mdhim_brm_t *mdhimPut(struct mdhim_t *md,
 		return NULL;
 	}
 
-	rm = _put_record(md, md->primary_index, primary_key, primary_key_len, value, value_len);
+	if (!index) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Invalid index specified",
+		     md->mdhim_rank);
+		return NULL;
+	}
+
+	rm = _put_record(md, index, primary_key, primary_key_len, value, value_len);
 	if (!rm || rm->error) {
 		return head;
 	}
@@ -544,7 +550,7 @@ struct mdhim_brm_t *_bput_secondary_keys_from_info(struct mdhim_t *md,
  * @param num_records  the number of records to store (i.e., the number of keys in keys array)
  * @return mdhim_brm_t * or NULL on error
  */
-struct mdhim_brm_t *mdhimBPut(struct mdhim_t *md,
+struct mdhim_brm_t *mdhimBPut(struct mdhim_t *md, struct index_t *index,
 			      void **primary_keys, int *primary_key_lens,
 			      void **primary_values, int *primary_value_lens,
 			      int num_records,
@@ -558,7 +564,13 @@ struct mdhim_brm_t *mdhimBPut(struct mdhim_t *md,
 		return NULL;
 	}
 
-	head = _bput_records(md, md->primary_index, primary_keys, primary_key_lens,
+	if (!index) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Invalid index specified",
+		     md->mdhim_rank);
+		return NULL;
+	}
+
+	head = _bput_records(md, index, primary_keys, primary_key_lens,
 			     primary_values, primary_value_lens, num_records);
 	if (!head || head->error) {
 		return head;
@@ -648,7 +660,9 @@ struct mdhim_bgetrm_t *mdhimGet(struct mdhim_t *md, struct index_t *index,
 	}
 
 	if (!index) {
-		index = md->primary_index;
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Invalid index specified",
+		     md->mdhim_rank);
+		return NULL;
 	}
 
 	//Create an a array with the single key and key len passed in
@@ -722,9 +736,6 @@ struct mdhim_bgetrm_t *mdhimBGet(struct mdhim_t *md, struct index_t *index,
 		}
 
 		if (plen > MAX_BULK_OPS) {
-			printf("plen is %d, MAX_BULK_OPS is %d\n", plen,
-			       MAX_BULK_OPS);
-			fflush(stdout);
 			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
 			     "Too many bulk operations would be performed "
 			     "with the MDHIM_GET_PRIMARY_EQ operation.  Limiting "
@@ -802,7 +813,12 @@ struct mdhim_bgetrm_t *mdhimBGetOp(struct mdhim_t *md, struct index_t *index,
 	void **keys;
 	int *key_lens;
 	struct mdhim_bgetrm_t *bgrm_head;
-	fflush(stdout);
+
+	if (!index) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Invalid index specified",
+		     md->mdhim_rank);
+		return NULL;
+	}
 
 	if (num_records > MAX_BULK_OPS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
@@ -838,6 +854,12 @@ struct mdhim_bgetrm_t *mdhimBGetRange(struct mdhim_t *md, struct index_t *index,
 				   void *start_key, void *end_key, int key_len) {
 	struct mdhim_bgetrm_t *bgrm_head;
 
+	if (!index) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Invalid index specified",
+		     md->mdhim_rank);
+		return NULL;
+	}
+
 	//Get the linked list of return messages from mdhimBGet
 	bgrm_head = _bget_range_records(md, index, start_key, end_key, key_len);
 
@@ -859,6 +881,12 @@ struct mdhim_brm_t *mdhimDelete(struct mdhim_t *md, struct index_t *index,
 	struct mdhim_brm_t *brm_head;
 	void **keys;
 	int *key_lens;
+
+	if (!index) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Invalid index specified",
+		     md->mdhim_rank);
+		return NULL;
+	}
 
 	keys = malloc(sizeof(void *));
 	key_lens = malloc(sizeof(int));
@@ -887,6 +915,11 @@ struct mdhim_brm_t *mdhimBDelete(struct mdhim_t *md, struct index_t *index,
 				 int num_records) {
 	struct mdhim_brm_t *brm_head;
 
+	if (!index) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Invalid index specified",
+		     md->mdhim_rank);
+		return NULL;
+	}
 
 	//Check to see that we were given a sane amount of records
 	if (num_records > MAX_BULK_OPS) {

@@ -9,7 +9,7 @@
 
 
 #define GEN_STR_LEN 1024
-#define UNIFYCR_MAX_FILENAME     ( 128 )
+#define UNIFYCR_MAX_FILENAME	ULFS_MAX_FILENAME
 
 
 typedef struct f_fattr_t_ {
@@ -29,7 +29,7 @@ typedef enum {
     CMD_UNMOUNT   = 0x31,   // unmount FAMfs
     CMD_QUIT      = 0x32,   // exit command for worker thread
     CMD_SHTDWN    = 0x33,   // shutdown FAMfs server
-    
+
     CMD_READ      = 0x43,   // depricated
     CMD_DIGEST    = 0x45,   // depricated
 

@@ -223,8 +223,8 @@ int meta_process_attr_set(char *buf, int qid)
 
     /*  LOG(LOG_DBG, "rank:%d, setting fattr key:%d, value:%s\n",
                 glb_rank, *fattr_keys[0], fattr_vals[0]->fname); */
-    md->primary_index = unifycr_indexes[1];
-    brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+    brm = mdhimPut(md, unifycr_indexes[1],
+                   fattr_keys[0], sizeof(fattr_key_t),
                    fattr_vals[0], sizeof(fattr_val_t),
                    NULL, NULL);
     if (!brm || brm->error) {
@@ -247,14 +247,15 @@ int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval) {
     strcpy(fattr_vals[0]->fname, pval->filename);
     fattr_vals[0]->loid = pval->loid;
 
-    md->primary_index = unifycr_indexes[1];
-    brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
-            fattr_vals[0], sizeof(fattr_val_t), NULL, NULL);
+    brm = mdhimPut(md, unifycr_indexes[1],
+                   fattr_keys[0], sizeof(fattr_key_t),
+                   fattr_vals[0], sizeof(fattr_val_t),
+                   NULL, NULL);
     if (!brm || brm->error) {
-        LOG(LOG_ERR, "client %d, no such file:%d\n", pcmd->cid, *fattr_keys[0]);
+        LOG(LOG_ERR, "client %d, no such file:%d", pcmd->cid, *fattr_keys[0]);
         rc = ULFS_ERROR_MDHIM;
     } else {
-        LOG(LOG_DBG, "client %d, setting fattr key:%d\n", pcmd->cid, *fattr_keys[0]);
+        LOG(LOG_DBG, "client %d, setting fattr gfid:%d", pcmd->cid, *fattr_keys[0]);
         rc = ULFS_SUCCESS;
     }
 
@@ -277,8 +278,8 @@ int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val)
 
     int rc;
 
-    md->primary_index = unifycr_indexes[1];
-    bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
+    bgrm = mdhimGet(md, unifycr_indexes[1],
+                    fattr_keys[0],
                     sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
@@ -306,8 +307,7 @@ int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval) {
 
     int rc;
 
-    md->primary_index = unifycr_indexes[1];
-    bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
+    bgrm = mdhimGet(md, unifycr_indexes[1], fattr_keys[0],
                     sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
@@ -315,13 +315,14 @@ int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval) {
 	    pcmd->cid, *fattr_keys[0], bgrm?bgrm->error:0);
         rc = ULFS_ERROR_MDHIM;
     } else {
-        tmp_ptr_attr = (fattr_val_t *)bgrm->values[0];
         pval->gfid = *fattr_keys[0];
-
-        LOG(LOG_DBG, "client %d, getting fattr key:%d\n", pcmd->cid, *fattr_keys[0]);
+        tmp_ptr_attr = (fattr_val_t *)bgrm->values[0];
         pval->file_attr = tmp_ptr_attr->file_attr;
         pval->loid = tmp_ptr_attr->loid;
         strcpy(pval->filename, tmp_ptr_attr->fname);
+
+        LOG(LOG_DBG, "client %d, got fattr for layout %d gfid %d",
+            pcmd->cid, tmp_ptr_attr->loid, pval->gfid);
 
         rc = ULFS_SUCCESS;
     }
@@ -336,8 +337,6 @@ int meta_famattr_put(int fam_id, fam_attr_val_t *val)
     uint32_t key;
     int rc;
 
-    md->primary_index = unifycr_indexes[2];
-
     if (fam_id < 0)
         key = MDHIM_MAX_SLICES;
     else
@@ -347,7 +346,8 @@ int meta_famattr_put(int fam_id, fam_attr_val_t *val)
     LOG(LOG_DBG, "key:%u size:%zu cnt:%u prov_key:%lu virt_addr:%016lx",
         key, val_sz, val->part_cnt, val->part_attr[0].prov_key,
         val->part_attr[0].virt_addr);
-    brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+    brm = mdhimPut(md, unifycr_indexes[2],
+                   fattr_keys[0], sizeof(fattr_key_t),
 		   val, val_sz, NULL, NULL);
 
     if (!brm || brm->error) {
@@ -368,8 +368,7 @@ int meta_famattr_get(int fam_id, fam_attr_val_t **val_p)
 
     int rc;
 
-    md->primary_index = unifycr_indexes[2];
-    bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
+    bgrm = mdhimGet(md, unifycr_indexes[2], fattr_keys[0],
 		    sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
@@ -381,7 +380,6 @@ int meta_famattr_get(int fam_id, fam_attr_val_t **val_p)
 
 	tmp_ptr_attr = (fam_attr_val_t *)bgrm->values[0];
 	*val_p = (fam_attr_val_t *)malloc(fam_attr_val_sz(tmp_ptr_attr->part_cnt));
-	//fam_id = *fattr_keys[0];
 	(*val_p)->part_cnt = tmp_ptr_attr->part_cnt;
 	size = tmp_ptr_attr->part_cnt*sizeof(LFS_EXCG_t);
 	memcpy((*val_p)->part_attr, tmp_ptr_attr->part_attr, size);
@@ -424,8 +422,6 @@ int meta_process_fsync(int qid)
         (md_index_t *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset + page_sz);
 
-    md->primary_index = unifycr_indexes[0];
-
     for (i = 0; i < num_entries; i++) {
         fsmd_keys[i]->pk.fid = meta_payload[i].fid;
         fsmd_keys[i]->pk.loid = 0;
@@ -445,7 +441,8 @@ int meta_process_fsync(int qid)
     //print_fsync_indices(fsmd_keys, fsmd_vals, num_entries);
 
     if (num_entries == 1) {
-        brm = mdhimPut(md, fsmd_keys[0], sizeof(fsmd_key_t),
+        brm = mdhimPut(md, unifycr_indexes[0],
+                       fsmd_keys[0], sizeof(fsmd_key_t),
                        fsmd_vals[0], sizeof(fsmd_val_t),
                        NULL, NULL);
         if (!brm || brm->error) {
@@ -458,8 +455,8 @@ int meta_process_fsync(int qid)
         mdhim_full_release_msg(brm);
 
     } else {
-
-        brm = mdhimBPut(md, (void **)(&fsmd_keys[0]), fsmd_ley_lens,
+        brm = mdhimBPut(md, unifycr_indexes[0],
+                        (void **)(&fsmd_keys[0]), fsmd_ley_lens,
                         (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries,
                         NULL, NULL);
         brmp = brm;
@@ -482,8 +479,6 @@ int meta_process_fsync(int qid)
     }
 
 _process_fattr:
-    md->primary_index = unifycr_indexes[1];
-
     num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->fmeta_offset));
@@ -508,7 +503,8 @@ _process_fattr:
     }
 
     if (num_entries == 1) {
-        brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+        brm = mdhimPut(md, unifycr_indexes[1],
+                       fattr_keys[0], sizeof(fattr_key_t),
                        fattr_vals[0], sizeof(fattr_val_t),
                        NULL, NULL);
         if (!brm || brm->error) {
@@ -521,8 +517,8 @@ _process_fattr:
         mdhim_full_release_msg(brm);
 
     } else {
-
-        brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
+        brm = mdhimBPut(md, unifycr_indexes[1],
+                        (void **)(&fattr_keys[0]), fattr_key_lens,
                         (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
                         NULL, NULL);
         brmp = brm;
@@ -571,8 +567,6 @@ int f_do_fsync(f_svcrq_t *pcmd) {
         (md_index_t *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset + page_sz);
 
-    md->primary_index = unifycr_indexes[0];
-
     LOG(LOG_DBG3, "srv fsync k/v[%d] cl_id=%d num=%lu meta_offset=%ld",
         qid, client_side_id, num_entries, app_config->meta_offset);
 
@@ -595,7 +589,8 @@ int f_do_fsync(f_svcrq_t *pcmd) {
     //print_fsync_indices(fsmd_keys, fsmd_vals, num_entries);
 
     if (num_entries == 1) {
-        brm = mdhimPut(md, fsmd_keys[0], sizeof(fsmd_key_t),
+        brm = mdhimPut(md, unifycr_indexes[0],
+                       fsmd_keys[0], sizeof(fsmd_key_t),
                        fsmd_vals[0], sizeof(fsmd_val_t),
                        NULL, NULL);
         if (!brm || brm->error) {
@@ -609,8 +604,10 @@ int f_do_fsync(f_svcrq_t *pcmd) {
 
     } else {
 
-        brm = mdhimBPut(md, (void **)(&fsmd_keys[0]), fsmd_ley_lens,
-                  (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries, NULL, NULL);
+        brm = mdhimBPut(md, unifycr_indexes[0],
+                        (void **)(&fsmd_keys[0]), fsmd_ley_lens,
+                        (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries,
+                        NULL, NULL);
         brmp = brm;
         if (!brmp || brmp->error) {
             ret = ULFS_ERROR_MDHIM;
@@ -631,8 +628,6 @@ int f_do_fsync(f_svcrq_t *pcmd) {
     }
 
 _process_fattr:
-    md->primary_index = unifycr_indexes[1];
-
     num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->fmeta_offset));
@@ -651,6 +646,7 @@ _process_fattr:
 
     for (i = 0; i < num_entries; i++) {
         *fattr_keys[i] = attr_payload[i].gfid;
+        fattr_vals[i]->loid = attr_payload[i].loid;
         fattr_vals[i]->file_attr = attr_payload[i].file_attr;
         strcpy(fattr_vals[i]->fname, attr_payload[i].filename);
 
@@ -659,7 +655,8 @@ _process_fattr:
     }
 
     if (num_entries == 1) {
-        brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+        brm = mdhimPut(md, unifycr_indexes[1],
+                       fattr_keys[0], sizeof(fattr_key_t),
                        fattr_vals[0], sizeof(fattr_val_t),
                        NULL, NULL);
         if (!brm || brm->error) {
@@ -672,9 +669,10 @@ _process_fattr:
         mdhim_full_release_msg(brm);
 
     } else {
-
-        brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
-                  (void **)(&fattr_vals[0]), fattr_val_lens, num_entries, NULL, NULL);
+        brm = mdhimBPut(md, unifycr_indexes[1],
+                        (void **)(&fattr_keys[0]), fattr_key_lens,
+                        (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
+                        NULL, NULL);
         brmp = brm;
         if (!brmp || brmp->error) {
             ret = ULFS_ERROR_MDHIM;
@@ -732,8 +730,8 @@ int meta_batch_get(int app_id, int client_id,
 
     }
 
-    md->primary_index = unifycr_indexes[0];
-    bgrm = mdhimBGet(md, md->primary_index, (void **)fsmd_keys,
+    bgrm = mdhimBGet(md, unifycr_indexes[0],
+                     (void **)fsmd_keys,
                      fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
 
     int tot_num = 0;
@@ -825,8 +823,8 @@ int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
 	}
     }
 
-    md->primary_index = unifycr_indexes[0];
-    bgrm = mdhimBGet(md, md->primary_index, (void **)fsmd_keys,
+    bgrm = mdhimBGet(md, unifycr_indexes[0],
+                     (void **)fsmd_keys,
                      fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
 
     bgrmp = bgrm;

@@ -253,8 +253,8 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		if (put_index->type == LOCAL_INDEX) {
 			if ((rl = get_range_servers(md, lookup_index, values[i], value_lens[i])) == 
 			    NULL) {
-				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
-				     "Error while determining range server in mdhimBPut", 
+				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
+				     "Error while determining range server in bput_records",
 				     md->mdhim_rank);
 				continue;
 			}
@@ -262,9 +262,8 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 			gettimeofday(&localrangestart, NULL);
 			if ((rl = get_range_servers(md, lookup_index, keys[i], key_lens[i])) == 
 			    NULL) {
-				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
-				     "Error while determining range server in mdhimBPut", 
-				     md->mdhim_rank);
+				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
+				     "Error while determining range server in bput_records",				     md->mdhim_rank);
 				continue;
 			}
 			gettimeofday(&localrangeend, NULL);
