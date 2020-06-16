@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
 	}
 
 	//Insert the records
-	brm = mdhimBPut(md, (void **) keys, key_lens,  
+	brm = mdhimBPut(md, md->primary_index, (void **) keys, key_lens,  
 			(void **) values, value_lens, KEYS, 
 			NULL, NULL);
 	brmp = brm;

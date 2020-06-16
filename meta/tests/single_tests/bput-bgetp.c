@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
 		//record the start time
 		start_record(&start_tv);
 		//Insert the keys into MDHIM
-		brm = mdhimBPut(md,
+		brm = mdhimBPut(md, md->primary_index,
 				(void **) keys, key_lens,  
 				(void **) values, value_lens, 
 				KEYS, NULL, NULL);

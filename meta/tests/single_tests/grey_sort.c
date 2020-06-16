@@ -82,7 +82,8 @@ int main(int argc, char **argv) {
 		}
 
 		//Insert the keys into MDHIM
-		brm = mdhimBPut(md, (void **) keys, key_lens, 
+		brm = mdhimBPut(md, md->primary_index,
+				(void **) keys, key_lens,
 				(void **) values, value_lens, KEYS);
 		brmp = brm;
 		if (!brm || brm->error) {

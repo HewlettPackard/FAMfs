@@ -66,12 +66,12 @@ int main(int argc, char **argv) {
 						  secondary_key_lens, 
 						  1, SECONDARY_GLOBAL_INFO);
 	//Put the primary and secondary keys
-	brm = mdhimPut(md, 
-		       &key, sizeof(key), 
-		       &value, sizeof(value), 
+	brm = mdhimPut(md, md->primary_index,
+		       &key, sizeof(key),
+		       &value, sizeof(value),
 		       secondary_info,
 		       NULL);
-	
+
 	if (!brm || brm->error) {
 		printf("Error inserting key/value into MDHIM\n");
 	} else {
@@ -81,10 +81,10 @@ int main(int argc, char **argv) {
 	
 	//Put another secondary key
 	skey = 2 * (md->mdhim_rank + 1);
-	brm = mdhimPutSecondary(md, 
+	brm = mdhimPutSecondary(md,
 				secondary_index,
 				/*Secondary key */
-				&skey, sizeof(skey),  
+				&skey, sizeof(skey),
 				/* Primary key */
 				&key, sizeof(key));
 	

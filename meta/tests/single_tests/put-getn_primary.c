@@ -12,7 +12,6 @@ int main(int argc, char **argv) {
 	int ret;
 	int provided = 0;
 	struct mdhim_t *md;
-	struct index_t *primary_index;
 	uint32_t key;
 	unsigned int *value;
 	struct mdhim_brm_t *brm;
@@ -66,7 +65,7 @@ int main(int argc, char **argv) {
 #endif
 		key = (md->mdhim_rank * keys_per_rank) + i;
 		value[0] = (10 * keys_per_rank) + (md->mdhim_rank * keys_per_rank) + i;
-		brm = mdhimPut(md,
+		brm = mdhimPut(md, md->primary_index,
 			       &key, sizeof(key),
 			       value, val_len*sizeof(int),
 			       NULL, NULL);
@@ -80,12 +79,9 @@ int main(int argc, char **argv) {
 		mdhim_full_release_msg(brm);
 	}
 
-	primary_index = md->primary_index;
-	md->primary_index = NULL;
-
 #if 0
 	//Commit the database
-	ret = mdhimCommit(md, primary_index);
+	ret = mdhimCommit(md, md->primary_index);
 	if (ret != MDHIM_SUCCESS) {
 		printf("Error committing MDHIM database\n");
 	} else {
@@ -93,7 +89,7 @@ int main(int argc, char **argv) {
 	}
 
 	//Get the stats for the primary index
-	ret = mdhimStatFlush(md, primary_index);
+	ret = mdhimStatFlush(md, md->primary_index);
 	if (ret != MDHIM_SUCCESS) {
 		printf("Error getting stats\n");
 	} else {
@@ -108,7 +104,7 @@ int main(int argc, char **argv) {
         key = tst_rank * keys_per_rank;
 	for (i = 0; i < keys_per_rank; i++) {
 		value[0] = (10 * keys_per_rank) + (tst_rank * keys_per_rank) + i;
-		bgrm = mdhimBGetOp(md, primary_index,
+		bgrm = mdhimBGetOp(md, md->primary_index,
 				   &key, sizeof(uint32_t), BGET_READAHEAD+1, MDHIM_GET_NEXT);
 		if (!bgrm || bgrm->error) {
 			printf("Rank: %d, Error getting next key/value given key: %d from MDHIM\n",
@@ -139,7 +135,6 @@ int main(int argc, char **argv) {
 	}
 	free(value);
 
-	md->primary_index = primary_index;
 	ret = mdhimClose(md);
 	mdhim_options_destroy(db_opts);
 	if (ret != MDHIM_SUCCESS) {

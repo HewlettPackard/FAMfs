@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
 		key = malloc(100);
 		sprintf(key, "%c", (int) '0' + (md->mdhim_rank + 1) + i);
 		value = 500 * (md->mdhim_rank + 1) + i;
-		brm = mdhimPut(md, key, strlen(key) + 1, 
+		brm = mdhimPut(md, md->primary_index, key, strlen(key) + 1,
 			       &value, sizeof(value), 
 			       NULL, NULL);
 		if (!brm || brm->error) {

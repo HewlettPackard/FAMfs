@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
 	//Put the keys and values
 	key = 100 * (md->mdhim_rank + 1);
 	value = 500 * (md->mdhim_rank + 1);
-	brm = mdhimPut(md, &key, sizeof(key), 
+	brm = mdhimPut(md, md->primary_index, &key, sizeof(key), 
 		       &value, sizeof(value),
 		       NULL, NULL);
 	if (!brm || brm->error) {

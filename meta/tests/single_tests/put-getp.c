@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
 	for (i = 0; i < keys_per_rank; i++) {
 		key = keys_per_rank * md->mdhim_rank + i;
 		value = md->mdhim_rank + i;
-		brm = mdhimPut(md, &key, sizeof(key), 
+		brm = mdhimPut(md, md->primary_index, &key, sizeof(key),
 			       &value, sizeof(value), 
 			       NULL, NULL);
 		if (!brm || brm->error) {
