@@ -314,12 +314,12 @@ static int f_find_file_global(int gfid, int loid, f_fattr_t **file_meta) {
         return rc;
     }
 
-    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
+ if ((rc = f_rbq_pop(rplyq, &r, 30000*RBQ_TMO_1S))) {
         ERROR("couldn't get response for 'find file' from layout %d queue: %s", loid, strerror(-rc));
         return rc;
     }
     if (r.rc) {
-        // not found in global DB
+        DEBUG("layout %d global file id %d not found in DB - error:%d", loid, gfid, r.rc);
         *file_meta = NULL;
         return ENOENT;
     }
@@ -546,8 +546,10 @@ static int famfs_fid_open(const char *path, int flags,
             meta->storage = FILE_STORAGE_LOGIO;
             meta->real_size = ptr_meta->file_attr.st_size;
             meta->loid = loid;
+            /* cache attributes locally */
             ptr_meta->fid = fid;
             ptr_meta->gfid = gfid;
+            ptr_meta->loid = loid;
 
             ins_file_meta(&unifycr_fattrs, ptr_meta);
             free(ptr_meta);
