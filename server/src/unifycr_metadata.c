@@ -252,10 +252,12 @@ int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval) {
                    fattr_vals[0], sizeof(fattr_val_t),
                    NULL, NULL);
     if (!brm || brm->error) {
-        LOG(LOG_ERR, "client %d, no such file:%d", pcmd->cid, *fattr_keys[0]);
+        LOG(LOG_ERR, "client %d, setting attributes for gfid %d error:%d",
+            pcmd->cid, *fattr_keys[0], brm?brm->error:0);
         rc = ULFS_ERROR_MDHIM;
     } else {
-        LOG(LOG_DBG, "client %d, setting fattr gfid:%d", pcmd->cid, *fattr_keys[0]);
+        LOG(LOG_DBG, "client %d, setting fattr gfid %d in lo %d",
+            pcmd->cid, *fattr_keys[0], fattr_vals[0]->loid);
         rc = ULFS_SUCCESS;
     }
 
@@ -311,7 +313,7 @@ int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval) {
                     sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
-        LOG(LOG_ERR, "client %d, fid %d - error %d getting file attributes",
+        LOG(LOG_ERR, "client %d, gfid %d - error %d getting file attributes",
 	    pcmd->cid, *fattr_keys[0], bgrm?bgrm->error:0);
         rc = ULFS_ERROR_MDHIM;
     } else {
