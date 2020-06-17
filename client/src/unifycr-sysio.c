@@ -952,21 +952,14 @@ ssize_t UNIFYCR_WRAP(write)(int fd, const void *buf, size_t count)
             return (ssize_t) (-1);
         }
 
-        if (fs_type == FAMFS || fs_type == UNIFYCR_LOG) {
-            fd += unifycr_fd_limit;
-            ret = pwrite(fd, buf, count, filedesc->pos);
-            /* pwrite() will set errno on error for us */
-            if (ret < 0)
-                return -1;
-        } else {
-            /* write data to file */
-            int write_rc = unifycr_fd_write(fd, filedesc->pos, buf, count);
-            if (write_rc != UNIFYCR_SUCCESS) {
-                errno = unifycr_err_map_to_errno(write_rc);
-                return (ssize_t) (-1);
-            }
-            ret = count;
+        /* write data to file */
+        int write_rc = unifycr_fd_write(fd, filedesc->pos, buf, count);
+        if (write_rc != UNIFYCR_SUCCESS) {
+            errno = unifycr_err_map_to_errno(write_rc);
+            return (ssize_t) (-1);
         }
+        ret = count;
+
         /* update file position */
         filedesc->pos += ret;
 
