@@ -87,7 +87,8 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
 	      lo->info.name, s, stripe->extent);
 	return -1;
     }
- if (se->stripe_0 != stripe_0) ERROR("%s: Slab map record:%lu != s:%lu",lo->info.name,se->stripe_0,stripe_0);
+    /* TODO: Move the assert below to EXTRA_CHECK */
+    if (se->stripe_0 != stripe_0) ERROR("%s: Slab map record:%lu != s:%lu",lo->info.name,se->stripe_0,stripe_0);
     ASSERT( se->stripe_0 == stripe_0 ); /* Slab map entry key */
     if (se->mapped == 0) {
 	ERROR("%s: failed to get Slab map record:%lu - not mapped!",

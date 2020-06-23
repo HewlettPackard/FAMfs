@@ -491,7 +491,7 @@ F_ITER_t *f_map_seek_iter(F_ITER_t *iter, uint64_t entry);
 	     (void)f_map_next(iter))
 
 /* Return the number of entries which matches the iterator's condition
- within given size; pass F_MAP_WHOLE for weighting the whole map. */
+  within given size; pass F_MAP_WHOLE for weighting the whole map. */
 uint64_t f_map_weight(const F_ITER_t *iter, size_t size);
 #define F_MAP_WHOLE (~(size_t)0)
 

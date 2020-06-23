@@ -1073,9 +1073,9 @@ void f_print_layouts(void) {
     if (p == NULL)
 	return;
     /* Pool */
+    printf("FS mode:%s%s%s\n",
+    PoolFAMFS(pool)?"FAMFS ":"", PoolUNIFYCR(pool)?"UNIFYCR ":"", PoolFAMEmul(pool)?"Emul":"");
     pool_info = &p->info;
- printf("FS mode:%s%s%s\n",
- PoolFAMFS(pool)?"FAMFS ":"", PoolUNIFYCR(pool)?"UNIFYCR ":"", PoolFAMEmul(pool)?"Emul":"");
     printf("Pool has %u devices in %u AGs, %u each\n",
 	pool_info->dev_count, p->pool_ags, p->ag_devs);
     ag = p->ags;
