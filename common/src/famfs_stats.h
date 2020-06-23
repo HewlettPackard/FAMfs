@@ -23,7 +23,7 @@
 #define mSec (1000L)
 #define uSec (mSec*1000L)
 
-#define FAMFS_STATS 1		/* Uncomment this line and export FAMFS_DO_STATS=1 to turn stats ON */
+//#define FAMFS_STATS 1		/* Uncomment this line and export FAMFS_DO_STATS=1 to turn stats ON */
 extern int do_lf_stats;
 
 #if FAMFS_STATS
