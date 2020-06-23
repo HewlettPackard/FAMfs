@@ -123,9 +123,10 @@ typedef struct {
 #define WR_MAP_STATS_FN "wr-map.csv"
 #define WR_UPD_STATS_FN "wr-upd.csv"
 #define WR_CMT_STATS_FN "wr-commit.csv"
-#define FD_EXT_STATS_FN "fd-ext.csv"
 #define FD_WR_STATS_FN  "fd-wr.csv"
-#define TEST1_STATS_FN     "test1.csv"
+#define FD_EXT_STATS_FN "fd-ext.csv"
+#define FD_SYN_STATS_FN "fd-sync.csv"
+#define TEST1_STATS_FN  "test1.csv"
 
 extern lfio_stats_t        lf_wr_stat;  // libfaric write
 extern lfio_stats_t        lf_rd_stat;  // libfaric read
@@ -138,8 +139,9 @@ extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put (MDRQ_SETFA)
 extern lfio_stats_t        wr_map_stat; // MD stripe/chunk mapping (on write)
 extern lfio_stats_t        wr_upd_stat; // find file attr entry and update attr (on write)
 extern lfio_stats_t        wr_cmt_stat; // commit stripe to Helper (on write)
-extern lfio_stats_t        fd_ext_stat; // fid_extend op
 extern lfio_stats_t        fd_wr_stat;  // fd_write()
+extern lfio_stats_t        fd_ext_stat; // fid_extend()
+extern lfio_stats_t        fd_syn_stat; // fid_sync()
 extern lfio_stats_t        test1_stat;
 
 

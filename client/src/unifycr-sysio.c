@@ -728,6 +728,7 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
 
         INIT_STATS(LF_RD_STATS_FN, lf_rd_stat);
         INIT_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        INIT_STATS(FD_SYN_STATS_FN, fd_syn_stat);
         INIT_STATS(FD_EXT_STATS_FN, fd_ext_stat);
         INIT_STATS(WR_MAP_STATS_FN, wr_map_stat);
         INIT_STATS(WR_UPD_STATS_FN, wr_upd_stat);
@@ -1932,6 +1933,7 @@ int UNIFYCR_WRAP(close)(int fd)
 
         DUMP_STATS(LF_RD_STATS_FN, lf_rd_stat);
         DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        DUMP_STATS(FD_SYN_STATS_FN, fd_syn_stat);
         DUMP_STATS(FD_EXT_STATS_FN, fd_ext_stat);
         DUMP_STATS(WR_MAP_STATS_FN, wr_map_stat);
         DUMP_STATS(WR_UPD_STATS_FN, wr_upd_stat);

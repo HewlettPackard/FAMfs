@@ -217,6 +217,7 @@ lfio_stats_t        md_fg_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        md_ap_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        md_ag_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        fd_ext_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        fd_syn_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        wr_map_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        wr_upd_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        wr_cmt_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};

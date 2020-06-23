@@ -2046,7 +2046,10 @@ static int famfs_fd_fsync(int fd) {
     if (!*unifycr_indices.ptr_num_entries)
         return 0;
 
-    STATS_START(start);
+#ifdef FAMFS_STATS
+    int md_cnt=0;
+    STATS_START(start_m);
+#endif
 
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fd);
     ASSERT(meta);
@@ -2072,6 +2075,9 @@ static int famfs_fd_fsync(int fd) {
                   fd, s, lo->info.name, rc);
             goto io_err;
         }
+#ifdef FAMFS_STATS
+        md_cnt++;
+#endif
         DEBUG_LVL(6, "fd:%d commit stripe %lu in layout %s",
                      fd, s, lo->info.name);
         stripe->f.committed = 1;
@@ -2079,6 +2085,8 @@ static int famfs_fd_fsync(int fd) {
 
     if (allow_merge)
         famfs_merge_md();
+
+    STATS_START(start);
 
     f_rbq_t *cq = lo_cq[meta->loid];
     ASSERT(cq);
@@ -2093,10 +2101,11 @@ static int famfs_fd_fsync(int fd) {
         return rc;
     }
 
-    UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
-
     *unifycr_indices.ptr_num_entries = 0;
     //*unifycr_fattrs.ptr_num_entries = 0;
+
+    UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries, start);
+    UPDATE_STATS(fd_syn_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start_m);
 
     return r.rc;
 
