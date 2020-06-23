@@ -149,6 +149,7 @@ int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
 	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
 
     hints->ep_attr->type        = FI_EP_RDM;
+    hints->addr_format = FI_SOCKADDR;
 
     free(hints->fabric_attr->prov_name);
     hints->fabric_attr->prov_name = strdup(info->provider);
@@ -200,8 +201,7 @@ int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
 
     // Create address vector
     memset(&av_attr, 0, sizeof(av_attr));
-    av_attr.type = FI_AV_MAP;
-    //av_attr.type = FI_AV_UNSPEC;
+    av_attr.type = FI_AV_TABLE;
     //av_attr.rx_ctx_bits = LFSRV_RCTX_BITS;
 
     rc = fi_av_open(dom->domain, &av_attr, &dom->av, NULL);
@@ -338,8 +338,10 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 
 	if (lf_srv == LF_CLIENT) {
 	    rc = fi_ep_bind(ep, &wcnt->fid, FI_WRITE);
-	    fi_err(rc, "fi_ep_bind counter (W) failed");
-	    goto _err;
+	    if (rc) {
+		fi_err(rc, "fi_ep_bind counter (W) failed");
+		goto _err;
+	    }
         }
     }
 
