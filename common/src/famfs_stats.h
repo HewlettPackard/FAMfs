@@ -23,7 +23,7 @@
 #define mSec (1000L)
 #define uSec (mSec*1000L)
 
-#define FAMFS_STATS 1
+#define FAMFS_STATS 1		/* Uncomment this line and export FAMFS_DO_STATS=1 to turn stats ON */
 extern int do_lf_stats;
 
 #if FAMFS_STATS
@@ -93,12 +93,54 @@ extern int do_lf_stats;
 
 #endif
 
+typedef struct {
+    pthread_mutex_t lck;
+    union {
+        struct {
+            uint64_t        cnt;
+            uint64_t        ttl;
+            uint64_t        min;
+            uint64_t        max;
+            uint64_t        bcnt;
+            uint64_t        bmin;
+            uint64_t        bmax;
+            uint64_t        ett;
+            uint64_t        emin;
+            uint64_t        emax;
+        };
+        uint64_t            all[10];
+    };
+} lfio_stats_t;
+
 #define LF_WR_STATS_FN  "lf-writes.csv"
 #define LF_RD_STATS_FN  "lf-reads.csv"
+#define LF_MR_STATS_FN  "lf-mreg.csv"
+#define MD_LG_STATS_FN  "md-lget.csv"
 #define MD_FG_STATS_FN  "md-fget.csv"
 #define MD_FP_STATS_FN  "md-fput.csv"
 #define MD_AG_STATS_FN  "md-aget.csv"
 #define MD_AP_STATS_FN  "md-aput.csv"
+#define WR_MAP_STATS_FN "wr-map.csv"
+#define WR_UPD_STATS_FN "wr-upd.csv"
+#define WR_CMT_STATS_FN "wr-commit.csv"
+#define FD_EXT_STATS_FN "fd-ext.csv"
+#define FD_WR_STATS_FN  "fd-wr.csv"
+#define TEST1_STATS_FN     "test1.csv"
+
+extern lfio_stats_t        lf_wr_stat;  // libfaric write
+extern lfio_stats_t        lf_rd_stat;  // libfaric read
+extern lfio_stats_t        lf_mr_stat;  // libfaric local memory reg
+extern lfio_stats_t        md_lg_stat;  // MDHIM file position get from local cache (on read)
+extern lfio_stats_t        md_fg_stat;  // MDHIM file position get (CMD_MDGET)
+extern lfio_stats_t        md_fp_stat;  // MDHIM file position put
+extern lfio_stats_t        md_ag_stat;  // MDHIM file attr get (MDRQ_FAMAT, MDRQ_GETFA)
+extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put (MDRQ_SETFA)
+extern lfio_stats_t        wr_map_stat; // MD stripe/chunk mapping (on write)
+extern lfio_stats_t        wr_upd_stat; // find file attr entry and update attr (on write)
+extern lfio_stats_t        wr_cmt_stat; // commit stripe to Helper (on write)
+extern lfio_stats_t        fd_ext_stat; // fid_extend op
+extern lfio_stats_t        fd_wr_stat;  // fd_write()
+extern lfio_stats_t        test1_stat;
 
 // current time in timespec
 static inline struct timeval now(struct timeval *tvp) {
@@ -122,32 +164,6 @@ static inline uint64_t elapsed(struct timeval *ts) {
     if (sec < 0 || (sec == 0 && usec < 0)) return 0;
     return sec * 1000000UL + usec;
 }
-
-typedef struct {
-    pthread_mutex_t lck;
-    union {
-        struct {
-            uint64_t        cnt;
-            uint64_t        ttl;
-            uint64_t        min;
-            uint64_t        max;
-            uint64_t        bcnt;
-            uint64_t        bmin;
-            uint64_t        bmax;
-            uint64_t        ett;
-            uint64_t        emin;
-            uint64_t        emax;
-        };
-        uint64_t            all[10];
-    };
-} lfio_stats_t;
-
-extern lfio_stats_t        lf_wr_stat;  // libfaric write
-extern lfio_stats_t        lf_rd_stat;  // libfaric read
-extern lfio_stats_t        md_fg_stat;  // MDHIM file position get
-extern lfio_stats_t        md_fp_stat;  // MDHIM file position put
-extern lfio_stats_t        md_ag_stat;  // MDHIM file attr get
-extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put
 
 
 /* Carbon simulator instruction stats */

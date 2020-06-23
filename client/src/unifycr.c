@@ -210,10 +210,18 @@ char external_meta_dir[1024] = {0};
 
 lfio_stats_t        lf_wr_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        lf_rd_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        lf_mr_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        md_lg_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        md_fp_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        md_fg_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        md_ap_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 lfio_stats_t        md_ag_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        fd_ext_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        wr_map_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        wr_upd_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        wr_cmt_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        fd_wr_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
+lfio_stats_t        test1_stat = {.lck = PTHREAD_MUTEX_INITIALIZER};
 
 int do_lf_stats = 0;
 
@@ -1982,6 +1990,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     dbg_rank = rank;
     app_id = l_app_id;
     glb_size = size;
+    INIT_STATS(LF_MR_STATS_FN, lf_mr_stat);
 
     rc = unifycr_config_init(&client_cfg, 0, NULL);
     if (rc) {
@@ -2184,6 +2193,8 @@ static int _unifycr_unmount() {
 }
 
 int unifycr_unmount() {
+    DUMP_STATS(LF_MR_STATS_FN, lf_mr_stat);
+
     if (fs_type == FAMFS)
         return famfs_unmount();
     return _unifycr_unmount();

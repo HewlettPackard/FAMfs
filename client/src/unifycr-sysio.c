@@ -563,6 +563,7 @@ int unifycr_fd_read(int fd, off_t pos, void *buf, size_t count,
  * fills any gaps with zeros */
 int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
 {
+    STATS_START(start);
 
     /* get the file id for this file descriptor */
     int fid = unifycr_get_fid_from_fd(fd);
@@ -593,8 +594,8 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
     /* TODO: check that file is open for writing */
 
     /* get current file size before extending the file */
-    off_t filesize = unifycr_fid_size(fid);
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    off_t filesize = unifycr_fid_size(fid);
     off_t newpos;
 
     if (meta->storage == FILE_STORAGE_FIXED_CHUNK) {
@@ -635,6 +636,9 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
             meta->real_size = pos + count;
         }
     }
+
+    UPDATE_STATS(fd_wr_stat, 1, count, start);
+
     return write_rc;
 }
 
@@ -721,10 +725,21 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
 
         /* don't conflict with active system fds that range from 0 - (fd_limit) */
         ret = fid + unifycr_fd_limit;
+
         INIT_STATS(LF_RD_STATS_FN, lf_rd_stat);
         INIT_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        INIT_STATS(FD_EXT_STATS_FN, fd_ext_stat);
+        INIT_STATS(WR_MAP_STATS_FN, wr_map_stat);
+        INIT_STATS(WR_UPD_STATS_FN, wr_upd_stat);
+        INIT_STATS(WR_CMT_STATS_FN, wr_cmt_stat);
+        INIT_STATS(FD_WR_STATS_FN, fd_wr_stat);
+        INIT_STATS(MD_FG_STATS_FN, md_lg_stat);
         INIT_STATS(MD_FP_STATS_FN, md_fp_stat);
         INIT_STATS(MD_FG_STATS_FN, md_fg_stat);
+        INIT_STATS(MD_AP_STATS_FN, md_ap_stat);
+        INIT_STATS(MD_AG_STATS_FN, md_ag_stat);
+        INIT_STATS(TEST1_STATS_FN, test1_stat);
+
         return ret;
     } else {
         MAP_OR_FAIL(open);
@@ -1914,10 +1929,20 @@ int UNIFYCR_WRAP(close)(int fd)
             errno = EIO;
             return -1;
         }
+
         DUMP_STATS(LF_RD_STATS_FN, lf_rd_stat);
         DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        DUMP_STATS(FD_EXT_STATS_FN, fd_ext_stat);
+        DUMP_STATS(WR_MAP_STATS_FN, wr_map_stat);
+        DUMP_STATS(WR_UPD_STATS_FN, wr_upd_stat);
+        DUMP_STATS(WR_CMT_STATS_FN, wr_cmt_stat);
+        DUMP_STATS(FD_WR_STATS_FN, fd_wr_stat);
+        DUMP_STATS(MD_FG_STATS_FN, md_lg_stat);
         DUMP_STATS(MD_FP_STATS_FN, md_fp_stat);
         DUMP_STATS(MD_FG_STATS_FN, md_fg_stat);
+        DUMP_STATS(MD_AP_STATS_FN, md_ap_stat);
+        DUMP_STATS(MD_AG_STATS_FN, md_ag_stat);
+        DUMP_STATS(TEST1_STATS_FN, test1_stat);
 
         /* TODO: free file descriptor */
 

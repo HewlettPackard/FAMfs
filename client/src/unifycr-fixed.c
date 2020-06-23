@@ -352,6 +352,7 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
             }
 
             index_set->idxes[index_set->count].fid = cur_idx->fid;
+            index_set->idxes[index_set->count].loid = cur_idx->loid;
             index_set->idxes[index_set->count].file_pos = cur_slice_start;
             index_set->idxes[index_set->count].length = slice_range;
             index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
@@ -364,6 +365,7 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
         }
 
         index_set->idxes[index_set->count].fid = cur_idx->fid;
+        index_set->idxes[index_set->count].loid = cur_idx->loid;
         index_set->idxes[index_set->count].file_pos = cur_slice_start;
         index_set->idxes[index_set->count].length = cur_idx_end - cur_slice_start + 1;
         index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
@@ -399,6 +401,7 @@ static int unifycr_logio_chunk_write(
         cur_idx.file_pos = pos;
         cur_idx.mem_pos = chunk_buf - unifycr_chunks;
         cur_idx.length = count;
+        cur_idx.loid = 0;
 
         /* find the corresponding file attr entry and update attr*/
         f_fattr_t tmp_meta_entry;
@@ -445,8 +448,7 @@ static int unifycr_logio_chunk_write(
                     tmp_index_set.idxes[i].mem_pos;
                 unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
                     tmp_index_set.idxes[i].length;
-
-
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].loid = 0;
                 unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
                     = tmp_index_set.idxes[i].fid;
                 (*unifycr_indices.ptr_num_entries)++;
@@ -485,7 +487,7 @@ static int unifycr_logio_chunk_write(
         cur_idx.fid = ptr_meta_entry->gfid;
         cur_idx.file_pos = pos;
         cur_idx.length = count;
-
+        cur_idx.loid = 0;
         cur_idx.mem_pos = spill_offset + unifycr_max_chunks * (1 << unifycr_chunk_bits);
 
 
@@ -520,7 +522,7 @@ static int unifycr_logio_chunk_write(
                     tmp_index_set.idxes[i].mem_pos;
                 unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
                     tmp_index_set.idxes[i].length;
-
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].loid = 0;
                 unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
                     = tmp_index_set.idxes[i].fid;
                 (*unifycr_indices.ptr_num_entries)++;
