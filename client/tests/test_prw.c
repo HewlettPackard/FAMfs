@@ -89,7 +89,7 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 
-    static const char * opts = "b:s:t:f:p:u:M:m:D:S:w:r:i:v:W:GRC:VU";
+    static const char * opts = "b:s:t:f:p:u:M:m:dD:S:w:r:i:v:W:GRC:VU";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     char mount_point[GEN_STR_LEN] = { 0 };
     long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
@@ -97,6 +97,7 @@ int main(int argc, char *argv[]) {
     int pat = 0, c, rank_num, rank, fd, \
             to_unmount = 0;
     int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
+    int shutdown = 0;
     int initialized, provided, rrc = MPI_SUCCESS;
     int gbuf = 0, mreg = 0;
     off_t ini_off = 0;
@@ -158,6 +159,8 @@ int main(int argc, char *argv[]) {
                mount_burstfs = atoi(optarg); break; /* 0: Don't mount burstfs */
             case 'm':
                strcpy(mount_point, optarg); break;
+            case 'd':
+               shutdown++; break; /* call fs shutdown() on exit (after unmount) */
             case 'D':
                direct_io = atoi(optarg); break; /* 1: Open with O_DIRECT */
             case 'S':
@@ -435,6 +438,9 @@ int main(int argc, char *argv[]) {
     double min_write_bw;
     min_write_bw=(double)blk_sz*seg_num*rank_num/1048576/ max_write_time;
 
+    double agg_write_time;
+    MPI_Reduce(&write_time, &agg_write_time,  1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
     double agg_meta_time;
     MPI_Reduce(&meta_time, &agg_meta_time,  1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
@@ -445,15 +451,13 @@ int main(int argc, char *argv[]) {
     famsim_stats_stop(famsim_stats_send, 1);
 
     if (rank == 0) {
-        printf("### Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",
+        printf("### Aggregate Write BW is %.3lf MiB/s, Min Write BW is %.3lf MiB/s\n",
                 agg_write_bw, min_write_bw);
-        printf("Per-process sync time %lf sec, Max %lf sec\n",
-                agg_meta_time / rank_num, max_meta_time);
+        printf("Per-process write time %lf sec, sync time %lf sec, Max %lf sec\n",
+                (agg_write_time-agg_meta_time)/rank_num, agg_meta_time/rank_num, max_meta_time);
         fflush(stdout);
     }
-    //free(buf);
 
-    //MPI_Finalize();
     MPI_Barrier(MPI_COMM_WORLD);
     if (write_only) {
         MPI_Finalize();
@@ -606,16 +610,15 @@ int main(int argc, char *argv[]) {
 
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
-        printf("### Aggregate Read BW is %lfMB/s, Min Read BW is %lf\n", agg_read_bw,  min_read_bw);
+        printf("### Aggregate Read BW is %.3lf MiB/s, Min Read BW is %.3lf\n", agg_read_bw,  min_read_bw);
         fflush(stdout);
     }
 
     if (rank == 0) {
 	if (to_unmount)
-	    unifycr_shutdown();
-	else
-	    // this will only free libfabric context and WILL NOT shut down servers
 	    unifycr_unmount();
+	if (shutdown)
+	    unifycr_shutdown();
     }
 
     famsim_stats_free(famsim_ctx);
