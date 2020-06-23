@@ -80,9 +80,9 @@ extern int do_lf_stats;
 }
 
 #define STATS_START(start) \
-    struct timeval start;  \
+    struct timespec start;  \
     if (do_lf_stats)       \
-        start = now(0);
+        start = now();
 
 #else
 
@@ -132,7 +132,7 @@ extern lfio_stats_t        lf_rd_stat;  // libfaric read
 extern lfio_stats_t        lf_mr_stat;  // libfaric local memory reg
 extern lfio_stats_t        md_lg_stat;  // MDHIM file position get from local cache (on read)
 extern lfio_stats_t        md_fg_stat;  // MDHIM file position get (CMD_MDGET)
-extern lfio_stats_t        md_fp_stat;  // MDHIM file position put
+extern lfio_stats_t        md_fp_stat;  // MDHIM file position put (MDRQ_FSYNC) (on fsync, close)
 extern lfio_stats_t        md_ag_stat;  // MDHIM file attr get (MDRQ_FAMAT, MDRQ_GETFA)
 extern lfio_stats_t        md_ap_stat;  // MDHIM file attr put (MDRQ_SETFA)
 extern lfio_stats_t        wr_map_stat; // MD stripe/chunk mapping (on write)
@@ -142,27 +142,29 @@ extern lfio_stats_t        fd_ext_stat; // fid_extend op
 extern lfio_stats_t        fd_wr_stat;  // fd_write()
 extern lfio_stats_t        test1_stat;
 
+
 // current time in timespec
-static inline struct timeval now(struct timeval *tvp) {
-    struct timeval tv;
-    gettimeofday(&tv, 0);
-    if (tvp) *tvp = tv;
-    return tv;
+static inline struct timespec now(void) {
+    struct timespec tv_nsec;
+
+    clock_gettime(CLOCK_MONOTONIC, &tv_nsec);
+    return tv_nsec;
 }
 
 // elapsed time
-static inline uint64_t elapsed(struct timeval *ts) {
-    int64_t sec, usec;
-    struct timeval tv = now(0);
+static inline uint64_t elapsed(struct timespec *ts) {
+    time_t sec;
+    long usec;
+    struct timespec tv = now();
 
     sec =  tv.tv_sec - ts->tv_sec;
-    usec = tv.tv_usec - ts->tv_usec;
+    usec = (tv.tv_nsec - ts->tv_nsec)/1000;
     if (sec > 0 && usec < 0) {
         sec--;
-        usec += 1000000UL;
+        usec += 1000000L;
     }
     if (sec < 0 || (sec == 0 && usec < 0)) return 0;
-    return sec * 1000000UL + usec;
+    return (uint64_t)sec * 1000000UL + (uint64_t)usec;
 }
 
 

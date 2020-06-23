@@ -120,7 +120,6 @@ f_rbq_t *adminq;
 f_rbq_t *rplyq;
 f_rbq_t *lo_cq[F_CMDQ_MAX];
 
-//static uint64_t wevents = 1;
 /* TODO: Remove me! */
 static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
 
@@ -2095,6 +2094,7 @@ static int famfs_fd_fsync(int fd) {
     }
 
     UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
+
     *unifycr_indices.ptr_num_entries = 0;
     //*unifycr_fattrs.ptr_num_entries = 0;
 
