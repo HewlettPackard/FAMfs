@@ -163,10 +163,10 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
 	lf_servers_free(pool);
 
 	/* Free pool and all layout structures */
-	f_free_layouts_info();
+	rc = f_free_layouts_info();
         free(lfs_ctx);
 
-        exit(0);
+        exit(rc?1:0);
     }
 
     /* Parent thread should wait */

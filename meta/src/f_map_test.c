@@ -554,7 +554,7 @@ int main (int argc, char *argv[]) {
     t = 8; /* Remove old DB files for layout */
     rc = meta_sanitize(); db_opts = NULL;
     if (rc) goto err1;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     /*
@@ -741,7 +741,7 @@ int main (int argc, char *argv[]) {
     t = 16;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     /*
@@ -936,7 +936,7 @@ int main (int argc, char *argv[]) {
     t = 16;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     /*
@@ -1163,7 +1163,7 @@ int main (int argc, char *argv[]) {
     t = 19;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     printf("SUCCESS\n");

@@ -616,9 +616,11 @@ int main(int argc, char *argv[]) {
 
     if (rank == 0) {
 	if (to_unmount)
-	    unifycr_unmount();
+	    if ((rc = unifycr_unmount()))
+		fprintf(stderr, "error on FS unmount: %d\n", rc);
 	if (shutdown)
-	    unifycr_shutdown();
+	    if ((rc = unifycr_shutdown()))
+		fprintf(stderr, "error on FS shutdown: %d\n", rc);
     }
 
     famsim_stats_free(famsim_ctx);

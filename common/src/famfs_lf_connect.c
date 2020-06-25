@@ -29,30 +29,48 @@
 
 static int lf_verbosity = 0;
 
-void f_domain_close(LF_DOM_t **dom_p)
+int f_domain_close(LF_DOM_t **dom_p)
 {
     LF_DOM_t *dom = *dom_p;
     int rc;
 
     if (!dom)
-	return;
+	return 0;
 
     if (dom->av) {
-	rc = fi_close(&dom->av->fid);
-	if (rc)
+	do {
+	    if (!(rc = fi_close(&dom->av->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
 	    fi_err(rc, "close av");
+	    return rc;
+	}
 	dom->av = NULL;
     }
     if (dom->domain) {
-	rc = fi_close(&dom->domain->fid);
-	if (rc)
+	do {
+	    if (!(rc = fi_close(&dom->domain->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
 	    fi_err(rc, "close domain");
+	    return rc;
+	}
 	dom->domain = NULL;
     }
     if (dom->fabric) {
-	rc = fi_close(&dom->fabric->fid);
-	if (rc)
+	do {
+	    if (!(rc = fi_close(&dom->fabric->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
 	    fi_err(rc, "close fabric");
+	    return rc;
+	}
 	dom->fabric = NULL;
     }
     if (dom->fi) {
@@ -61,33 +79,79 @@ void f_domain_close(LF_DOM_t **dom_p)
     }
     free(dom);
     *dom_p = NULL;
+    return 0;
 }
 
-void f_conn_close(FAM_DEV_t *d)
+int f_conn_close(FAM_DEV_t *d)
 {
     int rc;
 
     if (!d)
-	return;
+	return 0;
 
-    if (d->mr && (rc = fi_close(&d->mr->fid)))
-	fi_err(rc, "close mr");
+    if (d->mr) {
+	do {
+	    if (!(rc = fi_close(&d->mr->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
+	    fi_err(rc, "close mr");
+	    return rc;
+	}
+    }
     d->mr = NULL;
 
-    if (d->ep && (rc = fi_close(&d->ep->fid)))
-	fi_err(rc, "close ep");
+    if (d->ep) {
+	do {
+	    if (!(rc = fi_close(&d->ep->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
+	    fi_err(rc, "close ep");
+	    return rc;
+	}
+    }
     d->ep = NULL;
 
-    if (d->rcnt && (rc = fi_close(&d->rcnt->fid)))
-	fi_err(rc, "close rcnt");
+    if (d->rcnt) {
+	do {
+	    if (!(rc = fi_close(&d->rcnt->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
+	    fi_err(rc, "close rcnt");
+	    return rc;
+	}
+    }
     d->rcnt = NULL;
 
-    if (d->wcnt && (rc = fi_close(&d->wcnt->fid)))
-	fi_err(rc, "close wcnt");
+    if (d->wcnt) {
+	do {
+	    if (!(rc = fi_close(&d->wcnt->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
+	    fi_err(rc, "close wcnt");
+	    return rc;
+	}
+    }
     d->wcnt = NULL;
 
-    if (d->cq && (rc = fi_close(&d->cq->fid)))
-	fi_err(rc, "close cq");
+    if (d->cq) {
+	do {
+	    if (!(rc = fi_close(&d->cq->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
+	    fi_err(rc, "close cq");
+	    return rc;
+	}
+    }
     d->cq = NULL;
 
     free(d->lf_name); d->lf_name = NULL;
@@ -97,6 +161,7 @@ void f_conn_close(FAM_DEV_t *d)
 	munmap(d->mr_buf, d->mr_size);
 	d->mr_buf = NULL;
     }
+    return 0;
 }
 
 /* Open libfabric (info, fabric, domain and av). If lf_srv, setup for LF server. */
@@ -216,7 +281,7 @@ int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
 _err:
     fi_err(rc, "libfabric %s - failed to open fabric on %s:%s",
 	   (lf_srv? "server":"client"), node, port);
-    f_domain_close(&dom);
+    (void)f_domain_close(&dom);
     return rc;
 }
 
@@ -465,7 +530,7 @@ _err:
     fi_err(rc, "libfabric %s - failed to open connection to FAM id:%d on %s:%s",
 	   lf_srv? "server":"client",
 	   id, node, port);
-    f_conn_close(fdev);
+    (void)f_conn_close(fdev);
     return rc;
 }
 

@@ -920,23 +920,27 @@ int famfs_mount(const char prefix[] __attribute__((unused)),
 
     if ((rc = lfs_connect(&lfs_ctx))) {
     	printf("lf-connect failed on mount: %d\n", rc);
-	f_free_layouts_info();
+	(void)f_free_layouts_info();
 	return rc;
     }
 
     return 0;
 }
 
-static void famfs_client_exit(unifycr_cfg_t *cfg, LFS_CTX_t **lfs_ctx_p)
+static int famfs_client_exit(unifycr_cfg_t *cfg, LFS_CTX_t **lfs_ctx_p)
 {
+    int rc;
+
     /* close libfabric devices */
     free_lfc_ctx(lfs_ctx_p);
 
     /* close the pool */
-    f_free_layouts_info();
+    rc = f_free_layouts_info();
 
     /* free configurator structure */
     unifycr_config_free(cfg);
+
+    return rc;
 }
 
 /**
@@ -967,7 +971,7 @@ int famfs_shutdown() {
         }
     }
 
-    famfs_client_exit(&client_cfg, &lfs_ctx);
+    rc = famfs_client_exit(&client_cfg, &lfs_ctx);
 #endif
     return 0;
 }
@@ -980,22 +984,30 @@ int famfs_unmount() {
 
     F_POOL_t *pool;
     pool = f_get_pool();
-    if (f_rbq_push(adminq, &c, RBQ_TMO_1S)) {
+    if ((rc = f_rbq_push(adminq, &c, RBQ_TMO_1S))) {
         ERROR("couldn't push UNMOUNT command to srv");
+	goto _err;
     }
     f_rbq_destroy(rplyq);
     f_rbq_close(adminq);
     for (unsigned int i = 0; i < pool->info.layouts_count; i++) {
         if (lo_cq[i]) {
             if ((rc = f_rbq_close(lo_cq[i]))) {
-                ERROR("error closing queue of %u: %d", i, rc);
+                ERROR("on closing queue of %u", i);
+		goto _err;
             }
         }
     }
 
-    famfs_client_exit(&client_cfg, &lfs_ctx);
-
+    if ((rc = famfs_client_exit(&client_cfg, &lfs_ctx))) {
+	ERROR("on closing libfabric");
+	goto _err;
+    }
     return UNIFYCR_SUCCESS;
+
+_err:
+    ERROR("on unmount:%d", rc);
+    return UNIFYCR_FAILURE;
 }
 
 /**

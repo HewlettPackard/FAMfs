@@ -59,18 +59,28 @@ F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id)
     return (idx >= p->pool_devs)? NULL:&p->devlist[idx];
 }
 
-void lf_clients_free(F_POOL_t *p)
+int lf_clients_free(F_POOL_t *p)
 {
+    int r, rc = 0;
+
     if (p) {
 	F_POOL_DEV_t *pdev = NULL;
 
 	if (p->devlist && p->info.pdev_indexes) {
-	    for_each_pool_dev(p, pdev)
-	        if (pdev && pdev->dev)
-	            f_conn_close(&pdev->dev->f);
+	    for_each_pool_dev(p, pdev) {
+	        if (pdev && pdev->dev) {
+	            r = f_conn_close(&pdev->dev->f);
+		    if (r && !rc)
+			rc = r;
+		}
+	    }
 	}
-	f_domain_close(&p->mynode.domain);
+	if (rc)
+	    return rc;
+
+	rc = f_domain_close(&p->mynode.domain);
     }
+    return rc;
 }
 
 /* Open fabric/domain; open connections to all pool devices */
@@ -145,15 +155,23 @@ _err:
     return rc;
 }
 
-void lf_servers_free(F_POOL_t *p)
+int lf_servers_free(F_POOL_t *p)
 {
+    int r, rc = 0;
+
     if (p->mynode.emul_devs) {
 	F_POOL_DEV_t *pdev;
 
-	for_each_emul_pdev(p, pdev)
-	    f_conn_close(&pdev->dev->f);
+	for_each_emul_pdev(p, pdev) {
+	    r = f_conn_close(&pdev->dev->f);
+	    if (r && !rc)
+		rc = r;
+	}
     }
-    f_domain_close(&p->mynode.emul_domain);
+    if (rc)
+	return rc;
+
+    return f_domain_close(&p->mynode.emul_domain);
 }
 
 /* Open fabric/domain; open connections to all pool devices */

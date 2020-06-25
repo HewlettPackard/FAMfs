@@ -487,7 +487,7 @@ int main (int argc, char *argv[]) {
     t = 8; /* Remove old DB files for Layout0 */
     rc = meta_sanitize(); db_opts = NULL;
     if (rc) goto err;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     /*
@@ -852,7 +852,7 @@ t_2_del:
     t = 28;
     rc = meta_sanitize();
     if (rc) goto err;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     /*
@@ -1226,7 +1226,7 @@ t_3_del:
     t = 28;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     BARRIER_WORLD;
@@ -1542,7 +1542,7 @@ t_3_del:
     t = 30;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layouts_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     BARRIER_WORLD;

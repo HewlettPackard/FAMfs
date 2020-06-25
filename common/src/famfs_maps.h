@@ -328,7 +328,7 @@ struct f_pooldev_index_;
 
 int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
 int f_set_layouts_info(struct unifycr_cfg_t_ *cfg);
-void f_free_layouts_info(void);
+int f_free_layouts_info(void);
 struct f_pool_dev_ *f_find_pdev(unsigned int index);
 struct f_pool_dev_ *f_pdi_to_pdev(struct f_pool_ *p, struct f_pooldev_index_ *pdi);
 struct f_pool_ *f_get_pool(void);

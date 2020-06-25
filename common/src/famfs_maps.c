@@ -393,13 +393,16 @@ _err:
     return rc;
 }
 
-static void free_pool(F_POOL_t *p)
+static int free_pool(F_POOL_t *p)
 {
+    int rc;
+
     if (p) {
 	F_POOL_DEV_t *pdev;
 	unsigned int i;
 
-	lf_clients_free(p);
+	if ((rc = lf_clients_free(p)))
+	    goto _err;
 
 	if (p->devlist && p->info.pdev_indexes) {
 	    for_each_pool_dev(p, pdev)
@@ -434,7 +437,8 @@ static void free_pool(F_POOL_t *p)
 	    MPI_Comm_free(&p->ionode_comm);
 	}
 
-	lf_servers_free(p);
+	if ((rc = lf_servers_free(p)))
+	    goto _err;
 
 	if (p->mynode.emul_devlist) {
 	    pdev = p->mynode.emul_devlist;
@@ -458,6 +462,11 @@ static void free_pool(F_POOL_t *p)
 	pthread_rwlock_destroy(&p->lock);
 	free(p);
     }
+    return 0;
+
+_err:
+    err("failed to free pool:%d", rc);
+    return rc;
 }
 
 static int cfg_load_pool(unifycr_cfg_t *c)
@@ -804,7 +813,7 @@ _syntax:
 _noarg:
     rc = -1; /* no mandatory parameter specified */
 _err:
-    free_pool(p);
+    (void)free_pool(p);
     return rc;
 }
 
@@ -1023,10 +1032,11 @@ F_LAYOUT_t *f_get_layout_by_name(const char *moniker) {
     return NULL;
 }
 
-void f_free_layouts_info(void)
+int f_free_layouts_info(void)
 {
     F_LAYOUT_t *lo;
     struct list_head *l, *tmp;
+    int rc = 0;
 
     if (pool) {
 	list_for_each_safe(l, tmp, &pool->layouts) {
@@ -1034,9 +1044,10 @@ void f_free_layouts_info(void)
 	    list_del(l);
 	    free_layout(lo);
 	}
-	free_pool(pool);
+	rc = free_pool(pool);
 	pool = NULL;
     }
+    return rc;
 }
 
 static void print_lf_info(LF_INFO_t *info) {

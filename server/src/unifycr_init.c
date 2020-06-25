@@ -781,9 +781,13 @@ static int unifycr_exit()
             if (cmdq[i])
                 f_rbq_push(cmdq[i], &c, RBQ_TMO_1S);
 
-        for (int i = 0; i < pool->info.layouts_count; i++)
-            if (cmdq[i])
-                if ((rc = f_rbq_destroy(cmdq[i]))) 
+        for (int i = 0; i < pool->info.layouts_count; i++) {
+            if (cmdq[i]) {
+                if ((rc = f_rbq_destroy(cmdq[i]))) {
+		    LOG(LOG_ERR, "helper queue %d destroy: %d", i, rc);
+		}
+	    }
+	}
 
         for (int i = 0; i < MAX_NUM_CLIENTS; i++)
             if (rplyq[i])
@@ -811,7 +815,7 @@ static int unifycr_exit()
     free_lfs_ctx(&lfs_ctx_p);
 
     /* Free pool and all layout structures */
-    f_free_layouts_info();
+    rc = f_free_layouts_info();
 
     /* Allocated at main(): free unifycr_cfg_t */
     unifycr_config_free(&server_cfg);

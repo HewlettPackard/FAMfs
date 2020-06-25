@@ -239,9 +239,9 @@ F_POOL_DEV_t *f_find_pdev_by_media_id(F_POOL_t *p, unsigned int media_id);
 int f_pdev_to_indexes(F_POOL_t *p, int pdev_idx);
 
 int lf_clients_init(F_POOL_t *p);
-void lf_clients_free(F_POOL_t *p);
+int lf_clients_free(F_POOL_t *p);
 int lf_servers_init(F_POOL_t *p);
-void lf_servers_free(F_POOL_t *p);
+int lf_servers_free(F_POOL_t *p);
 
 #endif /* F_POOL_H_ */
 

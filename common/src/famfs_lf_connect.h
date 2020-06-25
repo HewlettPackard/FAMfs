@@ -116,8 +116,8 @@ int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
     bool lf_srv);
 int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *domain, LF_INFO_t *info,
     int media_id, bool lf_srv);
-void f_domain_close(LF_DOM_t **domain_p);
-void f_conn_close(FAM_DEV_t *d);
+int f_domain_close(LF_DOM_t **domain_p);
+int f_conn_close(FAM_DEV_t *d);
 
 /* TODO: Move me to debug.h */
 #define DEBUG_LF(lvl, fmt, ...) DEBUG_LVL_(lf_verbosity, lvl, fmt, ## __VA_ARGS__)
