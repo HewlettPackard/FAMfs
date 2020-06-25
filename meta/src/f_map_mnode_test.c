@@ -355,8 +355,9 @@ int main (int argc, char *argv[]) {
     rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     if ((lo_info = f_get_layout_info(layout_id)) == NULL) goto err;
-    if (my_node == 0)
+    if (my_node == 0) {
 	printf("\n"); f_print_layouts(); printf("\n");
+    }
 
     t = 3; /* Bring up DB thread */
     meta_init_store(db_opts);
