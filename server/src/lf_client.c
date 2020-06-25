@@ -75,7 +75,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
     pthread_mutexattr_t pattr;
     pthread_condattr_t cattr;
     pid_t cpid;
-    size_t shm_size, len;
+    size_t shm_size;
     uint64_t *mr_prov_keys = NULL, *mr_virt_addrs = NULL;
     int *recvcounts = NULL, *displs = NULL;
     unsigned int srv_cnt, cnt;
@@ -199,16 +199,13 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
     LF_INFO_t *lf_info = pool->lf_info;
     F_IONODE_INFO_t *ioi;
     LFS_EXCG_t *rmk;
-    unsigned int i, j, ionode_count, xchg_off, fam_xchg_off;
-    int sendcount;
+    unsigned int i, j, ionode_count, xchg_off;
 
     if (!NodeIsIOnode(&pool->mynode) ||
 	!(lf_info->mrreg.prov_key || lf_info->mrreg.virt_addr))
 	goto _exit;
 
     /* Prepare MPI_Allgatherv args */
-    len = srv_cnt * sizeof(uint64_t);
-    sendcount = len;
     ionode_count = pool->ionode_count;
     recvcounts = (int *) calloc(ionode_count, sizeof(int));
     displs = (int *) calloc(ionode_count, sizeof(int));
@@ -222,23 +219,22 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
 	displs[i] = ioi->fam_xchg_off;
     }
     rmk = lfs_shm->rmk;
-    fam_xchg_off = xchg_off = pool->ionodes[node->ionode_idx].fam_xchg_off;
+    xchg_off = pool->ionodes[node->ionode_idx].fam_xchg_off;
     for (j = 0; j < srv_cnt; j++, rmk++, xchg_off++) {
 	mr_prov_keys[xchg_off] = rmk->prov_key;
 	mr_virt_addrs[xchg_off] = rmk->virt_addr;
     }
 
     /* Exchange the keys within servers */
-    xchg_off = fam_xchg_off;
     if (lf_info->mrreg.prov_key &&
-	((rc = MPI_Allgatherv(&mr_prov_keys[xchg_off], sendcount, MPI_BYTE,
+	((rc = MPI_Allgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL,
                              mr_prov_keys, recvcounts, displs, MPI_BYTE,
                              pool->ionode_comm)))) {
 	LOG(LOG_ERR, "LF PROV_KEYS MPI_Allgather failed:%d", rc);
         goto _exit;
     }
     if (lf_info->mrreg.virt_addr &&
-	((rc = MPI_Allgatherv(&mr_virt_addrs[xchg_off], sendcount, MPI_BYTE,
+	((rc = MPI_Allgatherv(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL,
                              mr_virt_addrs, recvcounts, displs, MPI_BYTE,
                              pool->ionode_comm)))) {
 	LOG(LOG_ERR, "LF VIRT_ADDRS MPI_Allgather failed:%d", rc);
@@ -262,9 +258,10 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
     ioi = pool->ionodes;
     for (i = 0; i < ionode_count; i++, ioi++) {
 	F_POOL_DEV_t *pdev;
-	unsigned int k, xchg_off = ioi->fam_xchg_off;
+	unsigned int k;
 	uint16_t *pd_idx = pool->info.pdev_indexes;
 
+	xchg_off = ioi->fam_xchg_off;
 	for (j = k = 0; j < pool->info.dev_count && k < ioi->fam_devs; j++, pd_idx++)
 	{
 	    pdev = &pool->devlist[*pd_idx];
