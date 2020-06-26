@@ -253,14 +253,14 @@ int chunk_rma_start(N_STRIPE_t *stripe, int use_cq, int wr)
 	off = chunk_offset + 1ULL * stripe->stripe_in_part * chunk_sz;
 	off += chunk->p_stripe0_off; /* +fdev->offset +fdev->virt_addr */
 
-	DEBUG_LVL(7, "%s: %s stripe:%lu @%jd - %u/%u/%s(@%lu) "
-		  "on device %u len:%u desc:%p off:0x%016lx mr_key:%lu",
+	DEBUG_LVL(7, "%s: %s stripe:%lu @%jd - %u/%u/%s "
+		  "on device %u(@%lu) len:%u desc:%p off:0x%16lx mr_key:%lu",
 		  f_get_pool()->mynode.hostname,
 		  wr?"write":"read", s, chunk_offset,
 		  stripe->extent, stripe->stripe_in_part,
 		  pr_chunk(pr_buf, chunk->data, chunk->parity),
-		  (unsigned long)*tgt_srv_addr,
-		  media_id, len, local_desc, off, fdev->mr_key);
+		  media_id, (unsigned long)*tgt_srv_addr,
+		  len, local_desc, off, fdev->mr_key);
 
 	do {
 	    rc = fi_rma(tx_ep, buf, len, local_desc,

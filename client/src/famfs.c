@@ -1210,7 +1210,7 @@ static int famfs_chunk_free(int fid, unifycr_filemeta_t *meta, int chunk_id,
                   s, lo->info.name, rc);
             return UNIFYCR_FAILURE;
         }
-        DEBUG_LVL(6, "fid:%d commit stripe %lu in layout %s",
+        DEBUG_LVL(6, "fid:%d commit partial stripe %lu in layout %s",
                      fid, s, lo->info.name);
     }
     chunk_meta->flags = 0;
@@ -1571,6 +1571,7 @@ static int f_stripe_write(
             rc = UNIFYCR_FAILURE;
         return rc;
     }
+    chunk_meta->f.written = 1;
 
     /* find the corresponding file attr entry and update attr*/
     STATS_START(start);
@@ -2133,18 +2134,19 @@ static int commit_wrtn_stripes(int fd, F_LAYOUT_t *lo, int count,
 
     STATS_START(start);
 
-    /* commit stripes */
+    /* TODO: commit full stripes */
+    count = 0;
     unifycr_chunkmeta_t *stripe = stripes;
     for (i = 0; i < count; i++, stripe++) {
 	f_stripe_t s = stripe->id;
 
-	if (stripe->f.written == 0)
+	if (stripe->f.written == 0 || stripe->f.committed == 1)
 	    continue;
 
 	ASSERT( stripe->f.in_use == 1 );
 
 	if ((rc = f_ah_commit_stripe(lo, s))) {
-	    ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
+	    ERROR("fd:%d - failed committing stripe %lu in layout %s, error:%d",
 		  fd, s, lo->info.name, rc);
 	    return UNIFYCR_FAILURE;
 	}
