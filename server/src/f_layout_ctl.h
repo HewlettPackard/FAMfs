@@ -51,6 +51,45 @@ int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx);
  */
 int f_set_ionode_ranks(F_POOL_t *pool);
 
+/*
+ * Mark slab recovering
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # to mark
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_mark_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab);
+
+/*
+ * Clear slab recovering, resets slab recovery state
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # to clear
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_clear_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab);
+
+/*
+ * Mark slab recovered, i.e. clear recovery and degraded flags and reset failed extents
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # to mark
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_mark_slab_recovered(F_LAYOUT_t *lo, f_slab_t slab);
+
 
 /* 
  * Slab allocation bitmap manipulation routines 

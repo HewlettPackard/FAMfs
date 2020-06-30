@@ -768,3 +768,265 @@ int f_set_ionode_ranks(F_POOL_t *pool)
     pool->mynode.my_ion = pool->ionodes[hidx%pool->ionode_count].rank;
     return n == pool->ionode_count ? 0 : -EINVAL;
 }
+
+/*
+ * Mark slab recovering
+ *
+ *  Params
+ *	lo	FAMfs layout pointer
+ *	sme	pointer to the slab map entry for that slab
+ *
+ *  Returns
+ *	0	no update, already marked recovering
+ *	1	slab entry have been updated
+ */
+static inline int mark_slab_recovering(F_LAYOUT_t *lo, volatile F_SLABMAP_ENTRY_t *sme)
+{
+	F_LO_PART_t *lp = lo->lp;
+	F_SLAB_ENTRY_t se, old_se;
+	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
+	int retries = 0, retries_max = 5;
+
+	ASSERT(!slab_in_sync(lp, slab));
+
+	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
+	ASSERT(old_se.mapped && old_se.degraded && !old_se.failed);
+	if (old_se.recovery) return 0; // Already set
+	do {
+		se = old_se;
+		se.recovery = 1;
+		se.recovered = 0;
+		se.checksum = 0;
+		se.checksum = f_crc4_sm_fast(&se);
+		if (likely(__atomic_compare_exchange_16(sep, &old_se, se._v128,
+			0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)))
+			break;
+	} while (++retries < retries_max);
+	ASSERT(retries < retries_max);
+
+	return 1;
+}
+
+/*
+ * Mark slab recovering
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # to mark
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_mark_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab)
+{
+	F_LO_PART_t *lp = lo->lp;
+	volatile F_SLABMAP_ENTRY_t *sme;
+
+	ASSERT(slab < lp->slab_count);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	if (!sme) {
+		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
+		return -EINVAL;
+	}	
+
+	/* Skip unmapped slabs */
+	if (!sme->slab_rec.mapped) {
+		LOG(LOG_DBG, "%s[%d]: slab %u not mapped, skipping", lo->info.name, lp->part_num, slab);
+		return -ENOENT;
+	}
+
+	if (mark_slab_recovering(lo, sme) > 0) {
+		LOG(LOG_DBG, "%s[%d]: marked slab %u recovering", lo->info.name, lp->part_num, slab);
+		f_map_mark_dirty(lo->slabmap, slab);
+	}
+	return 0;
+}
+
+/*
+ * Clear slab recovering, resets slab recovery state
+ *
+ *  Params
+ *	lo	FAMfs layout pointer
+ *	sme	pointer to the slab map entry for that slab
+ *
+ *  Returns
+ *	0	no update, already cleared
+ *	1	slab entry have been updated
+ */
+static inline int clear_slab_recovering(F_LAYOUT_t *lo, volatile F_SLABMAP_ENTRY_t *sme)
+{
+	F_LO_PART_t *lp = lo->lp;
+	F_SLAB_ENTRY_t se, old_se;
+	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
+	int retries = 0, retries_max = 5;
+
+	ASSERT(!slab_in_sync(lp, slab));
+
+	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
+	ASSERT(old_se.mapped && old_se.degraded && !old_se.failed);
+	if (!old_se.recovery) return 0; // Already cleared
+	do {
+		se = old_se;
+		se.rc = 0;
+		se.checksum = 0;
+		se.checksum = f_crc4_sm_fast(&se);
+		if (likely(__atomic_compare_exchange_16(sep, &old_se, se._v128,
+			0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)))
+			break;
+	} while (++retries < retries_max);
+	ASSERT(retries < retries_max);
+
+	return 1;
+}
+
+/*
+ * Clear slab recovering, resets slab recovery state
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # to clear
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_clear_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab)
+{
+	F_LO_PART_t *lp = lo->lp;
+	volatile F_SLABMAP_ENTRY_t *sme;
+
+	ASSERT(slab < lp->slab_count);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	if (!sme) {
+		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
+		return -EINVAL;
+	}	
+
+	/* Skip unmapped slabs */
+	if (!sme->slab_rec.mapped) {
+		LOG(LOG_DBG, "%s[%d]: slab %u not mapped, skipping", lo->info.name, lp->part_num, slab);
+		return -ENOENT;
+	}
+
+	if (clear_slab_recovering(lo, sme) > 0) {
+		LOG(LOG_DBG, "%s[%d]: marked slab %u recovering", lo->info.name, lp->part_num, slab);
+		f_map_mark_dirty(lo->slabmap, slab);
+	}
+	return 0;
+}
+
+/*
+ * Mark slab recovered, i.e. clear recovery and degraded flags and reset failed extents
+ *
+ *  Params
+ *	lo	FAMfs layout pointer
+ *	sme	pointer to the slab map entry for that slab
+ *
+ *  Returns
+ *	0	no update, extents and the slab entry already cleared
+ *	1	partial update, only the slab record
+ *	>1	the slab entry and the extent records have been updated
+ */
+static inline int mark_slab_recovered(F_LAYOUT_t *lo, volatile F_SLABMAP_ENTRY_t *sme)
+{
+	F_LO_PART_t *lp = lo->lp;
+	F_SLAB_ENTRY_t se, old_se;
+	F_EXTENT_ENTRY_t ext, old_ext;
+	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
+	int retries = 0, retries_max = 5;
+	int n, rc = 0;
+
+	for (n = 0; n < lo->info.chunks; n++) {
+		if (sme->extent_rec[n].failed) {
+			volatile F_EXTENT_ENTRY_t *extp = &sme->extent_rec[n];
+			old_ext._v64 = __atomic_load_8(&sme->extent_rec[n], __ATOMIC_SEQ_CST);
+			do {
+				ext = old_ext;
+				ext.failed = 1;
+				ext.checksum = 0;
+				ext.checksum = f_crc4_fast((char*)&ext, sizeof(ext));
+				if (likely(__atomic_compare_exchange_8(extp, &old_ext, ext._v64,
+					0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)))
+					break;
+			} while (++retries < retries_max);
+			ASSERT(retries < retries_max);
+			rc++;
+		}
+	}
+
+	retries = 0;
+	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
+	do {
+		se = old_se;
+		se.rc = 0;
+		se.degraded = 0;
+		se.checksum = 0;
+		se.checksum = f_crc4_sm_fast(&se);
+		if (likely(__atomic_compare_exchange_16(sep, &old_se, se._v128,
+			0, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)))
+			break;
+	} while (++retries < retries_max);
+	ASSERT(retries < retries_max);
+	rc++;
+
+	if (!slab_in_sync(lp, slab)) {
+		set_slab_in_sync(lp, slab);
+		lp->sync_count++;
+		atomic_dec(&lp->degraded_slabs);
+	}
+
+	return rc;
+}
+
+/*
+ * Mark slab recovered, i.e. clear recovery and degraded flags and reset failed extents
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	slab		slab # to mark
+ *
+ *  Returns
+ *	0		success
+ *	<0		error
+ */
+int f_mark_slab_recovered(F_LAYOUT_t *lo, f_slab_t slab)
+{
+	F_LO_PART_t *lp = lo->lp;
+	volatile F_SLABMAP_ENTRY_t *sme;
+
+	ASSERT(slab < lp->slab_count);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	if (!sme) {
+		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
+		return -EINVAL;
+	}	
+
+	/* Skip unmapped slabs */
+	if (!sme->slab_rec.mapped) {
+		LOG(LOG_DBG, "%s[%d]: slab %u not mapped, skipping", lo->info.name, lp->part_num, slab);
+		return -EINVAL;
+	}
+
+	if (sme->slab_rec.failed || !sme->slab_rec.degraded) {
+		LOG(LOG_DBG, "%s[%d]: slab %u failed or not degraded, skipping", 
+			lo->info.name, lp->part_num, slab);
+		return -EINVAL;
+	}
+
+	if (!sme->slab_rec.recovery) {
+		LOG(LOG_DBG, "%s[%d]: slab %u not recovering, skipping", 
+			lo->info.name, lp->part_num, slab);
+		return -EINVAL;
+	}
+
+	if (mark_slab_recovered(lo, sme) > 0) {
+		LOG(LOG_DBG, "%s[%d]: marked slab %u recovered", lo->info.name, lp->part_num, slab);
+		f_map_mark_dirty(lo->slabmap, slab);
+	}
+	return 0;
+}
+
