@@ -649,7 +649,6 @@ static void *stoker(void *arg) {
                 // check slab map and update if missing that slab
                 f_slab_t slab = stripe_to_slab(lo, ss.stripes[i]);
                 F_SLABMAP_ENTRY_t *sme;
-                long tmo = 0;
                 for (j = 0; j < keyset.count; j++) {
                     if (keyset.slabs[j] == slab) break;
                 }
@@ -659,9 +658,22 @@ static void *stoker(void *arg) {
                     if (!sme || !sme->slab_rec.mapped) {
                         keyset.slabs[n] = slab;
                         keyset.count = ++n;
-                        printf("added slab %u (s %lu) to update count %d\n", slab, ss.stripes[i], keyset.count);
+                        printf("added slab %u (s %lu) to update count %d\n", 
+				slab, ss.stripes[i], keyset.count);
                     }
                 }
+            }
+            if (keyset.count > 0) {
+                LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, n);
+                if ((rc = f_slabmap_update(lo->slabmap, &keyset)))
+                    LOG(LOG_ERR, "%s: error %d updating global slabmap", lo->info.name, rc);
+                if (log_print_level > 0)
+                    f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+            }
+
+	    /* Stock the queue */
+            for (int i = 0; i < ss.count; i++) {
+                long tmo = 0;
 _retry:
                 if ((rc = f_rbq_push(salq, &ss.stripes[i], tmo)) < 0) {
                     LOG(LOG_ERR, "%s: rbq %s push error: %s", lo->info.name, qname, strerror(rc = errno));
@@ -673,13 +685,6 @@ _retry:
                     tmo += RBQ_TMO_1S;
                     goto _retry;
                 }
-            }
-            if (keyset.count > 0) {
-                LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, n);
-                if ((rc = f_slabmap_update(lo->slabmap, &keyset)))
-                    LOG(LOG_ERR, "%s: error %d updating global slabmap", lo->info.name, rc);
-                if (log_print_level > 0)
-                    f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
             }
         }
             
