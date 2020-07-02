@@ -198,6 +198,11 @@ typedef struct f_pool_ {
     F_POOL_INFO_t	info;		/* front-most pool attributes */
     struct list_head	layouts;	/* pool layouts list */
     struct lf_info_	*lf_info;	/* libfabric info */
+
+    pthread_mutex_t	event_lock;	/* pool event lock */
+    pthread_cond_t	event_cond;	/* condition to signal map events */
+    uint64_t		event;		/* predicate associated with event_cond */
+
     F_MYNODE_t		mynode;		/* structure that represents this node */
     MPI_Comm		ionode_comm;	/* MPI communicator for IO nodes */
 //    MPI_Comm		helper_comm;	/* MPI communicator for Helpers */

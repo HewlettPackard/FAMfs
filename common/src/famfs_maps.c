@@ -460,6 +460,7 @@ static int free_pool(F_POOL_t *p)
 	f_dict_free(p->dict);
 	pthread_spin_destroy(&p->dict_lock);
 	pthread_rwlock_destroy(&p->lock);
+	pthread_cond_destroy(&p->event_cond);
 	free(p);
     }
     return 0;
@@ -494,6 +495,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	free(p);
 	return -ENOMEM;
     }
+    pthread_cond_init(&p->event_cond, NULL); /* PTHREAD_PROCESS_PRIVATE */
+    pthread_mutex_init(&p->event_lock, NULL);
     INIT_LIST_HEAD(&p->layouts);
     pool_info = &p->info;
 
@@ -1167,6 +1170,7 @@ void f_print_layouts(void) {
     }
 }
 
+#if 0
 /* Is 'hostname' in IO nodes list? If NULL, check my node name */
 int f_host_is_ionode(const char *hostname)
 {
@@ -1186,6 +1190,7 @@ int f_host_is_mds(const char *hostname)
     }
     return pool && NodeHasMDS(&pool->mynode);
 }
+#endif
 
 int f_get_lo_stripe_sizes(F_POOL_t *p, size_t **stripe_sz_per_lo) {
     F_LAYOUT_t *lo;

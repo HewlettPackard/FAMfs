@@ -250,7 +250,7 @@ int main(int argc, char *argv[])
 
 	/* Create command queues and start layout threads only on compute nodes */
 	bzero(rplyq, sizeof(rplyq));
-	if (!f_host_is_ionode(NULL) || NodeForceHelper(&pool->mynode)) {
+	if (!NodeForceHelper(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
 
 	    bzero(lo_thrd, sizeof(lo_thrd));
 	    for (int i = 0; i < pool->info.layouts_count; i++) {
@@ -396,13 +396,13 @@ int main(int argc, char *argv[])
 	    goto _err;
 	}
 	LOG(LOG_DBG, "helper threads started");
-/*
+#if 0 /* 1: test helper */
 	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
 	    usleep(500);
 	    if ((rc = f_test_helper(pool)))
 		LOG(LOG_ERR, "error %d in f_test_helper", rc);
 	}
-*/
+#endif
     }
 
     /* Create file for automated testing */

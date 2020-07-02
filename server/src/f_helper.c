@@ -62,7 +62,7 @@ int f_ah_init(F_POOL_t *pool) {
     int i, rc = 0;
 
     // Only for "pure" IONs
-    if (f_host_is_ionode(NULL) && !NodeForceHelper(&pool->mynode)) {
+    if (NodeIsIOnode(&pool->mynode) && !NodeForceHelper(&pool->mynode)) {
 
         // start alloc srv threads
 	i = 0;
@@ -110,6 +110,12 @@ int f_ah_init(F_POOL_t *pool) {
         LOG(LOG_ERR, "helper str commit thread create failed");
         return rc;
     }
+
+    /* wait until layout maps loaded */
+    pthread_mutex_lock(&pool->event_lock);
+    while (pool->event)
+	pthread_cond_wait(&pool->event_cond, &pool->event_lock);
+    pthread_mutex_unlock(&pool->event_lock);
 
     return 0;
 }
@@ -292,7 +298,7 @@ int f_ah_shutdown(F_POOL_t *pool) {
     // make'em all know we are finished
     quit = 1;
 
-    if (f_host_is_ionode(NULL) && !NodeForceHelper(&pool->mynode)) {
+    if (NodeIsIOnode(&pool->mynode) && !NodeForceHelper(&pool->mynode)) {
         // running on "real" ION
         MPI_Request rq[pool->info.layouts_count];
         f_ah_ipc_t qm = {.cmd = F_AH_QUIT};
@@ -458,6 +464,10 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
         return rc;
     }
 
+    /* FIXME: Add tag to MDHIM remote msg and move two lines... */
+    F_POOL_t *pool = lo->pool;
+    pthread_mutex_lock(&pool->event_lock);
+
     cbdata.lo = lo;
     cbdata.err = 0;
     cbdata.loaded = 0;
@@ -469,12 +479,22 @@ static int read_global_slabmap(F_LAYOUT_t *lo)
         return rc ? rc : cbdata.err;
     }
 
+    /* signal pool event: layout maps are loaded */
+    /* FIXME: ...here. */
+//    F_POOL_t *pool = lo->pool;
+//    pthread_mutex_lock(&pool->event_lock);
+    if (pool->event)
+	rc = (int) pool->event--;
+    pthread_mutex_unlock(&pool->event_lock);
+    if (rc)
+	pthread_cond_signal(&pool->event_cond);
+
     LOG(LOG_DBG, "%s: %u slabs loaded: %d errors", lo->info.name, cbdata.loaded, cbdata.err);
 
     if (log_print_level > 0)
         f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 
-    return rc;
+    return 0;
 }
 
 /*
@@ -600,7 +620,7 @@ static void *stoker(void *arg) {
                 arq->flag = 0;
                 arq->lid = lo->info.conf_id;
                 // send request to remote allocator
-                rc = MPI_Send(arq, sizeof(*arq), MPI_BYTE, dst, 
+                rc = MPI_Send(arq, sizeof(*arq), MPI_BYTE, dst,
                               F_TAG_BASE + lo->info.conf_id, MPI_COMM_WORLD);
                 if (rc != MPI_SUCCESS) {
                     LOG(LOG_ERR, "MPI_Send returnd error %d", rc);
@@ -608,31 +628,34 @@ static void *stoker(void *arg) {
                 }
 
                 // wait for response
-                rc = MPI_Recv(arq, F_AH_MSG_SZ(arq->cnt), MPI_BYTE, dst, 
+                rc = MPI_Recv(arq, F_AH_MSG_SZ(arq->cnt), MPI_BYTE, dst,
                               F_TAG_BASE + lo->info.conf_id, MPI_COMM_WORLD, &sts);
                 if (rc != MPI_SUCCESS) {
                     LOG(LOG_ERR, "MPI_Recv returnd error %d", rc);
                     continue;
                 }
                 MPI_Get_count(&sts, MPI_BYTE, &msg_sz);
-                LOG(LOG_DBG, "cln AT rsp from %d: msg[%d].op=%d got %d stripes for %d", 
-                    sts.MPI_SOURCE, msg_sz, arq->cmd, arq->cnt, arq->lid);
+                LOG(LOG_DBG, "LO:%d cln AT rsp from %d: msg[%d].op=%d asked %d stripes",
+                    arq->lid, sts.MPI_SOURCE, msg_sz, arq->cmd, arq->cnt);
                 if (arq->cmd == F_AH_QUIT) {
                     LOG(LOG_INFO, "cln AT: received QUIT command");
                     quit = 1;
                     break;
                 }
                 if (arq->cmd != F_AH_GETS) {
-                    LOG(LOG_ERR, "cln AT: wrong response received: %d, LO %d", arq->cmd, arq->lid);
+                    LOG(LOG_ERR, "LO:%d cln AT: wrong response received: %d",
+                         arq->lid, arq->cmd);
                     continue;
                 }
                 ASSERT(arq->lid + F_TAG_BASE == sts.MPI_TAG);
                 if (arq->flag) {
-                    LOG(LOG_ERR, "remote allocator %d returnd error %d", dst, arq->flag);
+                    LOG(LOG_ERR, "LO:%d remote allocator %d returnd error %d",
+                        arq->lid, dst, arq->flag);
                     if (arq->flag == -ENOSPC) backoff += 10*RBQ_TMO_1S;
                     continue;
                 } else if (arq->cnt != ss.count) {
-                    LOG(LOG_WARN, "remote allocator returnd %d stripes, %d requested", arq->cnt, ss.count);
+                    LOG(LOG_WARN, "LO:%d remote allocator returnd %d stripes, %d requested",
+                        arq->lid, arq->cnt, ss.count);
                     ss.count = arq->cnt;
                     // adjust back off delay to reduce pressure on the allocator
                     backoff += backoff ? : RBQ_TMO_1S;

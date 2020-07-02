@@ -271,10 +271,16 @@ int f_start_allocator_threads(void)
 	list_for_each_entry(lo, &pool->layouts, list) {
 		rc = start_allocator_thread(lo);
 		if (rc) {
-			LOG(LOG_ERR, "%s[%d]: error %s starting allocator", 
+			LOG(LOG_ERR, "%s[%d]: error %s starting allocator",
 				lo->info.name, lo->lp->part_num, strerror(-rc));
 		}
 	}
+
+	/* wait until layout maps loaded */
+	pthread_mutex_lock(&pool->event_lock);
+	while (pool->event)
+		pthread_cond_wait(&pool->event_cond, &pool->event_lock);
+	pthread_mutex_unlock(&pool->event_lock);
 
 //	test_get_stripe();
 
@@ -368,6 +374,8 @@ int f_prepare_layouts_maps(F_POOL_t *pool, int global)
 		lo->info.name, msg_partid, rc, global?"global ":"");
 	    goto _err;
 	}
+
+	pool->event++; /* need per-layout map load event */
     }
     return rc;
 
@@ -966,7 +974,16 @@ static int read_maps(F_LO_PART_t *lp)
 			return rc;
 		}
 	}
-	return rc;
+
+	/* signal pool vent: layout maps are loaded */
+	pthread_mutex_lock(&pool->event_lock);
+	if (pool->event)
+		rc = (int) pool->event--;
+	pthread_mutex_unlock(&pool->event_lock);
+	if (rc)
+		pthread_cond_signal(&pool->event_cond);
+
+	return 0;
 }
 
 static void flush_maps(F_LO_PART_t *lp)
