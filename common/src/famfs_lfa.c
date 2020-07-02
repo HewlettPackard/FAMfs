@@ -1,4 +1,5 @@
 #include <sched.h>
+#include <unistd.h>
 #include "famfs_lfa.h"
 #include "famfs_bitops.h"
 
@@ -98,6 +99,7 @@ F_LFA_DESC_t *f_lfa_mydom(struct fi_info *fi, char *my_name, char *my_svc) {
 
     fi_freeinfo(hints);
     lfa->fi = fo; 
+    lfa->do_clean = 1; // mark for clean up
     return lfa;
 }
 
@@ -340,6 +342,9 @@ int f_lfa_attach(F_LFA_DESC_t *lfa, uint64_t key, F_LFA_SLIST_t *lst, int lcnt, 
 _clean:
     if (abd->ops_mr)
         fi_close(&abd->ops_mr->fid);
+
+    if (abd->in_mr)
+        fi_close(&abd->in_mr->fid);
 
     if(abd->tadr)
         free(abd->tadr);
@@ -922,27 +927,102 @@ int f_lfa_gbcf(F_LFA_ABD_t *abd, off_t goff, int bnum) {
 
 /*
    Detach from remote atomic blob
-    If free != 0, free all memory buffers 
+    If fm != 0, free all memory buffers 
 */
-int f_lfa_detach(F_LFA_ABD_t *abd, int free) {
-    if (!abd && free) return 1;
+int f_lfa_detach(F_LFA_ABD_t *abd, int fm) {
+    int rc = 0;
+
+    if (!abd) 
+        return -EINVAL;
+   
+    LOCK_LFA(abd);
+
+    F_LFA_ABD_t **prev = &abd->lfa->blobs;
+    for (F_LFA_ABD_t *cur = abd->lfa->blobs; cur && cur != abd; prev = &cur->next, cur = cur->next);
+    *prev = abd->next;
+
+    UNLOCK_LFA(abd);
+
+    ON_FIERR(rc = fi_close(&abd->ops_mr->fid), return rc, "ops mr close");
+    ON_FIERR(rc = fi_close(&abd->in_mr->fid), return rc, "ibuf mr close");
+
+    for (int i = 0; i < abd->nsrv; i++) {
+        free(abd->slist[i].name);
+        free(abd->slist[i].service);
+    }
+
+    free(abd->tadr);
+    free(abd->slist);
+    if (fm)
+        free(abd->in_buf);
+    free(abd);
+
     return 0;
 }
 
 /*
    Deregister local buffers and free all lf resources
-    If free != 0, free all memory buffers 
+    If fm != 0, free all memory buffers 
 */
-int f_lfa_deregister(F_LFA_ABD_t *abd, int free) {
-    if (!abd && free) return 1;
+int f_lfa_deregister(F_LFA_ABD_t *abd, int fm) {
+    int rc = 0;
+
+    if (!abd) 
+        return -EINVAL;
+   
+    LOCK_LFA(abd);
+
+    F_LFA_ABD_t **prev = &abd->lfa->blobs;
+    for (F_LFA_ABD_t *cur = abd->lfa->blobs; cur && cur != abd; prev = &cur->next, cur = cur->next);
+    *prev = abd->next;
+
+    UNLOCK_LFA(abd);
+
+    ON_FIERR(rc = fi_close(&abd->srv_mr->fid), return rc, "srv mr close");
+
+    if (fm)
+        free(abd->srv_buf);
+    free(abd);
+
     return 0;
 }
+
+#define FI_CLOSE(obj)\
+do {\
+    if (!(rc = fi_close(&((obj)->fid))))\
+        break;\
+    sleep(1);\
+    if (!rt--)\
+        break;\
+} while(rc == -EAGAIN);\
+if (rc) {\
+    LOG_FIERR(rc, "closing "#obj);\
+    return rc;\
+}
+
 
 /*
    Close evrything lf-related, free memory 
 */
 int f_lfa_destroy(F_LFA_DESC_t *lfa) {
-    if (!lfa) return 1;
+    int rc = 0, rt = 60;
+    if (!lfa) 
+        return -EINVAL;
+    if (lfa->blobs) {
+        LOG_FIERR(-EINVAL, "LFA blobs chain not empty");
+        return -EINVAL;
+    }
+    FI_CLOSE(lfa->ep);
+    FI_CLOSE(lfa->cq);
+
+    if (lfa->do_clean) {
+        FI_CLOSE(lfa->av);
+        FI_CLOSE(lfa->dom);
+        FI_CLOSE(lfa->fab);
+    }
+    fi_freeinfo(lfa->fi);
+    free(lfa);
+
     return 0;
 }
 

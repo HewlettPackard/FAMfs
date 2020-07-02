@@ -96,6 +96,7 @@ typedef struct f_lfa_desc_ {
     struct fid_av           *av;            // AV 
     struct fid_cq           *cq;            // Completion Queue for atomic ops
     struct fi_cq_tagged_entry cqe;          // CQ entry
+    int                     do_clean;       // cleanup flag: close domain and AV if set
 
 } F_LFA_DESC_t;
 
