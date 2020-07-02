@@ -241,7 +241,8 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 
 	MPI_Barrier(md->mdhim_client_comm);
 
-
+	mlog(MDHIM_CLIENT_NOTE, "MDHIM init: logging level=0x%x/%x, wthreads=%d",
+	     opts->debug_level, MLOG_EMERG, md->db_opts->num_wthreads);
 	return md;
 }
 

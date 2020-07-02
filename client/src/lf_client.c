@@ -5,6 +5,8 @@
 #include <string.h>
 #include <malloc.h>
 
+#include "unifycr-internal.h" /* client-specific DEBUG,DEBUG_LVL macros; UNIFYCR_SUCCESS */
+
 #include "famfs_env.h"
 #include "famfs_error.h"
 #include "famfs_global.h"
@@ -16,7 +18,6 @@
 
 #include "lf_client.h"
 #include "fam_stripe.h"
-#include "unifycr-internal.h" /* DEBUG() macro; UNIFYCR_SUCCESS */
 #include "famfs.h"
 
 
@@ -83,11 +84,13 @@ static int load_slab_maps(F_POOL_t *pool)
 	lo = container_of(l, struct f_layout_, list);
 	info = &lo->info;
 
+#if 0
         printf("  %uD+%uP chunk:%u, stripes:%u per slab, total %u slab(s)\n",
 	    info->data_chunks, (info->chunks - info->data_chunks),
 	    info->chunk_sz, info->slab_stripes, info->slab_count);
 	printf("  This layout has %u device(s), including %u missing.\n",
 	    info->devnum, info->misdevnum);
+#endif
 
 	/* Init map struct */
 	sm_entry_sz = F_SLABMAP_ENTRY_SZ(info->chunks);

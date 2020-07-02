@@ -85,6 +85,7 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
     if (se == NULL) {
 	ERROR("%s: failed to get Slab map record for %lu in slab %u",
 	      lo->info.name, s, stripe->extent);
+	f_print_sm(stderr, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 	return -1;
     }
     /* TODO: Move the assert below to EXTRA_CHECK */
@@ -93,6 +94,7 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
     if (se->mapped == 0) {
 	ERROR("%s: failed to get Slab map record:%lu - not mapped!",
 	      lo->info.name, stripe_0);
+	f_print_sm(stderr, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
 	return -1;
     }
 

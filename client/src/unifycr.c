@@ -73,7 +73,7 @@
 #include <sys/shm.h>
 #include <sched.h>
 
-#include "unifycr-internal.h"
+#include "unifycr-internal.h" /* DEBUG_LVL macro */
 
 /* UNIFYCR_DECL() */
 #include "unifycr-stdio.h"
@@ -482,7 +482,7 @@ inline int unifycr_intercept_fd(int *fd)
          * so intercept the call and shift the fd */
         int newfd = oldfd - unifycr_fd_limit;
         *fd = newfd;
-        DEBUG("Changing fd from exposed %d to internal %d\n", oldfd, newfd);
+        DEBUG_LVL(7, "Changing fd from exposed %d to internal %d\n", oldfd, newfd);
         return 1;
     }
 }
@@ -523,8 +523,8 @@ int unifycr_get_fid_from_norm_path(const char *path)
     while (i < unifycr_max_files) {
         if (unifycr_filelist[i].in_use &&
             strcmp((void *)&unifycr_filelist[i].filename, path) == 0) {
-            DEBUG("File found: unifycr_filelist[%d].filename = %s\n",
-                  i, (char *)&unifycr_filelist[i].filename);
+            DEBUG_LVL(6, "File found: unifycr_filelist[%d].filename = %s\n",
+                      i, (char *)&unifycr_filelist[i].filename);
             return i;
         }
         i++;
@@ -771,10 +771,10 @@ int unifycr_fid_alloc()
     unifycr_stack_lock();
     int fid = unifycr_stack_pop(free_fid_stack);
     unifycr_stack_unlock();
-    DEBUG("unifycr_stack_pop() gave %d\n", fid);
+    DEBUG_LVL(7, "unifycr_stack_pop() gave %d\n", fid);
     if (fid < 0) {
         /* need to create a new file, but we can't */
-        DEBUG("unifycr_stack_pop() failed (%d)\n", fid);
+        DEBUG_LVL(3, "unifycr_stack_pop() failed (%d)\n", fid);
         return -1;
     }
     return fid;

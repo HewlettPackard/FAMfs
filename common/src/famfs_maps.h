@@ -335,8 +335,8 @@ struct f_pool_ *f_get_pool(void);
 struct f_layout_ *f_get_layout(int layout_id);
 struct f_layout_ *f_get_layout_by_name(const char *moniker);
 struct f_layout_info_ *f_get_layout_info(int layout_id);
-int f_host_is_ionode(const char *hostname);
-int f_host_is_mds(const char *hostname);
+//int f_host_is_ionode(const char *hostname);
+//int f_host_is_mds(const char *hostname);
 void f_print_layouts(void);
 int f_get_lo_stripe_sizes(struct f_pool_ *p, size_t **stripe_sz_per_lo);
 
@@ -374,7 +374,10 @@ int f_db_bput(unsigned long *buf, int map_id, void **keys, size_t size,
 int f_db_bdel(int map_id, void **keys, size_t size);
 
 /* TODO: Move me to debug.h */
+/* If not defined yet, use verbosity level from pool struct */
+#ifndef DEBUG_LVL
 #define DEBUG_LVL(lvl, fmt, ...) DEBUG_LVL_(f_get_pool()->verbose, lvl, fmt, ## __VA_ARGS__)
+#endif
 
 
 /* Validate structure's size and/or alignment */

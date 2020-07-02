@@ -513,13 +513,13 @@ static int famfs_fid_open(const char *path, int flags,
 
     /* check whether this file already exists */
     int fid = unifycr_get_fid_from_norm_path(norm_path);
-    DEBUG("unifycr_get_fid_from_path() gave %d\n", fid);
+    DEBUG_LVL(7, "unifycr_get_fid_from_path() gave %d\n", fid);
 
     int gfid = -1, rc = 0;
     if (fid < 0) {
         rc = unifycr_get_global_fid(norm_path, &gfid);
         if (rc != UNIFYCR_SUCCESS) {
-            DEBUG("Failed to generate fid for file %s\n", norm_path);
+            DEBUG_LVL(2, "Failed to generate fid for file %s\n", norm_path);
             errno = unifycr_err_map_to_errno(UNIFYCR_ERR_IO);
             return -1;
         }
@@ -638,7 +638,7 @@ static int famfs_fid_open(const char *path, int flags,
     /* set in_use flag and file pointer */
     *outfid = fid;
     *outpos = pos;
-    DEBUG("FAMFS_open generated fd %d for file %s\n", fid, norm_path);
+    DEBUG_LVL(6, "FAMFS_open generated fd %d for file %s\n", fid, norm_path);
 
     /* don't conflict with active system fds that range from 0 - (fd_limit) */
     return UNIFYCR_SUCCESS;
@@ -1362,9 +1362,10 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
     known_mrs.regs[i].len = len;
 
     for_each_pool_dev(pool, pdev) {
+	/* return -EINVAL if any error */
 	ON_FI_ERR_RET(fi_mr_reg(pool->mynode.domain->domain, buf, len, FI_READ | FI_WRITE,
 				0, my_key, 0, &known_mrs.regs[i].mreg[_i], NULL),
-		      "cln fi_mr_reg failed");
+		      "cln fi_mr_reg key:%lu buf:%p failed", my_key, buf);
         known_mrs.regs[i].desc[_i] = fi_mr_desc(known_mrs.regs[i].mreg[_i]);
     }
 

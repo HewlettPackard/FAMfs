@@ -153,6 +153,7 @@ void f_print_sm(FILE *f, F_MAP_t *sm, uint16_t chunks, uint32_t slab_stripes)
 	fwrite(line, len, 1, f);
     free(line);
     fprintf(f, "*** MAP END ***\n");
+    fflush(f);
 }
 
 #define DEC_31BIT_LEN 10
