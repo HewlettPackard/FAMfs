@@ -339,7 +339,7 @@ int main(int argc, char *argv[])
     }
 
     if (pool->verbose > 0) {
-	printf("unifycrd is running\n");
+	printf("%s: FAMFS server is running\n", pool->mynode.hostname);
 
 	/* set MDHIM debug level */
 	int mlog_priority = pool->verbose;
@@ -475,6 +475,7 @@ int main(int argc, char *argv[])
     return rc;
 
 _err:
+    err("famfs error:%d", rc);
     unifycr_exit();
 
     LOG(LOG_FATAL, "Exiting with error:%d - %s", rc, ULFS_str_errno(rc));
