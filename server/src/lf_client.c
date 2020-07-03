@@ -123,6 +123,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
 
 	/* On each ionode */
 	if (NodeIsIOnode(node)) {
+	    pool->ionode_comm = 0; /* child proccess should never use MPI! */
 
 	    /* Initialize libfabric target on node 'i' */
 	    rc = lf_servers_init(pool);
@@ -252,6 +253,7 @@ int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx)
         ((rc = mpi_broadcast_arr64(mr_virt_addrs, cnt,
 				   pool->zero_ion_rank)))) {
         LOG(LOG_ERR, "LF VIRT_ADDRS MPI broadcast failed:%d", rc);
+        goto _exit;
     }
 
     /* Re-assign remote key/address to pool devices */
