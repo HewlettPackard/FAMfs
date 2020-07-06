@@ -614,11 +614,11 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
     }
 
-    if (rank == 0) {
-	if (to_unmount)
+    if (to_unmount) {
 	    if ((rc = unifycr_unmount()))
 		fprintf(stderr, "error on FS unmount: %d\n", rc);
-	if (shutdown)
+    }
+    if (shutdown && rank == 0) {
 	    if ((rc = unifycr_shutdown()))
 		fprintf(stderr, "error on FS shutdown: %d\n", rc);
     }
