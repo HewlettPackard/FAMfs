@@ -156,6 +156,29 @@ static F_IONODE_INFO_t *get_ionode_info(F_POOL_t *p, const char *hostname)
     return &p->ionodes[idx];
 }
 
+static char *get_myhostname(void) {
+    char *mpienvname = getenv("MPIR_CVAR_CH3_INTERFACE_HOSTNAME");
+    char *hostname = f_get_myhostname();
+
+    /* take host name from mpirun command if possible */
+    if (mpienvname) {
+	const char *p1, *p2;
+
+	mpienvname = strdup(mpienvname);
+	for (p1 = mpienvname, p2 = hostname ; *p1 && *p1 == *p2 ; p1++, p2++)
+	    ;
+	/* validate mpi host name or IP */
+	if (!*p2 /* host name */ ||
+	    (p1 == mpienvname && find_my_node(&mpienvname, 1, NULL) == 0) /* host IP */)
+	{
+	    free(hostname);
+	    return mpienvname;
+	}
+	free(mpienvname);
+    }
+    return hostname;
+}
+
 /* Set ionode_id and HasMDS, IsIOnode flags in pool struct */
 static void set_mynode_info(F_POOL_t *p)
 {
@@ -179,7 +202,7 @@ static void set_mynode_info(F_POOL_t *p)
     } else {
 	ClearNodeIsIOnode(&p->mynode);
 	ClearNodeHasMDS(&p->mynode);
-	p->mynode.hostname = f_get_myhostname();
+	p->mynode.hostname = get_myhostname();
     }
 }
 
@@ -618,7 +641,7 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (p->ionodes[0].hostname == NULL) {
 	if (p->ionode_count > 1) goto _noarg;
 	if (!IOnodeForceHelper(p->ionodes)) goto _noarg;
-	p->ionodes[0].hostname = f_get_myhostname();
+	p->ionodes[0].hostname = get_myhostname();
     }
     for (u = 0; u < p->ionode_count; u++)
 	p->ionodelist[u] = strdup(p->ionodes[u].hostname);
