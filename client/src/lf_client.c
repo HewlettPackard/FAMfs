@@ -59,10 +59,14 @@ static void exit_lo_maps(F_POOL_t *pool)
 	F_LAYOUT_t *lo;
 
 	lo = container_of(l, struct f_layout_, list);
-	if (lo->slabmap)
+	if (lo->slabmap) {
 	    f_map_exit(lo->slabmap);
-	if (lo->file_ids)
+	    lo->slabmap = NULL;
+	}
+	if (lo->file_ids) {
 	    f_map_exit(lo->file_ids);
+	    lo->file_ids = NULL;
+	}
     }
 }
 

@@ -1811,7 +1811,7 @@ static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
             off_t md_b = md[j].k.offset;
             off_t md_e = md[j].k.offset + md[j].v.len;
 
-	    DEBUG_LVL(6, "match md[%d] lo %d fid=%d sid=%lu len=%lu @%lu,"
+	    DEBUG_LVL(7, "match md[%d] lo %d fid=%d sid=%lu len=%lu @%lu,"
 			 " rq[%d] fid=%d len=%lu @%lu, ttl:%zu",
 		      j, md[j].k.pk.loid, md[j].k.pk.fid,
 		      md[j].v.stripe, md[j].v.len, md[j].k.offset,
@@ -1841,7 +1841,8 @@ static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
             if (fam_len) {
 		fam_len = min(fam_len, ttl);
 
-                DEBUG_LVL(5, "rq read %lu[%lu]@%lu, sid=%lu",
+                DEBUG_LVL(6, "lo:%d fid:%d rq read %lu[%lu]@%lu, stripe %lu",
+			  lid, rq[i].fid,
 			  fam_len, bufp - rq[i].buf, fam_off, md[j].v.stripe);
 
                 if ((rc = lf_read(lo, bufp, fam_len, fam_off, md[j].v.stripe)))
