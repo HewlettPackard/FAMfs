@@ -16,6 +16,8 @@ struct ec_worker_data {
 	struct f_stripe_set	ss;	/* stripe set, ss->stripes released by the worker thread */
 };
 
+typedef struct ec_worker_data F_EDR_WD_t; 
+
 
 typedef enum {
     F_EDR_EMPTY,    // Use for preallocated RQs
@@ -26,7 +28,7 @@ typedef enum {
 } F_EDR_STATE_t;
 
 struct f_edr_;
-typedef int (*f_edr_cb_)(struct f_edr_ *rq);
+typedef int (*F_EDR_CB_t)(struct f_edr_ *rq);
 
 //
 // Encode-Decode Request
@@ -34,9 +36,9 @@ typedef int (*f_edr_cb_)(struct f_edr_ *rq);
 // lf_read/write will provide *Rq in cq context field
 typedef struct f_edr_ {
     struct list_head        list;       // Request list links
-    struct ec_worker_data   wdata;      // Worker data: stripe set and lyaout
+    F_EDR_WD_t              wdata;      // Worker data: stripe set and lyaout
     F_EDR_STATE_t           state;      // Request state
-    f_edr_cb_               completion; // Operation end callback
+    F_EDR_CB_t              completion; // Operation end callback
     ssize_t                 bsize;      // Buffer size
     char                    **bvec;     // Buffer vector of this request
     int                     nvec;       // Number of buffers in the vector
@@ -59,6 +61,22 @@ typedef struct f_edr_opq_ {
     struct list_head    queue;
     int                 size;
 } F_EDR_OPQ_t;
+
+/*
+ * Submnit Encode/Decode/Recover(/Verify) Request
+ *
+ * Parmas
+ *      lo              layout pointer
+ *      ss              stripe set to encode/recover
+ *      fvec            failed chunks bitmap, if == 0: encode parities according to layout
+ *                          if == <all 1s>: verify stripes
+ *      done_cb         callaback function to call when state becomes DONE (or NULL if not needed)A
+ *
+ *  Returns
+ *      0               success
+ *      <>0             error              
+*/      
+int f_edr_sumbit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb);
 
 
 /*

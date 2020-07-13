@@ -219,3 +219,20 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	return rc;
 }
 
+/*
+ * Submnit Encode/Decode/Recover(/Verify) Request
+ *
+ * Parmas
+ *      lo              layout pointer
+ *      ss              stripe set to encode/recover
+ *      fvec            failed chunks bitmap, if == 0: encode parities according to layout
+ *                          if == <all 1s>: verify stripes
+ *      done_cb         callaback function to call when state becomes DONE (or NULL if not needed)A
+ *
+ *  Returns
+ *      0               success
+ *      <>0             error              
+*/      
+int f_edr_sumbit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb) {
+    return 0;
+}
