@@ -49,7 +49,7 @@ For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PA
 ## Configure FAMfs
 Configure and build the package:
 ```
-   make distclean; ./autogen.sh && ./configure --prefix=$TEST_DIR --disable-debug --with-gotcha=$TEST_DIR --enable-shared=famfs,libisal && echo Ok
+   make distclean; ./autogen.sh && ./configure --prefix=$TEST_DIR --disable-debug --with-gotcha=$TEST_DIR && echo Ok
    make clean; make -j install && echo Ok
 ```
 
