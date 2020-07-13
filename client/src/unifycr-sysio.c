@@ -730,11 +730,11 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
         INIT_STATS(LF_WR_STATS_FN, lf_wr_stat);
         INIT_STATS(FD_SYN_STATS_FN, fd_syn_stat);
         INIT_STATS(FD_EXT_STATS_FN, fd_ext_stat);
+        INIT_STATS(FD_WR_STATS_FN, fd_wr_stat);
         INIT_STATS(WR_MAP_STATS_FN, wr_map_stat);
         INIT_STATS(WR_UPD_STATS_FN, wr_upd_stat);
         INIT_STATS(WR_CMT_STATS_FN, wr_cmt_stat);
-        INIT_STATS(FD_WR_STATS_FN, fd_wr_stat);
-        INIT_STATS(MD_FG_STATS_FN, md_lg_stat);
+        INIT_STATS(MD_LG_STATS_FN, md_lg_stat);
         INIT_STATS(MD_FP_STATS_FN, md_fp_stat);
         INIT_STATS(MD_FG_STATS_FN, md_fg_stat);
         INIT_STATS(MD_AP_STATS_FN, md_ap_stat);
@@ -1935,11 +1935,11 @@ int UNIFYCR_WRAP(close)(int fd)
         DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
         DUMP_STATS(FD_SYN_STATS_FN, fd_syn_stat);
         DUMP_STATS(FD_EXT_STATS_FN, fd_ext_stat);
+        DUMP_STATS(FD_WR_STATS_FN, fd_wr_stat);
         DUMP_STATS(WR_MAP_STATS_FN, wr_map_stat);
         DUMP_STATS(WR_UPD_STATS_FN, wr_upd_stat);
         DUMP_STATS(WR_CMT_STATS_FN, wr_cmt_stat);
-        DUMP_STATS(FD_WR_STATS_FN, fd_wr_stat);
-        DUMP_STATS(MD_FG_STATS_FN, md_lg_stat);
+        DUMP_STATS(MD_LG_STATS_FN, md_lg_stat);
         DUMP_STATS(MD_FP_STATS_FN, md_fp_stat);
         DUMP_STATS(MD_FG_STATS_FN, md_fg_stat);
         DUMP_STATS(MD_AP_STATS_FN, md_ap_stat);
