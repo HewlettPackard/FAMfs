@@ -546,7 +546,7 @@ static int f_lfa_bandfl(F_LFA_ABD_t *abd, int trg_ix, off_t off, long val, long 
 
 int f_lfa_gborfl(F_LFA_ABD_t *abd, off_t goff, uint64_t val) {
     int ix, rc;
-    long old;
+    long old = 0;
     ssize_t off = get_local_off(abd, goff, &ix);
     if (off < 0)
         return -EINVAL;
@@ -559,7 +559,7 @@ int f_lfa_gborfl(F_LFA_ABD_t *abd, off_t goff, uint64_t val) {
 
 int f_lfa_gbandfl(F_LFA_ABD_t *abd, off_t goff, uint64_t val) {
     int ix, rc;
-    long old;
+    long old = 0;
     ssize_t off = get_local_off(abd, goff, &ix);
     if (off < 0)
         return -EINVAL;
