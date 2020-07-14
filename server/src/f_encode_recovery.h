@@ -28,7 +28,7 @@ typedef enum {
 } F_EDR_STATE_t;
 
 struct f_edr_;
-typedef int (*F_EDR_CB_t)(struct f_edr_ *rq);
+typedef int (*F_EDR_CB_t)(struct f_edr_ *rq, void *ctx);
 
 //
 // Encode-Decode Request
@@ -56,10 +56,12 @@ typedef struct f_edr_ {
 // New(Rq) or Get(Rq from PreQ) -> SubmitQ -> thread removes it from Sq and starts operation -> 
 //   Rq completes -> CB -> CompletedQ -> another thread removes it from Cq -> CB -> etc.
 typedef struct f_edr_opq_ {
-    pthread_mutex_t     lock;
-    pthread_cond_t      cond;
-    struct list_head    queue;
-    int                 size;
+    pthread_mutex_t     wlock;          // wake signal lock
+    pthread_cond_t      wake;           // wake signal
+    pthread_spinlock_t  qlock;          // queue ops spinlock 
+    struct list_head    queue;          // queue head
+    int                 size;           // queue current size
+    int                 quit;           // quit flag
 } F_EDR_OPQ_t;
 
 /*
@@ -76,7 +78,7 @@ typedef struct f_edr_opq_ {
  *      0               success
  *      <>0             error              
 */      
-int f_edr_sumbit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb);
+int f_edr_sumbit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb, void *ctx);
 
 
 /*

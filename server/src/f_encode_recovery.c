@@ -233,6 +233,6 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
  *      0               success
  *      <>0             error              
 */      
-int f_edr_sumbit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb) {
+int f_edr_sumbit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb, void *ctx) {
     return 0;
 }
