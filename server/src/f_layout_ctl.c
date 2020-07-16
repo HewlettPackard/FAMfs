@@ -82,7 +82,7 @@ static inline int mark_extent_fail(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, unsig
 		if (sme->extent_rec[n].failed)
 			failed_chunks++;
 	}
-	failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
+	//failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
 		
 	retries = 0;
 	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
@@ -130,7 +130,7 @@ static int fail_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int pool_index)
 	ASSERT(pdev && pdev->sha);
 	ASSERT(slab < lp->slab_count);
 	pthread_rwlock_wrlock(&lp->lock);
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
 		rc = -EINVAL; goto _ret;
@@ -164,7 +164,7 @@ static int fail_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int pool_index)
 		}
 		LOG(LOG_DBG, "%s[%d]: marked ext %d (dev %d) in slab %u failed, count:%lu", 
 			lo->info.name, lp->part_num, n, pool_index, slab, pdev->sha->failed_extents);
-		f_map_mark_dirty(lo->slabmap, slab);
+		f_map_mark_dirty(lp->slabmap, slab);
 	}
 _ret:
 	pthread_rwlock_unlock(&lp->lock);
@@ -188,7 +188,7 @@ static int fail_slab_extents(F_LAYOUT_t *lo, int pool_index)
 	F_ITER_t *sm_it;
 	int rc = 0, updated = 0;
 	
-	sm_it = f_map_get_iter(lo->slabmap, sm_slab_mapped, 0);
+	sm_it = f_map_get_iter(lp->slabmap, sm_slab_mapped, 0);
 	for_each_iter(sm_it) {
 		f_slab_t slab = sm_it->entry;
 
@@ -209,8 +209,8 @@ static int fail_slab_extents(F_LAYOUT_t *lo, int pool_index)
 	/* Wake up the allocator thread */
 	if (updated) {
 		if (log_print_level > 0)
-			f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
-		rc = f_map_flush(lo->slabmap);
+			f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		rc = f_map_flush(lp->slabmap);
 		if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing slab map", 
 			lo->info.name, lp->part_num, rc);
 		atomic_inc(&lp->slabmap_version);
@@ -301,7 +301,7 @@ static inline int replace_extent(F_LAYOUT_t *lo, F_EXTENT_ENTRY_t *pext,
 		if (sme->extent_rec[n].failed)
 			failed_chunks++;
 	}
-	failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
+//	failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
 		
 	retries = 0;
 	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
@@ -558,7 +558,7 @@ static int replace_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int tgt_idx, int s
 	ASSERT(slab < lp->slab_count);
 
 	pthread_rwlock_wrlock(&lp->lock);
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
 		rc = -EINVAL; goto _ret;
@@ -601,7 +601,7 @@ static int replace_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int tgt_idx, int s
 
 	LOG(LOG_DBG, "%s[%d]: replaced %d extents in slab %u", 
 		lo->info.name, lp->part_num, replaced, slab); 
-	f_map_mark_dirty(lo->slabmap, slab);
+	f_map_mark_dirty(lp->slabmap, slab);
 _ret:
 	pthread_rwlock_unlock(&lp->lock);
 	return rc;
@@ -625,9 +625,15 @@ static int replace_slab_extents(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
 	F_ITER_t *sm_it;
 	int rc = 0, updated = 0;
 	
-	sm_it = f_map_get_iter(lo->slabmap, sm_slab_mapped, 0);
+	sm_it = f_map_get_iter(lp->slabmap, sm_slab_mapped, 0);
 	for_each_iter(sm_it) {
 		f_slab_t slab = sm_it->entry;
+
+		/* Skip unused slabs, the allocator will release them */
+		if (!slab_used(lp, slab_to_stripe0(lo, slab))) {
+			LOG(LOG_DBG, "%s[%d]: slab %u not used", lo->info.name, lp->part_num, slab);
+			continue;
+		}
 
 		rc = replace_slab_extent(lo, slab, tgt_idx, src_idx);
 		if (rc) {
@@ -646,8 +652,8 @@ static int replace_slab_extents(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
 	/* Flush slabmap and wake up the allocator thread */
 	if (updated) {
 		if (log_print_level > 0)
-			f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
-		rc = f_map_flush(lo->slabmap);
+			f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
+		rc = f_map_flush(lp->slabmap);
 		if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing slab map", 
 			lo->info.name, lp->part_num, rc);
 		atomic_inc(&lp->slabmap_version);
@@ -679,7 +685,7 @@ int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
 	F_LO_PART_t *lp = lo->lp;
 	int rc;
 
-	LOG(LOG_DBG2, "%s[%d]: replacing slab extents on dev %d from dev %d", 
+	LOG(LOG_DBG2, "%s[%d]: replacing slab extents from dev %d by extents from dev %d", 
 		lo->info.name, lp->part_num, tgt_idx, src_idx);
 
 	/* Validate parmeters */
@@ -825,7 +831,7 @@ int f_mark_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab)
 	volatile F_SLABMAP_ENTRY_t *sme;
 
 	ASSERT(slab < lp->slab_count);
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
 		return -EINVAL;
@@ -839,8 +845,10 @@ int f_mark_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab)
 
 	if (mark_slab_recovering(lo, sme) > 0) {
 		LOG(LOG_DBG, "%s[%d]: marked slab %u recovering", lo->info.name, lp->part_num, slab);
-		f_map_mark_dirty(lo->slabmap, slab);
+		f_map_mark_dirty(lp->slabmap, slab);
 	}
+
+	f_map_mark_dirty(lp->slabmap, slab);
 	return 0;
 }
 
@@ -899,7 +907,7 @@ int f_clear_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab)
 	volatile F_SLABMAP_ENTRY_t *sme;
 
 	ASSERT(slab < lp->slab_count);
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
 		return -EINVAL;
@@ -913,8 +921,10 @@ int f_clear_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab)
 
 	if (clear_slab_recovering(lo, sme) > 0) {
 		LOG(LOG_DBG, "%s[%d]: marked slab %u recovering", lo->info.name, lp->part_num, slab);
-		f_map_mark_dirty(lo->slabmap, slab);
+		f_map_mark_dirty(lp->slabmap, slab);
 	}
+
+	f_map_mark_dirty(lp->slabmap, slab);
 	return 0;
 }
 
@@ -999,7 +1009,7 @@ int f_mark_slab_recovered(F_LAYOUT_t *lo, f_slab_t slab)
 	volatile F_SLABMAP_ENTRY_t *sme;
 
 	ASSERT(slab < lp->slab_count);
-	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
 	if (!sme) {
 		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
 		return -EINVAL;
@@ -1025,8 +1035,11 @@ int f_mark_slab_recovered(F_LAYOUT_t *lo, f_slab_t slab)
 
 	if (mark_slab_recovered(lo, sme) > 0) {
 		LOG(LOG_DBG, "%s[%d]: marked slab %u recovered", lo->info.name, lp->part_num, slab);
-		f_map_mark_dirty(lo->slabmap, slab);
+		f_map_mark_dirty(lp->slabmap, slab);
 	}
+
+	f_map_mark_dirty(lp->slabmap, slab);
+
 	return 0;
 }
 

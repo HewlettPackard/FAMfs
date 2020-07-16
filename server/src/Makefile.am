@@ -39,7 +39,9 @@ unifycrd_SOURCES = arraylist.c \
 	           f_helper.h \
         	   f_helper.c \
 		   f_encode_recovery.h \
-		   f_encode_recovery.c
+		   f_encode_recovery.c \
+		   f_recovery.h \
+		   f_recovery.c
 
 # Preprocessor options for inlined code from common/src/famfs_bbitops.h
 unifycrd_CPPFLAGS = -mbmi2 -fms-extensions \

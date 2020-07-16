@@ -25,6 +25,7 @@
 #include "f_layout_ctl.h"
 #include "f_encode_recovery.h"
 #include "f_allocator.h"
+#include "f_recovery.h"
 
 
 static void *f_allocator_thread(void *ctx);
@@ -155,7 +156,7 @@ _ret:
 }
 
 
-int start_allocator_thread(F_LAYOUT_t *lo)
+static int start_allocator_thread(F_LAYOUT_t *lo)
 {
 	F_LO_PART_t *lp = lo->lp;
 	int rc = 0;
@@ -178,7 +179,7 @@ int start_allocator_thread(F_LAYOUT_t *lo)
 	return rc;
 }
 
-int stop_allocator_thread(F_LAYOUT_t *lo)
+static int stop_allocator_thread(F_LAYOUT_t *lo)
 {
 	F_LO_PART_t *lp = lo->lp;
 	void *res;
@@ -2765,6 +2766,7 @@ static unsigned int get_layout_slab_count(F_LAYOUT_t *lo)
 static void check_layout_devices(F_LAYOUT_t *lo)
 {
 	F_POOL_t *pool = lo->pool;
+	F_LO_PART_t *lp = lo->lp;
 	F_POOL_DEV_t *pdev;
 	F_POOLDEV_INDEX_t *pdi;
 	int i;
@@ -2779,6 +2781,8 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 //			f_replace(lo, pdi->pool_index, 2);
 		}
 	}
+	if (atomic_read(&lp->degraded_slabs)) 
+		f_start_recovery_thread(lo);
 }
 
 /*
@@ -3133,6 +3137,10 @@ static void *f_allocator_thread(void *ctx)
 		pthread_cond_signal(&lp->cond_ready);
 		if (log_print_level > 0) 
 			printf("%s[%d]: allocator thread is ready\n", lo->info.name, lp->part_num);
+
+		/* Wake-up recovery thread if needed */
+		if (LayoutRecover(lo))
+			pthread_cond_signal(&lp->r_thread_cond);
 	}
 
 	while (!LayoutQuit(lo) && !rc) {
@@ -3188,6 +3196,9 @@ _ret:
 		pthread_mutex_unlock(&lp->lock_ready);
 		pthread_cond_signal(&lp->cond_ready);
 	}
+
+	/* Stop recovery thread if it is running */
+	if (lp->rctx) f_stop_recovery_thread(lo);
 
 	lp->thread_res = rc;
 	return (void *)&lp->thread_res;

@@ -189,6 +189,12 @@ typedef struct f_layout_partition_ {
     pthread_mutex_t	stripes_wait_lock;/* stripes wait condition mutex */
     pthread_cond_t	stripes_wait_cond;/* stripes wait condition */
 
+    pthread_t		r_thread;	/* partition recovery thread struct */
+    pthread_mutex_t	r_thread_lock;	/* recovery thread wait condition mutex */
+    pthread_cond_t	r_thread_cond;	/* recovery thread wait condition */
+    int			r_thread_res;	/* recovery thread exit code */
+    void		*rctx;		/* recovery context */
+
     uint32_t		slab0;		/* first slab in this partition */
     uint32_t		slab_count;	/* total number of slabs in this partition */
     uint64_t		stripe0;	/* first stripe in this partition */
