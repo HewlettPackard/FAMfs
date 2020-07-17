@@ -82,7 +82,7 @@ static inline int mark_extent_fail(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, unsig
 		if (sme->extent_rec[n].failed)
 			failed_chunks++;
 	}
-	//failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
+	failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
 		
 	retries = 0;
 	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
@@ -162,8 +162,9 @@ static int fail_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int pool_index)
 			LOG(LOG_WARN, "%s[%d]: error updating device %d failed exts",
 				lo->info.name, lp->part_num, pool_index);		
 		}
-		LOG(LOG_DBG, "%s[%d]: marked ext %d (dev %d) in slab %u failed, count:%lu", 
-			lo->info.name, lp->part_num, n, pool_index, slab, pdev->sha->failed_extents);
+		LOG(LOG_DBG, "%s[%d]: marked ext %d (dev %d %s) in slab %u failed, count:%lu", 
+			lo->info.name, lp->part_num, n, pool_index, 
+			DevFailed(pdev->sha) ? "F" : "", slab, pdev->sha->failed_extents);
 		f_map_mark_dirty(lp->slabmap, slab);
 	}
 _ret:
@@ -301,7 +302,7 @@ static inline int replace_extent(F_LAYOUT_t *lo, F_EXTENT_ENTRY_t *pext,
 		if (sme->extent_rec[n].failed)
 			failed_chunks++;
 	}
-//	failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
+	failed = failed_chunks > (lo->info.chunks - lo->info.data_chunks);
 		
 	retries = 0;
 	old_se._v128 = __atomic_load_16(&sme->slab_rec, __ATOMIC_SEQ_CST);
@@ -530,8 +531,9 @@ static int do_replace_extent(F_LAYOUT_t *lo, f_slab_t slab, F_SLABMAP_ENTRY_t *s
 	if (old_ext.mapped)
 		f_release_dev_extent(lp, &old_ext);
 
-	LOG(LOG_DBG, "%s[%d]: replaced ext %d (dev %d) in slab %u, count:%lu", 
-		lo->info.name, lp->part_num, n, ext.media_id, slab, pdev->sha->failed_extents);
+	LOG(LOG_DBG, "%s[%d]: replaced ext %d (dev %d %s) in slab %u, count:%lu", 
+		lo->info.name, lp->part_num, n, ext.media_id,
+		DevFailed(pdev->sha) ? "F" : "", slab, pdev->sha->failed_extents);
 	return 0;
 }
 

@@ -91,6 +91,23 @@ struct ss_data {
 	struct f_stripe_set 	ss;
 };
 
+/* Encode batch completed callback */
+int encode_batch_done_cb(F_EDR_t *rq, void *ctx)
+{
+	F_EDR_WD_t *wdata = &rq->wdata;
+	F_LO_PART_t *lp;
+	F_LAYOUT_t *lo;
+
+	ASSERT(wdata);
+	lp = wdata->lp;
+	lo = lp->layout;
+
+	LOG(LOG_DBG, "%s[%d]: encode rq completed with status %d", lo->info.name, lp->part_num, rq->status);
+
+//	ss_free(wdata->ss);
+	return 0;
+}
+
 /*
  * Submit a set of committed stripes for EC encoding.i Called from f_commit_stripe().
  * All stripe #s n the set are expected to be global and to belong to the local allocator partition.
@@ -148,7 +165,8 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	for (i = 0; i < ss->count; i++) {
 		struct ss_data *ssd = NULL;
 		f_stripe_t stripe;
-		struct ec_worker_data *ecw_data;
+//		struct ec_worker_data *ecw_data;
+		struct f_stripe_set *bss;
 		f_slab_t slab;
 		unsigned long devmap[F_DEVMAP_SIZE];
 
@@ -174,17 +192,29 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 		if (ssd->ss.count < batch_size) continue;
 
 		/* Exceeded the batch size, submit what we have so far */
-		ecw_data = calloc(1, sizeof(struct ec_worker_data));
+/*		ecw_data = calloc(1, sizeof(struct ec_worker_data));
 		ASSERT(ecw_data);
 		ecw_data->lp = lp;
 		ecw_data->ss.count = ssd->ss.count;
 		ecw_data->ss.stripes = calloc(batch_size, sizeof(f_stripe_t));
 		memcpy(ecw_data->ss.stripes, ssd->ss.stripes, ssd->ss.count * sizeof(f_stripe_t));
+*/
+		bss = ss_alloc(batch_size);
+		ASSERT(bss);
+		bss->count = ssd->ss.count;
+		memcpy(bss->stripes, ssd->ss.stripes, ssd->ss.count * sizeof(f_stripe_t));		
 
 		LOG(LOG_DBG2, "%s[%d]: submitting %d stripes for EC encoding (bucket 0x%lx)", 
-			lo->info.name, lp->part_num, ecw_data->ss.count, *(ssd->devmap));
+			lo->info.name, lp->part_num, bss->count, *(ssd->devmap));
 
-		rc += f_wpool_add_work(lp->wpool, F_WT_ENCODE, F_WP_NORMAL, ecw_data);
+//		rc += f_wpool_add_work(lp->wpool, F_WT_ENCODE, F_WP_NORMAL, ecw_data);
+		rc = f_edr_sumbit(lo, bss, NULL, encode_batch_done_cb, NULL);
+		if (rc) {
+			LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for encode, rc=%d",
+				lo->info.name, lp->part_num, rc);
+			ss_free(bss);
+			break;
+		}
 
 		/* Reset the busket's stripe set */
 		memset(ssd->ss.stripes, 0, ssd->ss.count * sizeof(f_stripe_t));
@@ -193,22 +223,28 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 
 	/* Now submit the rest of stripe sets for encoding */
 	for (j = 0; j < n; j++) {
-		struct ec_worker_data *ecw_data;
 		struct ss_data *ssd = &buckets[j];
+		struct f_stripe_set *bss;
 
 		/* Skip empty buckets */
 		if (!ssd->ss.count) continue;
 
-		ecw_data = calloc(1, sizeof(struct ec_worker_data));
-		ASSERT(ecw_data);
-		ecw_data->lp = lp;
-		ecw_data->ss.count = ssd->ss.count;
-		ecw_data->ss.stripes = ssd->ss.stripes;
+		bss = ss_alloc(batch_size);
+		ASSERT(bss);
+		bss->count = ssd->ss.count;
+		memcpy(bss->stripes, ssd->ss.stripes, ssd->ss.count * sizeof(f_stripe_t));		
 
 		LOG(LOG_DBG2, "%s[%d]: submitting %d stripes for EC encoding (bucket 0x%lx", 
-			lo->info.name, lp->part_num, ecw_data->ss.count, *(ssd->devmap));
+			lo->info.name, lp->part_num, bss->count, *(ssd->devmap));
 
-		rc += f_wpool_add_work(lp->wpool, F_WT_ENCODE, F_WP_NORMAL, ecw_data);
+		rc = f_edr_sumbit(lo, bss, NULL, encode_batch_done_cb, NULL);
+		if (rc) {
+			LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for encode, rc=%d",
+				lo->info.name, lp->part_num, rc);
+			ss_free(bss);
+			break;
+		}
+
 	}
 	
 /*

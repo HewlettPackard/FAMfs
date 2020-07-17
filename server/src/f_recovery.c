@@ -22,6 +22,7 @@
 #include "f_layout.h"
 #include "f_layout_ctl.h"
 #include "f_recovery.h"
+#include "f_encode_recovery.h"
 
 
 /* Virtual map iterator function, filters degraded slabs */
@@ -35,24 +36,40 @@ static F_COND_t sm_slab_degraded = {
 	.vf_get = &sm_is_slab_degraded,
 };
 
+/* Recovery batch completed callback */
+int recovery_batch_done_cb(F_EDR_t *rq, void *ctx)
+{
+	F_RECOVERY_t *rec = (F_RECOVERY_t *)ctx;
+	F_EDR_WD_t *wdata = &rq->wdata;
+	F_LO_PART_t *lp;
+	F_LAYOUT_t *lo;
+
+	ASSERT(rec && wdata);
+	lp = wdata->lp;
+	lo = lp->layout;
+
+	LOG(LOG_DBG, "%s[%d]: recovery rq completed with status %d", lo->info.name, lp->part_num, rq->status);
+	
+//	ss_free(wdata->ss);
+	atomic_dec(&rec->in_progress);
+	pthread_cond_signal(&rec->r_batch_done);
+	return 0;
+}
+
 static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_RECOVERY_t *rec = (F_RECOVERY_t *)lp->rctx;
 	f_stripe_t s0 = slab_to_stripe0(lo, slab);
 	int batch_size = 16; //FIXME, adjust for chunk size
-	struct f_stripe_set *ss = calloc(1, sizeof(struct f_stripe_set));
+	struct f_stripe_set *ss = ss_alloc(batch_size);
 	int i, n, rc = 0;
 
 	if (!ss) return -ENOMEM;
-	ss->stripes = calloc(batch_size, sizeof(f_stripe_t));
-	if (ss->stripes) return -ENOMEM;
-	memset(ss->stripes, 0, ss->count * sizeof(f_stripe_t));
-	ss->count = 0;
 
 	LOG(LOG_INFO, "%s[%d]: recovering slab %u", lo->info.name, lp->part_num, slab);
 	rc = f_mark_slab_recovering(lo, slab);
-	if (rc) { free(ss->stripes); free(ss); return rc; }
+	if (rc) { ss_free(ss); return rc; }
 
 	for (n = 0, i = 0; i < lo->info.slab_stripes; i++) {
 		f_stripe_t s = s0 + i;
@@ -73,35 +90,42 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 		/* Stop recovery if layout is exitiing */
 		if  (!LayoutActive(lo) || LayoutQuit(lo) || !LayoutRecover(lo)) break;
 
-		//submit the stripe set here
+		rc = f_edr_sumbit(lo, ss, bmap, recovery_batch_done_cb, rec);
+		if (rc) {	
+			LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for recovery, rc=%d", 
+				lo->info.name, lp->part_num, rc);
+			ss_free(ss);
+			break;
+		}
 		atomic_inc(&rec->in_progress);
 
 		/* Allocate the next stripe set */
-	 	ss = calloc(1, sizeof(struct f_stripe_set));
+	 	ss = ss_alloc(batch_size);
 		if (!ss) return -ENOMEM;
-		ss->stripes = calloc(batch_size, sizeof(f_stripe_t));
-		if (ss->stripes) return -ENOMEM;
-		memset(ss->stripes, 0, ss->count * sizeof(f_stripe_t));
-		ss->count = 0;
 	}
 
 	/* Submit remaining strpes if any */
 	if (n) {
-		//submit the stripe set here
-		atomic_inc(&rec->in_progress);
+		rc = f_edr_sumbit(lo, ss, bmap, recovery_batch_done_cb, rec);
+		if (rc)	{
+			LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for recovery, rc=%d", 
+				lo->info.name, lp->part_num, rc);
+			ss_free(ss);
+		} else {
+			atomic_inc(&rec->in_progress);
+		}
 	}
 
 	/* Wait for the slab recovery completon */
 	pthread_mutex_lock(&rec->r_done_lock);
 	while (atomic_read(&rec->in_progress)) {
 		/* Stop recovery if layout is exitiing */
-		if  (!LayoutActive(lo) || LayoutQuit(lo) || !LayoutRecover(lo)) break;
+//		if  (rc || !LayoutActive(lo) || LayoutQuit(lo) || !LayoutRecover(lo)) break;
 		pthread_cond_wait(&rec->r_batch_done, &rec->r_done_lock);
-		atomic_dec(&rec->in_progress);
 	}
 	pthread_mutex_unlock(&rec->r_done_lock);
 
-	if (!atomic_read(&rec->in_progress)) {
+	if (!rc && !atomic_read(&rec->in_progress)) {
 		rc = f_mark_slab_recovered(lo, slab);
 		rec->done_slabs++;
 
@@ -203,6 +227,10 @@ static int do_recovery(F_LO_PART_t *lp)
 			LOG(LOG_ERR, "%s[%d]: slab %u recovry error %d", lo->info.name, lp->part_num, slab, rc);
 			break;
 		}
+
+		rc = f_map_flush(lp->slabmap);
+		if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing slab map", lo->info.name, lp->part_num, rc);
+		atomic_inc(&lp->slabmap_version);
 
 	}
 	LOG(LOG_INFO, "%s[%d]: recovered: %lu of %lu, errors: %lu, skipped: %lu", 

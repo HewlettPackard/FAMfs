@@ -702,16 +702,19 @@ static inline int apply_counters_to_devices(F_LO_PART_t *lp, struct cb_data *cbd
 
 		if (!pdev) continue;
 
-		LOG(LOG_DBG, "%s[%d]: dev %d: used/failed exts: %lu/%u/%lu extmap: 0x%lx",
-			lo->info.name, lp->part_num, i+dev0, p_sha->extents_used, 
-			pdi->prt_extents_used, p_sha->failed_extents, p_sha->extent_bmap[0]);
-
 		ASSERT(pdev->sha);
 		sha_off = (void *)pdev->sha - pool->pds_lfa->global;
 		ASSERT(sha_off < pool->pds_lfa->global_size);
 
 		used = bitmap_weight(p_sha->extent_bmap, bmap_size*BITS_PER_BYTE);
 		ASSERT(used == p_sha->extents_used);
+
+		/* Restore pdev flags */
+		memcpy(&p_sha->io, &pdev->sha->io, sizeof(pdev->sha->io));
+
+		LOG(LOG_DBG, "%s[%d]: dev %d%s: used/failed exts: %lu/%u/%lu extmap: 0x%lx",
+			lo->info.name, lp->part_num, i+dev0, DevFailed(p_sha) ? "(F)" : "", 
+			p_sha->extents_used, pdi->prt_extents_used, p_sha->failed_extents, p_sha->extent_bmap[0]);
 
 		if (p_sha->extent_bmap) {
 			for (n = 0; n < BITS_TO_LONGS(bmap_size); n++) {
@@ -738,6 +741,15 @@ static inline int apply_counters_to_devices(F_LO_PART_t *lp, struct cb_data *cbd
 			rc = f_lfa_gaafl(pool->pds_lfa->global_abd, off, p_sha->failed_extents);
 			if (rc) {
 				LOG(LOG_WARN, "%s[%d]: error %d updating device %d failed extents", 
+					lo->info.name, lp->part_num, rc, i);
+				r = rc;
+			}
+		}
+		if (p_sha->io.flags) {
+			off = sha_off + offsetof(F_PDEV_SHA_t, io);
+			rc = f_lfa_gborfl(pool->pds_lfa->global_abd, off, p_sha->io.flags);
+			if (rc) {
+				LOG(LOG_WARN, "%s[%d]: error %d updating device %d flags",
 					lo->info.name, lp->part_num, rc, i);
 				r = rc;
 			}
@@ -1055,8 +1067,10 @@ static int cmp_pdi_by_usage(const void *a, const void *b)
 {
 	F_POOLDEV_INDEX_t *pdia = (F_POOLDEV_INDEX_t *)a;
 	F_POOLDEV_INDEX_t *pdib = (F_POOLDEV_INDEX_t *)b;
-	unsigned int ua = pdia->pool_index == F_PDI_NONE ? UINT_MAX : pdia->prt_extents_used;
-	unsigned int ub = pdib->pool_index == F_PDI_NONE ? UINT_MAX : pdib->prt_extents_used;
+	unsigned int ua = pdia->pool_index == F_PDI_NONE || PDIFailed(pdia->sha) || 
+		PDIMissing(pdia->sha) || PDIDisabled(pdia->sha) ? UINT_MAX : pdia->prt_extents_used;
+	unsigned int ub = pdib->pool_index == F_PDI_NONE || PDIFailed(pdib->sha) ||
+		PDIMissing(pdib->sha) || PDIDisabled(pdib->sha) ? UINT_MAX : pdib->prt_extents_used;
 	if (ua > ub)
 		return 1;
 	else if (ua == ub)
@@ -1083,6 +1097,29 @@ static int pdi_matrix_init(F_PDI_MATRIX_t *mx)
 	}
 
 	return 0;
+}
+
+static void pdi_matrix_print(F_PDI_MATRIX_t *mx)
+{
+//	F_POOL_t *pool = f_get_pool();
+	int i, j;
+
+	ASSERT(mx->addr);
+
+	printf("*** Allocation Matrix ***\n");
+	for (i = 0; i < mx->rows; i++) {
+		F_POOLDEV_INDEX_t *pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[i];
+		printf("%d: ", i);
+		for (j = 0; j < mx->cols; j++, pdi++) {
+			printf("dev#%d[%d:%d](%u:%s%s%s%s) ", pdi->pool_index, pdi->idx_ag, 
+				pdi->idx_dev, pdi->prt_extents_used,
+				!PDIFailed(pdi->sha) && !PDIMissing(pdi->sha) && !PDIDisabled(pdi->sha) ? "H" : "",
+				PDIFailed(pdi->sha) ? "F" : "",
+				PDIMissing(pdi->sha) ? "M" : "",
+				PDIDisabled(pdi->sha) ? "D" : "");
+		}
+		printf("\n");
+	}
 }
 
 static F_POOLDEV_INDEX_t *pdi_matrix_lookup(F_PDI_MATRIX_t *mx, size_t row, size_t col)
@@ -1153,7 +1190,7 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 	F_POOL_t *pool = f_get_pool();
 	F_POOLDEV_INDEX_t *pdi, *pdi0;
 	F_POOLDEV_INDEX_t *col0_list = (F_POOLDEV_INDEX_t *) alloca(sizeof(F_POOLDEV_INDEX_t)*mx->rows);
-	unsigned int i;
+	unsigned int i, n;
 
 	if (!col0_list) return -ENOMEM;
 	if (*size > mx->rows) return -EINVAL;
@@ -1161,7 +1198,7 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 	memset(col0_list, 0, sizeof(F_POOLDEV_INDEX_t)*mx->rows);
 
 	/* Generate a PDI list from the matrix 0 column */
-	for (i = 0, pdi0 = col0_list; i < mx->rows && i < *size; i++) {
+	for (i = 0, n = 0, pdi0 = col0_list; i < mx->rows && i < *size; i++) {
 		F_POOL_DEV_t *pdev;
 		pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[i];
 		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
@@ -1169,9 +1206,10 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 			continue;
 		memcpy(pdi0, pdi, sizeof(F_POOLDEV_INDEX_t));
 		pdi0++;
+		n++;
 	}
 
-	*size = i;
+	*size = n;
 
 	/* Sort the resulting list by usage and copy the required number of PDIs to the output list */
 	qsort(col0_list, *size, sizeof(F_POOLDEV_INDEX_t), cmp_pdi_by_usage);
@@ -1250,6 +1288,7 @@ static int create_lp_dev_matrix(F_LO_PART_t *lp)
 		lp->dmx->gen_devlist = pdi_matrix_gen_devlist_across_AGs;
 		lp->dmx->gen_devlist_for_replace = pdi_matrix_gen_devlist_for_replace;
 		lp->dmx->release = pdi_matrix_release;
+		lp->dmx->print   = pdi_matrix_print;
 		rc = lp->dmx->init(lp->dmx);
 	}
 	if (rc) {
@@ -1264,9 +1303,11 @@ static int create_lp_dev_matrix(F_LO_PART_t *lp)
 		mpdi = lp->dmx->lookup(lp->dmx, pdi->idx_ag, pdi->idx_dev);
 		mpdi->pool_index = pdi->pool_index;
 		mpdi->prt_extents_used = pdi->prt_extents_used;
+		mpdi->sha = pdi->sha;
 	}
 
 	lp->dmx->sort(lp->dmx);
+	if (log_print_level > LOG_DBG) lp->dmx->print(lp->dmx);
 	return 0;
 }
 
@@ -1340,8 +1381,9 @@ int f_alloc_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 	/* Re-sort the matrix row we picked the device from */ 
 	lp->dmx->resort(lp->dmx, pdev->idx_ag);
 
-	LOG(LOG_DBG2, "%s[%d]: extent %u allocated on %d, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
-		extent, ext->media_id, pdev->sha->extents_used, pdi->prt_extents_used, pdev->extent_count);
+	LOG(LOG_DBG2, "%s[%d]: extent %u allocated on %d%s, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
+		extent, ext->media_id, DevFailed(pdev->sha) ? "(F)" : "",
+		pdev->sha->extents_used, pdi->prt_extents_used, pdev->extent_count);
 	return extent;
 }
 
@@ -1405,8 +1447,9 @@ void f_release_dev_extent(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *ext)
 	/* Re-sort the matrix row we picked the device from */ 
 	lp->dmx->resort(lp->dmx, pdev->idx_ag);
 
-	LOG(LOG_DBG2, "%s[%d]: extent %u released on %d, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
-		ext->extent, ext->media_id, pdev->sha->extents_used, pdi->prt_extents_used, pdev->extent_count);
+	LOG(LOG_DBG2, "%s[%d]: extent %u released on %d%s, used/total %lu/%u/%u", lo->info.name, lp->part_num, 
+		ext->extent, ext->media_id, DevFailed(pdev->sha) ? "(F)" : "", 
+		pdev->sha->extents_used, pdi->prt_extents_used, pdev->extent_count);
 }
 
 /* 
@@ -1536,6 +1579,7 @@ static unsigned int alloc_slab_extents(F_LO_PART_t *lp, F_SLABMAP_ENTRY_t *sme)
 			lo->info.name, lp->part_num, slab, rc);
 		return 0;
 	}
+
 	if (devnum < lo->info.chunks) {
 		n = devnum;
 		LOG(LOG_DBG, "%s[%d]: slab %u: not enough devices available: %d of %d", 
@@ -1552,6 +1596,7 @@ _ret:
 	pthread_rwlock_unlock(&pool->lock);
 	free(sorted_devlist);
 //	print_sheetmap_entry(lo, sme);
+//	lp->dmx->print(lp->dmx);
 
 	return n;
 }
@@ -2785,6 +2830,26 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 		f_start_recovery_thread(lo);
 }
 
+static inline void print_layout_devices(F_LAYOUT_t *lo)
+{
+	F_POOL_t *pool = lo->pool;
+	F_POOL_DEV_t *pdev;
+	F_POOLDEV_INDEX_t *pdi;
+	int i;
+
+	printf("%s layout devices:\n",  lo->info.name); 
+	for (i = 0; i < lo->devlist_sz; i++) {
+		pdi = &lo->devlist[i];
+		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
+		if (pdev) {
+			printf("%s: dev#%d media id:%d AG:%d %s%s%s\n",  
+				lo->info.name, i, pdev->pool_index, pdev->idx_ag,
+				DevFailed(pdev->sha) ? "F" : "",
+				DevMissing(pdev->sha) ? "M" : "",
+				DevDisabled(pdev->sha) ? "D" : "");
+		}
+	}
+}
 /*
  * Release the layout partition structure.
  */
@@ -3135,9 +3200,10 @@ static void *f_allocator_thread(void *ctx)
 		SetLayoutActive(lo);
 		pthread_mutex_unlock(&lp->lock_ready);
 		pthread_cond_signal(&lp->cond_ready);
-		if (log_print_level > 0) 
+		if (log_print_level > 0) { 
 			printf("%s[%d]: allocator thread is ready\n", lo->info.name, lp->part_num);
-
+			print_layout_devices(lo);
+		}
 		/* Wake-up recovery thread if needed */
 		if (LayoutRecover(lo))
 			pthread_cond_signal(&lp->r_thread_cond);

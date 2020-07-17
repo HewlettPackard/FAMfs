@@ -970,6 +970,7 @@ static int cfg_load_layout(unifycr_cfg_t *c, int idx)
 	    /* Allocate the device index shareable atomics */
 	    pdi->sha = (F_PDI_SHA_t *) calloc(sizeof(F_PDI_SHA_t), 1);
 	    if (!pdi->sha) goto _nomem;
+	    pdi->sha->io.flags = pdev->sha->io.flags;
 	}
     }
 

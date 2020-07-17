@@ -130,7 +130,21 @@ typedef struct f_pdi_sha_ {
     FI_UINT32_t __attribute__ ((aligned(4))) \
 			extents_used;
     FI_UINT32_t		failed_extents;
+    struct {				/* Using struct to be able to BITOPS() */
+	FI_UINT64_t	flags;		/* pool device index flags, */
+    } io;
 } F_PDI_SHA_t;
+
+/* Flag specs for f_pdi_sha_ */
+enum pdi_flags {
+    _PDI_FAILED,	/* device failed */
+    _PDI_DISABLED,	/* device disabled (for example, being replaced) */
+    _PDI_MISSING,	/* device is missing from the pool */
+};
+BITOPS(PDI, Failed,     f_pdi_sha_, _PDI_FAILED)
+BITOPS(PDI, Disabled,   f_pdi_sha_, _PDI_DISABLED)
+BITOPS(PDI, Missing,    f_pdi_sha_, _PDI_MISSING)
+
 
 typedef struct f_pooldev_index_ {
     uint32_t		pool_index;
@@ -157,6 +171,7 @@ typedef int (*mx_gen_devlist_fn) (struct f_pdi_matrix_ *mx,
 typedef int (*mx_gen_devlist_for_replace_fn) (struct f_pdi_matrix_ *mx, 
 	F_POOLDEV_INDEX_t *devlist, unsigned int *size, struct f_slabmap_entry_ *sme);
 typedef void (*mx_release_fn) (struct f_pdi_matrix_ *mx);
+typedef void (*mx_print_fn) (struct f_pdi_matrix_ *mx);
 
 typedef struct f_pdi_matrix_ {
     struct f_layout_partition_		*lp;
@@ -172,6 +187,7 @@ typedef struct f_pdi_matrix_ {
     mx_gen_devlist_fn			gen_devlist;
     mx_gen_devlist_for_replace_fn	gen_devlist_for_replace;
     mx_release_fn			release;
+    mx_print_fn				print;
 } F_PDI_MATRIX_t;
 
 /* Partition info */

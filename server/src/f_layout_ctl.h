@@ -222,4 +222,19 @@ static inline bool ag_used_in_slab(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, int p
 	return false;
 }
 
+static inline struct f_stripe_set *ss_alloc(size_t size)
+{
+	struct f_stripe_set *ss = calloc(1, sizeof(struct f_stripe_set));
+	if (!ss) return NULL;
+	ss->stripes = calloc(size, sizeof(f_stripe_t));
+	if (ss->stripes) return NULL;
+	return ss;
+}
+
+static inline void ss_free(struct f_stripe_set *ss)
+{
+	if (ss && ss->stripes) free(ss->stripes);
+	if (ss) free(ss);
+}
+
 #endif
