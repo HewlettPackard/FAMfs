@@ -54,6 +54,6 @@ unifycrd_LDADD = $(top_builddir)/userspace-rcu/src/liburcu.la \
                  $(top_builddir)/common/src/libfamfs_common.la \
 		 $(top_builddir)/common/src/libfamfs_meta.la \
                  $(LEVELDB_LIBS) \
-		 -lurcu-qsbr -lurcu-cds
+		 -lurcu-qsbr -lurcu-cds -latomic
 
 CLEANFILES = $(bin_PROGRAMS)

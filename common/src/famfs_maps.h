@@ -171,7 +171,7 @@ typedef struct f_claim_packed__ {
 	unsigned short		_hhv[4];	/* for 16-bit cmpxchg */
 	unsigned char		_hhhv[8];	/* for 8-bit cmpxchg */
     };
-} __attribute__((packed)) F_CLAIM_PACKED_t;
+} __attribute__((packed, aligned(8))) F_CLAIM_PACKED_t;
 
 #define F_CV_BYTE_N	BBITS_PER_BYTE	/* number of CV entries per byte */
 
@@ -202,7 +202,7 @@ typedef struct f_pu_val_ {
 	};
 	F_CLAIM_PACKED_t	cv_packed;
     };
-} __attribute__((packed)) F_PU_VAL_t;
+} __attribute__((packed, aligned(8))) F_PU_VAL_t;
 
 /* The Dictionary structure for pool device header; it could be mapped
  * to both F_POOL_LABEL_t and F_DICT_t where pdict_ref is the device uuid and

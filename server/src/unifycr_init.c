@@ -90,7 +90,7 @@ f_rbq_t *admq;
 volatile int exit_flag = 0;
 
 static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
-    int i, n = 0;
+    int i, rc, n = 0;
     char *vec;
 
     if (!(vec = malloc(wsize))) {
@@ -100,9 +100,13 @@ static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
     memset(vec, 0, wsize);
     MPI_Barrier(MPI_COMM_WORLD);
     vec[rank] = (char) is_member;
-    ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
-             vec, 1, MPI_BYTE, MPI_COMM_WORLD),
-            "MPI_Allgather");
+    rc = MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
+                       vec, 1, MPI_BYTE, MPI_COMM_WORLD);
+    if (rc) {
+        LOG(LOG_ERR, "MPI_Allgather error %d", rc);
+        return 0;
+    }
+
     for (i = 0; i < wsize; i++) {
         if (vec[i] < 0) {
             free(vec);

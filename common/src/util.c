@@ -193,7 +193,8 @@ int find_my_node(char* const* nodelist, int node_cnt, char **hostname_p) {
 	if (idx < 0) {
 		struct ifaddrs *ifa;
 
-		ON_ERROR( getifaddrs(&ifa), "Failed to obtain my IPs");
+		if(getifaddrs(&ifa))
+			ERROR("Failed to obtain my IPs");
 		while (ifa) {
 			if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET) {
 				struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;

@@ -212,6 +212,15 @@ static inline int fam_node_by_index(FAM_MAP_t *m, int index)
     return -1;
 }
 
+#define ON_FI_ERROR(action, msg, ...)       \
+    do {                                    \
+        int64_t __err;                      \
+        if ((__err = (action))) {           \
+            fprintf(stderr, #msg ": %ld - %s\n", ## __VA_ARGS__, \
+                    __err, fi_strerror(-__err)); \
+            exit(1);                        \
+        }                                   \
+    } while (0);
 
 #endif /* LF_CONNECT_H */
 

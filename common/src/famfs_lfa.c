@@ -8,7 +8,7 @@
         int64_t __err;                      \
         if ((__err = (action))) {           \
             fprintf(stderr, "lfa error @%s:%d" #msg ": %ld - %s\n", __FUNCTION__, __LINE__, ## __VA_ARGS__, \
-                    __err, fi_strerror(abs(__err))); \
+                    __err, fi_strerror(llabs(__err))); \
             onerr;                          \
         }                                   \
     } while (0);
@@ -17,7 +17,7 @@
     do {                                    \
         int64_t __err = (err);              \
         fprintf(stderr, "lfa error @%s:%d" #msg ": %ld - %s\n", __FUNCTION__, __LINE__, ## __VA_ARGS__, \
-                    __err, fi_strerror(abs(__err))); \
+                    __err, fi_strerror(llabs(__err))); \
     } while (0);
 
 #define LOCK_LFA(a)\
@@ -25,8 +25,8 @@
         int __err = pthread_mutex_lock(&a->lfa->lock);\
         if (__err) {\
             fprintf(stderr, "lfa lock @%s:%d error %d - %s\n", __FUNCTION__, __LINE__,\
-                    __err, strerror(abs(__err)));\
-            return -abs(__err);\
+                    __err, strerror(llabs(__err)));\
+            return (int)-llabs(__err);\
         }\
     } while(0);
 

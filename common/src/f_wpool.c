@@ -34,11 +34,11 @@ F_WPOOL_t *f_wpool_init(int size, f_wfunc_ *work_func_array, int *affinity)
 
 	if (affinity) {
 		cpumask = (cpu_set_t *)malloc(sizeof(cpu_set_t));
-		ON_ERROR(!cpumask, "OOM cpumask");
+		ON_ERROR_RV(!cpumask, NULL, "OOM cpumask");
 	}
 
 	wpool = (F_WPOOL_t *)malloc(sizeof(F_WPOOL_t));
-	ON_ERROR(!wpool, "OOM pool");
+	ON_ERROR_RV(!wpool, NULL, "OOM pool");
 	wpool->size = 0;
 	wpool->any_done_only = 0;
 	wpool->queue_max_size = W_QUEUE_MAX_SIZE;
@@ -52,15 +52,15 @@ F_WPOOL_t *f_wpool_init(int size, f_wfunc_ *work_func_array, int *affinity)
 	}
 
 	wpool->threads = (F_WTHREAD_t **)malloc(size*sizeof(F_WTHREAD_t *));
-	ON_ERROR(!wpool->threads, "OOM threads");
+	ON_ERROR_RV(!wpool->threads, NULL, "OOM threads");
 	wpool->shutdown = 0;
 	memset(&wpool->stats, 0, sizeof(wpool->stats)); /* alive, job_queued, job_done = 0 */
 
-	ON_ERROR( pthread_mutex_init(&wpool->w_thread_lock, NULL), "mutex");
-	ON_ERROR( pthread_cond_init(&wpool->w_thread_cond, NULL), "cond");
-	ON_ERROR( pthread_mutex_init(&wpool->queue_lock, NULL), "mutex");
-	ON_ERROR( pthread_cond_init(&wpool->queue_cond, NULL), "cond");
-	ON_ERROR( pthread_spin_init(&wpool->stats_lock, PTHREAD_PROCESS_SHARED), "spin");
+	ON_ERROR_RV( pthread_mutex_init(&wpool->w_thread_lock, NULL), NULL, "mutex");
+	ON_ERROR_RV( pthread_cond_init(&wpool->w_thread_cond, NULL), NULL, "cond");
+	ON_ERROR_RV( pthread_mutex_init(&wpool->queue_lock, NULL), NULL, "mutex");
+	ON_ERROR_RV( pthread_cond_init(&wpool->queue_cond, NULL), NULL, "cond");
+	ON_ERROR_RV( pthread_spin_init(&wpool->stats_lock, PTHREAD_PROCESS_SHARED), NULL, "spin");
 
 	for (i = 0; i < size; i++) {
 		if (affinity) {
@@ -253,19 +253,17 @@ int f_wpool_exit(F_WPOOL_t* wpool, int cancel)
 	ASSERT(wpool);
 
 	/* Stop queueing */
-	ON_ERROR( pthread_mutex_lock(&wpool->w_thread_lock), "mutex_lock");
+	ON_ERROR_RV( pthread_mutex_lock(&wpool->w_thread_lock), -1, "mutex_lock");
 	if (wpool->shutdown) {
-		ON_ERROR( pthread_mutex_unlock(&wpool->w_thread_lock), "mutex_unlock");
-
 		err("Pool already stopped");
-		return -1;
+		ON_ERROR_RV( pthread_mutex_unlock(&wpool->w_thread_lock), -1, "mutex_unlock");
 	}
 	wpool->shutdown = cancel;
-	ON_ERROR( pthread_mutex_unlock(&wpool->w_thread_lock), "mutex_unlock");
+	ON_ERROR_RV( pthread_mutex_unlock(&wpool->w_thread_lock), -1, "mutex_unlock");
 
-	ON_ERROR( pthread_spin_lock(&wpool->stats_lock), "spin lock");
+	ON_ERROR_RV( pthread_spin_lock(&wpool->stats_lock), -1, "spin lock");
 	size = wpool->stats.alive;
-	ON_ERROR( pthread_spin_unlock(&wpool->stats_lock), "spin lock");
+	ON_ERROR_RV( pthread_spin_unlock(&wpool->stats_lock), -1, "spin lock");
 
 	/* Signal threads to exit */
 	ASSERT(size<=wpool->size);
@@ -294,7 +292,7 @@ static void w_queue_init(F_WQUEUE_t* q)
 	INIT_LIST_HEAD(&q->queue);
 	q->size = 0;
 	atomic_set(&q->in_flight, 0);
-	ON_ERROR( pthread_spin_init(&q->lock, PTHREAD_PROCESS_PRIVATE), "spin");
+	ON_ERROR_RET( pthread_spin_init(&q->lock, PTHREAD_PROCESS_PRIVATE), "spin");
 }
 
 static void w_queue_free(F_WQUEUE_t* queue)
@@ -314,11 +312,12 @@ static int thread_init(F_WPOOL_t *wpool, F_WTHREAD_t **threads, int id, const cp
 	pthread_attr_t	attr;
 	F_WTHREAD_t	*threadp;
 
-	ON_ERROR( pthread_attr_init(&attr), "pthread attr init");
-	ON_ERROR( pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE), "pthread set attr");
+	ON_ERROR_RV( pthread_attr_init(&attr), -1, "pthread attr init");
+	ON_ERROR_RV( pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE),
+		    -1, "pthread set attr");
 	if (cpuset)
-		ON_ERROR( pthread_attr_setaffinity_np(&attr, sizeof(*cpuset), cpuset),
-			"pthread setaffinity");
+		ON_ERROR_RV( pthread_attr_setaffinity_np(&attr, sizeof(*cpuset), cpuset),
+			    -1, "pthread setaffinity");
 
 	threadp = (F_WTHREAD_t *)malloc(sizeof(F_WTHREAD_t));
 	if (!threadp) {
@@ -328,14 +327,14 @@ static int thread_init(F_WPOOL_t *wpool, F_WTHREAD_t **threads, int id, const cp
 	threadp->wpool = wpool;
 	threadp->id = id;
 
-	ON_ERROR( pthread_create(&threadp->pthread, &attr, (void *)thread_run, threadp),
-		"Error creating pthread");
-	ON_ERROR( pthread_attr_destroy(&attr), "pthread attr destroy");
+	ON_ERROR_RV( pthread_create(&threadp->pthread, &attr, (void *)thread_run, threadp),
+		    -1, "Error creating pthread");
+	ON_ERROR_RV( pthread_attr_destroy(&attr), -1, "pthread attr destroy");
 
-	ON_ERROR( pthread_spin_lock(&wpool->stats_lock), "spin lock");
+	ON_ERROR_RV( pthread_spin_lock(&wpool->stats_lock), -1, "spin lock");
 	*threads = threadp;
 	wpool->size++;
-	ON_ERROR( pthread_spin_unlock(&wpool->stats_lock), "spin unlock");
+	ON_ERROR_RV( pthread_spin_unlock(&wpool->stats_lock), -1, "spin unlock");
 
 	return 0;
 }
@@ -349,11 +348,14 @@ static void* thread_run(F_WTHREAD_t *thread)
 {
 	F_WPOOL_t *wpool = thread->wpool;
 	char name[16];
-	intptr_t rc = 0;
+	intptr_t rc;
 
 	ASSERT(wpool);
 	sprintf(name, "w-thread-%d", thread->id);
-	ON_ERROR( pthread_setname_np(thread->pthread, name), "setname");
+	if ((rc = pthread_setname_np(thread->pthread, name))) {
+		err("setname %ld", rc);
+		goto _exit;
+	}
 
 	pthread_spin_lock(&wpool->stats_lock);
 	wpool->stats.alive++;
@@ -437,6 +439,7 @@ _free:
 	wpool->stats.alive--;
 	pthread_spin_unlock(&wpool->stats_lock);
 
+_exit:
 	pthread_exit((void*)rc);
 }
 

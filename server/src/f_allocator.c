@@ -3141,8 +3141,14 @@ static void *f_allocator_thread(void *ctx)
 
 	ASSERT(pool && lo && lp);
 
-	ON_ERROR((MPI_Comm_rank(pool->ionode_comm, &ion_rank)), "MPI_Comm_rank");
-	ON_ERROR((MPI_Comm_size(pool->ionode_comm, &ion_cnt)), "MPI_Comm_size");
+	if ((rc = MPI_Comm_rank(pool->ionode_comm, &ion_rank))) {
+		LOG(LOG_ERR, "MPI_Comm_rank error %d", rc);
+		goto _exit;
+	}
+	if ((rc = MPI_Comm_size(pool->ionode_comm, &ion_cnt))) {
+		LOG(LOG_ERR, "MPI_Comm_size %d", rc);
+		goto _exit;
+	}
 	rcbuf = alloca(ion_cnt*sizeof(rc));
 	ASSERT(rcbuf);
 	memset(rcbuf, 0, ion_cnt*sizeof(rc));
@@ -3172,8 +3178,10 @@ static void *f_allocator_thread(void *ctx)
 	 * all slab map partitions were successfully loaded
 	 */ 
 	rcbuf[ion_rank] = rc;
-	ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, rcbuf, 1, MPI_INT, pool->ionode_comm), "MPI_Allgather");
-
+	if ((rc = MPI_Allgather(MPI_IN_PLACE, 1, MPI_INT, rcbuf, 1, MPI_INT, pool->ionode_comm))) {
+		LOG(LOG_ERR, "MPI_Allgather");
+		goto _ret;
+	}
 	for (i = 0; i < ion_cnt; i++) {
 		/* Bring down all allocators if any of them failed */
 		LOG(LOG_DBG, "%s[%d]: loaded slab map part %d rc: %d", 
@@ -3266,6 +3274,7 @@ _ret:
 	/* Stop recovery thread if it is running */
 	if (lp->rctx) f_stop_recovery_thread(lo);
 
+_exit:
 	lp->thread_res = rc;
 	return (void *)&lp->thread_res;
 }

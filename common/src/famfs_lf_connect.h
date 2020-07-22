@@ -18,12 +18,14 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_rma.h>
 #include <rdma/fi_ext_zhpe.h>
+#include <rdma/fi_errno.h>
 #include <uuid/uuid.h>
 
 #include "famfs_env.h"
 #include "famfs_ktypes.h"
 #include "famfs_bitops.h"
 #include "famfs_zfm.h"
+#include "famfs_error.h"
 
 
 /* libfabric domain structure: that could be per device or per process */
@@ -118,6 +120,46 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *domain, LF_INFO_t *info,
     int media_id, bool lf_srv);
 int f_domain_close(LF_DOM_t **domain_p);
 int f_conn_close(FAM_DEV_t *d);
+
+
+#define FI_ERROR_LOG(err, msg, ...)       \
+    do {                                  \
+        int64_t __err = (int64_t)err;     \
+        fprintf(stderr, #msg ": %ld - %s\n", ## __VA_ARGS__, __err, fi_strerror(-__err)); \
+    } while (0);
+
+#define ON_FI_ERROR(action, msg, ...)       \
+    do {                                    \
+        int64_t __err;                      \
+        if ((__err = (action))) {           \
+            fprintf(stderr, #msg ": %ld - %s\n", ## __VA_ARGS__, \
+                    __err, fi_strerror(-__err)); \
+            exit(1);                        \
+        }                                   \
+    } while (0);
+
+#define ON_FI_ERR_RET(action, msg, ...)       \
+    do {                                    \
+        int64_t __err;                      \
+        if ((__err = (action))) {           \
+            fprintf(stderr, #msg ": %ld - %s\n", ## __VA_ARGS__, \
+                    __err, fi_strerror(-__err)); \
+            return -EINVAL;                 \
+        }                                   \
+    } while (0);
+
+#define fi_err(rc, msg, ...)				\
+    do {						\
+	if (rc < 0) {					\
+	    fprintf(stderr, "%s: " msg ": %d - %s\n",	\
+		    __FUNCTION__, ## __VA_ARGS__,	\
+		    (int)(rc), fi_strerror(-(int)(rc)));\
+	} else if (rc > 0) {				\
+	    fprintf(stderr, "%s: " msg ": %d - %m\n",	\
+		    __FUNCTION__, ## __VA_ARGS__,	\
+		    (int)(rc));				\
+	}						\
+    } while (0);
 
 /* TODO: Move me to debug.h */
 #define DEBUG_LF(lvl, fmt, ...) DEBUG_LVL_(lf_verbosity, lvl, fmt, ## __VA_ARGS__)
