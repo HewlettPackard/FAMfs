@@ -172,12 +172,15 @@ PKG_CHECK_MODULES([LEVELDB], [leveldb], ,
 UNIFYCR_AC_GOTCHA
 
 # check libfabric
+PKG_CHECK_MODULES([LIBFABRIC], [libfabric], ,
+    AC_CHECK_LIB([fabric], fi_getinfo, , AC_MSG_ERROR(['libfabric not found.'])))
+CPPFLAGS_OLD="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS $LIBFABRIC_CFLAGS"
 AC_CHECK_HEADER(rdma/fabric.h, ,
     AC_MSG_ERROR(['libfabric header not found.']))
 AC_CHECK_HEADER(rdma/fi_ext_zhpe.h, ,
     AC_MSG_ERROR(['zhpe extension header (fi_ext_zhpe.h) not found.']))
-PKG_CHECK_MODULES([LIBFABRIC], [libfabric], ,
-    AC_CHECK_LIB([fabric], fi_getinfo, , AC_MSG_ERROR(['libfabric not found.'])))
+CPPFLAGS=$CPPFLAGS_OLD
 
 # probe CPU feature
 CPU_HAS_AVX2=$(grep -q avx2 /proc/cpuinfo && echo 1 || echo 0)
