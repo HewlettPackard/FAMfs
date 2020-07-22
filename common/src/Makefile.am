@@ -50,7 +50,7 @@ f_map_test_CPPFLAGS =	-D_GNU_SOURCE=1 $(AM_CPPFLAGS) \
 			-I$(top_srcdir)/userspace-rcu/src
 f_map_test_LDADD = libfamfs_common.la libfamfs_meta.la -lurcu-qsbr -lurcu-cds
 
-f_shmap_test_CPPFLAGS = $(f_map_test_CPPFLAGS) $(MPI_CFLAGS)
+f_shmap_test_CPPFLAGS = $(f_map_test_CPPFLAGS) $(MPI_CFLAGS) $(LIBFABRIC_CFLAGS)
 f_shmap_test_LDADD = $(f_map_test_LDADD) $(MPI_CLDFLAGS)
 
 check_tests = famfs_bbitops_test f_map_test

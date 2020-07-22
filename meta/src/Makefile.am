@@ -43,10 +43,14 @@ LDADD = $(top_builddir)/common/src/libfamfs_common.la \
 libmdhim_la_LIBADD = $(LDADD) -lleveldb -lurcu-qsbr -lurcu-cds
 
 # For tests
+tests_CPPFLAGS = $(AM_CPPFLAGS) $(LIBFABRIC_CFLAGS)
 tests_LDADD =	$(LDADD) libmdhim.la \
 		$(top_builddir)/common/src/libfamfs_meta.la \
 		-lurcu-qsbr -lurcu-cds
 
+f_map_test_CPPFLAGS = $(tests_CPPFLAGS)
+f_map_mnode_test_CPPFLAGS = $(tests_CPPFLAGS)
+f_map_cnode_test_CPPFLAGS = $(tests_CPPFLAGS)
 f_map_test_LDADD = $(tests_LDADD)
 mpitests_LDADD = $(tests_LDADD) -lmpi
 f_map_mnode_test_LDADD = $(mpitests_LDADD)
