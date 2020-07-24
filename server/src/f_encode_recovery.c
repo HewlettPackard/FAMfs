@@ -119,7 +119,7 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	F_POOL_t *pool = lo->pool;
 	struct ss_data *buckets;
 	F_ITER_t *sm_it;
-	int batch_size = ss->count / lp->w_thread_cnt;	// use all worker threads
+	int batch_size = DIV_CEIL(ss->count, lp->w_thread_cnt);	// use all worker threads
 	int n = 0, i = 0, j = 0, rc = 0;
 
 	ASSERT(lp);

@@ -227,7 +227,7 @@ static inline struct f_stripe_set *ss_alloc(size_t size)
 	struct f_stripe_set *ss = calloc(1, sizeof(struct f_stripe_set));
 	if (!ss) return NULL;
 	ss->stripes = calloc(size, sizeof(f_stripe_t));
-	if (ss->stripes) return NULL;
+	if (!ss->stripes) return NULL;
 	return ss;
 }
 
