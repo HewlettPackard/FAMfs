@@ -7,6 +7,10 @@
 #ifndef F_RECOVERY_H
 #define F_RECOVERY_H
 
+#include "famfs_stats.h"
+
+#define F_RC_MAX_IO_SIZE	(16*MiB)	/* Max recovery I/O size */
+
 typedef struct f_recovery_ {
 	pthread_mutex_t	r_done_lock;	/* recovery batch done wait condition mutex */
 	pthread_cond_t	r_batch_done;	/* recovery batch done wait condition */

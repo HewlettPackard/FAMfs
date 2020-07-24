@@ -61,7 +61,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 	F_LAYOUT_t *lo = lp->layout;
 	F_RECOVERY_t *rec = (F_RECOVERY_t *)lp->rctx;
 	f_stripe_t s0 = slab_to_stripe0(lo, slab);
-	int batch_size = 16; //FIXME, adjust for chunk size
+	int batch_size = F_RC_MAX_IO_SIZE / lo->info.chunk_sz;
 	struct f_stripe_set *ss = ss_alloc(batch_size);
 	int i, n, rc = 0;
 
