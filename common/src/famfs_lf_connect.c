@@ -214,7 +214,7 @@ int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
 	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
 
     hints->ep_attr->type        = FI_EP_RDM;
-    hints->addr_format = FI_SOCKADDR;
+    //hints->addr_format = FI_SOCKADDR;
 
     free(hints->fabric_attr->prov_name);
     hints->fabric_attr->prov_name = strdup(info->provider);
