@@ -41,7 +41,7 @@ int main (void) {
 		/* k: number of continious ones */
 		for (k = 1; k <= cont_ones_end && (k+j) <= sz; k++) {
 		    /* t: test number */
-		    pos=0; i=0;
+		    pos=0; i=0; bit=0;
 		    /* bmap has all zeros */
 		    t=1; if (!bitmap_empty(bmap, sz)) goto err;
 		    t=2; if (bitmap_full(bmap, sz)) goto err;
@@ -130,7 +130,7 @@ int main (void) {
 		/* k: number of continious ones */
 		for (k = 1; k <= cont_ones_end && (k+j) <= sz; k++) {
 		    /* t: test number */
-		    pos=0; i=0;
+		    pos=0; i=0; bit=0;
 		    /* bmap has all zeros */
 		    t=1; if (!bitmap_empty(bmap, sz)) goto err;
 		    t=2; if (bitmap_full(bmap, sz)) goto err;
@@ -214,7 +214,7 @@ int main (void) {
     printf("Running group %d tests: random pattern\n", tg);
     srand((unsigned int)time(NULL));
     /* not used in this test */
-    k = pos = 0;
+    k = pos = 0; bit = 0;
     /* i: repeat random size test */
     for (i = b_size_start; i <= b_size_end; i++) {
 	/* Repeat the test */
