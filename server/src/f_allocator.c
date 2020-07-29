@@ -1850,7 +1850,7 @@ static inline int alloc_stripe(F_LO_PART_t *lp, f_stripe_t s)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	unsigned long old;
-	void *p = f_map_get_p(lp->claimvec, s);
+	void *p = f_map_new_p(lp->claimvec, s); /* if no entry, create it */
 
 	if (!p) {
 		LOG(LOG_ERR, "%s[%d]: error accessing claim vector entry %lu", lo->info.name, lp->part_num, s);
@@ -2112,11 +2112,11 @@ static int purge_prealloc_stripes(F_LO_PART_t *lp)
 }
 
 /* Claim Vector iterator condition: entry is free */
-/*
+
 static F_COND_t cv_free = {
     .pset = CV_FREE_P,
 };
-*/
+
 
 /*
  * Find unused stripes in the slab and add them to the preallocated
@@ -2132,7 +2132,7 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 	F_ITER_t *cv_it;
 	f_stripe_t s0 = slab_to_stripe0(lo, slab);
 	unsigned long devmap[F_DEVMAP_SIZE];
-	int i, n, rc;
+	int i = 0, n = 0, rc;
 
 	if (!count)
 		return 0;
@@ -2143,7 +2143,9 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 		return -ENOENT;
 	}
 
-	LOG(LOG_DBG, "%s[%d]: allocating %d stripes in slab %u", lo->info.name, lp->part_num, count, slab);
+	LOG(LOG_DBG, "%s[%d]: allocating %d stripes in slab %u (used %d)", 
+		lo->info.name, lp->part_num, count, slab, slab_used(lp, s0));
+
 	INIT_LIST_HEAD(&alloclist);
 
 	if (log_print_level > LOG_DBG2)
@@ -2153,51 +2155,32 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 	ASSERT(rc == 0);
 	ASSERT(!bitmap_empty(devmap, pool->info.pdev_max_idx+1));
 
-	cv_it = f_map_new_iter(lp->claimvec, F_NO_CONDITION, 0);
-//	cv_it = f_map_new_iter(lp->claimvec, cv_free, 0);
+	cv_it = f_map_new_iter(lp->claimvec, cv_free, 0);
 	assert(cv_it);
-	for (n = 0, i = 0; i < lo->info.slab_stripes && n < count; i++) {
-		int v;
-		/* Probe if the entry is in memory and force its creation if not */
-		assert (f_map_probe_iter_at(cv_it, s0 + i, (void*)&v));
-		if (v < 0) {
-			/* create zeroed BoS in memory */
-			cv_it = f_map_seek_iter(cv_it, s0 + i);
-			v = 0;
-		} /*else {
-			cv_it = f_map_next(cv_it);
-		}
-		assert(cv_it);
+	for_each_iter_from(cv_it, s0) {
+		/* Watch the slab boundaries */
+		if (cv_it->entry - s0 >= lo->info.slab_stripes) break; 
 
-		i = cv_it->entry - s0;
-*/
-		if (v != CVE_FREE) {
-			LOG(LOG_DBG3, "%s[%d]: stripe %lu in slab %u: %d", 
-				lo->info.name, lp->part_num, s0 + i, slab, v);
+		rc = alloc_stripe(lp, cv_it->entry);
+		if (rc < 0) {
+			LOG(LOG_ERR, "%s[%d]: error allocating stripe %lu", 
+				lo->info.name, lp->part_num, s0 + i);
 			continue;
-		} else {
-			rc = alloc_stripe(lp, s0 + i);
-			if (rc < 0) {
-				LOG(LOG_ERR, "%s[%d]: error allocating stripe %lu", 
-					lo->info.name, lp->part_num, s0 + i);
-				continue;
-			}
 		}
 		n++;
 		se = alloc_stripe_entry(lp);
-		se->stripe = s0 + i;
+		se->stripe = cv_it->entry;
 		se->slab = slab;
 		LOG(LOG_DBG3, "%s[%d]: stripe %lu allocated in slab %u", 
 			lo->info.name, lp->part_num, se->stripe, slab);
 		list_add_tail(&se->list, &alloclist);
 
+		if (n >= count) break; /* Are we done here? */
+
 		/* don't hug the cpu, yield every 1K or so entries */
 		if (n && ((n & 0x3ff) == 0))
 			sched_yield();
 	}
-
-	LOG(LOG_DBG, "%s[%d]: %d stripes allocated in slab %u (used %d)", 
-			lo->info.name, lp->part_num, n, slab, slab_used(lp, s0));
 
 	if (list_empty(&alloclist)) {
 		LOG(LOG_DBG, "%s[%d]: no stripes (%d) allocated in slab %u (used %d)", 
@@ -2228,6 +2211,8 @@ static int prealloc_stripes_in_slab(F_LO_PART_t *lp, f_slab_t slab, int count)
 	}
 	pthread_spin_unlock(&lp->alloc_lock);
 
+	LOG(LOG_DBG, "%s[%d]: %d stripes allocated in slab %u (used %d)", 
+			lo->info.name, lp->part_num, n, slab, slab_used(lp, s0));
 	return n;
 }
 
