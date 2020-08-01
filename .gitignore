@@ -118,3 +118,4 @@ t/unifycr_unmount.t
 t/test_run_env.sh
 
 /famfs.conf
+scripts/t

@@ -1,14 +1,12 @@
 #!/bin/bash
 SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
+WRK_DIR=${SCRIPT_DIR}/t
 export SCRIPT_DIR
-. ${SCRIPT_DIR}/setup-env.sh
+
+FAMFS_CONF="famfs.conf"
 
 function run-all() { mpirun --hosts ${all_n} -ppn 1 /bin/bash -c "$@"; }
-function run-cln() { mpirun --hosts ${all_c} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }
-function run-srv() { mpirun --hosts ${all_h} -ppn 1 /bin/bash -c "$1 $2 $3 $4 $5 $6"; }
 export -f run-all
-export -f run-cln
-export -f run-srv
 
 function count() {
     IFS=","
@@ -39,7 +37,7 @@ function make_list() {
     fi
     list=""
     for ((i = 0; i < $2 && i < ${#a[*]}; i++)); do
-        list="$list${a[$i]},"
+        list="$list${a[$i]}$3,"
     done
     list=${list:0:((${#list}-1))}
     echo $list
@@ -80,7 +78,22 @@ function add_mynode() {
   unset IFS
 }
 
-OPTS=`getopt -o I:i:S:C:R:b:s:nw:r:W:c:vqVE:p:F:m: -l iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,lf_progress:,fams:,md: -n 'parse-options' -- "$@"`
+# update key($2) value to $3 for section($1) in $FAMFS_CONF
+function update_ini() {
+  local s=$1 k=$2 v=$3
+  sed -r -i "/^\[$s\]\$/,/^\[/{s/^$k = [^\s]*( ; .*)\$/$k = $v\1/; t; s/^$k = [^\s]*\$/$k = $v/}" ${FAMFS_CONF}
+}
+
+#
+# Working DIR
+#
+mkdir -p ${WRK_DIR}
+cd ${WRK_DIR}
+
+#
+# Command line
+#
+OPTS=`getopt -o D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x: -l data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,mpi:,md:,suffix: -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -88,7 +101,7 @@ eval set -- "$OPTS"
 all_h=""
 all_c=""
 if command -v squeue; then
-  MPIchEnv="-genv MPICH_NEMESIS_NETMOD mxm"
+  oMPIchEnv="-genv MPICH_NEMESIS_NETMOD mxm"
   nodes=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 2))
   parts=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 1))
   for ((i = 0; i < ${#parts[*]}; i++)) do
@@ -98,33 +111,30 @@ if command -v squeue; then
         base=${nlist%%[*}
         #split into ranges separated by space
         spec=`echo ${nlist##$base} | tr -d [] | tr , ' '`
-        nodes=""
         for range in $spec; do
             #process range
             beg=${range%-*}
             len=${#beg}
             ((rbeg = beg))
             ((rend = ${range#*-}))
-            if ((rend > rbeg)); then
-                #range
-                for ((j = rbeg; j <= rend; j++)); do
-                    node=`printf "%s%0*d-ib," $base $len $j`
-                    nodes="$nodes$node"
-                done
+            ((rend < rbeg)) && ((rend = rbeg))
+            #range or single
+            nodes=""
+            for ((j = rbeg; j <= rend; j++)); do
+                node=`printf "%s%0*d" $base $len $j`
+                nodes="$nodes$node,"
+            done
+            # belongs to ionodes?
+            if [[ -z $(sinfo -h -n $node -p ionodes -o %D) ]]; then
+                all_c="$all_c$nodes"
             else
-                #just one node
-                nodes="$nodes$base$range-ib,"
+                all_h="$all_h$nodes"
             fi
         done
     else
         #single node
-        nodes="$nlist-ib,"
-    fi
-    nodes=${nodes:0:((${#nodes}-1))}
-    if [[ "${parts[$i]}" == *"ionode"* ]]; then
-        all_h="$all_h$nodes,"
-    else
-        all_c="$all_c$nodes,"
+        nodes="$nlist,"
+        all_h="$all_h$nodes"
     fi
   done
   all_h=${all_h:0:((${#all_h}-1))}
@@ -132,7 +142,7 @@ if command -v squeue; then
   echo "Allocated Servers: $all_h"
   echo "Allocated Clients: $all_c"
 else
-  MPIchEnv=""
+  oMPIchEnv=""
 fi
 export MPI_LOG=${PWD}/mpi.log
 export TEST_LOG=${PWD}/test.log
@@ -140,31 +150,32 @@ export SRV_LOG=${PWD}/server.log
 
 ### DEFAULTS ###
 ExtSize="1G"
-lfProgress="manual"
-fams=""
 oSERVERS="$all_h"
 oCLIENTS="$all_c"
 oRANKS="1,2,4,8,16"
 oBLOCK="1G"
 oSEGMENT="1"
-oWRITES="4K,64K,128K,1M"
+oWRITES="4K,128K,1M,16M"
 oREADS=""
 oWARMUP="0"
 oMdServers=""
-
 oVERBOSE=0
 oN2N=0
 oSEQ=0
 oVFY=0
-
+oMPIchEnv=""
 cycles=1
+oDATA=1
+oCHUNK="1M"
+oNodeSuffix=
 
 declare -a SrvIter
 declare -a ClnIter
 
 while true; do
   case "$1" in
-  -v | --verbose )   oVERBOSE=1; shift ;;
+  -D | --data)       oDATA="$2"; shift; shift ;;
+  -v | --verbose)    oVERBOSE=1; shift ;;
   -n | --n2n)        oN2N=1; shift ;;
   -q | --sequential) oSEQ=1; shift ;;
   -S | --servers)    oSERVERS="$2"; shift; shift ;;
@@ -180,9 +191,10 @@ while true; do
   -I | --iter-srv)   SrvIter=(`echo "$2" | tr ',' ' '`); shift; shift ;;
   -V | --verify)     oVFY=1; shift ;;
   -E | --extent)     ExtSize="$2"; shift; shift ;;
-  -p | --lf_progress) lfProgress="$2"; shift; shift ;;
-  -F | --fams)       fams="$2"; shift; shift ;;
+  -u | --chunk)      oCHUNK="$2"; shift; shift ;;
+  -M | --mpi)        oMPIchEnv="$2"; shift; shift ;;
   -m | --md)         oMdServers="$2"; shift; shift ;; # Default: Servers
+  -x | --suffix)     oNodeSuffix="$2"; shift; shift ;;
   -- ) shift; break ;;
   * ) break ;;
   esac
@@ -192,10 +204,8 @@ if [ -z "$oREADS" ]; then oREADS=$oWRITES; fi
 if [ -z "$all_h" ]; then all_h="$oSERVERS"; fi
 if [ -z "$all_c" ]; then all_c="$oCLIENTS"; fi
 
-export all_h
-export all_c
-export hh="${oSERVERS}"
-export cc="${oCLIENTS}"
+hh="${oSERVERS}"
+cc="${oCLIENTS}"
 ns=$(count $hh)
 nc=$(count $cc)
 IFS=","
@@ -215,29 +225,37 @@ blksz=$(getval $oBLOCK)
 wup=$(getval $oWARMUP)
 seg=$(getval $oSEGMENT)
 extsz=$(getval $ExtSize)
+((tVERBOSE=0))
 
 # Real FAM or emulation?
-oData=""
-if [[ -z "$fams" ]]; then
-  oFAMs=""
-  # Pass the number of data chunks option if zhpe driver is loaded
-  [ -d /sys/module/zhpe ] && oData="-n"
-else
- oFAMs="-F $fams"
-fi
 
 if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 
 unset IFS
 opt=""
-
+srv_opt=""
+if ((oVERBOSE)); then
+    export tVERBOSE=1
+    srv_opt="$srv_opt -v 6"
+fi
 if ((oSEQ)); then seq="-S 1"; else seq=""; fi
 ((err=0))
+
+# Set constants in config file (FAMFS_CONF)
+moniker="${oDATA}D:${oCHUNK}"
+#copy FAMFS config file to current dir
+if [ ! -f "$FAMFS_CONF" ]; then
+    cp -Pf ${SCRIPT_DIR}/famfs.conf.template ${WRK_DIR}/${FAMFS_CONF}
+    update_ini "layout" "name" "$moniker"
+    update_ini "devices" "extent_size" "${ExtSize}"
+    ((oVERBOSE))&& update_ini log verbosity 6
+fi
+
 for ((si = 0; si < ${#SrvIter[*]}; si++)); do
-    export Servers=`make_list "$hh" ${SrvIter[$si]}`
+    Servers=`make_list "$hh" "${SrvIter[$si]}" "$oNodeSuffix"`
+    export Servers
     ns=`count $Servers`
-    [ -z "$oData" ] || oData="${oData::2} $ns"
     mdExclusive=""
     if [ -z "$oMdServers" ]; then
         mdServers="$Servers"
@@ -255,7 +273,8 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     fi
 
     for ((ci = 0; ci < ${#ClnIter[*]}; ci++)); do
-        export Clients=`make_list "$cc" ${ClnIter[$ci]}`
+        Clients=`make_list "$cc" "${ClnIter[$ci]}" "$oNodeSuffix"`
+        export Clients
         AllNodes="$Servers,$Clients"
         [ -z "$mdExclusive" ] || AllNodes+=",$mdExclusive"
         all_n=$(add_mynode "$AllNodes") # Force my node included
@@ -266,7 +285,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
             for ((j = 0; j < ${#TXSZ[*]}; j++)); do
                 dsc="[$nc*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
                 dsc="$dsc Writes=${TXSZ[$j]}"
-                if [ -z "${RDSZ[$j]}" ]; then 
+                if [ -z "${RDSZ[$j]}" ]; then
                     reads="-w"
                     dsc="$dsc <no reads>"
                 else
@@ -278,22 +297,22 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         dsc="$dsc Reads=${RDSZ[$j]}"
                     fi
                 fi
-                if [ -z "$seq" ]; then 
+                if [ -z "$seq" ]; then
                     dsc="$dsc RANDOM"
                 else
                     dsc="$dsc SEQ"
                 fi
-                if ((oN2N)); then 
+                if ((oN2N)); then
                     ptrn="-p 1"
                     dsc="$dsc N-to-N"
                 else
                     ptrn="-p 0"
                     dsc="$dsc N-to-1"
                 fi
-                if ((wup == 0)); then 
-                    wu="" 
+                if ((wup == 0)); then
+                    wu=""
                     dsc="$dsc <no warmup>"
-                else 
+                else
                     wu="-W $wup"
                     dsc="$dsc WARMUP=$wup"
                 fi
@@ -301,12 +320,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     dsc="$dsc with VFY"
                     opt="$opt -V"
                 fi
-                if ((oVERBOSE)); then
-                    opt="$opt -v1"
-                fi
                 for ((k = 0; k < cycles; k++)); do
                     ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
                     ((mem = (mem/1024/1024/1024 + 1)*1024*1024*1024))
+                    # TODO: check device size >= $mem
+
                     export BLK="-b $blksz"
                     export SEG="-s $seg"
                     export WSZ="-t ${TXSZ[$j]}"
@@ -315,18 +333,20 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export PTR="$ptrn"
                     export SEQ="$seq"
                     export OPT="$opt"
+                    export SRV_OPT="$srv_opt"
                     export DSC="$dsc"
                     export Ranks="${RANK[$i]}"
                     export AllNodes
                     export all_n
-                    export MEM=$mem
-                    export DSC="$dsc"
                     export extsz
-                    export lfProgress
-                    export oFAMs
-                    export oData
                     export mdServers
-                    source ${SCRIPT_DIR}/test-env
+                    export oMPIchEnv
+                    export MONIKER="$moniker"
+# export LFS_COMMAND="x ${oData} -H ${Servers} -c ${Clients} --provider zhpe --memreg basic -P0 -R0 -M ${mem} LOAD"
+# export FAMFS_MDS_LIST="$mdServers"
+#echo "test_prw_static -f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 0"
+                    export TEST_BIN="${TEST_DIR}/libexec/test_prw_static"
+                    export TEST_OPTS="-f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 1"
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
                     if ${SCRIPT_DIR}/test_cycle.sh; then

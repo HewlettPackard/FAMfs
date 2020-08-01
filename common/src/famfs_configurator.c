@@ -56,12 +56,22 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
         return rc;
 
     // process system config file (if available)
-    rc = validate_value("unifycr", "configfile", cfg->unifycr_configfile,
+    rc = validate_value("unifycr", NULL, cfg->unifycr_configfile,
 	"STRING", &configurator_file_check, &new_val);
     if (rc) {
 	free(cfg->unifycr_configfile);
 	cfg->unifycr_configfile = NULL;
-    } else if (new_val != NULL) {
+	// read config file passed on command-line
+	if (unifycr_config_process_cli_args(cfg, argc, argv))
+	    return rc;
+	rc = validate_value("unifycr", NULL, cfg->unifycr_configfile,
+	     "STRING", &configurator_file_check, &new_val);
+	if (rc) {
+	    free(cfg->unifycr_configfile);
+	    cfg->unifycr_configfile = NULL;
+	}
+    }
+    if (rc == 0 && new_val != NULL) {
 	free(cfg->unifycr_configfile);
 	cfg->unifycr_configfile = new_val;
     }
@@ -647,11 +657,14 @@ int inih_config_handler(void *user,
 	char **v = &cfg->sec##_##key;				\
 	curval = *v;						\
 	defval = stringify(dv);					\
-	if (curval && strcmp(defval, curval) == 0)		\
-	    free(*v);						\
-	*v = (!strcmp(#typ, "STRING") &&			\
-	      val[0]=='\"' && strlen(val)>1)?			\
+	if (curval && strcmp(defval, curval) == 0) {		\
+	    free(*v); curval = NULL;				\
+	}							\
+	if (curval == NULL) {					\
+	    *v = (!strcmp(#typ, "STRING") &&			\
+		  val[0]=='\"' && strlen(val)>1)?		\
 		    strndup(val+1, strlen(val)-2) : strdup(val);\
+	}							\
     }
 
 #define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)		\
