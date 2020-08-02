@@ -1,4 +1,5 @@
 #!/bin/bash
+SRC_DIR="${TEST_DIR}/src"
 SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
 WRK_DIR=${SCRIPT_DIR}/t
 export SCRIPT_DIR
@@ -247,7 +248,7 @@ moniker="${oDATA}D:${oCHUNK}"
 #copy FAMFS config file to current dir
 if [ ! -f "$FAMFS_CONF" ]; then
     cp -Pf ${SCRIPT_DIR}/famfs.conf.template ${WRK_DIR}/${FAMFS_CONF}
-    update_ini "layout" "name" "$moniker"
+    update_ini "layout" "name" "\"$moniker\""
     update_ini "devices" "extent_size" "${ExtSize}"
     ((oVERBOSE))&& update_ini log verbosity 6
 fi
