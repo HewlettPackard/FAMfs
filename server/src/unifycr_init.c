@@ -254,7 +254,7 @@ int main(int argc, char *argv[])
 
 	/* Create command queues and start layout threads only on compute nodes */
 	bzero(rplyq, sizeof(rplyq));
-	if (!NodeForceHelper(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
+	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
 
 	    bzero(lo_thrd, sizeof(lo_thrd));
 	    for (int i = 0; i < pool->info.layouts_count; i++) {

@@ -493,7 +493,8 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
     // Enable endpoint
     rc = fi_enable(ep);
     if (rc) {
-	fi_err(rc, "fi_enable EP failed");
+	fi_err(rc, "fi_enable EP failed on prov:%s fab:%s dom:%s",
+		  fi->fabric_attr->prov_name, fi->fabric_attr->name, fi->domain_attr->name);
 	goto _err;
     }
 
