@@ -4,7 +4,7 @@ chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
 debug = off
-lfa_port = 11020
+lfa_port = 1020
 fs_type = famfs ; "famfs" (default), "unifycr" or "both"
 
 [log]
@@ -28,7 +28,7 @@ id = 0 ; this is a default
 z_node = io1
 topo = "1.1.5"
 geo = "R2.Ch1.FS1.N1"
-host = "pnode17" ; node's hostname or IP
+host = "r1c1t5n1" ; node's hostname or IP
 mds = 1 ; run one MD server on this ionode
 # force_helper = true ; there's only node in the test configuration!
 
@@ -41,45 +41,64 @@ offset = 1023M
 # Default layout
 name = "1D:1M"
 # devices = [0] ; optional list of device IDs
+# sq_depth = 0 ; save space vs. perf.
 
 [devices]
 extent_size = 1G
-emulated = true ; force FAM module emulation
+# emulated = true ; force FAM module emulation
 pk = 0 ; default
-size = 16G ; default device size
+# size = 16G ; default device size
+size = 127G
 offset = 0 ; default
 ### libfabric ###
 # fabric =
 # domain =
-port = 11010
-# provider = zhpe ; default:sockets
+port = 1010
+provider = zhpe ; default:sockets
 memreg = "basic,local" ; basic|local|basic,local|scalable, default:basic
 progress = manual ; auto|manual|default, default:auto
 use_cq = true ; use completion queue instead of counters
 timeout = 30*1000 ; 30 sec
 
 [device]
-id = 0
-topo = "1.1.5.1"
-url = "zhpe:///ion1" ; default
-
-[device]
 id = 1
 topo = "1.1.5.1"
-url = "zhpe:///ion2" ; default
+url = "zhpe:///ion4264" ; default
 
 [device]
 id = 2
 topo = "1.1.5.1"
-url = "zhpe:///ion3" ; default
+url = "zhpe:///ion4265" ; default
 
 [device]
 id = 3
 topo = "1.1.5.1"
-url = "zhpe:///ion4" ; default
+url = "zhpe:///ion4266" ; default
 
-[ag] # Allocation group
-devices = [0] ; List of famid
+[device]
+id = 4
+topo = "1.1.5.1"
+url = "zhpe:///ion4267" ; default
+
+[device]
+id = 5
+topo = "1.1.5.1"
+url = "zhpe:///ion4284" ; default
+
+[device]
+id = 6
+topo = "1.1.5.1"
+url = "zhpe:///ion4285" ; default
+
+[device]
+id = 7
+topo = "1.1.5.1"
+url = "zhpe:///ion4286" ; default
+
+[device]
+id = 8
+topo = "1.1.5.1"
+url = "zhpe:///ion4287" ; default
 
 [ag] # Allocation group
 devices = [1] ; List of famid
@@ -89,3 +108,18 @@ devices = [2] ; List of famid
 
 [ag] # Allocation group
 devices = [3] ; List of famid
+
+[ag] # Allocation group
+devices = [4] ; List of famid
+
+[ag] # Allocation group
+devices = [5] ; List of famid
+
+[ag] # Allocation group
+devices = [6] ; List of famid
+
+[ag] # Allocation group
+devices = [7] ; List of famid
+
+[ag] # Allocation group
+devices = [8] ; List of famid
