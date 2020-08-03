@@ -34,6 +34,7 @@ typedef struct lf_dom_ {
 	struct fid_domain *domain;
 	struct fi_info	*fi;
 	struct fid_av	*av;
+	struct fid_ep	*ep;		/* per-domain endpoint or NULL */
 } LF_DOM_t;
 
 typedef struct fam_dev_ {
@@ -44,7 +45,7 @@ typedef struct fam_dev_ {
 	void		*local_desc;	/* local buffer descriptor */
 	uint64_t	virt_addr;	/* address of remote memory to access or NULL */
 	struct fid_mr	*mr;		/* memory region */
-	struct fid_ep	*ep;		/* connected fabric endpoint */
+	struct fid_ep	*ep;		/* connected fabric endpoint: pointer of ref. */
 	struct fid_cntr *rcnt;		/* completion and event counter for reads */
 	struct fid_cntr	*wcnt;		/* completion and event counter for writes */
 	struct fid_cq	*cq;		/* comlition queue bound to this endpoint or NULL */
@@ -56,6 +57,10 @@ typedef struct fam_dev_ {
 	};
 	size_t		mr_size;	/* memory region size, bytes */
 	int		cq_affinity;	/* CQ affinity or zero */
+	struct {
+	    unsigned int    per_dom:1;	/* FAM_DEV_t::ep is a reference to per-domain EP */
+	    unsigned int    enable:1;	/* enable LF_DOM_t::ep at f_conn_open() */
+	}		ep_flags;
 	uint16_t	ionode_idx;	/* ionode index where device is located */
 
 	/* FAM emulation only */

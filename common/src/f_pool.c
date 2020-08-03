@@ -206,6 +206,9 @@ int lf_servers_init(F_POOL_t *p)
 	FAM_DEV_t *fdev = &pdev->dev->f;
 	unsigned int media_id = pdev->pool_index;
 
+	/* enable EP if last fdev */
+	fdev->ep_flags.enable = (_i == (p->mynode.emul_devs - 1))?1:0;
+	/* create domain->ep; register MR for each fdev; enable EP */
 	rc = f_conn_open(fdev, domain, lf_info, media_id, LF_SERVER);
 	if (rc) {
 	    err("Failed to open libfabric connection to znode:%s url:%s"

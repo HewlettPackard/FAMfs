@@ -37,6 +37,18 @@ int f_domain_close(LF_DOM_t **dom_p)
     if (!dom)
 	return 0;
 
+    if (dom->ep) {
+	do {
+	    if (!(rc = fi_close(&dom->ep->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
+	    fi_err(rc, "close per-domain ep");
+	    return rc;
+	}
+	dom->ep = NULL;
+    }
     if (dom->av) {
 	do {
 	    if (!(rc = fi_close(&dom->av->fid)))
@@ -102,7 +114,7 @@ int f_conn_close(FAM_DEV_t *d)
     }
     d->mr = NULL;
 
-    if (d->ep) {
+    if (!d->ep_flags.per_dom && d->ep) {
 	do {
 	    if (!(rc = fi_close(&d->ep->fid)))
 		break;
@@ -323,17 +335,28 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
     node = fdev->lf_name;
 
     /* non-scalable endpoint */
-    rc = fi_endpoint(domain, fi, &ep, NULL);
-    if (rc) {
-	fi_err(rc, "fi_endpoint failed");
-	goto _err;
-    }
-    fdev->ep = ep;
+    if (lf_srv && dom->ep) {
+	ep = dom->ep;
+    } else {
+	rc = fi_endpoint(domain, fi, &ep, NULL);
+	if (rc) {
+	    fi_err(rc, "fi_endpoint failed");
+	    goto _err;
+	}
+	fdev->ep = ep;
 
-    rc = fi_ep_bind(ep, &av->fid, 0);
-    if (rc) {
-	fi_err(rc, "fi_ep_bind failed");
-	goto _err;
+	rc = fi_ep_bind(ep, &av->fid, 0);
+	if (rc) {
+	    fi_err(rc, "fi_ep_bind failed");
+	    goto _err;
+	}
+    }
+    if (lf_srv) {
+	dom->ep = ep;
+	fdev->ep_flags.per_dom = 1; /* FAM_DEV_t has a reference to LF_DOM_t::ep */
+	if (fdev->ep_flags.enable == 0)
+	    ep = NULL; /* defer fi_enable(ep) till the last mr registered */
+	goto _cont;
     }
 
     // Create completion queue and bind to endpoint
@@ -409,6 +432,7 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 	    }
         }
     }
+_cont:
 
     if (!info->opts.true_fam)
 	fdev->mr_key = id;
@@ -483,46 +507,49 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 		rc = -ENXIO;
 		goto _err;
 	    }
-	    DEBUG_LF(3, "CL attached to device %d on %s:%s",
-		     id, node, port);
+	    DEBUG_LF(3, "CL attached to device %d on %s:%d",
+		     id, node, service);
 
 	}
 	fdev->fi_addr = srv_addr;
     }
 
-    // Enable endpoint
-    rc = fi_enable(ep);
-    if (rc) {
-	fi_err(rc, "fi_enable EP failed on prov:%s fab:%s dom:%s",
-		  fi->fabric_attr->prov_name, fi->fabric_attr->name, fi->domain_attr->name);
-	goto _err;
+    if (ep) {
+	// Enable endpoint
+	rc = fi_enable(ep);
+	if (rc) {
+	    fi_err(rc, "fi_enable EP failed on prov:%s fab:%s dom:%s id:%d",
+		   fi->fabric_attr->prov_name, fi->fabric_attr->name,
+		   fi->domain_attr->name, id);
+	    goto _err;
+	}
     }
 
-    if (lf_srv == LF_SERVER) {
-	char name[128];
-	size_t n = sizeof(name);
+    if (lf_srv) {
+	if (ep) {
+	    char name[128];
+	    size_t n = sizeof(name);
 
-	rc = fi_getname((fid_t)ep, name, &n);
-	if (rc) {
-	    fi_err(rc, "fi_getname failed");
-	    goto _err;
+	    rc = fi_getname(&dom->ep->fid, name, &n);
+	    if (rc) {
+		fi_err(rc, "fi_getname failed");
+		goto _err;
+	    }
+	    if (n >=128) {
+		err("name > 128 chars!");
+		rc = -E2BIG;
+		goto _err;
+	    }
+	    name[n] = 0;
+	    if (lf_verbosity >= 7) {
+		printf("%d: server addr is %zu:\n", id, n);
+		for (int i = 0; i < (int)n; i++)
+		    printf("%02x ", (unsigned char)name[i]);
+		printf("\n");
+	    }
 	}
-	if (n >=128) {
-	    err("name > 128 chars!");
-	    rc = -E2BIG;
-	    goto _err;
-	}
-	name[n] = 0;
-
-	DEBUG_LF(3, "%d: Emulated %zuMB FAM on %s:%s if:%s",
-		 id, fdev->mr_size/1024/1024, node, port, fi->domain_attr->name);
-
-	if (lf_verbosity >= 7) {
-	    printf("%d: server addr is %zu:\n", id, n);
-	    for (int i = 0; i < (int)n; i++)
-		printf("%02x ", (unsigned char)name[i]);
-	    printf("\n");
-	}
+	DEBUG_LF(3, "%d: Emulated %zuMB FAM on %s:%d if:%s",
+		 id, fdev->mr_size/1024/1024, node, service, fi->domain_attr->name);
     }
 
     return 0;
