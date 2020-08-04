@@ -389,7 +389,8 @@ int main(int argc, char *argv[])
 	if (NodeIsIOnode(&pool->mynode)) {
 	    rc = f_start_allocator_threads();
 	    if (rc != ULFS_SUCCESS) {
-		LOG(LOG_WARN, "%s starting allocator threads", ULFS_str_errno(rc));
+		LOG(LOG_ERR, "%s error starting allocator threads", strerror(-rc));
+	        goto _err;
 	    }
 	}
 
