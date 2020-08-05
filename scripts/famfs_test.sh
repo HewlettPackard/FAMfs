@@ -347,7 +347,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
 # export FAMFS_MDS_LIST="$mdServers"
 #echo "test_prw_static -f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 0"
                     export TEST_BIN="${TEST_DIR}/libexec/test_prw_static"
-                    export TEST_OPTS="-f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 1"
+                    export TEST_OPTS="-f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ $OPT -D 0 -u 1"
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
                     if ${SCRIPT_DIR}/test_cycle.sh; then
