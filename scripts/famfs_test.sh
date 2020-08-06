@@ -101,7 +101,7 @@ eval set -- "$OPTS"
 
 all_h=""
 all_c=""
-if command -v squeue 1>/dev/null; then
+if [[ -d $SLURM_HOME ]] && command -v squeue 1>/dev/null; then
   echo "SLURM: $(command -v squeue)"
   oMPIchEnv="-genv MPICH_NEMESIS_NETMOD mxm"
   nodes=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 2))
@@ -181,7 +181,7 @@ while true; do
   case "$1" in
   -A | --app)        oAPP="$2"; shift; shift ;;
   -D | --data)       oDATA="$2"; shift; shift ;;
-  -v | --verbose)    oVERBOSE=1; shift ;;
+  -v | --verbose)    ((oVERBOSE++)); shift ;;
   -n | --n2n)        oN2N=1; shift ;;
   -q | --sequential) oSEQ=1; shift ;;
   -S | --servers)    oSERVERS="$2"; shift; shift ;;
@@ -255,8 +255,8 @@ if [ ! -x ${TEST_BIN} ]; then
 fi
 # FS type?
 case "${oFStype^^}" in
-  FAM* | 3)    fstype=2 ;;
-  UNI* | 2)    fstype=1 ;;
+  FAM* | 2)    fstype=2 ;;
+  UNI* | 1)    fstype=1 ;;
   *)           fstype=0 ;;
 esac
 ITR=""
@@ -374,9 +374,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export SRV_OPT="$srv_opt"
                     export TEST_BIN
                     ((tIOR)) \
-                      && TEST_OPTS="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -Cge -wr" \
-                      || TEST_OPTS="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1"
- echo "test:$TEST_BIN TEST_OPTS=\"$TEST_OPTS\""
+                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -Cge -wr" \
+                      || opts="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1"
+                    opts=( $(echo $opts) )
+                    TEST_OPTS=${opts[*]} # jam whitespaces
+                    # echo "\"test:${TEST_BIN} ${TEST_OPTS}\""
                     export TEST_OPTS
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
