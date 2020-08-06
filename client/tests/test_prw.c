@@ -89,7 +89,7 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 
-    static const char * opts = "b:s:t:f:p:u:M:m:dD:S:w:r:i:v:W:GRC:VU";
+    static const char * opts = "b:s:t:f:p:u:M:m:dD:S:w:r:i:v:W:GRC:VU:";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     char mount_point[GEN_STR_LEN] = { 0 };
     long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
     struct famsim_stats *famsim_stats_send, *famsim_stats_recv;
     int carbon_stats = 0; /* Only on Carbon: CPU instruction stats */
     int fam_cnt = 0; /* Number of FAMs */
-    int unifycr_fs = 0;
+    int unifycr_fs = FAMFS;
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -182,7 +182,7 @@ int main(int argc, char *argv[]) {
             case 'V':
                vfy++; break;
             case 'U':
-               unifycr_fs = 1; break; /* 0: FAMFS, 1: UNIFYCR_LOG */
+               unifycr_fs = atoi(optarg); break; /* 2: FAMFS, 1: UNIFYCR_LOG */
         }
     }
     if (read_sz == 0)
@@ -191,7 +191,7 @@ int main(int argc, char *argv[]) {
         blk_sz = tran_sz;
 
     /* choose fs type: UNIFYCR_LOG or FAMFS */
-    fs_type_t fs = unifycr_fs?UNIFYCR_LOG:FAMFS;
+    fs_type_t fs = unifycr_fs;
     if (!fs_supported(fs)) {
         printf(" fs type %d not supported - check configuration file!\n", fs);
         exit(1);

@@ -94,14 +94,15 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x: -l data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,mpi:,md:,suffix: -n 'parse-options' -- "$@"`
+OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,suffix: -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
 
 all_h=""
 all_c=""
-if command -v squeue; then
+if command -v squeue 1>/dev/null; then
+  echo "SLURM: $(command -v squeue)"
   oMPIchEnv="-genv MPICH_NEMESIS_NETMOD mxm"
   nodes=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 2))
   parts=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 1))
@@ -117,7 +118,7 @@ if command -v squeue; then
             beg=${range%-*}
             len=${#beg}
             ((rbeg = beg))
-            ((rend = ${range#*-}))
+            ((rend = 10#${range#*-})) # ignore leading zeroes by explicit 10 base
             ((rend < rbeg)) && ((rend = rbeg))
             #range or single
             nodes=""
@@ -151,6 +152,7 @@ export SRV_LOG=${PWD}/server.log
 
 ### DEFAULTS ###
 ExtSize="1G"
+tstFileName="/tmp/mnt/abc"
 oSERVERS="$all_h"
 oCLIENTS="$all_c"
 oRANKS="1,2,4,8,16"
@@ -165,16 +167,19 @@ oN2N=0
 oSEQ=0
 oVFY=0
 oMPIchEnv=""
-cycles=1
+oCycles=1
 oDATA=1
 oCHUNK="1M"
 oNodeSuffix=
+oAPP="test_prw_static"
+oFStype="FAMfs"
 
 declare -a SrvIter
 declare -a ClnIter
 
 while true; do
   case "$1" in
+  -A | --app)        oAPP="$2"; shift; shift ;;
   -D | --data)       oDATA="$2"; shift; shift ;;
   -v | --verbose)    oVERBOSE=1; shift ;;
   -n | --n2n)        oN2N=1; shift ;;
@@ -187,12 +192,13 @@ while true; do
   -w | --writes)     oWRITES="$2"; shift; shift ;;
   -W | --warmup)     oWARMUP="$2"; shift; shift ;;
   -r | --reads)      oREADS="$2"; shift; shift ;;
-  -c | --cycles)     cycles="$2"; shift; shift ;;
+  -c | --cycles)     oCycles="$2"; shift; shift ;;
   -i | --iter-cln)   ClnIter=(`echo "$2" | tr ',' ' '`); shift; shift ;;
   -I | --iter-srv)   SrvIter=(`echo "$2" | tr ',' ' '`); shift; shift ;;
-  -V | --verify)     oVFY=1; shift ;;
+  -V | --verify)     ((oVFY++)); shift ;;
   -E | --extent)     ExtSize="$2"; shift; shift ;;
   -u | --chunk)      oCHUNK="$2"; shift; shift ;;
+  -F | --fs_type)    oFStype="$2"; shift; shift ;;
   -M | --mpi)        oMPIchEnv="$2"; shift; shift ;;
   -m | --md)         oMdServers="$2"; shift; shift ;; # Default: Servers
   -x | --suffix)     oNodeSuffix="$2"; shift; shift ;;
@@ -227,21 +233,41 @@ wup=$(getval $oWARMUP)
 seg=$(getval $oSEGMENT)
 extsz=$(getval $ExtSize)
 ((tVERBOSE=0))
-
-# Real FAM or emulation?
+((tIOR=0))
 
 if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 
 unset IFS
-opt=""
 srv_opt=""
 if ((oVERBOSE)); then
     export tVERBOSE=1
     srv_opt="$srv_opt -v 6"
 fi
-if ((oSEQ)); then seq="-S 1"; else seq=""; fi
 ((err=0))
+TEST_BIN="${TEST_DIR}/libexec/${oAPP}"
+if [ ! -x ${TEST_BIN} ]; then
+  TEST_BIN="${TEST_DIR}/bin/${oAPP}"
+  if [ ! -x ${TEST_BIN} ]; then
+    echo "Test file not found: ${TEST_BIN}"
+    exit 1
+  fi
+fi
+# FS type?
+case "${oFStype^^}" in
+  FAM* | 3)    fstype=2 ;;
+  UNI* | 2)    fstype=1 ;;
+  *)           fstype=0 ;;
+esac
+ITR=""
+if [[ "$oAPP" =~ ior ]]; then
+  ((tIOR=1))
+  cycles=1
+  ITR="-i $oCycles"
+else
+  ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
+  ((cycles = oCycles))
+fi
 
 # Set constants in config file (FAMFS_CONF)
 moniker="${oDATA}D:${oCHUNK}"
@@ -252,6 +278,8 @@ if [ ! -f "$FAMFS_CONF" ]; then
     update_ini "devices" "extent_size" "${ExtSize}"
     ((oVERBOSE))&& update_ini log verbosity 6
 fi
+echo "Layout moniker: $moniker"
+echo "configuration file: ${PWD}/${FAMFS_CONF}"
 
 for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     Servers=`make_list "$hh" "${SrvIter[$si]}" "$oNodeSuffix"`
@@ -294,60 +322,62 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         reads="-w"
                         dsc="$dsc <no reads>"
                     else
-                        reads="-r ${RDSZ[$j]}"
+                        ((tIOR)) || reads="-r ${RDSZ[$j]}"
                         dsc="$dsc Reads=${RDSZ[$j]}"
                     fi
                 fi
-                if [ -z "$seq" ]; then
-                    dsc="$dsc RANDOM"
-                else
+                if (($oSEQ)); then
+                    ((tIOR)) && sec="" || sec="-S 1"
                     dsc="$dsc SEQ"
+                else
+                    ((oVFY)) && ((tIOR)) && { echo "Can't combine verify & random"; exit 1; }
+                    ((tIOR)) && sec="-z" || sec="-S 0"
+                    dsc="$dsc RANDOM"
                 fi
                 if ((oN2N)); then
-                    ptrn="-p 1"
+                    ((tIOR)) && ptrn="-F" || ptrn="-p 1"
                     dsc="$dsc N-to-N"
                 else
-                    ptrn="-p 0"
+                    ((tIOR)) && ptrn="" || ptrn="-p 0"
                     dsc="$dsc N-to-1"
                 fi
+                wu=""
                 if ((wup == 0)); then
-                    wu=""
                     dsc="$dsc <no warmup>"
                 else
-                    wu="-W $wup"
-                    dsc="$dsc WARMUP=$wup"
+                    ((tIOR)) && ITR="-i $((oCycles+1))" || wu="-W $wup"
+                    ((tIOR)) || dsc="$dsc WARMUP=$wup"
                 fi
+                vfy=""
                 if ((oVFY)); then
                     dsc="$dsc with VFY"
-                    opt="$opt -V"
+                    ((tIOR)) && vfy="-R" || vfy="-V"
                 fi
                 for ((k = 0; k < cycles; k++)); do
                     ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
                     ((mem = (mem/1024/1024/1024 + 1)*1024*1024*1024))
                     # TODO: check device size >= $mem
 
-                    export BLK="-b $blksz"
-                    export SEG="-s $seg"
-                    export WSZ="-t ${TXSZ[$j]}"
-                    export RSZ="$reads"
-                    export WUP="$wu"
-                    export PTR="$ptrn"
-                    export SEQ="$seq"
-                    export OPT="$opt"
-                    export SRV_OPT="$srv_opt"
+                    BLK="-b $blksz"
+                    SEG="-s $seg"
+                    WSZ="-t ${TXSZ[$j]}"
+                    RSZ="$reads"
+                    WUP="$wu"
+                    PTR="$ptrn"
+                    SEQ="$seq"
+                    VFY="$vfy"
                     export DSC="$dsc"
                     export Ranks="${RANK[$i]}"
                     export AllNodes
                     export all_n
-                    export extsz
-                    export mdServers
                     export oMPIchEnv
-                    export MONIKER="$moniker"
-# export LFS_COMMAND="x ${oData} -H ${Servers} -c ${Clients} --provider zhpe --memreg basic -P0 -R0 -M ${mem} LOAD"
-# export FAMFS_MDS_LIST="$mdServers"
-#echo "test_prw_static -f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ -D 0 -u 0"
-                    export TEST_BIN="${TEST_DIR}/libexec/test_prw_static"
-                    export TEST_OPTS="-f /tmp/mnt/abc $BLK $SEG $WSZ $RSZ $PTR $WUP $SEQ $OPT -D 0 -u 1"
+                    export SRV_OPT="$srv_opt"
+                    export TEST_BIN
+                    ((tIOR)) \
+                      && TEST_OPTS="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -Cge -wr" \
+                      || TEST_OPTS="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1"
+ echo "test:$TEST_BIN TEST_OPTS=\"$TEST_OPTS\""
+                    export TEST_OPTS
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"
                     if ${SCRIPT_DIR}/test_cycle.sh; then
