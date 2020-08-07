@@ -94,7 +94,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,suffix: -n 'parse-options' -- "$@"`
+OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x:X: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,suffix:,extra: -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -171,6 +171,7 @@ oCHUNK="1M"
 oNodeSuffix=
 oAPP="test_prw_static"
 oFStype="FAMfs"
+oExtraOpt=
 
 declare -a SrvIter
 declare -a ClnIter
@@ -200,6 +201,7 @@ while true; do
   -M | --mpi)        oMPIchEnv="$2"; shift; shift ;;
   -m | --md)         oMdServers="$2"; shift; shift ;; # Default: Servers
   -x | --suffix)     oNodeSuffix="$2"; shift; shift ;;
+  -X | --extra)      oExtraOpt"$2"; shift; shift ;; # Pass extra options to the test command line
   -- ) shift; break ;;
   * ) break ;;
   esac
@@ -372,8 +374,8 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export SRV_OPT="$srv_opt"
                     export TEST_BIN
                     ((tIOR)) \
-                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -Cge -wr" \
-                      || opts="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1"
+                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -ge $oExtraOpt" \
+                      || opts="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
                     opts=( $(echo $opts) )
                     TEST_OPTS=${opts[*]} # jam whitespaces
                     # echo "\"test:${TEST_BIN} ${TEST_OPTS}\""
@@ -393,3 +395,4 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     done
 done
 echo "Error count: $err"
+(($err))&& exit 1 || exit 0
