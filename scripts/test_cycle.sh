@@ -30,9 +30,9 @@ echo
 echo "### $DSC" >>$TEST_LOG
 echo "### $DSC" >>$MPI_LOG
 echo "### $DSC" >>$SRV_LOG
-((tVERBOSE)) && echo "mpirun --hosts $Clients -ppn $Ranks /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}' 2>>$MPI_LOG 1>>$TEST_LOG"
+((tVERBOSE)) && echo "mpirun --hosts $Clients -ppn $Ranks $oMPIchEnv /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}' 2>>$MPI_LOG 1>>$TEST_LOG"
 echo "Starting test..."
-mpirun --hosts $Clients -ppn $Ranks /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}' 2>>$MPI_LOG 1>>$TEST_LOG
+mpirun --hosts $Clients -ppn $Ranks $oMPIchEnv /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}' 2>>$MPI_LOG 1>>$TEST_LOG
 
 if (($? == 0))
 then

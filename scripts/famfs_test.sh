@@ -101,6 +101,7 @@ eval set -- "$OPTS"
 
 all_h=""
 all_c=""
+oMPIchEnv=""
 if [[ -d $SLURM_HOME ]] && command -v squeue 1>/dev/null; then
   echo "SLURM: $(command -v squeue)"
   oMPIchEnv="-genv MPICH_NEMESIS_NETMOD mxm"
@@ -143,8 +144,6 @@ if [[ -d $SLURM_HOME ]] && command -v squeue 1>/dev/null; then
   all_c=${all_c:0:((${#all_c}-1))}
   echo "Allocated Servers: $all_h"
   echo "Allocated Clients: $all_c"
-else
-  oMPIchEnv=""
 fi
 export MPI_LOG=${PWD}/mpi.log
 export TEST_LOG=${PWD}/test.log
@@ -166,7 +165,6 @@ oVERBOSE=0
 oN2N=0
 oSEQ=0
 oVFY=0
-oMPIchEnv=""
 oCycles=1
 oDATA=1
 oCHUNK="1M"
