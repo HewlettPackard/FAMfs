@@ -94,7 +94,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x:X: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,suffix:,extra: -n 'parse-options' -- "$@"`
+OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x:X:O: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,suffix:,extra:,srv_extra: -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -172,6 +172,7 @@ oNodeSuffix=
 oAPP="test_prw_static"
 oFStype="FAMfs"
 oExtraOpt=
+oExtraSrvOpt=
 
 declare -a SrvIter
 declare -a ClnIter
@@ -201,7 +202,8 @@ while true; do
   -M | --mpi)        oMPIchEnv="$2"; shift; shift ;;
   -m | --md)         oMdServers="$2"; shift; shift ;; # Default: Servers
   -x | --suffix)     oNodeSuffix="$2"; shift; shift ;;
-  -X | --extra)      oExtraOpt"$2"; shift; shift ;; # Pass extra options to the test command line
+  -X | --extra)      oExtraOpt="$2"; shift; shift ;; # Pass extra options to the test command line
+  -O | --srv_extra)  oExtraSrvOpt="$2"; shift; shift ;; # Pass extra options to FAMFS server
   -- ) shift; break ;;
   * ) break ;;
   esac
@@ -239,7 +241,7 @@ if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 
 unset IFS
-srv_opt=""
+srv_opt="$oExtraSrvOpt"
 if ((oVERBOSE)); then
     export tVERBOSE=1
     srv_opt="$srv_opt -v 6"
