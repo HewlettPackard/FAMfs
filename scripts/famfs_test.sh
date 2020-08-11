@@ -279,6 +279,10 @@ if [ ! -f "$FAMFS_CONF" ]; then
     update_ini "layout" "name" "\"$moniker\""
     update_ini "devices" "extent_size" "${ExtSize}"
     ((oVERBOSE))&& update_ini log verbosity 6
+    if ((ns==1)); then
+        Servers=`make_list "$hh" 1 "$oNodeSuffix"`
+        update_ini ionode host ${Servers[0]}
+    fi
 fi
 echo "Layout moniker: $moniker"
 echo "configuration file: ${PWD}/${FAMFS_CONF}"

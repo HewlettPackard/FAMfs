@@ -28,7 +28,7 @@ id = 0 ; this is a default
 z_node = io1
 topo = "1.1.5"
 geo = "R2.Ch1.FS1.N1"
-host = "r1c1t5n1" ; node's hostname or IP
+host = "hostname" ; node's hostname or IP
 mds = 1 ; run one MD server on this ionode
 # force_helper = true ; there's only node in the test configuration!
 
