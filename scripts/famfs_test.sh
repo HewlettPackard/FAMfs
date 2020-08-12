@@ -333,11 +333,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     fi
                 fi
                 if (($oSEQ)); then
-                    ((tIOR)) && sec="" || sec="-S 1"
+                    ((tIOR)) && seq="" || seq="-S 1"
                     dsc="$dsc SEQ"
                 else
                     ((oVFY)) && ((tIOR)) && { echo "Can't combine verify & random"; exit 1; }
-                    ((tIOR)) && sec="-z" || sec="-S 0"
+                    ((tIOR)) && seq="-z" || seq="-S 0"
                     dsc="$dsc RANDOM"
                 fi
                 if ((oN2N)); then
