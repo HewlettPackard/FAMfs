@@ -738,10 +738,10 @@ int f_set_ionode_ranks(F_POOL_t *pool)
 
     ASSERT(pool->mynode.ionode_idx < pool->ionode_count);
 
-    rc = MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    rc = MPI_Comm_rank(pool->helper_comm, &rank);
     if (rc != MPI_SUCCESS) return rc;
 
-    rc = MPI_Comm_size(MPI_COMM_WORLD, &cnt);
+    rc = MPI_Comm_size(pool->helper_comm, &cnt);
     if (rc != MPI_SUCCESS) return rc;
 
     idxbuf = alloca(cnt*sizeof(io_idx));
@@ -754,7 +754,7 @@ int f_set_ionode_ranks(F_POOL_t *pool)
      */ 
     idxbuf[rank] = NodeIsIOnode(&pool->mynode) ? io_idx : -1;
     rc = MPI_Allgather(MPI_IN_PLACE, sizeof(io_idx), MPI_BYTE, idxbuf, 
-            sizeof(io_idx), MPI_BYTE, MPI_COMM_WORLD);
+            sizeof(io_idx), MPI_BYTE, pool->helper_comm);
     if (rc != MPI_SUCCESS) return rc;
 
     for (i = 0, n = 0, hcnt = 0; i < cnt; i++) {

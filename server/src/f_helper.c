@@ -146,7 +146,7 @@ static void *commit_srv(void *arg) {
         // wait for any commit or release message from CNs' helpers
         // commit thread uses TAG_BASE + layout_count
         rc = MPI_Recv(msg, msg_max, MPI_BYTE, MPI_ANY_SOURCE, 
-                      F_TAG_BASE + N, MPI_COMM_WORLD, &sts);
+                      F_TAG_BASE + N, pool->helper_comm, &sts);
         if (rc != MPI_SUCCESS || sts.MPI_ERROR != MPI_SUCCESS) {
             LOG(LOG_ERR, "MPI_Recv returnd error %d/sts=%d", rc, sts.MPI_ERROR);
             continue;
@@ -199,6 +199,7 @@ static void *commit_srv(void *arg) {
 static void *alloc_srv(void *arg) {
     struct f_stripe_set ss = {.count = 0, .stripes = NULL}; 
     F_LAYOUT_t *lo = (F_LAYOUT_t *)arg;
+    F_POOL_t *pool = lo->pool;
     MPI_Status sts;
     MPI_Request mrq;
     f_ah_ipc_t msg, *rply = NULL;
@@ -209,7 +210,7 @@ static void *alloc_srv(void *arg) {
         // wait for any commit message from CNs' helpers
         // allocators use TAG_BASE + layout ID tag
         rc = MPI_Recv(&msg, sizeof(msg), MPI_BYTE, MPI_ANY_SOURCE, F_TAG_BASE + lid, 
-                      MPI_COMM_WORLD, &sts);
+                      pool->helper_comm, &sts);
         if (rc != MPI_SUCCESS || sts.MPI_ERROR != MPI_SUCCESS) {
             LOG(LOG_ERR, "MPI_Recv returnd error %d/sts=%d", rc, sts.MPI_ERROR);
             continue;
@@ -262,7 +263,7 @@ static void *alloc_srv(void *arg) {
         if (ss.count < rq_cnt)
             LOG(LOG_WARN, "srv AT: requested %d stripes, but only got %d\n", rq_cnt, ss.count);
         rc = MPI_Isend(rply, F_AH_MSG_SZ(ss.count), MPI_BYTE, sts.MPI_SOURCE, 
-                       sts.MPI_TAG, MPI_COMM_WORLD, &mrq);
+                       sts.MPI_TAG, pool->helper_comm, &mrq);
         if (rc != MPI_SUCCESS) {
             LOG(LOG_ERR, "MPI_Isend returnd error %d", rc);
             continue;
@@ -270,7 +271,7 @@ static void *alloc_srv(void *arg) {
         in_flight = 1;
 /*
         rc = MPI_Send(rply, F_AH_MSG_SZ(ss.count), MPI_BYTE, sts.MPI_SOURCE, 
-                       sts.MPI_TAG, MPI_COMM_WORLD);
+                       sts.MPI_TAG, pool->helper_comm);
         if (rc != MPI_SUCCESS) {
             LOG(LOG_ERR, "MPI_Send returnd error %d", rc);
             continue;
@@ -304,13 +305,13 @@ int f_ah_shutdown(F_POOL_t *pool) {
         f_ah_ipc_t qm = {.cmd = F_AH_QUIT};
         int myself;
 
-        MPI_Comm_rank(MPI_COMM_WORLD, &myself);
+        MPI_Comm_rank(pool->helper_comm, &myself);
         for (int i = 0; i < pool->info.layouts_count; i++) {
-            MPI_Isend(&qm, sizeof(qm), MPI_BYTE, myself, F_TAG_BASE + i, MPI_COMM_WORLD, &rq[i]);
+            MPI_Isend(&qm, sizeof(qm), MPI_BYTE, myself, F_TAG_BASE + i, pool->helper_comm, &rq[i]);
             pthread_join(hs_athrd[i], NULL);
         }
 
-        MPI_Isend(&qm, sizeof(qm), MPI_BYTE, myself, F_TAG_BASE + pool->info.layouts_count, MPI_COMM_WORLD, &rq[0]);
+        MPI_Isend(&qm, sizeof(qm), MPI_BYTE, myself, F_TAG_BASE + pool->info.layouts_count, pool->helper_comm, &rq[0]);
         pthread_join(hs_cthrd, NULL);
 
         return 0;
@@ -621,7 +622,7 @@ static void *stoker(void *arg) {
                 arq->lid = lo->info.conf_id;
                 // send request to remote allocator
                 rc = MPI_Send(arq, sizeof(*arq), MPI_BYTE, dst,
-                              F_TAG_BASE + lo->info.conf_id, MPI_COMM_WORLD);
+                              F_TAG_BASE + lo->info.conf_id, pool->helper_comm);
                 if (rc != MPI_SUCCESS) {
                     LOG(LOG_ERR, "MPI_Send returnd error %d", rc);
                     continue;
@@ -629,7 +630,7 @@ static void *stoker(void *arg) {
 
                 // wait for response
                 rc = MPI_Recv(arq, F_AH_MSG_SZ(arq->cnt), MPI_BYTE, dst,
-                              F_TAG_BASE + lo->info.conf_id, MPI_COMM_WORLD, &sts);
+                              F_TAG_BASE + lo->info.conf_id, pool->helper_comm, &sts);
                 if (rc != MPI_SUCCESS) {
                     LOG(LOG_ERR, "MPI_Recv returnd error %d", rc);
                     continue;
@@ -750,7 +751,7 @@ _retry:
             arq->flag = 0;
             arq->lid = lo->info.conf_id;
             rc = MPI_Send(&arq, F_AH_MSG_SZ(ss.count), MPI_BYTE, dst, 
-                     F_TAG_BASE + pool->info.layouts_count, MPI_COMM_WORLD);
+                     F_TAG_BASE + pool->info.layouts_count, pool->helper_comm);
             if (rc != MPI_SUCCESS)
                 LOG(LOG_ERR, "MPI_Send returned error %d", rc);
         }
@@ -882,7 +883,7 @@ static void *drainer(void *arg) {
                         MPI_Wait(&mrq[lid], MPI_STATUS_IGNORE);
                     in_flight[lid] = 0;
                     rc = MPI_Isend(&prq, sizeof(prq), MPI_BYTE, dst, F_TAG_BASE + N, 
-                                   MPI_COMM_WORLD, &mrq[lid]);
+                                   pool->helper_comm, &mrq[lid]);
                     if (rc != MPI_SUCCESS) {
                         LOG(LOG_ERR, "MPI_Isend returnd error %d", rc);
                         continue;
@@ -921,7 +922,7 @@ static void *drainer(void *arg) {
                     crq[i]->flag = 0;
                     crq[i]->lid = i;
                     rc = MPI_Isend(crq[i], F_AH_MSG_SZ(ssa[i].count), MPI_BYTE, 
-                                   dst, F_TAG_BASE + N, MPI_COMM_WORLD, &mrq[i]);
+                                   dst, F_TAG_BASE + N, pool->helper_comm, &mrq[i]);
                     if (rc != MPI_SUCCESS) {
                         LOG(LOG_ERR, "MPI_Isend returnd error %d", rc);
                     } else {
