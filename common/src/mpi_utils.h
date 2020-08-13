@@ -13,6 +13,7 @@
 
 int mpi_split_world(MPI_Comm *mpi_comm, int my_role, int zero_role,
     int gbl_rank, int gbl_size);
+int mpi_comm_dup(MPI_Comm *dst_comm, const MPI_Comm *src_comm);
 
 static inline int mpi_broadcast_arr64(uint64_t *keys, int size, int rank0)
 {

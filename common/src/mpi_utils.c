@@ -82,3 +82,42 @@ _err:
 	return -1;
 }
 
+/* Duplicate src_comm */
+int mpi_comm_dup(MPI_Comm *dst_comm, const MPI_Comm *src_comm)
+{
+	int rc;
+	MPI_Comm	comm, src = src_comm?*src_comm:MPI_COMM_WORLD;
+	MPI_Group	group;
+
+/*
+	rc = MPI_Comm_dup(src, &comm);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_dup failed:%d", rc);
+		goto _err;
+	}
+*/
+	/* Create private communicator (GASNET way) */
+	rc = MPI_Comm_group(src, &group);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_group failed:%d", rc);
+		goto _err;
+	}
+	rc = MPI_Comm_create(src, group, &comm);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_create failed:%d", rc);
+		goto _err;
+	}
+	rc = MPI_Group_free(&group);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Group_free failed:%d", rc);
+		goto _err;
+	}
+
+	memcpy(dst_comm, &comm, sizeof(MPI_Comm));
+	return 0;
+
+_err:
+	*dst_comm = MPI_COMM_NULL;
+	return rc;
+}
+
