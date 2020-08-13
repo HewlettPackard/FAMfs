@@ -13,6 +13,7 @@
 #include "famfs_maps.h"
 #include "famfs_lf_connect.h"
 #include "famfs_configurator.h"
+#include "mpi_utils.h"
 
 
 F_POOL_t *pool = NULL;
@@ -423,6 +424,9 @@ static int free_pool(F_POOL_t *p)
     if (p) {
 	F_POOL_DEV_t *pdev;
 	unsigned int i;
+
+	if (p->helper_comm)
+	    MPI_Comm_free(&p->helper_comm);
 
 	if ((rc = lf_clients_free(p)))
 	    goto _err;
@@ -1016,11 +1020,14 @@ static int cfg_load(unifycr_cfg_t *c)
 /* Set layout info from configurator once */
 int f_set_layouts_info(unifycr_cfg_t *cfg)
 {
+    int rc = -1;
+
     if (cfg && pool == NULL) {
 	f_crc4_init_table();
-	return cfg_load(cfg);
+	if (!(rc = cfg_load(cfg)))
+	    rc = mpi_comm_dup(&pool->helper_comm, NULL);
     }
-    return -1;
+    return rc;
 }
 
 /* Get layout 'layout_id' info */
