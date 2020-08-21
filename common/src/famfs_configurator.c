@@ -176,7 +176,7 @@ void unifycr_config_print(unifycr_cfg_t *cfg,
     char msg[UNIFYCR_CFG_MAX_MSG];
 
     if (fp == NULL)
-        fp = stderr;
+        fp = stdout;
 
 #define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)                       \
     if (cfg->sec##_##key != NULL) {                                     \
@@ -235,7 +235,7 @@ void unifycr_config_print_ini(unifycr_cfg_t *cfg,
     const char *last_sec = NULL;
 
     if (inifp == NULL)
-        inifp = stderr;
+        inifp = stdout;
 
 #define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)                       \
     if (cfg->sec##_##key != NULL) {                                     \
