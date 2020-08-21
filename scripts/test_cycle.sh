@@ -43,7 +43,7 @@ then
 else
     echo "### ERRORS" >>$TEST_LOG
     echo "Test failed"
- sleep 10000
+    # sleep 10000
     sts=1
 fi
 echo "Stopping servers"
