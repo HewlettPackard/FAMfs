@@ -12,52 +12,66 @@
 
 
 /* TODO: Move me to debug.h */
-#define DEBUG_LVL_(verbosity, lvl, fmt, ...) \
-do { \
-    if ((verbosity) >= (lvl)) \
-        printf("famfs: %s:%d: %s: " fmt "\n", \
-               __FILE__, __LINE__, __func__, ## __VA_ARGS__); \
-} while (0)
-
-#define ERROR(fmt, ...) \
-    do {								\
-	fprintf(stderr, "famfs error: %s:%d: %s: " fmt "\n",	\
-		__FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
+#ifndef DEBUG
+#define DEBUG(fmt, ...)                          \
+    do {                                         \
+        printf("%s:%d: %s: " fmt "\n",           \
+               __FILE__, __LINE__,               \
+               __func__, ## __VA_ARGS__);        \
     } while (0)
+#endif
 
-#define ON_ERROR(action, msg, ...)          \
-    do {                                    \
-        int __err;                          \
-        if ((__err = (action))) {           \
-            fprintf(stderr, #msg ": %d - %m\n", ## __VA_ARGS__, __err); \
-            exit(1);                        \
-        }                                   \
+#define DEBUG_LVL_(verbosity, lvl, fmt, ...)     \
+    if ((verbosity) >= (lvl))                    \
+        DEBUG(fmt, ## __VA_ARGS__);
+
+#ifndef ERROR
+#define ERROR(fmt, ...)                          \
+    do {                                         \
+	fprintf(stderr, "error in %s:%d: %s: "   \
+                fmt "\n",                        \
+		__FILE__, __LINE__, __func__,    \
+                ## __VA_ARGS__);                 \
+    } while (0)
+#endif
+
+#define ON_ERROR(action, msg, ...)               \
+    do {                                         \
+        int __err;                               \
+        if ((__err = (action))) {                \
+            ERROR("%d " msg,                      \
+                  __err, ## __VA_ARGS__);        \
+            exit(1);                             \
+        }                                        \
     } while (0);
 
-#define ON_ERROR_RET(action, msg, ...)      \
-    do {                                    \
-        int __err;                          \
-        if ((__err = (action))) {           \
-            fprintf(stderr, #msg ": %d - %m\n", ## __VA_ARGS__, __err); \
-            return;                         \
-        }                                   \
+#define ON_ERROR_RET(action, msg, ...)           \
+    do {                                         \
+        int __err;                               \
+        if ((__err = (action))) {                \
+            fprintf(stderr, #msg ": %d - %m\n",  \
+                    ## __VA_ARGS__, __err);      \
+            return;                              \
+        }                                        \
     } while (0);
 
-#define ON_ERROR_RV(action, ret_val, msg, ...) \
-    do {                                       \
-        int __err;                             \
-        if ((__err = (action))) {              \
-            fprintf(stderr, #msg ": %d - %m\n", ## __VA_ARGS__, __err); \
-            return (ret_val);                  \
-        }                                      \
+#define ON_ERROR_RV(action, ret_val, msg, ...)   \
+    do {                                         \
+        int __err;                               \
+        if ((__err = (action))) {                \
+            fprintf(stderr, #msg ": %d - %m\n",  \
+                    ## __VA_ARGS__, __err);      \
+            return (ret_val);                    \
+        }                                        \
     } while (0);
 
-#define    ASSERT(x)                    \
-    do {                                \
-        if (!(x))    {                  \
-            fprintf(stderr, "ASSERT failed %s:%s(%d) " #x "\n", __FILE__, __FUNCTION__, __LINE__); \
-            exit(1);                    \
-        }                               \
+#define    ASSERT(x)                             \
+    do {                                         \
+        if (!(x))    {                           \
+            fprintf(stderr, "ASSERT failed %s:%s(%d) " #x "\n", \
+               __FILE__, __FUNCTION__, __LINE__);\
+            exit(1);                             \
+        }                                        \
     } while (0);
 
 #define err(str, ...) fprintf(stderr, str "\n", ## __VA_ARGS__)

@@ -55,7 +55,6 @@ double dbngettime=0;
 struct timeval dbbputstart, dbbputend;
 double dbbputtime=0;
 
-extern int dbg_rank;
 static void cmp_destroy(void* arg __attribute__((unused))) { }
 
 static int cmp_empty(const char* a, size_t alen,
@@ -412,9 +411,6 @@ int mdhim_leveldb_put(void *dbh, void *key, int key_len, void *data, int32_t dat
      * operation is fully defined and implemented */
 
     if (err != NULL) {
-     /*   printf("in mdhim, rank:%d, key is %d, value len is %d, err is %s\n",\
-        		dbg_rank, *((int *)key), data_len, err);
-        fflush(stdout); */
 	    mlog(MDHIM_SERVER_CRIT, "Error putting key/value in leveldb");
 	    return MDHIM_DB_ERROR;
     }

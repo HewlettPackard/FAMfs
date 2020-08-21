@@ -68,9 +68,6 @@
  * @param opts Options structure for DB creation, such as name, and primary key type
  * @return mdhim_t* that contains info about this instance or NULL if there was an error
  */
-
-int dbg_rank;
-
 struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 	int ret = 0;
 	int flag, provided;
@@ -174,14 +171,14 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 		     md->mdhim_rank);
 		return NULL;
 	}
-
-	if ((ret = MPI_Comm_rank(md->mdhim_comm, &dbg_rank)) != MPI_SUCCESS) {
+/*
+	if ((ret = MPI_Comm_rank(md->mdhim_comm, &mdhim_dbg_rank)) != MPI_SUCCESS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error getting the rank of the "
 		     "comm while initializing",
 		     md->mdhim_rank);
 		return NULL;
 	}
-
+*/
 	//Initialize receive msg mutex - used for receiving a message from myself
 	md->receive_msg_mutex = malloc(sizeof(pthread_mutex_t));
 	if (!md->receive_msg_mutex) {
@@ -210,6 +207,11 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 		return NULL;
 	}
 
+	//Set the local receive queue to NULL - used for sending and receiving to/from ourselves
+	//md->receive_msg = NULL;
+	INIT_LIST_HEAD(&md->receive_msg_list);
+	md->receive_msg_cnt = 0;
+
 	//Initialize the partitioner
 	partitioner_init();
 
@@ -223,7 +225,9 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 		     md->mdhim_rank);
 		return NULL;
 	}
+
 	//Create the default remote primary index
+	//Start RS threads if not started yet
 	primary_index = create_global_index(md, opts->rserver_factor, opts->max_recs_per_slice,
 					    opts->db_type, opts->db_key_type, NULL);
 	if (!primary_index) {
@@ -233,11 +237,6 @@ struct mdhim_t *mdhimInit(void *appComm, struct mdhim_options_t *opts) {
 		return NULL;
 	}
 	md->primary_index = primary_index;
-
-	//Set the local receive queue to NULL - used for sending and receiving to/from ourselves
-	//md->receive_msg = NULL;
-	INIT_LIST_HEAD(&md->receive_msg_list);
-	md->receive_msg_cnt = 0;
 
 	MPI_Barrier(md->mdhim_client_comm);
 

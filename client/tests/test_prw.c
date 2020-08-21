@@ -262,7 +262,7 @@ int main(int argc, char *argv[]) {
         to_unmount = 0;
 
     /* Add layout name if FAMFS */
-    print0("File name is %s\n", fname);
+    print0("File name is %s\n", fname)
 
     char *buf;
     size_t len;
@@ -330,7 +330,7 @@ int main(int argc, char *argv[]) {
         flags |= O_DIRECT;
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        printf("%02d open file %s failure\n", rank, tmpfname);
+        printf("%02d open file '%s' failure - %m\n", rank, tmpfname);
         fflush(stdout);
         return -1;
     }
@@ -491,7 +491,7 @@ int main(int argc, char *argv[]) {
 
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        printf("%02d open file '%s' failure - %m\n", rank, tmpfname);
+        printf("%02d open file '%s' for read failure - %m\n", rank, tmpfname);
         fflush(stdout);
         return -1;
     }

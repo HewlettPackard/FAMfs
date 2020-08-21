@@ -129,7 +129,7 @@ char *shm_reqbuf;
 char cmd_buf[GEN_STR_LEN] = {0};
 char ack_msg[3] = {0};
 
-int dbg_rank;
+int dbg_rank = -1;
 int app_id;
 static int glb_size = 0;
 int reqbuf_fd = -1;
@@ -1995,8 +1995,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 
     rc = unifycr_config_init(&client_cfg, 0, NULL);
     if (rc) {
-        DEBUG("rank:%d, failed to initialize configuration:%d",
-              dbg_rank, rc);
+        DEBUG("failed to initialize configuration:%d", rc);
         return -1;
     }
 
@@ -2033,7 +2032,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
     if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
         rc = CountTasksPerNode(rank, size);
         if (rc < 0) {
-            DEBUG("rank:%d, cannot get the local rank list.", dbg_rank);
+            DEBUG("cannot get the local rank list.");
             return -1;
         }
 
@@ -2071,13 +2070,13 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
 
     rc = unifycr_init_req_shm(local_rank_idx, app_id);
     if (rc < 0) {
-	DEBUG("rank:%d, fail to init shared request memory.", dbg_rank);
+	DEBUG("fail to init shared request memory.");
 	return UNIFYCR_FAILURE;
     }
 
     rc = unifycr_init_recv_shm(local_rank_idx, app_id);
     if (rc < 0) {
-	DEBUG("rank:%d, fail to init shared receive memory.", dbg_rank);
+	DEBUG("fail to init shared receive memory.");
 	return UNIFYCR_FAILURE;
     }
 
@@ -2086,7 +2085,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
         *((int *)shm_recvbuf) = 0; /* metadata read cache size */
 
         if ((rc = f_srv_connect())) {
-            DEBUG("rank %d couldn't connect to server: %d", dbg_rank, rc);
+            DEBUG("couldn't connect to server: %d", rc);
             return UNIFYCR_FAILURE;
         }
 	rc = f_server_sync();
@@ -2094,8 +2093,7 @@ int unifycr_mount(const char prefix[], int rank, size_t size,
         rc = unifycr_sync_to_del();
     }
     if (rc < 0) {
-	DEBUG("rank:%d, fail to convey information to the delegator.",
-	      dbg_rank);
+	DEBUG("fail to convey information to the server");
 	return UNIFYCR_FAILURE;
     }
 

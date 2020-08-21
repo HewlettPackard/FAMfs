@@ -73,7 +73,6 @@
 #include "famfs_stats.h"
 #include "fam_stripe.h"
 #include "lf_client.h"
-#include "famfs_global.h"
 #include "famfs_rbq.h"
 #include "famfs_bitmap.h"
 #include "famfs_maps.h" /* DEBUG_LVL macro */
@@ -112,6 +111,7 @@ extern unsigned long unifycr_max_index_entries;
 extern unsigned int unifycr_max_fattr_entries;
 extern char external_data_dir[1024];
 extern char external_meta_dir[1024];
+extern int app_id;
 
 
 /* FAM */
@@ -1918,7 +1918,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
         tot_sz += read_req[i].length;
     }
-#if defined(DEBUG) | defined(FAMFS_STATS)
+#if defined(DEBUG_RC) | defined(FAMFS_STATS)
     long ttl = tot_sz;
 #endif
 
@@ -1936,8 +1936,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 #endif
         rq_cnt = count;
         rq_ptr = read_req_set.read_reqs;
-        memcpy(rq_ptr, read_req, sizeof(read_req_t)*count);
-//    md_}
+        memcpy(rq_ptr, read_req, sizeof(read_req_t)*(size_t)count);
 
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
     int *rc_ptr = (int *)shm_recvbuf;
@@ -2014,7 +2013,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 	f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, lid, rq_cnt);
 
     for (i = 0; i < rq_cnt; i++) {
-        DEBUG_LVL(6, "  [%d] fid=%d off/len=%ld/%ld",
+        DEBUG_LVL(7, "  [%d] fid=%d off/len=%ld/%ld",
 		  i, md_rq[i].src_fid, md_rq[i].offset, md_rq[i].length);
     }
 
@@ -2027,8 +2026,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         return -EIO;
     }
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("%s:%d: can't get reply to MD_GET from layout %d: %s(%d)", 
-	    f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, lid, strerror(-rc), rc);
+        ERROR("can't get reply to MD_GET from layout %d: %s(%d)", lid, strerror(-rc), rc);
         return -EIO;
     }
     if (r.rc) {
@@ -2041,6 +2039,11 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     DEBUG_LVL(7, "%s:%d: miss:%lu sz:%ld of %ld, MD records found:%d time:%lu",
               f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, ++c_miss, tot_sz, ttl, *rc_ptr, elapsed(&md_start));
 #endif
+    DEBUG_LVL(6, "MD/read: loid:%d poll %d rq:", lid, rq_cnt);
+    for (i = 0; i < rq_cnt; i++) {
+        DEBUG_LVL(7, "  [%d] fid=%d off/len=%ld/%ld",
+		  i, md_rq[i].src_fid, md_rq[i].offset, md_rq[i].length);
+    }
 
     tot_sz = match_rq_and_read(lo, read_req, count, lid,
                                md_ptr, *rc_ptr, tot_sz);
