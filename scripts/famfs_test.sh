@@ -3,11 +3,7 @@ SRC_DIR="${TEST_DIR}/src"
 SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
 WRK_DIR=${SCRIPT_DIR}/t
 export SCRIPT_DIR
-
 FAMFS_CONF="famfs.conf"
-
-function run-all() { mpirun --hosts ${all_n} -ppn 1 /bin/bash -c "$@"; }
-export -f run-all
 
 function count() {
     IFS=","
@@ -104,7 +100,6 @@ all_c=""
 oMPIchEnv=""
 if [[ -d $SLURM_HOME ]] && command -v squeue 1>/dev/null; then
   echo "SLURM: $(command -v squeue)"
-  oMPIchEnv="-genv MPICH_NEMESIS_NETMOD mxm"
   nodes=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 2))
   parts=($(squeue -u $USER -o %P:%N -h | cut -d':' -f 1))
   for ((i = 0; i < ${#parts[*]}; i++)) do
@@ -237,6 +232,17 @@ extsz=$(getval $ExtSize)
 ((tVERBOSE=0))
 ((tIOR=0))
 
+# mpich or ompi?
+_s=$(mpirun --version 2>/dev/null)
+echo -ne $_s | grep -q "Version:" && ((mpich=1)) || ((mpich=0))
+echo -ne $_s | grep -q "Open MPI" && ((ompi=1)) || ((ompi=0))
+((mpich==0))&&((ompi==0))&&{ echo "No MPI found!"; exit 1; }
+unset _s
+((mpich))&& { mpi_hosts="--hosts"; mpi_ppn="--ppn"; }
+((ompi)) && { mpi_hosts="-H"; mpi_ppn="-N"; }
+mpirun=$(command -v mpirun)
+export mpi_hosts mpi_ppn mpirun
+
 if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 
@@ -255,6 +261,8 @@ if [ ! -x ${TEST_BIN} ]; then
     exit 1
   fi
 fi
+SRV_BIN="${TEST_DIR}/bin/unifycrd"
+export TEST_BIN SRV_BIN
 # FS type?
 case "${oFStype^^}" in
   FAM* | 2)    fstype=2 ;;
@@ -269,6 +277,18 @@ if [[ "$oAPP" =~ ior ]]; then
 else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
   ((cycles = oCycles))
+fi
+if ((ompi)); then
+  oMPIchEnv="${oMPIchEnv} -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS"
+fi
+#if ((mpich)); then
+#  oMPIchEnv="${oMPIchEnv} MPIR_CVAR_OFI_USE_PROVIDER=sockets"
+#fi
+if ((tVERBOSE)); then
+  ((mpich))&& echo "MPICH"
+  ((ompi))&& echo "ompi"
+  echo "App: ${TEST_BIN}"
+  ((fstype==2)) && echo "FS type FAMfs" || echo "FS type $fstype"
 fi
 
 # Set constants in config file (FAMFS_CONF)
@@ -378,13 +398,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export all_n
                     export oMPIchEnv
                     export SRV_OPT="$srv_opt"
-                    export TEST_BIN
                     ((tIOR)) \
                       && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -ge $oExtraOpt" \
                       || opts="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
                     opts=( $(echo $opts) )
                     TEST_OPTS=${opts[*]} # jam whitespaces
-                    # echo "\"test:${TEST_BIN} ${TEST_OPTS}\""
                     export TEST_OPTS
                     ((kk = k + 1))
                     echo "Starting cycle $kk of: $DSC"

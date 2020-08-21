@@ -1,16 +1,16 @@
 #!/bin/bash
-run-all ${SCRIPT_DIR}/cleanup.sh
+$mpirun $mpi_hosts ${all_n} $mpi_ppn 1 $oMPIchEnv /bin/bash -c "${SCRIPT_DIR}/cleanup.sh"
 
-((tVERBOSE)) && echo "mpirun --hosts $AllNodes -ppn 1 $oMPIchEnv /bin/bash -c \"ulimit -s 1024; unifycrd ${SRV_OPT}\" 2>>$MPI_LOG 1>>$SRV_LOG"
+((tVERBOSE)) && echo "$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c \"ulimit -s 1024; $SRV_BIN ${SRV_OPT}\" 2>>$MPI_LOG 1>>$SRV_LOG"
 echo "Starting unifycrd..."
-mpirun --hosts $AllNodes -ppn 1 $oMPIchEnv /bin/bash -c "ulimit -s 1024; unifycrd ${SRV_OPT}" 2>>$MPI_LOG 1>>$SRV_LOG &
+$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c "ulimit -s 1024; $SRV_BIN ${SRV_OPT}" 2>>$MPI_LOG 1>>$SRV_LOG &
 pid=$!
 
 ((waiting=0))
 ((_dt=2)) # Check every 2 sec
 echo -n "Waiting for the servers to come up"
 while
-    if ((waiting > 600))
+    if ((waiting > 60000))
     then
         echo "***ERROR: Server start timeout" >> $SRV_LOG
         exit 1
@@ -30,9 +30,10 @@ echo
 echo "### $DSC" >>$TEST_LOG
 echo "### $DSC" >>$MPI_LOG
 echo "### $DSC" >>$SRV_LOG
-((tVERBOSE)) && echo "mpirun --hosts $Clients -ppn $Ranks $oMPIchEnv /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}' 2>>$MPI_LOG 1>>$TEST_LOG"
+TEST_BASH_ARG="ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}"
+((tVERBOSE)) && echo "$mpirun $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c ""${TEST_BASH_ARG}"" 2>>$MPI_LOG 1>>$TEST_LOG"
 echo "Starting test..."
-mpirun --hosts $Clients -ppn $Ranks $oMPIchEnv /bin/bash -c 'ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}' 2>>$MPI_LOG 1>>$TEST_LOG
+$mpirun $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c "${TEST_BASH_ARG}" 2>>$MPI_LOG 1>>$TEST_LOG
 
 if (($? == 0))
 then
@@ -42,6 +43,7 @@ then
 else
     echo "### ERRORS" >>$TEST_LOG
     echo "Test failed"
+ sleep 10000
     sts=1
 fi
 echo "Stopping servers"
