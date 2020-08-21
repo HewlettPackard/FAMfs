@@ -207,6 +207,7 @@ typedef struct f_pool_ {
     MPI_Comm		ionode_comm;	/* MPI communicator for IO nodes */
     MPI_Comm		helper_comm;	/* MPI communicator for Helpers, dup of MPI_COMM_WORLD */
     int			zero_ion_rank;	/* rank in COMM_WORLD of zero rank in ionode_comm */
+    int			dbg_rank;	/* FAMfs client rank */
     int			verbose;	/* debug flag */
 //    uint32_t	nparts;		/* layout partition number estimate */
     uint32_t		pool_ags;	/* allocation group array size; also this is

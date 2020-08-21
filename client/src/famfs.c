@@ -918,6 +918,8 @@ int famfs_mount(const char prefix[] __attribute__((unused)),
 	printf("\n"); f_print_layouts(); printf("\n");
     }
 
+    pool->dbg_rank = rank;
+
     if ((rc = lfs_connect(&lfs_ctx))) {
     	printf("lf-connect failed on mount: %d\n", rc);
 	(void)f_free_layouts_info();
@@ -1428,8 +1430,8 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
     {
 	/* map to physical stripe */
 	if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, stripe_phy_id))) {
-	    DEBUG("%s: stripe:%lu in layout %s - mapping error:%d\n",
-		  pool->mynode.hostname, stripe_phy_id, lo->info.name, rc);
+	    DEBUG("%s:%d: stripe:%lu in layout %s - mapping error:%d\n",
+		  pool->mynode.hostname, pool->dbg_rank, stripe_phy_id, lo->info.name, rc);
 	    errno = EIO;
 	    return UNIFYCR_FAILURE;
 	}
@@ -1448,8 +1450,8 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
     /* start lf write to chunk(s) */
     if ((rc = chunk_rma_start(fam_stripe, lf_info->opts.use_cq?1:0, 1)))
     {
-	DEBUG("%s: stripe:%lu in layout %s off/len=%lu/%lu write error:%d\n",
-	      pool->mynode.hostname, stripe_phy_id, lo->info.name,
+	DEBUG("%s:%d: stripe:%lu in layout %s off/len=%lu/%lu write error:%d\n",
+	      pool->mynode.hostname, pool->dbg_rank, stripe_phy_id, lo->info.name,
 	      stripe_offset, len, rc);
 	errno = EIO;
 	return UNIFYCR_FAILURE;
@@ -1459,8 +1461,8 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
     rc = chunk_rma_wait(fam_stripe, lf_info->opts.use_cq?1:0, 1,
 			lf_info->io_timeout_ms);
     if (rc) {
-	DEBUG("%s: stripe:%lu in layout %s off/len=%lu/%lu write error:%d\n",
-	      pool->mynode.hostname, stripe_phy_id, lo->info.name,
+	DEBUG("%s:%d: stripe:%lu in layout %s off/len=%lu/%lu write error:%d\n",
+	      pool->mynode.hostname, pool->dbg_rank, stripe_phy_id, lo->info.name,
 	      stripe_offset, len, rc);
 	errno = EIO;
 	return UNIFYCR_FAILURE;
@@ -1492,8 +1494,8 @@ static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
     {
         /* map to physical stripe */
         if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, s))) {
-            DEBUG("%s: stripe:%lu in layout %s - read mapping error:%d\n",
-                  pool->mynode.hostname, s, lo->info.name, rc);
+            DEBUG("%s:%d: stripe:%lu in layout %s - read mapping error:%d\n",
+                  pool->mynode.hostname, pool->dbg_rank, s, lo->info.name, rc);
             errno = EIO;
             return UNIFYCR_FAILURE;
         }
@@ -1510,8 +1512,8 @@ static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
     /* start lf read to chunk(s) */
     if ((rc = chunk_rma_start(fam_stripe, lf_info->opts.use_cq?1:0, 0)))
     {
-	DEBUG_LVL(2, "%s: stripe %lu in layout %s off/len=%lu/%lu read error:%d",
-		  pool->mynode.hostname, s, lo->info.name, stripe_offset, len, rc);
+	DEBUG_LVL(2, "%s:%d: stripe %lu in layout %s off/len=%lu/%lu read error:%d",
+		  pool->mynode.hostname, pool->dbg_rank, s, lo->info.name, stripe_offset, len, rc);
 	errno = EIO;
 	return UNIFYCR_FAILURE;
     }
@@ -1520,8 +1522,8 @@ static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
     rc = chunk_rma_wait(fam_stripe, lf_info->opts.use_cq?1:0, 0,
 			lf_info->io_timeout_ms);
     if (rc) {
-	DEBUG_LVL(2, "%s: stripe:%lu in layout %s off/len=%lu/%lu read error:%d",
-		  pool->mynode.hostname, s, lo->info.name, stripe_offset, len, rc);
+	DEBUG_LVL(2, "%s:%d: stripe:%lu in layout %s off/len=%lu/%lu read error:%d",
+		  pool->mynode.hostname, pool->dbg_rank, s, lo->info.name, stripe_offset, len, rc);
 	errno = EIO;
 	return UNIFYCR_FAILURE;
     }
@@ -1560,8 +1562,8 @@ static int f_stripe_write(
     key_slice_range = lo->info.stripe_sz;
     f_stripe_t stripe_phy_id = chunk_meta->id; /* global stripe number */
 
-    DEBUG("%s: write %zu bytes logical stripe:%lu to %lu @%lu\n",
-          lfs_ctx->pool->mynode.hostname, count, stripe_id, stripe_phy_id, stripe_offset);
+    DEBUG("%s:%d: write %zu bytes logical stripe:%lu to %lu @%lu\n",
+          lfs_ctx->pool->mynode.hostname, lfs_ctx->pool->dbg_rank, count, stripe_id, stripe_phy_id, stripe_offset);
 
     int rc = lf_write(lo, (char *)buf, count, stripe_phy_id, stripe_offset);
     if (rc) {
@@ -1841,8 +1843,8 @@ static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
             if (fam_len) {
 		fam_len = min(fam_len, ttl);
 
-                DEBUG_LVL(6, "lo:%d fid:%d rq read %lu[%lu]@%lu, stripe %lu",
-			  lid, rq[i].fid,
+                DEBUG_LVL(6, "%s:%d: lo:%d fid:%d rq read %lu[%lu]@%lu, stripe %lu",
+			  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, lid, rq[i].fid,
 			  fam_len, bufp - rq[i].buf, fam_off, md[j].v.stripe);
 
                 if ((rc = lf_read(lo, bufp, fam_len, fam_off, md[j].v.stripe)))
@@ -1886,15 +1888,15 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     ASSERT( meta );
     F_LAYOUT_t *lo = f_get_layout(meta->loid);
     if (lo == NULL) {
-        DEBUG_LVL(2, "fid:%d error: layout id:%d not found!",
-              lid, meta->loid);
+        DEBUG_LVL(2, "%s:%d: fid:%d error: layout id:%d not found!",
+              f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, lid, meta->loid);
         errno = EIO;
         return -1;
     }
     for (i = 0; i < count; i++) {
         if (read_req[0].lid != lid) {
-            DEBUG_LVL(2, "read rqs on different layouts, expected %d, got %d",
-                  read_req[0].lid, lid);
+            DEBUG_LVL(2, "%s:%d: read rqs on different layouts, expected %d, got %d",
+                  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, read_req[0].lid, lid);
             errno = EIO;
             return -1;
         }
@@ -1908,8 +1910,8 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         if (ptr_meta_entry != NULL) {
             read_req[i].fid = ptr_meta_entry->gfid;
         } else {
-            DEBUG_LVL(2, "file %d has no gfid %d record in DB",
-                  read_req[i].fid, ptr_meta_entry->gfid);
+            DEBUG_LVL(2, "%s:%d: file %d has no gfid %d record in DB",
+                  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, read_req[i].fid, ptr_meta_entry->gfid);
             errno = EBADF;
             return -1;
         }
@@ -1935,7 +1937,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         rq_cnt = count;
         rq_ptr = read_req_set.read_reqs;
         memcpy(rq_ptr, read_req, sizeof(read_req_t)*count);
-//    }
+//    md_}
 
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
     int *rc_ptr = (int *)shm_recvbuf;
@@ -1950,7 +1952,8 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
 #ifdef DEBUG_RC
 	if (tot_sz < ttl)
-	    DEBUG_LVL(7, " hit:%lu sz:%ld of %lu", ++c_hit, tot_sz, ttl);
+	    DEBUG_LVL(7, "%s:%d: hit:%lu sz:%ld of %lu",
+		f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, ++c_hit, tot_sz, ttl);
 #endif
 
         if (!tot_sz)
@@ -2007,31 +2010,36 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     STATS_START(start);
 
-    DEBUG_LVL(6, "MD/read: loid:%d poll %d rq:", lid, rq_cnt);
+    DEBUG_LVL(6, "%s:%d: MD/read: loid:%d poll %d rq:", 
+	f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, lid, rq_cnt);
+
     for (i = 0; i < rq_cnt; i++) {
         DEBUG_LVL(6, "  [%d] fid=%d off/len=%ld/%ld",
-		  i, rq_ptr[i].fid, rq_ptr[i].offset, rq_ptr[i].length);
+		  i, md_rq[i].src_fid, md_rq[i].offset, md_rq[i].length);
     }
 
     f_rbq_t *cq = lo_cq[lid];
     ASSERT(cq);
+    struct timespec md_start = now();
     if ((rc = f_rbq_push(cq, &c, RBQ_TMO_1S))) {
-        ERROR("can't push MD_GET cmd, layout %d: %s(%d)", lid, strerror(-rc), rc);
+        ERROR("%s:%d: can't push MD_GET cmd, layout %d: %s(%d)", 
+	    f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, lid, strerror(-rc), rc);
         return -EIO;
     }
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("can't get reply to MD_GET from layout %d: %s(%d)", lid, strerror(-rc), rc);
+        ERROR("%s:%d: can't get reply to MD_GET from layout %d: %s(%d)", 
+	    f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, lid, strerror(-rc), rc);
         return -EIO;
     }
     if (r.rc) {
-        ERROR("error retrieving file MD: %d", r.rc);
+        ERROR("%s:%d: error retrieving file MD: %d", f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, r.rc);
         return -EIO;
     }
     UPDATE_STATS(md_fg_stat, *rc_ptr, *rc_ptr*sizeof(fsmd_kv_t), start);
 
 #ifdef DEBUG_RC
-    DEBUG_LVL(7, " miss:%lu sz:%ld of %ld, MD records found:%d",
-              ++c_miss, tot_sz, ttl, *rc_ptr);
+    DEBUG_LVL(7, "%s:%d: miss:%lu sz:%ld of %ld, MD records found:%d time:%lu",
+              f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, ++c_miss, tot_sz, ttl, *rc_ptr, elapsed(&md_start));
 #endif
 
     tot_sz = match_rq_and_read(lo, read_req, count, lid,
