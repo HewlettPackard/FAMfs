@@ -90,7 +90,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x:X:O: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,suffix:,extra:,srv_extra: -n 'parse-options' -- "$@"`
+OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:tx:X:O: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra: -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -168,6 +168,7 @@ oAPP="test_prw_static"
 oFStype="FAMfs"
 oExtraOpt=
 oExtraSrvOpt=
+oTCP=0
 
 declare -a SrvIter
 declare -a ClnIter
@@ -196,6 +197,7 @@ while true; do
   -F | --fs_type)    oFStype="$2"; shift; shift ;;
   -M | --mpi)        oMPIchEnv="$2"; shift; shift ;;
   -m | --md)         oMdServers="$2"; shift; shift ;; # Default: Servers
+  -t | --tcp)        oTCP=1; shift ;; # use TCP/IP (sockets) instead of ofi zhpi
   -x | --suffix)     oNodeSuffix="$2"; shift; shift ;;
   -X | --extra)      oExtraOpt="$2"; shift; shift ;; # Pass extra options to the test command line
   -O | --srv_extra)  oExtraSrvOpt="$2"; shift; shift ;; # Pass extra options to FAMFS server
@@ -279,11 +281,19 @@ else
   ((cycles = oCycles))
 fi
 if ((ompi)); then
-  oMPIchEnv="${oMPIchEnv} -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS"
+  oMPIchEnv="${oMPIchEnv} --bind-to none -x FI_MR_CACHE_MONITOR -x LD_LIBRARY_PATH -x PATH -x MPIROOT"
+  oMPIchEnv+=" -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS"
+  if ((oTCP)); then
+    oMPIchEnv+=" --mca btl ^ofi,openib,vader --mca mtl ^ofi,psm,psm2,portals4 --mca pml ^ucx --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
+  else
+    oMPIchEnv+=" --mca btl ^openib,tcp,vader --mca mtl ^psm,psm2,portals4 --mca pml ^ucx --mca mtl_ofi_provider_include zhpe --mca mtl_ofi_data_progress manual --mca btl_ofi_provider_include zhpe --mca btl_ofi_progress_mode manual --mca osc_rdma_aggregation_limit 0 --mca opal_leave_pinned 0 --mca opal_leave_pinned_pipeline 0 --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
+  fi
 fi
-#if ((mpich)); then
-#  oMPIchEnv="${oMPIchEnv} MPIR_CVAR_OFI_USE_PROVIDER=sockets"
-#fi
+if ((mpich)); then
+  if ((oTCP)); then
+    oMPIchEnv+=" MPIR_CVAR_OFI_USE_PROVIDER=sockets"
+  fi
+fi
 if ((tVERBOSE)); then
   ((mpich))&& echo "MPICH"
   ((ompi))&& echo "ompi"
