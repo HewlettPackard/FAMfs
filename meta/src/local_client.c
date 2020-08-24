@@ -95,6 +95,7 @@ static void *get_msg_self(struct mdhim_t *md, void *msg_tag) {
  */
 struct mdhim_rm_t *local_client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
 	int ret;
+	int msg_id = pm->basem.msg_id;
 	struct mdhim_rm_t *rm;
 	work_item *item;
 	void *rcv_msg_tag = pm;
@@ -113,6 +114,11 @@ struct mdhim_rm_t *local_client_put(struct mdhim_t *md, struct mdhim_putm_t *pm)
 	}
 
 	rm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
+	if (msg_id != rm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "local_client_put - Error msg index %d id %d expected %d",
+		     pm->basem.index, rm->basem.msg_id, msg_id);
+		return NULL;
+	}
 	// Return response
 
 	return rm;
@@ -127,6 +133,7 @@ struct mdhim_rm_t *local_client_put(struct mdhim_t *md, struct mdhim_putm_t *pm)
 */
 struct mdhim_rm_t *local_client_bput(struct mdhim_t *md, struct mdhim_bputm_t *bpm) {
 	int ret;
+	int msg_id = bpm->basem.msg_id;
 	struct mdhim_rm_t *brm;
 	work_item *item;
 	void *rcv_msg_tag = bpm;
@@ -144,6 +151,11 @@ struct mdhim_rm_t *local_client_bput(struct mdhim_t *md, struct mdhim_bputm_t *b
 	}
 
 	brm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
+	if (msg_id != brm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "local_client_bput - Error msg index %d id %d expected %d",
+		     bpm->basem.index, brm->basem.msg_id, msg_id);
+		return NULL;
+	}
 
 	// Return response
 	return brm;
@@ -158,6 +170,7 @@ struct mdhim_rm_t *local_client_bput(struct mdhim_t *md, struct mdhim_bputm_t *b
  */
 struct mdhim_bgetrm_t *local_client_bget(struct mdhim_t *md, struct mdhim_bgetm_t *bgm) {
 	int ret;
+	int msg_id = bgm->basem.msg_id;
 	struct mdhim_bgetrm_t *rm;
 	work_item *item;
 	void *rcv_msg_tag = bgm;
@@ -175,6 +188,11 @@ struct mdhim_bgetrm_t *local_client_bget(struct mdhim_t *md, struct mdhim_bgetm_
 	}
 
 	rm = (struct mdhim_bgetrm_t *) get_msg_self(md, rcv_msg_tag);
+	if (msg_id != rm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "local_client_bget - Error msg index %d id %d expected %d",
+		     bgm->basem.index, rm->basem.msg_id, msg_id);
+		return NULL;
+	}
 
 	// Return response
 	return rm;
@@ -189,6 +207,7 @@ struct mdhim_bgetrm_t *local_client_bget(struct mdhim_t *md, struct mdhim_bgetm_
  */
 struct mdhim_bgetrm_t *local_client_bget_op(struct mdhim_t *md, struct mdhim_getm_t *gm) {
 	int ret;
+	int msg_id = gm->basem.msg_id;
 	struct mdhim_bgetrm_t *rm;
 	work_item *item;
 	void *rcv_msg_tag = gm;
@@ -206,6 +225,11 @@ struct mdhim_bgetrm_t *local_client_bget_op(struct mdhim_t *md, struct mdhim_get
 	}
 
 	rm = (struct mdhim_bgetrm_t *) get_msg_self(md, rcv_msg_tag);
+	if (msg_id != rm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "local_client_bget_op - Error msg index %d id %d expected %d",
+		     gm->basem.index, rm->basem.msg_id, msg_id);
+		return NULL;
+	}
 
 	// Return response
 	return rm;
@@ -251,6 +275,7 @@ struct mdhim_rm_t *local_client_commit(struct mdhim_t *md, struct mdhim_basem_t 
  */
 struct mdhim_rm_t *local_client_delete(struct mdhim_t *md, struct mdhim_delm_t *dm) {
 	int ret;
+	int msg_id = dm->basem.msg_id;
 	struct mdhim_rm_t *rm;
 	work_item *item;
 	void *rcv_msg_tag = dm;
@@ -268,6 +293,11 @@ struct mdhim_rm_t *local_client_delete(struct mdhim_t *md, struct mdhim_delm_t *
 	}
 
 	rm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
+	if (msg_id != rm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "local_client_delete - Error msg index %d id %d expected %d",
+		     dm->basem.index, rm->basem.msg_id, msg_id);
+		return NULL;
+	}
 
 	// Return response
 	return rm;
@@ -283,6 +313,7 @@ struct mdhim_rm_t *local_client_delete(struct mdhim_t *md, struct mdhim_delm_t *
  */
 struct mdhim_rm_t *local_client_bdelete(struct mdhim_t *md, struct mdhim_bdelm_t *bdm) {
 	int ret;
+	int msg_id = bdm->basem.msg_id;
 	struct mdhim_rm_t *brm;
 	work_item *item;
 	void *rcv_msg_tag = bdm;
@@ -300,7 +331,11 @@ struct mdhim_rm_t *local_client_bdelete(struct mdhim_t *md, struct mdhim_bdelm_t
 	}
 
 	brm = (struct mdhim_rm_t *) get_msg_self(md, rcv_msg_tag);
-	ASSERT( brm->basem.mtype == MDHIM_RECV );
+	if (msg_id != brm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "local_client_bdelete - Error msg index %d id %d expected %d",
+		     bdm->basem.index, brm->basem.msg_id, msg_id);
+		return NULL;
+	}
 
 	// Return response
 	return brm;

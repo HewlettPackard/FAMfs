@@ -911,6 +911,10 @@ int famfs_mount(const char prefix[] __attribute__((unused)),
     }
     pool = f_get_pool();
     ASSERT(pool); /* f_set_layouts_info must fail if no pool */
+    ASSERT(rank==dbg_rank);
+    if (pool->dbg_rank != rank)
+	DEBUG("pool dbg_rank:%d", pool->dbg_rank);
+    pool->dbg_rank = rank; /* use application's rank for the log and error messages */
 
     /* DEBUG */
     if (pool->verbose && rank == 0) {
@@ -918,7 +922,6 @@ int famfs_mount(const char prefix[] __attribute__((unused)),
 	printf("\n"); f_print_layouts(); printf("\n");
     }
 
-    pool->dbg_rank = rank;
 
     if ((rc = lfs_connect(&lfs_ctx))) {
     	printf("lf-connect failed on mount: %d\n", rc);

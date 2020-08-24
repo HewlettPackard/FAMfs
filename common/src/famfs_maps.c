@@ -1010,6 +1010,11 @@ static int cfg_load(unifycr_cfg_t *c)
     if ((rc = cfg_load_pool(c)))
 	return rc;
 
+    if ((rc = mpi_comm_dup(&pool->helper_comm, NULL)))
+	return rc;
+    if (MPI_Comm_size(pool->helper_comm, &pool->dbg_rank) != MPI_SUCCESS)
+        return -1;
+
     for (i = 0; i < pool->info.layouts_count; i++)
 	if ((rc = cfg_load_layout(c, i)))
 	    return rc;
@@ -1024,8 +1029,7 @@ int f_set_layouts_info(unifycr_cfg_t *cfg)
 
     if (cfg && pool == NULL) {
 	f_crc4_init_table();
-	if (!(rc = cfg_load(cfg)))
-	    rc = mpi_comm_dup(&pool->helper_comm, NULL);
+	rc = cfg_load(cfg);
     }
     return rc;
 }

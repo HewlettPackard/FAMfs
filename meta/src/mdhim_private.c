@@ -127,6 +127,7 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 		pm->value = value;
 		pm->value_len = value_len;
 		pm->basem.server_rank = rl->ri->rank;
+		pm->basem.msg_id = next_index_msg_id(md, put_index);
 		pm->basem.index = put_index->id;
 		pm->basem.index_type = put_index->type;
 
@@ -151,6 +152,7 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 		} else {
 			//Send the message through the network as this message is for another rank
 			rm = client_put(md, pm);
+			rm->basem.msg_id = pm->basem.msg_id;
  /*
  gettimeofday(&en, NULL);
  timersub(&en, &st0, &tm);
@@ -184,6 +186,7 @@ struct mdhim_brm_t *_create_brm(struct mdhim_rm_t *rm) {
 	brm->error = rm->error;
 	brm->basem.mtype = rm->basem.mtype;
 	brm->basem.index = rm->basem.index;
+	brm->basem.msg_id = rm->basem.msg_id;
 	brm->basem.index_type = rm->basem.index_type;
 	brm->basem.server_rank = rm->basem.server_rank;
 
@@ -225,6 +228,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 	} else {
 		lookup_index = index;
 	}
+	int msg_id = next_index_msg_id(md, put_index);
 
 	//Check to see that we were given a sane amount of records
 	if (num_keys > MAX_BULK_OPS) {
@@ -296,6 +300,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 				bpm->num_keys = 0;
 				bpm->basem.server_rank = rl->ri->rank;
 				bpm->basem.mtype = MDHIM_BULK_PUT;
+				bpm->basem.msg_id = msg_id;
 				bpm->basem.index = put_index->id;
 				bpm->basem.index_type = put_index->type;
 				if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -368,6 +373,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 	struct mdhim_bgetrm_t *bgrm_head, *lbgrm;
 	int i;
 	rangesrv_list *rl = NULL, *rlp;
+	int msg_id = next_index_msg_id(md, index);
 
 	//The message to be sent to ourselves if necessary
 	lbgm = NULL;
@@ -424,6 +430,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 				bgm->basem.server_rank = rl->ri->rank;
 				bgm->basem.mtype = MDHIM_BULK_GET;
 				bgm->op = (op == MDHIM_GET_PRIMARY_EQ) ? MDHIM_GET_EQ : op;
+				bgm->basem.msg_id = msg_id;
 				bgm->basem.index = index->id;
 				bgm->basem.index_type = index->type;
 				if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -491,6 +498,7 @@ struct mdhim_bgetrm_t *_bget_range_records(struct mdhim_t *md, struct index_t *i
 	struct mdhim_bgetrm_t *bgrm_head, *lbgrm;
 	unsigned int i;
 	rangesrv_list *rl = NULL, *rlp;
+	int msg_id = next_index_msg_id(md, index);
 
 	gettimeofday(&localgetstart, NULL);
 	//The message to be sent to ourselves if necessary
@@ -537,6 +545,7 @@ struct mdhim_bgetrm_t *_bget_range_records(struct mdhim_t *md, struct index_t *i
 			bgm->basem.server_rank = rl->ri->rank;
 			bgm->basem.mtype = MDHIM_BULK_GET;
 			bgm->op = MDHIM_GET_NEXT;
+			bgm->basem.msg_id = msg_id;
 			bgm->basem.index = index->id;
 			bgm->basem.index_type = index->type;
 			if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -614,6 +623,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 	struct mdhim_rm_t *rm;
 	int i;
 	rangesrv_list *rl;
+	int msg_id = next_index_msg_id(md, index);
 
 	//The message to be sent to ourselves if necessary
 	lbdm = NULL;
@@ -663,6 +673,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 			bdm->num_keys = 0;
 			bdm->basem.server_rank = rl->ri->rank;
 			bdm->basem.mtype = MDHIM_BULK_DEL;
+			bdm->basem.msg_id = msg_id;
 			bdm->basem.index = index->id;
 			bdm->basem.index_type = index->type;
 			if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -686,6 +697,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 		/* TODO: Add check for brm==NULL when ENOMEM */
 		brm->error = rm->error;
 		brm->basem.mtype = rm->basem.mtype;
+		brm->basem.msg_id = rm->basem.msg_id;
 		brm->basem.index = rm->basem.index;
 		brm->basem.index_type = rm->basem.index_type;
 		brm->basem.server_rank = rm->basem.server_rank;

@@ -86,11 +86,16 @@ extern "C"
 #define MDHIM_RANGE_BGET 6
 
 //Message Types
-#define RANGESRV_WORK_MSG         1
-#define RANGESRV_WORK_SIZE_MSG    2
-#define RANGESRV_INFO             3
+#define RANGESRV_WORK_MSG         10
+#define RANGESRV_WORK_SIZE_MSG    20
+//#define RANGESRV_INFO             3
 #define CLIENT_RESPONSE_MSG       4
 #define CLIENT_RESPONSE_SIZE_MSG  5
+
+#define CLIENT_RSP_TAG_INDEX_SHIFT 8 /* CLIENT_RESPONSE tag: 8..15 - index_id; 0..7 - message type */
+#define CLIENT_RSP_TAG_INDEX_MAX   255
+#define CLIENT_RSP_TAG(index, msg_type) (((int)index & CLIENT_RSP_TAG_INDEX_MAX) << CLIENT_RSP_TAG_INDEX_SHIFT \
+                                         | (unsigned char)msg_type)
 
 //#define MAX_BULK_OPS 1000000
 #define MAX_BULK_OPS 20000000
@@ -107,6 +112,7 @@ struct mdhim_basem_t {
 	int size;
 	int index;
 	int index_type;
+	int msg_id; /* multithreaded client <-> RS message ID */
 	char *index_name;
 	//RS response queue
 	void *rcv_msg_tag;
@@ -212,9 +218,9 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs);
 int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message);
 int send_client_response(struct mdhim_t *md, int dest, void *message, int *sizebuf,
 			 void **sendbuf);
-int receive_client_response(struct mdhim_t *md, int src, void **message);
+int receive_client_response(struct mdhim_t *md, int src, int index_id, void **message);
 int receive_all_client_responses(struct mdhim_t *md, int *srcs, int nsrcs, 
-				 void ***messages);
+				 int index_id, void ***messages);
 int pack_put_message(struct mdhim_t *md, struct mdhim_putm_t *pm, void **sendbuf, int *sendsize);
 int pack_bput_message(struct mdhim_t *md, struct mdhim_bputm_t *bpm, void **sendbuf, int *sendsize);
 int unpack_put_message(struct mdhim_t *md, void *message, int mesg_size, void **pm);

@@ -16,7 +16,7 @@
 
 #define F_MAX_IPC_ME 1024 // max count of Message Elements to snd at once 
 
-#define F_TAG_BASE  666
+#define F_TAG_BASE  65536
 
 typedef struct _f_ah_scme {
     f_stripe_t  str;

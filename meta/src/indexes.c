@@ -1319,6 +1319,16 @@ int indexes_release(struct mdhim_t *md) {
 	return rc;
 }
 
+int next_index_msg_id(struct mdhim_t *md, struct index_t *index)
+{
+	int id;
+
+	pthread_mutex_lock(md->mdhim_comm_lock);
+	id = index->rq_msg_id++;
+	pthread_mutex_unlock(md->mdhim_comm_lock);
+	return id;
+}
+
 int pack_stats(struct index_t *index, void *buf, int size, 
 	       int float_type, int stat_size, MPI_Comm comm) {
 	

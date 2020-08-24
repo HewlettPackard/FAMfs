@@ -94,6 +94,8 @@ struct index_t {
 	size_t *key_slice_size_per_lo;
 	//Size of key_slice_size_per_lo array; same as the number of layouts.
 	int lo_count;
+	//Request message ID
+	int rq_msg_id;
 
 	MPI_Comm md_comm; /* protected copy of md_comm for this index */
 	//This communicator is for range servers only to talk to each other
@@ -148,5 +150,6 @@ struct index_t *get_index(struct mdhim_t *md, int index_id);
 struct index_t *get_index_by_name(struct mdhim_t *md, char *index_name);
 int indexes_release(struct mdhim_t *md);
 int im_range_server(struct index_t *index);
+int next_index_msg_id(struct mdhim_t *md, struct index_t *index);
 
 #endif

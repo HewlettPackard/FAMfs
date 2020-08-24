@@ -432,6 +432,10 @@ done:
 	rm->error = error;
 	//Set the server's rank
 	rm->basem.server_rank = md->mdhim_rank;
+	//Set index id
+	rm->basem.index = index->id;
+	//Set msg id
+	rm->basem.msg_id = im->basem.msg_id;
 
 	//Send response
 	gettimeofday(&resp_put_comm_start, NULL);
@@ -603,6 +607,10 @@ int range_server_bput(struct mdhim_t *md, struct mdhim_bputm_t *bim, int source)
 	brm->error = error;
 	//Set the server's rank
 	brm->basem.server_rank = md->mdhim_rank;
+	//Set index id
+	brm->basem.index = index->id;
+	//Set msg id
+	brm->basem.msg_id = bim->basem.msg_id;
 
 	//Release the internals of the bput message
 	free(bim->keys);
@@ -658,6 +666,10 @@ int range_server_del(struct mdhim_t *md, struct mdhim_delm_t *dm, int source) {
 	rm->error = ret;
 	//Set the server's rank
 	rm->basem.server_rank = md->mdhim_rank;
+	//Set index id
+	rm->basem.index = index->id;
+	//Set msg id
+	rm->basem.msg_id = dm->basem.msg_id;
 
 	//Send response
 	ret = send_locally_or_remote(md, source, rm, dm);
@@ -713,6 +725,10 @@ done:
 	brm->error = error;
 	//Set the server's rank
 	brm->basem.server_rank = md->mdhim_rank;
+	//Set index id
+	brm->basem.index = index->id;
+	//Set msg id
+	brm->basem.msg_id = bdm->basem.msg_id;
 
 	//Send response
 	ret = send_locally_or_remote(md, source, brm, bdm);
@@ -763,6 +779,10 @@ int range_server_commit(struct mdhim_t *md, struct mdhim_basem_t *im, int source
 	rm->error = ret;
 	//Set the server's rank
 	rm->basem.server_rank = md->mdhim_rank;
+	//Set index id
+	rm->basem.index = index->id;
+	//Set msg id
+	rm->basem.msg_id = im->msg_id;
 
 	//Send response
 	ret = send_locally_or_remote(md, source, rm, im);
@@ -960,6 +980,8 @@ done:
 	bgrm->num_keys = bgm->num_keys;
 	bgrm->basem.index = index->id;
 	bgrm->basem.index_type = index->type;
+	//Set msg id
+	bgrm->basem.msg_id = bgm->basem.msg_id;
 
 	mlog(MDHIM_SERVER_DBG, ".  [%d] found %d keys for [%d]",
 		md->mdhim_rank, bgm->num_keys, source);
@@ -1199,6 +1221,8 @@ respond:
 	bgrm->num_keys = num_records;
 	bgrm->basem.index = index->id;
 	bgrm->basem.index_type = index->type;
+	//Set msg id
+	bgrm->basem.msg_id = bgm->basem.msg_id;
 
 	//Send response
 	gettimeofday(&resp_get_comm_start, NULL);
@@ -1263,11 +1287,12 @@ void *listener_thread(void *data) {
 		range_server_add_work(md, item);
 		gettimeofday(&listener_end, NULL);
 		listener_time += 1000000L*(listener_end.tv_sec-listener_start.tv_sec)+listener_end.tv_usec-listener_start.tv_usec;
- /*
- mlog(MDHIM_SERVER_INFO, ".  listener - message from rank:%d of type:%d, time:%ld",
-  source, ((struct mdhim_basem_t *)item->message)->mtype,
+
+ mlog(MDHIM_SERVER_INFO, ".  listener - message id:%d from rank:%d of type:%d for index:%d, time:%ld",
+  ((struct mdhim_basem_t *)item->message)->msg_id,
+  source, ((struct mdhim_basem_t *)item->message)->mtype, ((struct mdhim_basem_t *)item->message)->index,
   1000000L*(listener_end.tv_sec-listener_start.tv_sec)+listener_end.tv_usec-listener_start.tv_usec);
- */
+
 	}
 
 	return NULL;
@@ -1334,8 +1359,8 @@ void *worker_thread(void *data) {
 			mtype = ((struct mdhim_basem_t *) item->message)->mtype;
 
 #ifdef DEBUG_WRK_THREAD
-			mlog(MDHIM_SERVER_INFO, ". RS worker[%d] - msg from rank:%d of type:%d (%s), current time:%ld",
-			     worker_id, item->source, mtype,
+			mlog(MDHIM_SERVER_INFO, ". RS worker[%d] - msg id:%d from rank:%d of type:%d (%s), current time:%ld",
+			     worker_id, ((struct mdhim_basem_t *) item->message)->msg_id, item->source, mtype,
 			     (mtype==MDHIM_PUT)?"PUT":(mtype==MDHIM_BULK_GET)?"BGET":
 				(mtype==MDHIM_BULK_PUT)?"BPUT":"?",
 			     1000000L*(worker_start.tv_sec-worker_zero.tv_sec)+worker_start.tv_usec-worker_zero.tv_usec);

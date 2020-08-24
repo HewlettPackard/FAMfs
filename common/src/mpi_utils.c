@@ -86,23 +86,22 @@ _err:
 int mpi_comm_dup(MPI_Comm *dst_comm, const MPI_Comm *src_comm)
 {
 	int rc;
-	MPI_Comm	comm, src = src_comm?*src_comm:MPI_COMM_WORLD;
+	MPI_Comm	src = src_comm?*src_comm:MPI_COMM_WORLD;
+	MPI_Comm	comm, dup_comm_world;
 	MPI_Group	group;
 
-/*
-	rc = MPI_Comm_dup(src, &comm);
+	/* Create private communicator (GASNET way) */
+	rc = MPI_Comm_dup(src, &dup_comm_world);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Comm_dup failed:%d", rc);
 		goto _err;
 	}
-*/
-	/* Create private communicator (GASNET way) */
-	rc = MPI_Comm_group(src, &group);
+	rc = MPI_Comm_group(dup_comm_world, &group);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Comm_group failed:%d", rc);
 		goto _err;
 	}
-	rc = MPI_Comm_create(src, group, &comm);
+	rc = MPI_Comm_create(dup_comm_world, group, &comm);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Comm_create failed:%d", rc);
 		goto _err;
@@ -110,6 +109,11 @@ int mpi_comm_dup(MPI_Comm *dst_comm, const MPI_Comm *src_comm)
 	rc = MPI_Group_free(&group);
 	if (rc != MPI_SUCCESS) {
 		err("MPI_Group_free failed:%d", rc);
+		goto _err;
+	}
+	rc = MPI_Comm_free(&dup_comm_world);
+	if (rc != MPI_SUCCESS) {
+		err("MPI_Comm_free failed:%d", rc);
 		goto _err;
 	}
 

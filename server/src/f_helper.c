@@ -163,6 +163,7 @@ static void *commit_srv(void *arg) {
             LOG(LOG_ERR, "srv CT: wrong command received: %d, LO %d", msg->cmd, msg->lid);
             continue;
         }
+ ASSERT(F_TAG_BASE + N  == sts.MPI_TAG);
         ASSERT(msg_sz == F_AH_MSG_SZ(msg->cnt));
 
         ss.count = msg->cnt;
@@ -227,8 +228,8 @@ static void *alloc_srv(void *arg) {
             LOG(LOG_ERR, "srv AT: wrong command received: %d, LO %d", msg.cmd, msg.lid);
             continue;
         }
-        ASSERT(msg_sz == sizeof(msg));
         ASSERT(msg.lid + F_TAG_BASE == sts.MPI_TAG);
+        ASSERT(msg_sz == sizeof(msg));
         if (lid != msg.lid) {
             LOG(LOG_ERR, "srv AT: wrong layout id: expected %d, got %d", lid, msg.lid);
             continue;
