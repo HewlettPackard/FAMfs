@@ -1131,7 +1131,7 @@ int unifycr_locate_req(read_req_t *read_req, int count,
  * @param slice_range: the slice size of the key-value store
  * @return read_req_set: the set of split read requests
  * */
-int unifycr_split_read_requests(read_req_t *cur_read_req,
+static int unifycr_split_read_requests(read_req_t *cur_read_req,
                                 read_req_set_t *read_req_set,
                                 long slice_range)
 {
@@ -1202,7 +1202,7 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
  * @return read_req_set: the coalesced read requests
  *
  * */
-static int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
+int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
                                read_req_set_t *tmp_read_req_set, long unifycr_key_slice_range,
                                read_req_set_t *read_req_set)
 {

@@ -235,7 +235,7 @@ int famfs_fid_create_file(const char *path, const char *fpath, int loid)
     F_LAYOUT_t *lo = f_get_layout(loid);
     set_bit(fid%BITS_PER_LONG, f_map_new_p(lo->file_ids, fid));
 
-    DEBUG("Filename %s got famfs fd %d in layout %s\n",
+    DEBUG("Filename %s got famfs fd %d in layout %s",
           unifycr_filelist[fid].filename, fid, lo->info.name);
 
     /* initialize meta data */
@@ -494,7 +494,7 @@ static int famfs_fid_open(const char *path, int flags,
         return -1; /* ENAMETOOLONG */
     }
     if (strcmp(path, norm_path))
-        DEBUG("normalize path:'%s' to '%s'\n", path, norm_path);
+        DEBUG("normalize path:'%s' to '%s'", path, norm_path);
 
     /* check that path is short enough */
     size_t pathlen = strlen(norm_path) + 1;
@@ -513,13 +513,13 @@ static int famfs_fid_open(const char *path, int flags,
 
     /* check whether this file already exists */
     int fid = unifycr_get_fid_from_norm_path(norm_path);
-    DEBUG_LVL(7, "unifycr_get_fid_from_path() gave %d\n", fid);
+    DEBUG_LVL(7, "unifycr_get_fid_from_path() gave %d", fid);
 
     int gfid = -1, rc = 0;
     if (fid < 0) {
         rc = unifycr_get_global_fid(norm_path, &gfid);
         if (rc != UNIFYCR_SUCCESS) {
-            DEBUG_LVL(2, "Failed to generate fid for file %s\n", norm_path);
+            DEBUG_LVL(2, "Failed to generate fid for file %s", norm_path);
             errno = unifycr_err_map_to_errno(UNIFYCR_ERR_IO);
             return -1;
         }
@@ -544,7 +544,7 @@ static int famfs_fid_open(const char *path, int flags,
              * allocate a file id slot for this existing file */
             fid = famfs_fid_create_file(path, norm_path, loid);
             if (fid < 0) {
-                DEBUG("Failed to create new file %s\n", norm_path);
+                DEBUG("Failed to create new file %s", norm_path);
                 errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NFILE);
                 return -1;
             }
@@ -571,16 +571,16 @@ static int famfs_fid_open(const char *path, int flags,
         /* file does not exist */
         /* create file if O_CREAT is set */
         if (flags & O_CREAT) {
-            DEBUG("Couldn't find entry for %s in FAMFS\n", norm_path);
+            DEBUG("Couldn't find entry for %s in FAMFS", norm_path);
             DEBUG("unifycr_superblock = %p;"
                   "free_chunk_stack = %p; unifycr_filelist = %p;"
-                  "chunks = %p\n", unifycr_superblock,
+                  "chunks = %p", unifycr_superblock,
                   free_chunk_stack, unifycr_filelist, unifycr_chunks);
 
             /* allocate a file id slot for this new file */
             fid = famfs_fid_create_file(path, norm_path, loid);
             if (fid < 0) {
-                DEBUG("Failed to create new file %s\n", norm_path);
+                DEBUG("Failed to create new file %s", norm_path);
                 errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NFILE);
                 return -1;
             }
@@ -601,7 +601,7 @@ static int famfs_fid_open(const char *path, int flags,
 
         } else {
             /* ERROR: trying to open a file that does not exist without O_CREATE */
-            DEBUG("Couldn't find entry for %s in FAMFS\n", norm_path);
+            DEBUG("Couldn't find entry for %s in FAMFS", norm_path);
             errno = unifycr_err_map_to_errno(UNIFYCR_ERR_NOENT);
             return -1;
         }
@@ -638,7 +638,7 @@ static int famfs_fid_open(const char *path, int flags,
     /* set in_use flag and file pointer */
     *outfid = fid;
     *outpos = pos;
-    DEBUG_LVL(6, "FAMFS_open generated fd %d for file %s\n", fid, norm_path);
+    DEBUG_LVL(6, "FAMFS_open generated fd %d for file %s", fid, norm_path);
 
     /* don't conflict with active system fds that range from 0 - (fd_limit) */
     return UNIFYCR_SUCCESS;
@@ -807,7 +807,7 @@ static int unifycr_init_structures()
         *(unifycr_indices.ptr_num_entries) = 0;
         *(unifycr_fattrs.ptr_num_entries) = 0;
     }
-    DEBUG("Meta-stacks initialized!\n");
+    DEBUG("Meta-stacks initialized!");
 
     return UNIFYCR_SUCCESS;
 }
@@ -851,7 +851,7 @@ static void *unifycr_superblock_shmget(size_t size, key_t key)
     void *scr_shmblock = NULL;
     int scr_shmblock_shmid;
 
-    DEBUG("Key for superblock = %x\n", key);
+    DEBUG("Key for superblock = %x", key);
 
     /* Use mmap to allocated share memory for UnifyCR*/
     int ret = -1;
@@ -1159,10 +1159,10 @@ static int famfs_chunk_alloc(F_LAYOUT_t *lo, unifycr_filemeta_t *meta, int chunk
     /* allocate a chunk and record its location */
     if ((rc = f_ah_get_stripe(lo, &s))) {
         if (rc == -ENOSPC) {
-            DEBUG("layout (%d) out of space\n", meta->loid);
+            DEBUG("layout (%d) out of space", meta->loid);
             return UNIFYCR_ERR_NOSPC;
         }
-        DEBUG("layout (%d) getting stripe error:%d\n", meta->loid, rc);
+        DEBUG("layout (%d) getting stripe error:%d", meta->loid, rc);
         return UNIFYCR_FAILURE;
     }
     DEBUG_LVL(6, "layout %s (%d) get stripe %lu",
@@ -1185,7 +1185,7 @@ static int famfs_chunk_free(int fid, unifycr_filemeta_t *meta, int chunk_id,
 
     /* get physical id of chunk */
     int id = chunk_meta->id;
-    DEBUG("free chunk %d from location %d\n", id, chunk_meta->location);
+    DEBUG("free chunk %d (logical id %d) fl:%x", id, chunk_id, chunk_meta->flags);
 
     ASSERT( chunk_meta->location == CHUNK_LOCATION_SPILLOVER );
 
@@ -1430,7 +1430,7 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
     {
 	/* map to physical stripe */
 	if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, stripe_phy_id))) {
-	    DEBUG("%s: stripe:%lu in layout %s - mapping error:%d\n",
+	    DEBUG("%s: stripe %lu in layout %s - mapping error:%d",
 		  pool->mynode.hostname, stripe_phy_id, lo->info.name, rc);
 	    errno = EIO;
 	    return UNIFYCR_FAILURE;
@@ -1450,7 +1450,7 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
     /* start lf write to chunk(s) */
     if ((rc = chunk_rma_start(fam_stripe, lf_info->opts.use_cq?1:0, 1)))
     {
-	DEBUG("%s: stripe:%lu in layout %s off/len=%lu/%lu write error:%d\n",
+	DEBUG("%s: stripe %lu in layout %s off/len=%lu/%lu write error:%d",
 	      pool->mynode.hostname, stripe_phy_id, lo->info.name,
 	      stripe_offset, len, rc);
 	errno = EIO;
@@ -1461,7 +1461,7 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
     rc = chunk_rma_wait(fam_stripe, lf_info->opts.use_cq?1:0, 1,
 			lf_info->io_timeout_ms);
     if (rc) {
-	DEBUG("%s: stripe:%lu in layout %s off/len=%lu/%lu write error:%d\n",
+	DEBUG("%s: stripe %lu in layout %s off/len=%lu/%lu write error:%d",
 	      pool->mynode.hostname, stripe_phy_id, lo->info.name,
 	      stripe_offset, len, rc);
 	errno = EIO;
@@ -1488,13 +1488,16 @@ static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
     //struct famsim_stats *stats_fi_rd;
     int rc = 0;
 
+    DEBUG_LVL(5, "%s: read %zu bytes @%lu from stripe %lu",
+              lfs_ctx->pool->mynode.hostname, len, stripe_offset, s);
+
     /* new physical stripe? */
     if (!lo->fam_stripe ||
         lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != s)
     {
         /* map to physical stripe */
         if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, s))) {
-            DEBUG("%s: stripe:%lu in layout %s - read mapping error:%d\n",
+            DEBUG("%s: stripe %lu in layout %s - read mapping error:%d",
                   pool->mynode.hostname, s, lo->info.name, rc);
             errno = EIO;
             return UNIFYCR_FAILURE;
@@ -1522,7 +1525,7 @@ static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
     rc = chunk_rma_wait(fam_stripe, lf_info->opts.use_cq?1:0, 0,
 			lf_info->io_timeout_ms);
     if (rc) {
-	DEBUG_LVL(2, "%s: stripe:%lu in layout %s off/len=%lu/%lu read error:%d",
+	DEBUG_LVL(2, "%s: stripe %lu in layout %s off/len=%lu/%lu read error:%d",
 		  pool->mynode.hostname, s, lo->info.name, stripe_offset, len, rc);
 	errno = EIO;
 	return UNIFYCR_FAILURE;
@@ -1562,8 +1565,8 @@ static int f_stripe_write(
     key_slice_range = lo->info.stripe_sz;
     f_stripe_t stripe_phy_id = chunk_meta->id; /* global stripe number */
 
-    DEBUG("%s: write %zu bytes logical stripe:%lu to %lu @%lu\n",
-          lfs_ctx->pool->mynode.hostname, count, stripe_id, stripe_phy_id, stripe_offset);
+    DEBUG_LVL(5, "%s: write %zu bytes @%ld (logical %lu) to stripe %lu @%lu",
+              lfs_ctx->pool->mynode.hostname, count, pos, stripe_id, stripe_phy_id, stripe_offset);
 
     int rc = lf_write(lo, (char *)buf, count, stripe_phy_id, stripe_offset);
     if (rc) {
@@ -1736,7 +1739,10 @@ static int famfs_fid_extend(int fid, off_t length)
     /* TODO: Get file max size */
     /* determine whether we need to allocate more chunks */
     off_t maxsize = meta->chunks*stripe_sz;
-//      printf("rank %d,meta->chunks is %d, length is %ld, maxsize is %ld\n", dbgrank, meta->chunks, length, maxsize);
+
+    DEBUG_LVL(5, "fid %d lid %d extend from %jd to %jd",
+              fid, meta->loid, maxsize, length);
+
     if (length > maxsize) {
         /* compute number of additional bytes we need */
         off_t additional = length - maxsize;
@@ -1749,7 +1755,7 @@ static int famfs_fid_extend(int fid, off_t length)
             /* allocate a new chunk */
             int rc = famfs_chunk_alloc(lo, meta, meta->chunks);
             if (rc != UNIFYCR_SUCCESS) {
-                DEBUG("failed to allocate chunk\n");
+                DEBUG("failed to allocate chunk");
                 return UNIFYCR_ERR_NOSPC;
             }
 
@@ -1782,6 +1788,9 @@ static int famfs_fid_shrink(int fid, off_t length)
     }
     size_t stripe_sz = lo->info.stripe_sz;
 
+    DEBUG_LVL(5, "fid %d lid %d shrink to %jd",
+              fid, meta->loid, length);
+
     /* determine the number of chunks to leave after truncating */
     off_t num_chunks = 0;
     if (length > 0) {
@@ -1813,10 +1822,10 @@ static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
             off_t md_b = md[j].k.offset;
             off_t md_e = md[j].k.offset + md[j].v.len;
 
-	    DEBUG_LVL(7, "match md[%d] lo %d fid=%d sid=%lu len=%lu @%lu,"
+	    DEBUG_LVL(7, "match md[%d] K lo=%d fid=%d @%lu V s=%lu len=%lu @%lu,"
 			 " rq[%d] fid=%d len=%lu @%lu, ttl:%zu",
-		      j, md[j].k.pk.loid, md[j].k.pk.fid,
-		      md[j].v.stripe, md[j].v.len, md[j].k.offset,
+		      j, md[j].k.pk.loid, md[j].k.pk.fid, md[j].k.offset,
+		      md[j].v.stripe, md[j].v.len, md[j].v.addr,
 		      i, rq[i].fid, rq[i].length, rq[i].offset, ttl);
 
             fam_off = fam_len = 0;
@@ -1843,9 +1852,9 @@ static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
             if (fam_len) {
 		fam_len = min(fam_len, ttl);
 
-                DEBUG_LVL(6, "lo:%d fid:%d rq read %lu[%lu]@%lu, stripe %lu",
+                DEBUG_LVL(6, "lo %d fid %d read %lu bytes from stripe %lu @%lu to %lu",
 			  lid, rq[i].fid,
-			  fam_len, bufp - rq[i].buf, fam_off, md[j].v.stripe);
+			  fam_len, md[j].v.stripe, fam_off, bufp - rq[i].buf);
 
                 if ((rc = lf_read(lo, bufp, fam_len, fam_off, md[j].v.stripe)))
                 {
@@ -1924,6 +1933,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     qsort(read_req, count, sizeof(read_req_t), compare_read_req);
 
+    size_t stripe_sz = lo->info.stripe_sz;
 #if 0
     if (key_slice_range % stripe_sz) {
         // If some brain-dead individual created a FS with key range slice not multiples of
@@ -1931,12 +1941,18 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         // *** NOTE: this is REALLY stupid and should be discouraged in SOP
         split_reads_by_slice(read_req, count, &read_req_set);
         rq_cnt = read_req_set.count;
-        rq_ptr = read_req_set.read_reqs;
-    } else {
+    }
 #endif
         rq_cnt = count;
-        rq_ptr = read_req_set.read_reqs;
-        memcpy(rq_ptr, read_req, sizeof(read_req_t)*(size_t)count);
+    rq_ptr = read_req_set.read_reqs;
+#if 0
+     memcpy(rq_ptr, read_req, sizeof(read_req_t)*(unsigned)count);
+#else
+    /*coalesce the contiguous read requests*/
+    unifycr_coalesce_read_reqs(read_req, count,
+                               &tmp_read_req_set, stripe_sz,
+                               &read_req_set);
+#endif
 
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
     int *rc_ptr = (int *)shm_recvbuf;
@@ -1959,7 +1975,6 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
             return 0;
     }
 
-    size_t stripe_sz = lo->info.stripe_sz;
     md_rq = (shm_meta_t *)(shm_reqbuf);
     long prev_offset = -1;
     int prev_fid = -1;

@@ -257,8 +257,8 @@ int chunk_rma_start(N_STRIPE_t *stripe, int use_cq, int wr)
 	off = chunk_offset + 1ULL * stripe->stripe_in_part * chunk_sz;
 	off += chunk->p_stripe0_off; /* +fdev->offset +fdev->virt_addr */
 
-	DEBUG_LVL(7, "%s:%d: %s stripe:%lu @%jd - %u/%u/%s "
-		  "on device %u(@%lu) len:%u desc:%p off:0x%16lx mr_key:%lu",
+	DEBUG_LVL(7, "%s:%d: %s stripe %lu @%jd - %u/%u/%s "
+		  "on device %u(@%lu) len:%u desc:%p off:0x%lx mr_key:%lu",
 		  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank,
 		  wr?"write":"read", s, chunk_offset,
 		  stripe->extent, stripe->stripe_in_part,
@@ -364,7 +364,7 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
 	}
 
 	if (rc == -FI_ETIMEDOUT) {
-	    err("%s:%d: fi_%s timeout stripe:%lu - %u/%u/%s on device %u len:%u",
+	    err("%s:%d: fi_%s timeout stripe %lu - %u/%u/%s on device %u len:%u",
 		f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, wr?"write":"read",
 		s, stripe->extent, stripe->stripe_in_part,
 		pr_chunk(pr_buf, chunk->data, chunk->parity),
@@ -390,7 +390,7 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
 		if (ret)
 		    err("failed to reset counter error!");
 	    }
-	    err("%s:%d: fi_%s stripe:%lu has %lu error(s):%d/%d "
+	    err("%s:%d: fi_%s stripe %lu has %lu error(s):%d/%d "
 		    "- %u/%u/%s on device %u count:%lu/%lu",
 		    f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, wr?"write":"read",
 		    s, count, rc, err,
@@ -400,7 +400,7 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
 	    break;
 	}
     }
-    DEBUG_LVL(7, "%s:%d: %s completed stripe:%lu - %u/%u/%s "
+    DEBUG_LVL(7, "%s:%d: %s completed stripe %lu - %u/%u/%s "
 	  "on device %u len:%u time:%lu",
 	  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank,
 	  wr?"write":"read", s,

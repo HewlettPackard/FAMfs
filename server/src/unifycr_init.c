@@ -352,6 +352,8 @@ int main(int argc, char *argv[])
 	mlog_priority = 7 - mlog_priority;
 	db_opts->debug_level &= ~MLOG_PRIMASK;
 	db_opts->debug_level |= mlog_priority << MLOG_PRISHIFT;
+        if (pool->verbose > 7)
+	    db_opts->debug_level |= MLOG_DBG;
     }
 
     rc = meta_init_store(db_opts);

@@ -1378,6 +1378,7 @@ static int unifycr_fid_open(const char *path, int flags,
 
         /* if O_TRUNC is set with RDWR or WRONLY, need to truncate file */
         if ((flags & O_TRUNC) && (flags & (O_RDWR | O_WRONLY))) {
+            DEBUG_LVL(6, "fid %d O_TRUNC", fid);
             unifycr_fid_truncate(fid, 0);
         }
 
@@ -1409,6 +1410,8 @@ static int unifycr_fid_close(int fid __attribute__((unused)))
 /* delete a file id and return file its resources to free pools */
 int unifycr_fid_unlink(int fid)
 {
+    DEBUG_LVL(6, "fid %d unlink", fid);
+
     /* return data to free pools */
     unifycr_fid_truncate(fid, 0);
 
