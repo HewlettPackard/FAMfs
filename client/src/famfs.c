@@ -83,22 +83,6 @@
 #include "famfs_rbq.h"
 
 
-#if 0
-/* Extend unifycr_chunkmeta_t defined in unifycr-fixed.h with stripe 'flags' */
-typedef struct unifycr_chunkmeta_t_ {
-    int location; /* CHUNK_LOCATION specifies how chunk is stored */
-    union {
-	int flags;
-	struct {
-	    unsigned int in_use:1;	/* we have got it from helper */
-	    unsigned int written:1;	/* [partially] written */
-	    unsigned int committed:1;	/* been committed */
-	} f;
-    };
-    off_t id;     /* physical id of chunk in its respective storage */
-} __attribute__((aligned(8))) unifycr_chunkmeta_t;
-#endif
-
 /*
  * unifycr variable:
  * */
@@ -123,9 +107,6 @@ f_rbq_t *lo_cq[F_CMDQ_MAX];
 /* TODO: Remove me! */
 static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
 
-
-static int commit_wrtn_stripes(int fd, F_LAYOUT_t *lo, int count,
-    unifycr_chunkmeta_t *stripes);
 static int f_stripe_write(int fid, long pos, unifycr_filemeta_t *meta, uint64_t strpe_id,
     off_t stripe_offset, const void *buf, size_t count, F_LAYOUT_t *lo);
 
@@ -198,6 +179,91 @@ int famfs_report_storage(int fid, size_t *total, size_t *free)
     /* TODO; Gather spillover free blocks globally */
     *free = (unifycr_spillover_max_chunks - meta->chunks) * stripe_sz;
     return UNIFYCR_SUCCESS;
+}
+
+/* ---------------------------------------
+ * Operations on write stripe cache
+ * --------------------------------------- */
+
+/* allocate a new stripe for the specified file and logical stripe id */
+static int famfs_stripe_alloc(F_LAYOUT_t *lo, unifycr_filemeta_t *meta, int id)
+{
+    f_stripe_t s;
+    int rc;
+
+    /* get pointer to chunk meta data */
+    unifycr_chunkmeta_t *stripe = &(meta->chunk_meta[id]);
+
+    /* allocate a chunk and record its location */
+    if ((rc = f_ah_get_stripe(lo, &s))) {
+        if (rc == -ENOSPC) {
+            DEBUG("layout (%d) out of space", meta->loid);
+            return UNIFYCR_ERR_NOSPC;
+        }
+        DEBUG("layout (%d) getting stripe error:%d", meta->loid, rc);
+        return UNIFYCR_FAILURE;
+    }
+    DEBUG_LVL(6, "layout %s (%d) get stripe %lu",
+                 lo->info.name, meta->loid, s);
+
+    /* got one from spill over */
+    stripe->id = s;
+    stripe->flags = 0;
+    stripe->f.in_use = 1;
+    stripe->data_w = 0;
+
+    return UNIFYCR_SUCCESS;
+}
+
+/* drop stripe from write stripe cache */
+static int famfs_stripe_free(int fid, unifycr_filemeta_t *meta, int id,
+    F_LAYOUT_t *lo)
+{
+    int rc;
+
+    /* get pointer to chunk meta data */
+    unifycr_chunkmeta_t *stripe = &(meta->chunk_meta[id]);
+
+    /* get physical id of chunk */
+    f_stripe_t s = stripe->id;
+    DEBUG_LVL(7, "free stripe %ld (logical id %d) fl:%x", s, id, stripe->flags);
+
+    /* release stripe; check uncommited stripe */
+
+    if (!stripe->f.in_use) {
+        ERROR("free unallocated stripe %lu in layout %s",
+              s, lo->info.name);
+        ASSERT(0);
+    }
+
+    if (!stripe->f.committed) {
+        if ((rc = f_ah_release_stripe(lo, s))) {
+            ERROR("failed to release stripe %lu in layout %s, error:%d",
+                  s, lo->info.name, rc);
+            return UNIFYCR_FAILURE;
+        }
+        DEBUG_LVL(6, "fid:%d lid:%d - stripe %lu released",
+                  fid, meta->loid, s);
+    }
+    stripe->flags = 0;
+    stripe->data_w = 0;
+
+    return UNIFYCR_SUCCESS;
+}
+
+static int trim_stripe_cache(int fid, F_LAYOUT_t *lo, unifycr_filemeta_t *meta, off_t n)
+{
+    int rc = 0;
+    while (meta->chunks > n) {
+        meta->chunks--;
+        if ((rc = famfs_stripe_free(fid, meta, meta->chunks, lo)))
+            break;
+    }
+    return rc;
+}
+
+static int invalidate_stripe_cache(int fid, F_LAYOUT_t *lo, unifycr_filemeta_t *meta) {
+    return trim_stripe_cache(fid, lo, meta, 0);
 }
 
 /* ---------------------------------------
@@ -387,7 +453,7 @@ int get_global_fam_meta(int fam_id, fam_attr_val_t **fam_meta)
  * be extended before calling this routine */
 static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
 {
-    int rc, ret;
+    int rc;
 
     /* short-circuit a 0-byte write */
     if (count == 0) {
@@ -422,7 +488,7 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
         rc = f_stripe_write(fid, pos, meta, stripe_id, stripe_offset,
                             buf, count, lo);
         if (rc)
-            goto _commit;
+            goto _err;
 
     } else {
         /* otherwise, fill up the remainder of the current chunk */
@@ -430,7 +496,7 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
         rc = f_stripe_write(fid, pos, meta, stripe_id, stripe_offset,
                             (void *)ptr, remaining, lo);
         if (rc)
-            goto _commit;
+            goto _err;
 
         ptr += remaining;
         pos += remaining;
@@ -452,7 +518,7 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
             rc = f_stripe_write(fid, pos, meta, stripe_id, 0,
                                 (void *)ptr, num, lo);
             if (rc)
-                goto _commit;
+                goto _err;
 
             ptr += num;
             pos += num;
@@ -462,17 +528,11 @@ static int famfs_fid_write(int fid, off_t pos, const void *buf, size_t count)
         }
     }
 
-_commit:
-    ret = commit_wrtn_stripes(fid, lo, meta->chunks, meta->chunk_meta);
+_err:
     if (rc) {
-        DEBUG("error writing stripe %lu, fid:%d @%ld in layout %d",
-              stripe_id, fid, pos, meta->loid);
+        DEBUG("write error in layout %d, fid:%d pos:%ld len:%zu rem:%zu",
+              meta->loid, fid, pos, count, remaining);
         return rc; /* UNIFYCR_FAILURE */
-    }
-    if (ret) {
-        DEBUG("error commiting written stripes, fid:%d pos:%ld s:%lu in layout %d",
-              fid, pos, stripe_id, meta->loid);
-        return ret; /* UNIFYCR_FAILURE */
     }
     return UNIFYCR_SUCCESS;
 }
@@ -661,21 +721,33 @@ static int famfs_fid_close(int fid)
     for (i = 0; i < meta->chunks; i++, stripe++) {
 	f_stripe_t s = stripe->id;
 
-	if (stripe->f.in_use == 1 && stripe->f.written == 0) {
-	    ASSERT( stripe->f.committed == 0 );
-	    if ((rc = f_ah_release_stripe(lo, s)))
-	    {
-		ERROR("fd:%d - failed to release stripe %lu in layout %s, error:%d",
-		      fid, s, lo->info.name, rc);
+	if (stripe->f.in_use == 0 || stripe->f.committed == 1)
+	    continue;
+
+	if (stripe->data_w == 0) {
+	    if ((rc = f_ah_release_stripe(lo, s))) {
+		ERROR("fid:%d in layout %s - failed to release stripe %lu on close, error:%d",
+		      fid, lo->info.name, s, rc);
 		return UNIFYCR_FAILURE;
 	    }
-	    DEBUG_LVL(6, "fd:%d release stripe %lu on close in layout %s",
-		      fid, s, lo->info.name);
+	    DEBUG_LVL(6, "fid:%d lid:%d - release stripe %lu on close",
+		      fid, meta->loid, s);
+	} else {
+	    ASSERT( stripe->data_w == lo->info.stripe_sz ); 
+	    if ((rc = f_ah_commit_stripe(lo, s))) {
+		ERROR("fid:%d in layout %s - failed to commit stripe %lu on close, error:%d",
+		      fid, lo->info.name, s, rc);
+		return UNIFYCR_FAILURE;
+	    }
 	}
 	stripe->flags = 0;
     }
 
-    /* nothing to do here, just a place holder */
+    if (invalidate_stripe_cache(fid, lo, meta)) {
+	ERROR("fid:%d in layout %s - failed to drop %jd stripes on close",
+	      fid, lo->info.name, meta->chunks);
+	return UNIFYCR_FAILURE;
+    }
     return UNIFYCR_SUCCESS;
 }
 
@@ -1142,87 +1214,6 @@ int f_srv_connect()
     return 0;
 }
 
-
-/* ---------------------------------------
- * Operations on file chunks
- * --------------------------------------- */
-
-/* allocate a new chunk for the specified file and logical chunk id */
-static int famfs_chunk_alloc(F_LAYOUT_t *lo, unifycr_filemeta_t *meta, int chunk_id)
-{
-    f_stripe_t s;
-    int rc;
-
-    /* get pointer to chunk meta data */
-    unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
-
-    /* allocate a chunk and record its location */
-    if ((rc = f_ah_get_stripe(lo, &s))) {
-        if (rc == -ENOSPC) {
-            DEBUG("layout (%d) out of space", meta->loid);
-            return UNIFYCR_ERR_NOSPC;
-        }
-        DEBUG("layout (%d) getting stripe error:%d", meta->loid, rc);
-        return UNIFYCR_FAILURE;
-    }
-    DEBUG_LVL(6, "layout %s (%d) get stripe %lu",
-                 lo->info.name, meta->loid, s);
-
-    /* got one from spill over */
-    chunk_meta->location = CHUNK_LOCATION_SPILLOVER;
-    chunk_meta->id = s;
-    chunk_meta->flags = 0;
-    chunk_meta->f.in_use = 1;
-
-    return UNIFYCR_SUCCESS;
-}
-
-static int famfs_chunk_free(int fid, unifycr_filemeta_t *meta, int chunk_id,
-    F_LAYOUT_t *lo)
-{
-    /* get pointer to chunk meta data */
-    unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
-
-    /* get physical id of chunk */
-    int id = chunk_meta->id;
-    DEBUG("free chunk %d (logical id %d) fl:%x", id, chunk_id, chunk_meta->flags);
-
-    ASSERT( chunk_meta->location == CHUNK_LOCATION_SPILLOVER );
-
-    /* TODO: free spill over chunk */
-
-    /* release stripe; check uncommited stripe */
-    f_stripe_t s = id;
-    int rc;
-
-    if (!chunk_meta->f.in_use) {
-        DEBUG("free unallocated stripe %lu in layout %s",
-              s, lo->info.name);
-    } else if (!chunk_meta->f.written) {
-        if ((rc = f_ah_release_stripe(lo, s))) {
-            ERROR("failed to release stripe %lu in layout %s, error:%d",
-                  s, lo->info.name, rc);
-            return UNIFYCR_FAILURE;
-        }
-        DEBUG_LVL(6, "fid:%d release stripe %lu in layout %s",
-                     fid, s, lo->info.name);
-    } else if (!chunk_meta->f.committed) {
-        if ((rc = f_ah_commit_stripe(lo, s))) {
-            ERROR("failed to report committed stripe %lu in layout %s, error:%d",
-                  s, lo->info.name, rc);
-            return UNIFYCR_FAILURE;
-        }
-        DEBUG_LVL(6, "fid:%d commit partial stripe %lu in layout %s",
-                     fid, s, lo->info.name);
-    }
-    chunk_meta->flags = 0;
-
-    /* update location of chunk */
-    chunk_meta->location = CHUNK_LOCATION_NULL;
-
-    return UNIFYCR_SUCCESS;
-}
-
 #if 0
 /*
  * given an index, split it into multiple indices whose range is equal or smaller
@@ -1559,25 +1550,56 @@ static int f_stripe_write(
     int i;
 
     /* get chunk meta data */
-    unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[stripe_id]);
-    ASSERT( chunk_meta->f.in_use == 1 ); /* got allocated stripe from Helper */
+    unifycr_chunkmeta_t *stripe = &(meta->chunk_meta[stripe_id]);
+    ASSERT( stripe->f.in_use == 1 ); /* got allocated stripe from Helper */
 
     key_slice_range = lo->info.stripe_sz;
-    f_stripe_t stripe_phy_id = chunk_meta->id; /* global stripe number */
+    f_stripe_t s = stripe->id; /* global stripe number */
 
     DEBUG_LVL(5, "%s: write %zu bytes @%ld (logical %lu) to stripe %lu @%lu",
-              lfs_ctx->pool->mynode.hostname, count, pos, stripe_id, stripe_phy_id, stripe_offset);
+              lfs_ctx->pool->mynode.hostname, count, pos, stripe_id, s, stripe_offset);
 
-    int rc = lf_write(lo, (char *)buf, count, stripe_phy_id, stripe_offset);
+    int rc = lf_write(lo, (char *)buf, count, s, stripe_offset);
     if (rc) {
+        int ret;
+        /* Release or commit the stripe because of I/O failure */
+        if (stripe->data_w) {
+            if ((ret = f_ah_commit_stripe(lo, s)))
+                ERROR("fid:%d in layout %s - error %d committing stripe %lu",
+                      fid, lo->info.name, ret, s);
+        } else {
+            if ((ret = f_ah_release_stripe(lo, s)))
+                ERROR("fid:%d in layout %s - error %d releasing stripe %lu",
+                      fid, lo->info.name, ret, s);
+        }
         /* Print the real error code */
-        ioerr("lf-write failed ret:%d", rc);
+        ioerr("lf-write failed: %d", rc);
         /* Report ENOSPC or EIO */
         if (rc != UNIFYCR_ERR_NOSPC)
             rc = UNIFYCR_FAILURE;
         return rc;
     }
-    chunk_meta->f.written = 1;
+    stripe->data_w += count;
+
+    /* Commit full stipe */
+    if (stripe->data_w >= key_slice_range) {
+        ASSERT( stripe->data_w == key_slice_range );
+        ASSERT( stripe->f.in_use == 1 );
+        ASSERT( stripe->f.committed == 0 );
+
+        STATS_START(start_cmt);
+
+        if ((rc = f_ah_commit_stripe(lo, s))) {
+            ERROR("fid:%d in layout %s - failed committing stripe %lu, error:%d",
+                  fid, lo->info.name, s, rc);
+            return UNIFYCR_FAILURE;
+        }
+        DEBUG_LVL(6, "fid:%d lid %d commit full stripe %lu",
+                  fid, meta->loid, s);
+        stripe->f.committed = 1;
+
+        UPDATE_STATS(wr_cmt_stat, 1, count, start_cmt);
+    }
 
     /* find the corresponding file attr entry and update attr*/
     STATS_START(start);
@@ -1595,7 +1617,7 @@ static int f_stripe_write(
     cur_idx.file_pos = pos;
     cur_idx.length = count;
     cur_idx.mem_pos = stripe_offset;
-    cur_idx.sid = stripe_phy_id;
+    cur_idx.sid = s;
     cur_idx.loid = meta->loid;
 
     /*split the write requests larger than key_slice_range into
@@ -1753,8 +1775,8 @@ static int famfs_fid_extend(int fid, off_t length)
             if (meta->chunks == unifycr_max_chunks + unifycr_spillover_max_chunks) {
                 return UNIFYCR_ERR_NOSPC;
             }
-            /* allocate a new chunk */
-            int rc = famfs_chunk_alloc(lo, meta, meta->chunks);
+            /* allocate a new stripe */
+            int rc = famfs_stripe_alloc(lo, meta, meta->chunks);
             if (rc != UNIFYCR_SUCCESS) {
                 DEBUG("failed to allocate chunk");
                 return UNIFYCR_ERR_NOSPC;
@@ -1798,13 +1820,7 @@ static int famfs_fid_shrink(int fid, off_t length)
         num_chunks = DIV_CEIL(length, stripe_sz);
     }
 
-    /* clear off any extra chunks */
-    while (meta->chunks > num_chunks) {
-        meta->chunks--;
-        famfs_chunk_free(fid, meta, meta->chunks, lo);
-    }
-
-    return UNIFYCR_SUCCESS;
+    return trim_stripe_cache(fid, lo, meta, num_chunks);
 }
 
 static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
@@ -2104,24 +2120,24 @@ static int famfs_fd_fsync(int fd) {
     for (int i = 0; i < meta->chunks; i++, stripe++) {
 	f_stripe_t s = stripe->id;
 
-	if (!stripe->f.written || stripe->f.committed)
+	if (stripe->data_w == 0 || stripe->f.committed)
 	    continue;
 
 	if (!stripe->f.in_use) {
-	    ERROR("fd:%d - unallocated stripe %lu in layout %s",
-		  fd, s, lo->info.name);
+	    ERROR("fid:%d in layout %s - unallocated stripe %lu",
+		  fd, lo->info.name, s);
 	    goto io_err;
 	}
         if ((rc = f_ah_commit_stripe(lo, s))) {
-            ERROR("fd:%d - failed to report committed stripe %lu in layout %s, error:%d",
-                  fd, s, lo->info.name, rc);
+            ERROR("fid:%d in layout %s - error %d committed stripe %lu",
+                  fd, lo->info.name, rc, s);
             goto io_err;
         }
 #ifdef FAMFS_STATS
         md_cnt++;
 #endif
-        DEBUG_LVL(6, "fd:%d commit stripe %lu in layout %s",
-                     fd, s, lo->info.name);
+        DEBUG_LVL(6, "fid:%d lid:%d commit stripe %lu",
+                  fd, meta->loid, s);
         stripe->f.committed = 1;
     }
 
@@ -2134,12 +2150,17 @@ static int famfs_fd_fsync(int fd) {
     ASSERT(cq);
 
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push create file command onto layout %d queue: %s", meta->loid, strerror(-rc));
+        ERROR("can't push fsync command onto layout %d queue: %s", meta->loid, strerror(-rc));
         return rc;
     }
 
+    if ((rc = invalidate_stripe_cache(fd, lo, meta))) {
+        ERROR("fid:%d in layout %s - failed to drop %jd stripes", fd, lo->info.name, meta->chunks);
+        goto io_err;
+    }
+
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for create file from layout %d queue: %s", meta->loid, strerror(-rc));
+        ERROR("couldn't get response for fsync from layout %d queue: %s", meta->loid, strerror(-rc));
         return rc;
     }
 
@@ -2154,39 +2175,6 @@ static int famfs_fd_fsync(int fd) {
 io_err:
     errno = EIO;
     return -1;
-}
-
-static int commit_wrtn_stripes(int fd, F_LAYOUT_t *lo, int count,
-    unifycr_chunkmeta_t *stripes)
-{
-    int i, rc;
-
-    STATS_START(start);
-
-    /* TODO: commit full stripes */
-    count = 0;
-    unifycr_chunkmeta_t *stripe = stripes;
-    for (i = 0; i < count; i++, stripe++) {
-	f_stripe_t s = stripe->id;
-
-	if (stripe->f.written == 0 || stripe->f.committed == 1)
-	    continue;
-
-	ASSERT( stripe->f.in_use == 1 );
-
-	if ((rc = f_ah_commit_stripe(lo, s))) {
-	    ERROR("fd:%d - failed committing stripe %lu in layout %s, error:%d",
-		  fd, s, lo->info.name, rc);
-	    return UNIFYCR_FAILURE;
-	}
-        DEBUG_LVL(6, "fd:%d commit full stripe %lu in layout %s",
-                     fd, s, lo->info.name);
-	stripe->f.committed = 1;
-    }
-
-    UPDATE_STATS(wr_cmt_stat, 1, count, start);
-
-    return UNIFYCR_SUCCESS;
 }
 
 /* sysio/stdio interface to UNIFYCR or FAMFS filesystem */
