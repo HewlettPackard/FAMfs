@@ -394,7 +394,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 vfy=""
                 if ((oVFY)); then
                     dsc="$dsc with VFY"
-                    ((tIOR)) && vfy="-R" || vfy="-V"
+                    ((tIOR)) && vfy="-w -r -R" || vfy="-V"
                 fi
                 for ((k = 0; k < cycles; k++)); do
                     ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
@@ -416,7 +416,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export cMPImap
                     export SRV_OPT="$srv_opt"
                     ((tIOR)) \
-                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -ge $oExtraOpt" \
+                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -g $oExtraOpt" \
                       || opts="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
                     opts=( $(echo $opts) )
                     TEST_OPTS=${opts[*]} # jam whitespaces
