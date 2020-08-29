@@ -1612,6 +1612,7 @@ static int f_stripe_write(
             md_index_t *ptr_last_idx = &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
             if (ptr_last_idx->loid == tmp_index_set.idxes[0].loid &&
                 ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
+                ptr_last_idx->sid == tmp_index_set.idxes[0].sid &&
                 ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length
                 == tmp_index_set.idxes[0].file_pos) {
                 if (ptr_last_idx->file_pos / key_slice_range
