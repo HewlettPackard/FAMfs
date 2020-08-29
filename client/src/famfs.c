@@ -1950,6 +1950,13 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     qsort(read_req, count, sizeof(read_req_t), compare_read_req);
 
+    DEBUG_LVL(6, "lid:%d read %d request(s):", 
+	      lid, count);
+    for (i = 0; i < count; i++) {
+        DEBUG_LVL(6, "  [%d] fid=%d off/len=%ld/%ld",
+		  i, read_req[i].fid, read_req[i].offset, read_req[i].length);
+    }
+
     size_t stripe_sz = lo->info.stripe_sz;
 #if 0
     if (key_slice_range % stripe_sz) {
@@ -1969,6 +1976,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     unifycr_coalesce_read_reqs(read_req, count,
                                &tmp_read_req_set, stripe_sz,
                                &read_req_set);
+    rq_cnt = read_req_set.count;
 #endif
 
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
@@ -2041,9 +2049,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     STATS_START(start);
 
-    DEBUG_LVL(6, "MD/read: loid:%d poll %d rq:", 
-	      lid, rq_cnt);
-
+    DEBUG_LVL(6, "MD/read: loid:%d poll %d rq:", lid, rq_cnt);
     for (i = 0; i < rq_cnt; i++) {
         DEBUG_LVL(7, "  [%d] fid=%d off/len=%ld/%ld",
 		  i, md_rq[i].src_fid, md_rq[i].offset, md_rq[i].length);
@@ -2071,11 +2077,6 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     DEBUG_LVL(7, "miss:%lu sz:%ld of %ld, MD records found:%d time:%lu",
               ++c_miss, tot_sz, ttl, *rc_ptr, elapsed(&md_start));
 #endif
-    DEBUG_LVL(6, "MD/read: loid:%d poll %d rq:", lid, rq_cnt);
-    for (i = 0; i < rq_cnt; i++) {
-        DEBUG_LVL(7, "  [%d] fid=%d off/len=%ld/%ld",
-		  i, md_rq[i].src_fid, md_rq[i].offset, md_rq[i].length);
-    }
 
     tot_sz = match_rq_and_read(lo, read_req, count, lid,
                                md_ptr, *rc_ptr, tot_sz);
