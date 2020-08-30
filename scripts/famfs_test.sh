@@ -280,7 +280,7 @@ else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
   ((cycles = oCycles))
 fi
-cMPImap=
+clMPImap=
 if ((ompi)); then
   oMPIchEnv="${oMPIchEnv} --bind-to none -x FI_MR_CACHE_MONITOR -x LD_LIBRARY_PATH -x PATH -x MPIROOT"
   oMPIchEnv+=" -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS"
@@ -289,7 +289,7 @@ if ((ompi)); then
   else
     oMPIchEnv+=" --mca btl ^openib,tcp,vader --mca mtl ^psm,psm2,portals4 --mca pml ^ucx --mca mtl_ofi_provider_include zhpe --mca mtl_ofi_data_progress manual --mca btl_ofi_provider_include zhpe --mca btl_ofi_progress_mode manual --mca osc_rdma_aggregation_limit 0 --mca opal_leave_pinned 0 --mca opal_leave_pinned_pipeline 0 --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
   fi
-  cMPImap="--map-by :OVERSUBSCRIBE"
+  clMPImap="--map-by :OVERSUBSCRIBE"
 fi
 if ((mpich)); then
   if ((oTCP)); then
@@ -352,7 +352,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
             export Ranks="${RANK[$i]}"
             if ((ompi)); then
                 ((tnc=nc*Ranks))
-                cMPImap+=" -n $tnc"
+                cMPImap="${clMPImap} -n $tnc"
             fi
             for ((j = 0; j < ${#TXSZ[*]}; j++)); do
                 dsc="[$nc*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
