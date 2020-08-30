@@ -67,15 +67,19 @@ typedef struct unifycr_chunkmeta_t_ {
 
 typedef struct unifycr_filemeta_t_ {
     off_t size;                     /* current file size */
-    off_t real_size;                                /* real size of the file for logio*/
+    off_t real_size;                /* real size of the file for logio*/
     int is_dir;                     /* is this file a directory */
     pthread_spinlock_t fspinlock;   /* file lock variable */
     enum flock_enum flock_status;   /* file lock status */
 
     int storage;                    /* FILE_STORAGE specifies file data management */
 
-    off_t chunks;                   /* number of chunks allocated to file */
-    unifycr_chunkmeta_t *chunk_meta; /* meta data for chunks */
+    off_t chunks;                   /* UNIFYCR: number of chunks allocated to file */
+    unsigned int stripes;           /* number of stripes allocated for write iops */
+    unsigned int stripe_idx;        /* current meta data index in chunk_meta array */
+    unsigned long ttl_stripes;      /* number of stripes allocated for file */
+    
+    unifycr_chunkmeta_t *chunk_meta; /* meta data for allocated stripes */
     int loid;                       /* FAMFS layout id */
 
 } unifycr_filemeta_t;

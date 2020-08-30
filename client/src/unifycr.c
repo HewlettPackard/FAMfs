@@ -721,7 +721,7 @@ unsigned long unifycr_fid_is_dir_used(int fid, unsigned long* max_files)
 }
 
 /* return current size of given file id */
-off_t unifycr_fid_size(int fid)
+static off_t unifycr_fid_size(int fid)
 {
     /* get meta data for this file */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
@@ -1006,7 +1006,7 @@ static int unifycr_fid_shrink(int fid, off_t length)
 /* truncate file id to given length, frees resources if length is
  * less than size and allocates and zero-fills new bytes if length
  * is more than size */
-int unifycr_fid_truncate(int fid, off_t length)
+static int unifycr_fid_truncate(int fid, off_t length)
 {
     /* get meta data for this file */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
@@ -1024,7 +1024,7 @@ int unifycr_fid_truncate(int fid, off_t length)
         }
     } else if (length > size) {
         /* file size has been extended, allocate space */
-        int extend_rc = fd_iface->fid_extend(fid, length);
+        int extend_rc = unifycr_fid_extend(fid, length);
         if (extend_rc != UNIFYCR_SUCCESS) {
             return UNIFYCR_ERR_NOSPC;
         }
@@ -1413,7 +1413,7 @@ int unifycr_fid_unlink(int fid)
     DEBUG_LVL(6, "fid %d unlink", fid);
 
     /* return data to free pools */
-    unifycr_fid_truncate(fid, 0);
+    fd_iface->fid_truncate(fid, 0);
 
     /* finalize the storage we're using for this file */
     unifycr_fid_store_free(fid);
@@ -1965,6 +1965,8 @@ static F_FD_IFACE_t unifycr_fd_iface = {
     .fid_extend		= &unifycr_fid_extend,
     .fid_shrink		= &unifycr_fid_shrink,
     .fid_write		= &unifycr_fid_write,
+    .fid_size		= &unifycr_fid_size,
+    .fid_truncate	= &unifycr_fid_truncate,
     /* direct wrapper fn used in unifycr-sysio.c */
     .fd_logreadlist	= &unifycr_fd_logreadlist,
     .fd_fsync		= &unifycr_fsync,

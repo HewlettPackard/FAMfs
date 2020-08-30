@@ -324,6 +324,11 @@ typedef int (*f_fid_close) (int fid);
 typedef int (*f_fid_extend) (int fid, off_t length);
 typedef int (*f_fid_shrink) (int fid, off_t length);
 typedef int (*f_fid_write) (int fid, off_t pos, const void *buf, size_t count);
+typedef off_t (*f_fid_size) (int fid);
+/* truncate file id to given length, frees resources if length is
+ * less than size and allocates and zero-fills new bytes if length
+ * is more than size */
+typedef int (*f_fid_truncate) (int fid, off_t length);
 
 typedef int (*f_fd_logreadlist) (read_req_t *read_req, int count);
 typedef int (*f_fd_fsync) (int fd);
@@ -334,6 +339,8 @@ typedef struct f_fd_iface_ {
     f_fid_extend	fid_extend;
     f_fid_shrink	fid_shrink;
     f_fid_write		fid_write;
+    f_fid_size		fid_size;
+    f_fid_truncate	fid_truncate;
     /* direct wrapper fn used in unifycr-sysio.c */
     f_fd_logreadlist	fd_logreadlist;
     f_fd_fsync		fd_fsync;
@@ -508,9 +515,6 @@ int unifycr_fid_is_dir_empty(const char *path);
 unsigned long unifycr_fid_is_dir_used(int fid, unsigned long* max_files);
 int unifycr_report_storage(int fid, size_t *total, size_t *free);
 
-/* return current size of given file id */
-off_t unifycr_fid_size(int fid);
-
 /* fill in limited amount of stat information */
 int unifycr_fid_stat(int fid, struct stat *buf);
 
@@ -544,11 +548,6 @@ int unifycr_fid_write(int fid, off_t pos, const void *buf, size_t count);
 /* given a file id, write zero bytes to region of specified offset
  * and length, assumes space is already reserved */
 int unifycr_fid_write_zero(int fid, off_t pos, off_t count);
-
-/* truncate file id to given length, frees resources if length is
- * less than size and allocates and zero-fills new bytes if length
- * is more than size */
-int unifycr_fid_truncate(int fid, off_t length);
 
 #if 0 /* Moved to F_FD_IFACE_t */
 /* increase size of file if length is greater than current size,
