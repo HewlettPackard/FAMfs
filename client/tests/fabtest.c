@@ -69,6 +69,27 @@ static void stuff_free(struct stuff *stuff)
         free(stuff);
 }
 
+static inline struct timespec now(void) {
+    struct timespec tv_nsec;
+
+    clock_gettime(CLOCK_MONOTONIC, &tv_nsec);
+    return tv_nsec;
+}
+static inline uint64_t elapsed(struct timespec *ts) {
+    time_t sec;
+    long usec;
+    struct timespec tv = now();
+
+    sec =  tv.tv_sec - ts->tv_sec;
+    usec = (tv.tv_nsec - ts->tv_nsec)/1000;
+    if (sec > 0 && usec < 0) {
+        sec--;
+        usec += 1000000L;
+    }
+    if (sec < 0 || (sec == 0 && usec < 0)) return 0;
+    return (uint64_t)sec * 1000000UL + (uint64_t)usec;
+}
+
 static ssize_t do_progress(struct fid_cq *cq, size_t *cmp)
 {
     ssize_t             ret = 0;
@@ -204,7 +225,7 @@ static int do_fam(const struct args *args, int rank, int cnt)
             ret = -FI_EINVAL;
             goto done;
         }
-        fi_freeinfo(fi);
+//        fi_freeinfo(fi);
     }
 
     int wup = args->do_warm_up;
@@ -236,11 +257,13 @@ static int do_fam(const struct args *args, int rank, int cnt)
                     }
                 }
                 tx_op++;
+    		struct timespec start = now();
                 while (tx_cmp != tx_op) 
                     if ((rc = do_progress(fab_conn->tx_cq, &tx_cmp)) < 0) {
                         print_func_err(__func__, __LINE__, "do_progress(w)", "", rc);
                         goto done;
                     }
+    		printf("%d: I/O completed rc:%d time:%lu\n", rank, rc, elapsed(&start));
             }
         }
     } while (wup--);
@@ -283,11 +306,13 @@ static int do_fam(const struct args *args, int rank, int cnt)
                 }
             }
             tx_op++;
+    	    struct timespec start = now();
             while (tx_cmp != tx_op)
                 if ((rc = do_progress(fab_conn->tx_cq, &tx_cmp)) < 0) {
                     print_func_err(__func__, __LINE__, "do_progress(r)", "", rc);
                     goto done;
                 }
+    	    printf("%d: I/O completed rc:%d time:%lu\n", rank, rc, elapsed(&start));
         }
     }
     gettimeofday(&ts_end, NULL);
