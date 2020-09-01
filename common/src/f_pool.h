@@ -99,6 +99,9 @@ typedef struct f_pool_dev_ {
     uint16_t		ionode_idx;	/* IO node index in pool->ionodes array */
     uint16_t		idx_in_ion;	/* index in IO node devices, sorted like in devlist */
 
+    atomic_t __attribute__ ((aligned(sizeof(atomic_t)))) \
+                        edr_io_cnt;
+
     F_PDEV_SHA_t	*sha;		/* pool device shareable atomics counters */
 } F_POOL_DEV_t;
 /* pool_index special value: not an index, i.e. this device array element is empty */
