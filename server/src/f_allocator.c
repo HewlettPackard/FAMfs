@@ -283,6 +283,13 @@ int f_start_allocator_threads(void)
 		pthread_cond_wait(&pool->event_cond, &pool->event_lock);
 	pthread_mutex_unlock(&pool->event_lock);
 
+        rc = f_edr_init();
+        if (rc) {
+            LOG(LOG_ERR, "%s[%d]: error %s starting EDR threads",
+                lo->info.name, lo->lp->part_num, strerror(-rc));
+        }
+
+
 //	test_get_stripe();
 
 	return rc;
@@ -293,6 +300,11 @@ int f_stop_allocator_threads(void)
 	F_POOL_t *pool = f_get_pool();
 	F_LAYOUT_t *lo;
 	int rc = 0;
+
+        do {
+            rc = f_edr_quit();
+            usleep(1000);
+        } while (rc == -EAGAIN);
 
 	if (pool) {
 		struct list_head *l, *tmp;

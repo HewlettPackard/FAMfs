@@ -90,7 +90,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 		/* Stop recovery if layout is exitiing */
 		if  (!LayoutActive(lo) || LayoutQuit(lo) || !LayoutRecover(lo)) break;
 
-		rc = f_edr_sumbit(lo, ss, bmap, recovery_batch_done_cb, rec);
+		rc = f_edr_submit(lo, ss, bmap, recovery_batch_done_cb, rec);
 		if (rc) {	
 			LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for recovery, rc=%d", 
 				lo->info.name, lp->part_num, rc);
@@ -106,7 +106,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 
 	/* Submit remaining strpes if any */
 	if (n) {
-		rc = f_edr_sumbit(lo, ss, bmap, recovery_batch_done_cb, rec);
+		rc = f_edr_submit(lo, ss, bmap, recovery_batch_done_cb, rec);
 		if (rc)	{
 			LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for recovery, rc=%d", 
 				lo->info.name, lp->part_num, rc);
