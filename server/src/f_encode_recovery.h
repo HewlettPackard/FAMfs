@@ -60,6 +60,8 @@ typedef struct f_edr_ {
     struct f_stripe_set     *ss;        // Stripe set of this request
     F_LAYOUT_t              *lo;        //   and Layout it belongs to
     uint64_t                fvec;       // Bitmap of failed chunks
+    u8                      dchnk[64];  // Data chunk indecies
+    u8                      pchnk[64];  // Data chunk indecies
     F_EDR_WD_t              wdata;      // Worker data: stripe set and lyaout
     F_EDR_STATE_t           state;      // Request state
     F_EDR_CB_t              opend;      // Operation end callback
@@ -69,7 +71,7 @@ typedef struct f_edr_ {
     int                     sall;       // Allocated number of stripes
     int                     scnt;       // Single IO "depth": stripes count to rd/wr at once
     int                     scur;       // Stripe being processed
-    char                    *iobuf;     // Buffer for this request: sall*<c.size>*<c.cnt>
+    u8                      *iobuf;     // Buffer for this request: sall*<c.size>*<c.cnt>
     struct fid_mr           *buf_mr;    // Operand buffer MR
     void                    *buf_dsc;   //    and its descriptor
     int                     nvec;       // Number of buffers in the vector
@@ -112,8 +114,8 @@ typedef struct f_edr_opq_ {
  *
  *  Returns
  *      0               success
- *      <>0             error              
-*/      
+ *      <>0             error
+*/
 int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb, void *ctx);
 
 
@@ -128,7 +130,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
  *
  * Returns
  * 	0		success
- * 	-EAGAIN		not enough resources to process cmd, resubmit this entry 
+ * 	-EAGAIN		not enough resources to process cmd, resubmit this entry
  * 	<>0		error
  */
 int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id);
@@ -144,7 +146,7 @@ int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id);
  *
  * Returns
  * 	0		success
- * 	-EAGAIN		not enough resources to process cmd, resubmit this entry 
+ * 	-EAGAIN		not enough resources to process cmd, resubmit this entry
  * 	<>0		error
  */
 int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id);
@@ -160,7 +162,7 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id);
  *
  * Returns
  * 	0		success
- * 	-EAGAIN		not enough resources to process cmd, resubmit this entry 
+ * 	-EAGAIN		not enough resources to process cmd, resubmit this entry
  * 	<>0		error
  */
 int f_verify_stripes(F_WTYPE_t cmd, void *arg, int thread_id);

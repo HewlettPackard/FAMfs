@@ -102,11 +102,18 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
     uint32_t len = chunk_sz*rq->scnt;
 
     nchunks = stripe->d + stripe->p;
+    ASSERT(nchunks <= 64);
     rq->ready = 0;
     rq->state = wr ? F_EDR_WRITE : F_EDR_READ;
+    int px = 0, dx = 0;
     for (int i = 0; i < nchunks; i++) {
 
 	chunk = get_fam_chunk(stripe, i);
+        // remeber wich chunks are data and parity
+        if (chunk->data >= 0)
+            rq->dchnk[dx++] = i;
+        else
+            rq->pchnk[px++] = i;
         if (rq->fvec == 0 && ((chunk->data < 0 && !wr) || (chunk->data >= 0 && wr)))
             continue;   // encode: skip parity on read and data on writes
         else if (rq->fvec == ~0L && wr)
@@ -126,7 +133,7 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
 	// remote address
 	off = 1ULL*stripe->stripe_in_part*chunk_sz + chunk->p_stripe0_off;
 
-	DEBUG_LVL(7, "%s: %s stripe:%lu - %u/%u/%s "
+	LOG(LOG_DBG3,"%s: %s stripe:%lu - %u/%u/%s "
 		  "on device %u(@%lu) len:%u desc:%p off:0x%16lx mr_key:%lu",
 		  f_get_pool()->mynode.hostname,
 		  wr?"write":"read",rq->ss->stripes[rq->scur],
@@ -155,8 +162,9 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
 	} while (rc == -FI_EAGAIN);
     }
 
-    // all ios submitted
+    // all ios submitted, tell CQ thread to be ready
     rq->ready = 1;
+    pthread_cond_signal(&edr_cq.wake);
 
     return rc;
 }
@@ -170,6 +178,7 @@ static int edr_read(F_EDR_t *rq) {
     f_stripe_t s = rq->ss->stripes[x];
     F_LAYOUT_t *lo = rq->lo;
 
+    LOG(LOG_DBG2, "stripe %lu (%d of %d)", s, x, rq->ss->count);
     if (!rq->sattr || rq->sattr->stripe_0 + rq->sattr->stripe_in_part != s) {
         // map to physical stripe
         if ((rc = f_map_fam_stripe(lo, &rq->sattr, s))) {
@@ -182,7 +191,7 @@ static int edr_read(F_EDR_t *rq) {
         LOG(LOG_ERR,"stripe:%lu in layout %s - submit i/o error:%d", s, lo->info.name, rc);
         goto _err;
     }
-                                                                
+
     return 0;
 
 _err:
@@ -213,6 +222,7 @@ static int encode_write_done(F_EDR_t *rq, void *ctx) {
     F_LAYOUT_t *lo = rq->lo;
     F_LO_PART_t *lp = rq->lo->lp;
 
+    LOG(LOG_DBG2, "stripe %lu (%d of %d)", s, x, rq->ss->count);
     do {
         if (!rq->err) {
             f_laminate_stripe(lp->layout, s);
@@ -246,6 +256,8 @@ static int encode_write_done(F_EDR_t *rq, void *ctx) {
             list_add_tail(&rq->list, &free_s[l].qhead);
             free_s[l].size++;
             pthread_spin_unlock(&free_s[l].qlock);
+
+            // wake up any client(s) that could be waiting for ree RQ
             pthread_cond_broadcast(&free_s[l].wake);
 
         } else {
@@ -272,6 +284,7 @@ static int encode_calc_done(F_EDR_t *rq, void *ctx) {
     rq->state = F_EDR_WRITE;
     rq->opend = encode_write_done;
 
+    LOG(LOG_DBG2, "stripe %lu (%d of %d)", s, x, rq->ss->count);
     if (!rq->err) {
         if ((rc = edr_io_submit(rq, 0))) {
             LOG(LOG_ERR,"stripe:%lu in layout %s - submit i/o error:%d", s, lo->info.name, rc);
@@ -298,6 +311,7 @@ static int encode_read_done(F_EDR_t *rq, void *ctx) {
     F_LO_PART_t *lp = rq->lo->lp;
     int rc = 0;
 
+    LOG(LOG_DBG2, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur, rq->ss->count);
     ASSERT(atomic_read(&rq->busy) == 0);
     rq->opend = encode_calc_done;
     rq->state = F_EDR_CALC;
@@ -336,46 +350,6 @@ static void start_rq(F_EDR_t *rq) {
 }
 
 //
-// EDR request queue processing thread
-//
-static void *edr_wq_thread(void *arg) {
-    F_EDR_OPQ_t *wq = (F_EDR_OPQ_t *)arg;
-    struct timespec ts;
-    F_EDR_t *rq;
-    int rc;
-
-    ASSERT(wq == &edr_wq);
-
-    while (!edr_quit) {
-        pthread_spin_lock(&wq->qlock);
-        rq = list_first_entry_or_null(&wq->qhead, F_EDR_t, list);
-        if (!rq) {
-            pthread_mutex_lock((&wq->wlock));
-            pthread_spin_unlock(&wq->qlock);
-            set_tmo(&ts, 10*TMO_1S);
-            if ((rc = pthread_cond_timedwait(&wq->wake, &wq->wlock, &ts))) {
-                pthread_mutex_unlock(&wq->wlock);
-                if (rc == ETIMEDOUT) {
-                    LOG(LOG_DBG, "wq tmo");
-                    continue;
-                } else {
-                    LOG(LOG_ERR, "wq err:%d", rc);
-                    continue;
-                }
-            }
-        } else {
-            list_del_init(&rq->list);
-            wq->size--;
-            pthread_spin_unlock(&wq->qlock);
-            start_rq(rq);
-        }
-    }
-    LOG(LOG_INFO, "EDR caught quit signal");
-
-    return NULL;
-}
-
-//
 // Check libfabric completion queue for any I/O completions or errors
 //
 static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
@@ -387,6 +361,7 @@ static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
     // read completio queue
     ret = fi_cq_read(cq, &cqe, 1);
     if (ret > 0) {
+        LOG(LOG_DBG2, "got RQ @%p completion", cqe.op_context);
         // got one rq completed successfully
         rq = (F_EDR_t *)cqe.op_context;
         rq->err = rq->prov_err = 0;
@@ -435,6 +410,7 @@ static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
 // Advance request propgress
 //
 static void advance_rq(F_EDR_t *rq) {
+    LOG(LOG_DBG2, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur, rq->ss->count);
     if (rq->err) {
         char *rn = rq->fvec == 0 ? "ENC" : (rq->fvec == ~0L ? "VFY" : "REC");
         rq->nerr++;
@@ -453,6 +429,48 @@ static void advance_rq(F_EDR_t *rq) {
 }
 
 //
+// EDR request queue processing thread
+//
+static void *edr_wq_thread(void *arg) {
+    F_EDR_OPQ_t *wq = (F_EDR_OPQ_t *)arg;
+    struct timespec ts;
+    F_EDR_t *rq;
+    int rc;
+
+    ASSERT(wq == &edr_wq);
+    LOG(LOG_INFO, "EDR worker thread started");
+
+    while (!edr_quit) {
+        pthread_spin_lock(&wq->qlock);
+        rq = list_first_entry_or_null(&wq->qhead, F_EDR_t, list);
+        if (!rq) {
+            pthread_mutex_lock((&wq->wlock));
+            pthread_spin_unlock(&wq->qlock);
+            set_tmo(&ts, 10*TMO_1S);
+            if ((rc = pthread_cond_timedwait(&wq->wake, &wq->wlock, &ts))) {
+                pthread_mutex_unlock(&wq->wlock);
+                if (rc == ETIMEDOUT) {
+                    LOG(LOG_DBG, "wq tmo");
+                    continue;
+                } else {
+                    LOG(LOG_ERR, "wq err:%d", rc);
+                    continue;
+                }
+            }
+        } else {
+            list_del_init(&rq->list);
+            wq->size--;
+            pthread_spin_unlock(&wq->qlock);
+            start_rq(rq);
+        }
+    }
+    LOG(LOG_INFO, "EDR worker thread exiting");
+
+    return NULL;
+}
+
+
+//
 // EDR's libfabric completion queue thread
 //
 static void *edr_cq_thread(void *arg) {
@@ -464,10 +482,11 @@ static void *edr_cq_thread(void *arg) {
 
     int rc;
 
+    LOG(LOG_INFO, "EDR worker thread started");
     while (!edr_quit) {
         // if no EDR I/O is outstanding, sleep
         if (!atomic_read(&edr_io_total)) {
-            pthread_mutex_lock((&cq->wlock));
+            pthread_mutex_lock(&cq->wlock);
             set_tmo(&ts, 10*TMO_1S);
             if ((rc = pthread_cond_timedwait(&cq->wake, &cq->wlock, &ts))) {
                 pthread_mutex_unlock(&cq->wlock);
@@ -504,6 +523,7 @@ static void *edr_cq_thread(void *arg) {
 
         }
     }
+    LOG(LOG_INFO, "EDR worker thread exiting");
 
     return NULL;
 }
@@ -572,7 +592,7 @@ int f_edr_quit() {
     ASSERT(pool);
     int N = pool->info.layouts_count;
     F_EDR_t *rq = NULL, *next;
-    
+
     edr_quit = 1;
     if (edr_io_total.counter) {
         LOG(LOG_WARN, "EDR I/O (%d) in progress, can't quit", edr_io_total.counter);
@@ -668,7 +688,7 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id)
 
 		f_laminate_stripe(lp->layout, s);
 	}
-	
+
 	/* Mark the claim vector to be flushed */
 	SetLPCVFlush(lp);
 
@@ -684,10 +704,23 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
     f_stripe_t s = rq->ss->stripes[rq->scur];
 
     ASSERT(cmd == F_WT_ENCODE);
+
+    LOG(LOG_DBG2, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur, rq->ss->count);
     if (!rq->err) {
+        int cs = lo->info.chunk_sz*rq->scnt;
+        int nd = lo->info.data_chunks;
+        int lx = lo->info.conf_id;
+        int np = lo->info.chunks - nd;
+        u8 *dvec[nd], *pvec[np];
+
         LOG(LOG_DBG3, "%s[%d]-w%d: encoding stripe %lu (%d of %d)",
             lo->info.name, lp->part_num, thread_id, s, rq->scur, rq->ss->count);
-    // TODO: insert encoding call here
+        for (int i = 0; i < nd; i++)
+            dvec[i] = rq->iobuf + rq->dchnk[i]*cs;
+        for (int i = 0; i < np; i++)
+            pvec[i] = rq->iobuf + rq->pchnk[i]*cs;
+
+        encode_data(ISAL_CMD, cs, nd, np, encode_tables[lx], dvec, pvec);
     } else {
         LOG(LOG_INFO, "%s[%d]-w%d: not encoding stripe %lu (%d of %d), rq error(s) %d",
             lo->info.name, lp->part_num, thread_id, s, rq->scur, rq->ss->count, rq->nerr);
@@ -695,7 +728,6 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
 
     // proceed to next step
     rq->opend(rq, rq->ctx);
-
 
     return 0;
 }
@@ -757,7 +789,7 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 
 		rc = f_get_slab_devmap(lp, slab, devmap);
 		ASSERT(!rc && !bitmap_empty(devmap, pool->info.pdev_max_idx+1));
-		
+
 		for (i = 0; i < lp->slab_count; i++) {
 			ssd = &buckets[i];
 			if (bitmap_empty(ssd->devmap, pool->info.pdev_max_idx+1) ||
@@ -765,7 +797,7 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 					break;
 		}
 		ASSERT(ssd);
-		
+
 		if (bitmap_empty(ssd->devmap, pool->info.pdev_max_idx+1)) {
 			bitmap_copy(ssd->devmap, devmap, pool->info.pdev_max_idx+1);
 			ssd->ss.count = 0;
@@ -862,7 +894,7 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 		}
 
 	}
-	
+
 /*
 	rc = f_wpool_wait_queue_jobs_done(lp->wpool, F_WP_NORMAL, 500);
 	if (rc) LOG(LOG_DBG2, "%s[%d]: error %d in f_wpool_wait_queue_jobs",
