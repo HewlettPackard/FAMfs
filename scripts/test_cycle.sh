@@ -9,7 +9,8 @@ pid=$!
 ((waiting=0))
 ((_dt=2)) # Check every 2 sec
 echo -n "Waiting for the servers to come up"
-while
+for hst in ${AllNodes//,/$IFS}; do
+  while
     if ((waiting > 60000))
     then
         echo "***ERROR: Server start timeout" >> $SRV_LOG
@@ -21,9 +22,11 @@ while
         sleep $_dt
     fi
     ((waiting += _dt))
-    ! ls /tmp/unifycrd.running.* 1>/dev/null 2>&1
-do
+    ssh -q "${hst}" exit || { echo "Cannot ssh to ${hst}"; exit 1; }
+    ssh -q $hst test ! -e /tmp/unifycrd.running.*
+  do
     :
+  done
 done
 echo
 
