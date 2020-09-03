@@ -23,7 +23,7 @@ for hst in ${AllNodes//,/$IFS}; do
     fi
     ((waiting += _dt))
     ssh -q "${hst}" exit || { echo "Cannot ssh to ${hst}"; exit 1; }
-    ssh -q $hst test ! -e /tmp/unifycrd.running.*
+    ssh -q ${hst} test "! -e /tmp/unifycrd.running.*"
   do
     :
   done
