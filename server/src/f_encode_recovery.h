@@ -64,7 +64,7 @@ typedef struct f_edr_ {
     u8                      pchnk[64];  // Data chunk indecies
     F_EDR_WD_t              wdata;      // Worker data: stripe set and lyaout
     F_EDR_STATE_t           state;      // Request state
-    F_EDR_CB_t              opend;      // Operation end callback
+    F_EDR_CB_t              next_call;  // Operation end callback
     F_EDR_CB_t              completion; // Request completion callback
     N_STRIPE_t              *sattr;     // FAM stripe attributes
     void                    *ctx;       // conext parameter for CB call
