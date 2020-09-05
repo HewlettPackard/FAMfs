@@ -2811,19 +2811,19 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 	F_LO_PART_t *lp = lo->lp;
 	F_POOL_DEV_t *pdev;
 	F_POOLDEV_INDEX_t *pdi;
-	int i;
+	int i, rc = 0;
 
 	for (i = 0; i < lo->devlist_sz; i++) {
 		pdi = &lo->devlist[i];
 		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
 		if (pdev && DevFailed(pdev->sha)) {
-			f_fail_pdev(lo, pdi->pool_index);
-			f_replace(lo, pdi->pool_index, F_PDI_NONE);
+			rc = f_fail_pdev(lo, pdi->pool_index);
+			if (!rc) rc = f_replace(lo, pdi->pool_index, F_PDI_NONE);
 //			f_replace(lo, F_PDI_NONE, F_PDI_NONE);
 //			f_replace(lo, pdi->pool_index, 2);
 		}
 	}
-	if (atomic_read(&lp->degraded_slabs)) 
+	if (!rc && atomic_read(&lp->degraded_slabs)) 
 		f_start_recovery_thread(lo);
 }
 
