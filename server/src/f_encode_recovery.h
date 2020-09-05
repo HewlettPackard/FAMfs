@@ -26,6 +26,27 @@
 #define F_EDR_PAINI 16  // Initial preallocated request que size
 #define F_EDR_PAMAX 64  // Max preallocated q size
 
+
+#define EDR_SQ_SC 1     // free 'S' queue stripe count
+#define EDR_SQ_SZ 64    // free 'S' queue max elements
+#define EDR_MQ_SC 8     // free 'M' queue stripe count
+#define EDR_MQ_SZ 8     // free 'M' queue max elements
+#define EDR_LQ_SC 16    // free 'L' queue stripe count
+#define EDR_LQ_SZ 4     // free 'L' queue max elements
+
+#define EDR_SQ  0x1
+#define EDR_MQ  0x2
+#define EDR_LQ  0x4
+#define EDR_WQ  0x10
+#define EDR_CQ  0x100
+
+#define EDR_OP_ENC 1
+#define EDR_OP_REC 2
+#define EDR_OP_VFY 3
+
+#define EDR_PR_Q(q) ((q)->idy==EDR_LQ?"L":((q)->idy==EDR_MQ?"M":((q)->idy==EDR_SQ?"S":((q)->idy==EDR_CQ?"C":"W"))))
+#define EDR_PR_R(r) ((r)->op==EDR_OP_ENC?"ENC":((r)->op==EDR_OP_REC?"REC":"VFY"))
+
 #define TMO_1S 1000000L // 1 sec in usec
 
 struct ec_worker_data {
@@ -58,17 +79,17 @@ typedef int (*F_EDR_CB_t)(struct f_edr_ *rq, void *ctx);
 typedef struct f_edr_ {
     struct list_head        list;       // Request list links
     struct f_stripe_set     *ss;        // Stripe set of this request
+    int                     sall;       // Allocated number of stripes
+    int                     op;         // Operation being performed: encode/recover/verify
     F_LAYOUT_t              *lo;        //   and Layout it belongs to
     uint64_t                fvec;       // Bitmap of failed chunks
     u8                      dchnk[64];  // Data chunk indecies
     u8                      pchnk[64];  // Data chunk indecies
-    F_EDR_WD_t              wdata;      // Worker data: stripe set and lyaout
     F_EDR_STATE_t           state;      // Request state
     F_EDR_CB_t              next_call;  // Operation end callback
     F_EDR_CB_t              completion; // Request completion callback
     N_STRIPE_t              *sattr;     // FAM stripe attributes
     void                    *ctx;       // conext parameter for CB call
-    int                     sall;       // Allocated number of stripes
     int                     scnt;       // Single IO "depth": stripes count to rd/wr at once
     int                     scur;       // Stripe being processed
     u8                      *iobuf;     // Buffer for this request: sall*<c.size>*<c.cnt>
@@ -99,6 +120,7 @@ typedef struct f_edr_opq_ {
     struct list_head    qhead;          // queue head
     int                 size;           // queue current size
     int                 quit;           // quit flag
+    int                 idy;            // queue identity
 } F_EDR_OPQ_t;
 
 /*
@@ -183,6 +205,8 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss);
 
 int f_edr_quit();
 int f_edr_init();
+
+extern u8 **edr_encode_tables, **edr_rs_matrices;
 
 #endif
 

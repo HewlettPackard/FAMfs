@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "log.h"
 #include "unifycr_debug.h"
@@ -23,11 +24,11 @@
 #include "f_wpool.h"
 #include "famfs_lf_connect.h"
 #include "f_layout_ctl.h"
-#include "f_encode_recovery.h"
 #include "f_allocator.h"
 #include "fam_stripe.h"
 #include "f_ec.h"
-#include <pthread.h>
+#include "f_encode_recovery.h"
+#include "f_recovery.h"
 
 
 static F_EDR_OPQ_t  edr_wq;
@@ -46,7 +47,8 @@ static inline void set_tmo(struct timespec *ts, uint64_t usec) {
     ts->tv_nsec = (ts->tv_nsec + (unsigned long)usec*1000L)%1000000000L;
 }
 
-static u8 **encode_tables, **rs_matrices;
+// make these global as they'll be needed by recovery thread
+u8 **edr_encode_tables, **edr_rs_matrices;
 
 //
 // q     - queue to init
@@ -112,21 +114,35 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
     for (int i = 0; i < nchunks; i++) {
 
 	chunk = get_fam_chunk(stripe, i);
-        // remeber wich chunks are data and parity
-        if (chunk->data >= 0)
-            rq->dchnk[dx++] = i;
-        else
-            rq->pchnk[px++] = i;
+        if (rq->op == EDR_OP_ENC) {
+            // encode: skip parity on read and data on write
+            // remeber wich chunks are data and parity
+            if (chunk->data >= 0)
+                rq->dchnk[dx++] = i;
+            else
+                rq->pchnk[px++] = i;
 
-        if (rq->fvec == 0) {
             if ((chunk->data < 0 && !wr) || (chunk->data >= 0 && wr))
-                continue;   // encode: skip parity on read and data on write
-        } else if (rq->fvec == ~0L) {
+                continue;
+        } else if (rq->op == EDR_OP_REC) {
+            // recover: skip error chunks on read and good ones on write
+            // remeber good chunk and failed ones (the latter go as 'parity')
+            if (test_bit(i, &rq->fvec)) {
+                rq->pchnk[px++] = i;
+                if (!wr) continue; 
+            } else {
+                rq->dchnk[dx++] = i;
+                if (wr) continue;
+            }
+        } else if (rq->op == EDR_OP_VFY) {
+            if (chunk->data >= 0)
+                rq->dchnk[dx++] = i;
+            else
+                rq->pchnk[px++] = i;
             if (wr)
                 continue;   // verify: don't write and dont't skip
         } else {
-            if ((test_bit(i, &rq->fvec) && !wr) || (!test_bit(i, &rq->fvec) && wr))
-                continue;   // recover: skip error chunks on read and good ones on write
+            ASSERT(0);
         }
 
 	pdev = chunk->pdev;
@@ -208,11 +224,6 @@ _err:
     return rc;
 }
 
-
-static int recover_read_done(F_EDR_t *rq, void *ctx) {
-    return 0;
-}
-
 static int vfy_read_done(F_EDR_t *rq, void *ctx) {
     return 0;
 }
@@ -222,8 +233,8 @@ static int vfy_read_done(F_EDR_t *rq, void *ctx) {
 // Porcess next stripe in SS: if the last one is doen, finish up
 // this request
 //
-static int encode_read_done(F_EDR_t *rq, void *ctx);
-static int encode_write_done(F_EDR_t *rq, void *ctx) {
+static int edr_read_done(F_EDR_t *rq, void *ctx);
+static int edr_write_done(F_EDR_t *rq, void *ctx) {
     int rc = 0;
     int x = rq->scur;
     f_stripe_t s = rq->ss->stripes[x], s0 = rq->ss->stripes[0];
@@ -240,7 +251,7 @@ static int encode_write_done(F_EDR_t *rq, void *ctx) {
                 lo->info.name, lp->part_num, s, x + 1, rq->ss->count, rq->err);
         }
 
-        rq->scur++;
+        rq->scur += rq->scnt;
         if (rq->scur >= rq->ss->count) {
             // last stripe in set done
             int l = lo->info.conf_id;
@@ -270,10 +281,11 @@ static int encode_write_done(F_EDR_t *rq, void *ctx) {
             //pthread_cond_signal(&free_s[l].wake);
 
         } else {
-            // repeat the whole process for the next stripe in set
+            // repeat the whole process for the next stripe(s) in set
             atomic_set(&rq->busy, 0);
+            rq->scnt = min(rq->sall, rq->ss->count - rq->scur);
             rq->err = 0;
-            rq->next_call = encode_read_done;
+            rq->next_call = edr_read_done;
             rc = edr_read(rq);
         }
     } while (rc);
@@ -282,29 +294,31 @@ static int encode_write_done(F_EDR_t *rq, void *ctx) {
 }
 
 //
-// Encode EC calc is done, next step: write out parity
+// Encode/Decode EC calc is done, next step: write out parity
 //
-static int encode_calc_done(F_EDR_t *rq, void *ctx) {
+static int edr_calc_done(F_EDR_t *rq, void *ctx) {
     int rc = 0;
-    int x = rq->scur;
-    f_stripe_t s = rq->ss->stripes[x];
-    F_LAYOUT_t *lo = rq->lo;
 
-    rq->next_call = encode_write_done;
+    rq->next_call = edr_write_done;
 
-    LOG(LOG_DBG3, "stripe %lu (%d of %d)", s, x + 1, rq->ss->count);
+    LOG(LOG_DBG3, "stripe batch %lu[%d] (%d of %d): %s calc done", 
+        rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq));
     if (!rq->err) {
         if ((rc = edr_io_submit(rq, 1))) {
-            LOG(LOG_ERR,"stripe:%lu in layout %s - submit i/o error:%d", s, lo->info.name, rc);
+            LOG(LOG_DBG3, "stripe batch %lu[%d] (%d of %d): %s wr submit err:%d", 
+                rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, 
+                EDR_PR_R(rq), rc);
             goto _err;
 
         }
+        // I/O submitted successfully, this is WP thread context so just retun
+        // and wait for the completion event to be read from CQ
         return 0;
     }
 
 _err:
     // current stripe is in error, no point in writing. invoke callback directly
-    // (NOTE: this is worker thread context, but oh well...)
+    // (NOTE: this is WP thread context, but oh well...)
     if (rc)
         rq->err = rc;
     rq->nerr++;
@@ -315,21 +329,35 @@ _err:
 //
 // Encode stripe: read done, start EC calculations
 //
-static int encode_read_done(F_EDR_t *rq, void *ctx) {
+static int edr_read_done(F_EDR_t *rq, void *ctx) {
     F_LO_PART_t *lp = rq->lo->lp;
     int rc = 0;
+    int cmd;
+    int prio;
 
-    LOG(LOG_DBG3, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur + 1, rq->ss->count);
+    if (rq->op == EDR_OP_ENC) {
+        cmd = F_WT_ENCODE;
+        prio = F_WP_NORMAL;
+    } else {
+        cmd = F_WT_DECODE;
+        prio = F_WP_HIGH;
+    }
+    rq->next_call = edr_calc_done;
+
+    LOG(LOG_DBG3, "stripe batch %lu[%d] (%d of %d): %s read done", 
+        rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq));
     ASSERT(atomic_read(&rq->busy) == 0);
-    rq->next_call = encode_calc_done;
+
     rq->state = F_EDR_CALC;
-    if ((rc = f_wpool_add_work(lp->wpool, F_WT_ENCODE, F_WP_NORMAL, rq))) {
-        LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for encode, rc=%d",
-            rq->lo->info.name, lp->part_num, rc);
+    if ((rc = f_wpool_add_work(lp->wpool, cmd, prio, rq))) {
+        LOG(LOG_ERR, "stripe batch %lu[%d] (%d of %d): %s calc failed:%d",
+            rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq), rc);
+        rq->nerr++;
+        rq->err = rc;
+        rq->next_call(rq, rq->ctx);
     }
     return 0;
 }
-
 
 //
 // Begin request processing
@@ -342,18 +370,24 @@ static void start_rq(F_EDR_t *rq) {
     rq->nerr = 0;
     rq->scur = 0;
 
-    if (rq->fvec == 0) {
-        rq->next_call = encode_read_done;
-    } else if (rq->fvec == ~0UL) {
+    switch (rq->op) {
+    case EDR_OP_ENC:
+    case EDR_OP_REC:
+        rq->next_call = edr_read_done;
+        break;
+
+    case EDR_OP_VFY:
         rq->next_call = vfy_read_done;
-    } else {
-        rq->next_call = recover_read_done;
+        break;
+
+    default:
+        ASSERT(0);
     }
 
     if ((rc = edr_read(rq))) {
         // error submitting read i/o, finsh this directly
         LOG(LOG_ERR, "read: %d, rq err:%d", rc, rq->status);
-        encode_write_done(rq, rq->ctx);
+        edr_write_done(rq, rq->ctx);
     }
 }
 
@@ -420,10 +454,10 @@ static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
 static void advance_rq(F_EDR_t *rq) {
     LOG(LOG_DBG3, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur + 1, rq->ss->count);
     if (rq->err) {
-        char *rn = rq->fvec == 0 ? "ENC" : (rq->fvec == ~0L ? "VFY" : "REC");
         rq->nerr++;
-        LOG(LOG_ERR, "I/O error (%d/%d) on %s rq, str=%d, ss cnt=%d, lid=%d",
-            rq->err, rq->prov_err, rn, rq->scur, rq->ss->count, rq->lo->info.conf_id);
+        LOG(LOG_ERR, "I/O error (%d/%d) on %s rq, s[%d]=%lu, ss cnt=%d, lid=%d",
+            rq->err, rq->prov_err, EDR_PR_R(rq), rq->scur, rq->ss->stripes[rq->scur], 
+            rq->ss->count, rq->lo->info.conf_id);
     }
     if (atomic_dec_and_test(&rq->busy)) {
         if (rq->ready || rq->err) {
@@ -484,13 +518,13 @@ static void *edr_wq_thread(void *arg) {
 static void *edr_cq_thread(void *arg) {
     F_EDR_OPQ_t *cq = (F_EDR_OPQ_t *)arg;
     struct timespec ts;
-    F_EDR_t *rq;
+    F_EDR_t *rq = NULL;
     F_POOL_DEV_t *pd;
     F_POOL_t *pool = f_get_pool();
 
     int rc;
 
-    LOG(LOG_INFO, "EDR worker thread started");
+    LOG(LOG_INFO, "EDR I/O completion thread started");
     while (!edr_quit) {
         // if no EDR I/O is outstanding, sleep
         if (!atomic_read(&edr_io_total)) {
@@ -555,13 +589,15 @@ int f_edr_init() {
 
     ON_ERROR_RC(init_edr_q(&edr_wq, NULL, 0, 0), "init wq");
     ON_ERROR_RC(init_edr_q(&edr_cq, NULL, 0, 0), "init cq");
+    edr_wq.idy = EDR_WQ;
+    edr_cq.idy = EDR_CQ;
 
     ON_NOMEM_RET(free_s = calloc(N, sizeof(F_EDR_OPQ_t)), "free S");
     ON_NOMEM_RET(free_m = calloc(N, sizeof(F_EDR_OPQ_t)), "free M");
     ON_NOMEM_RET(free_l = calloc(N, sizeof(F_EDR_OPQ_t)), "free L");
 
-    ON_NOMEM_RET(encode_tables = calloc(N, sizeof(u8 *)), "encode tables");
-    ON_NOMEM_RET(rs_matrices = calloc(N, sizeof(u8 *)), "R-S matricies");
+    ON_NOMEM_RET(edr_encode_tables = calloc(N, sizeof(u8 *)), "encode tables");
+    ON_NOMEM_RET(edr_rs_matrices = calloc(N, sizeof(u8 *)), "R-S matricies");
 
     // for each layout
     for (int i = 0; i < N; i++) {
@@ -576,11 +612,14 @@ int f_edr_init() {
         if (!p)
             continue;   // no parity - no recovery
 
-        ON_ERROR_RC(init_edr_q(&free_s[i], lo, 64, 1), "free S");
-        ON_ERROR_RC(init_edr_q(&free_m[i], lo, 8, 4), "free M");
-        ON_ERROR_RC(init_edr_q(&free_l[i], lo, 1, 16), "free L");
+        ON_ERROR_RC(init_edr_q(&free_s[i], lo, EDR_SQ_SZ, EDR_SQ_SC), "free S");
+        ON_ERROR_RC(init_edr_q(&free_m[i], lo, EDR_MQ_SZ, EDR_MQ_SC), "free M");
+        ON_ERROR_RC(init_edr_q(&free_l[i], lo, EDR_LQ_SZ, EDR_LQ_SC), "free L");
+        free_s[i].idy = EDR_SQ;
+        free_m[i].idy = EDR_MQ;
+        free_l[i].idy = EDR_LQ;
 
-        if (!(encode_tables[i] = make_encode_matrix(k, p, &rs_matrices[i]))) {
+        if (!(edr_encode_tables[i] = make_encode_matrix(k, p, &edr_rs_matrices[i]))) {
             LOG(LOG_ERR, "making encode matrix for lo %d", i);
             return -EINVAL;
         }
@@ -637,19 +676,20 @@ int f_edr_quit() {
         free_q(&free_m[i]);
         free_q(&free_l[i]);
 
-        free(encode_tables[i]);
-        free(rs_matrices[i]);
+        free(edr_encode_tables[i]);
+        free(edr_rs_matrices[i]);
     }
 
     // drop anything that still seats in work q
     free_q(&edr_wq);
-    free(encode_tables);
+    free(edr_encode_tables);
 
     return 0;
 }
 
 int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id)
 {
+#if 0
 	struct ec_worker_data *ecw_data = (struct ec_worker_data *)arg;
 	F_LO_PART_t *lp = ecw_data->lp;
 	F_LAYOUT_t *lo = lp->layout;
@@ -670,38 +710,46 @@ int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id)
 	if (ss->stripes) free(ss->stripes);
 	if (ecw_data) free(ecw_data);
 	return 0;
-}
-
-#if 0
-int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id)
-{
-	struct ec_worker_data *ecw_data = (struct ec_worker_data *)arg;
-	F_LO_PART_t *lp = ecw_data->lp;
-	F_LAYOUT_t *lo = lp->layout;
-	struct f_stripe_set *ss = &ecw_data->ss;
-	int i, rc = 0;
-
-	ASSERT(cmd == F_WT_ENCODE);
-	for (i = 0; i < ss->count; i++) {
-		f_stripe_t s = ss->stripes[i];
-
-		LOG(LOG_DBG3, "%s[%d]-w%d: encoding stripe %lu (%d of %d)",
-			lo->info.name, lp->part_num, thread_id, s, i, ecw_data->ss.count);
-		usleep(500);
-
-		if (rc ) return -EAGAIN;
-
-		f_laminate_stripe(lp->layout, s);
-	}
-
-	/* Mark the claim vector to be flushed */
-	SetLPCVFlush(lp);
-
-	if (ss->stripes) free(ss->stripes);
-	if (ecw_data) free(ecw_data);
-	return 0;
-}
 #endif
+
+    F_EDR_t *rq = (F_EDR_t *)arg;
+    F_LO_PART_t *lp = rq->lo->lp;
+    F_LAYOUT_t *lo = rq->lo;
+    f_stripe_t s = rq->ss->stripes[rq->scur];
+    F_RECOVERY_t *rctx = (F_RECOVERY_t *)rq->ctx;
+
+    ASSERT(rctx);
+    ASSERT(cmd == F_WT_DECODE);
+    if (!rq->err) {
+        int cs = lo->info.chunk_sz*rq->scnt;
+        int nerr = bitmap_weight(&rq->fvec, sizeof(u64));
+        int nd = lo->info.chunks - nerr;
+        u8 *dvec[nd], *evec[nerr];
+
+        ASSERT(nerr);
+
+        LOG(LOG_DBG3, "%s[%d]-w%d: decoding %d stripes s0=%lu (%d of %d)",
+            lo->info.name, lp->part_num, thread_id, rq->scnt, s, rq->scur + 1, rq->ss->count);
+        for (int i = 0; i < nd; i++)
+            dvec[i] = rq->iobuf + rq->dchnk[i]*cs;
+        for (int i = 0; i < nerr; i++)
+            evec[i] = rq->iobuf + rq->pchnk[i]*cs;
+
+        decode_data(ISAL_CMD, cs, nd, nerr, rctx->decode_table, dvec, evec);
+
+    } else {
+        LOG(LOG_INFO, "%s[%d]-w%d: not decoding %d stripes s0=%lu (%d of %d), rq nerr=%d",
+            lo->info.name, lp->part_num, thread_id, rq->scnt, s, rq->scur + 1, 
+            rq->ss->count, rq->nerr);
+    }
+
+    // proceed to next step (edr_calc_done, presumably)
+    rq->next_call(rq, rq->ctx);
+
+    return 0;
+
+}
+
 int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
     F_EDR_t *rq = (F_EDR_t *)arg;
     F_LO_PART_t *lp = rq->lo->lp;
@@ -723,8 +771,7 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
         for (int i = 0; i < np; i++)
             pvec[i] = rq->iobuf + rq->pchnk[i]*cs;
 
-        encode_data(ISAL_CMD, cs, nd, np, encode_tables[lx], dvec, pvec);
-        //encode_data(256, cs, nd, np, encode_tables[lx], dvec, pvec);
+        encode_data(ISAL_CMD, cs, nd, np, edr_encode_tables[lx], dvec, pvec);
 
     } else {
         LOG(LOG_INFO, "%s[%d]-w%d: not encoding stripe %lu (%d of %d), rq error(s) %d",
@@ -909,6 +956,98 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	return rc;
 }
 
+//
+// Get a request from one of the free queues
+//  *this_q - if not NULL, always use this q, returns the appropriate q otherwise
+//  qix     - layout (and hence queue) index
+//  cnt     - stripe count (size) of the request 
+//  wait    - 1: will block and wait forevr for free RQ to become available
+//            0: will return NULL/EAGAIN if nothing available
+//           -1: will block and wait once, return NULL/ETIMEDOUT on first timeout 
+//
+static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
+    F_EDR_OPQ_t *q = NULL;
+    F_EDR_t *rq = NULL;
+    struct timespec ts;
+    int rc = 0;
+
+    if (*this_q) {
+        q = *this_q;
+    } else {
+        if (cnt > EDR_MQ_SC) {
+            // rq size L, try L free q first, them M, then S. If S is empty go back to L
+            q = &free_l[qix];
+            if (!q->size) {
+                q = &free_m[qix];
+                if (!q->size) {
+                    q = &free_s[qix];
+                    if (!q->size)
+                        q = &free_l[qix];
+                }
+            }
+
+        } else if (cnt > 1) {
+            // rq size M, try M then S. If S is empty, go back to M, don't use L
+            q = &free_m[qix];
+            if (!q->size) {
+                q = &free_s[qix];
+                if (!q->size)
+                    q = &free_m[qix];
+            }
+        } else {
+            // rq size S, try S, if empty go to M, if empty go back to S. Never use L
+            q = &free_s[qix];
+            if (!q->size) {
+                q = &free_m[qix];
+                if (!q->size)
+                    q = &free_s[qix];
+            }
+        }
+        *this_q = q;
+    }
+    LOG(LOG_DBG3, "getting EDR rq(size=%d) from '%s' q[%d]\n", cnt, EDR_PR_Q(q), qix);
+
+    do {
+        // get a free request
+        pthread_spin_lock(&q->qlock);
+        if (!list_empty(&q->qhead)) {
+            break;
+        } else {
+            pthread_spin_unlock(&q->qlock);
+            if (wait) {
+                // no free requestes, wait for one becoming available
+                pthread_mutex_lock(&q->wlock);
+                set_tmo(&ts, 10*TMO_1S);
+                rc = pthread_cond_timedwait(&q->wake, &q->wlock, &ts);
+                pthread_mutex_unlock(&q->wlock);
+                if (rc) {
+                    if (rc == ETIMEDOUT) {
+                        LOG(LOG_ERR, "free q '%s' wait TMO, lo %d", EDR_PR_Q(q), qix);
+                        if (wait < 0) wait = 0;
+                        continue;
+                    } else {
+                        LOG(LOG_ERR, "free q '%s' wait err, lo %d:%d", EDR_PR_Q(q), qix, rc);
+                        errno = rc;
+                        return NULL;
+                    }
+                }
+            } else {
+                // no waiting
+                errno = EAGAIN;
+                return NULL;
+            }
+        }
+    } while (1);
+
+    // get first ra in free q
+    rq = list_first_entry(&q->qhead, F_EDR_t, list);
+    list_del_init(&rq->list);
+    q->size--;
+    pthread_spin_unlock(&q->qlock);
+
+    return rq;
+}
+
 /*
  * Submit Encode/Decode/Recover(/Verify) Request
  *
@@ -926,71 +1065,57 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 */
 int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_CB_t done_cb, void *ctx) {
     int l = lo->info.conf_id;
-    struct timespec ts;
-    int rc = 0;
-    F_EDR_t *rq;
+    F_EDR_OPQ_t *q = NULL;
+    F_EDR_t *rq = NULL;
 
 // FIXME
 //return 0;
 
     if (!fvec) {
         // ENCODE
-_encode:
 
-        do {
-            // get a free request
-            pthread_spin_lock(&free_s[l].qlock);
-            if (!list_empty(&free_s[l].qhead)) {
-                break;
-            } else {
-                // no free requestes, wait for one becoming available
-                pthread_spin_unlock(&free_s[l].qlock);
-                pthread_mutex_lock(&free_s[l].wlock);
-                set_tmo(&ts, 10*TMO_1S);
-                pthread_cond_timedwait(&free_s[l].wake, &free_s[l].wlock, &ts);
-                pthread_mutex_unlock(&free_s[l].wlock);
-                if (rc) {
-                    if (rc == ETIMEDOUT) {
-                        LOG(LOG_ERR, "free 'S' wait TMO, lo %d", l);
-                        continue;
-                    } else {
-                        LOG(LOG_ERR, "free 'S' wait err, lo %d:%d", l, rc);
-                        return -rc;
-                    }
-                }
-            }
-        } while (1);
+        // since we can encode only one stripe at a time (due to rotating parity)
+        // we will set scur to 1, never mind the ss size
+        if (!(rq = get_free_rq(&q, l, 1, 1)))
+            return -errno;
 
-        // get it off free q
-        rq = list_first_entry(&free_s[l].qhead, F_EDR_t, list);
-        list_del_init(&rq->list);
-        free_s[l].size--;
-        pthread_spin_unlock(&free_s[l].qlock);
-
-        rq->ss = ss;
-        rq->lo = lo;
         rq->fvec = 0;
-        rq->scur = 0;
         rq->scnt = 1;   // one stripe at a time
-        rq->status = 0;
-        rq->nerr = 0;
-        rq->completion = done_cb;
-        rq->ctx = ctx;
-
-        // and onto work q
-        pthread_spin_lock(&edr_wq.qlock);
-        list_add_tail(&rq->list, &edr_wq.qhead);
-        edr_wq.size++;
-        pthread_spin_unlock(&edr_wq.qlock);
-        pthread_cond_signal(&edr_wq.wake);
+        rq->op = EDR_OP_ENC;
 
     } else if (*fvec == ~0UL) {
         // VERIFY
+        return -EINVAL; // FIXME
     } else {
-        if (*fvec == 0UL)
-            goto _encode;
+        if (*fvec == 0UL) {
+            LOG(LOG_ERR, "layout [%d]: recover rq with empty fail vector", l);
+            return -EINVAL;
+        }
         // RECOVER
+
+        // try to get as large request as we can, recover can do multiple stripes at a time
+        if (!(rq = get_free_rq(&q, l, ss->count, -1)))
+            return -errno;
+        rq->fvec = *fvec;
+        rq->scnt = min(q->size, ss->count);
+        rq->op = EDR_OP_REC;
+
     }
+
+    rq->ss = ss;
+    rq->lo = lo;
+    rq->scur = 0;
+    rq->status = 0;
+    rq->nerr = 0;
+    rq->completion = done_cb;
+    rq->ctx = ctx;
+
+    // and onto work q
+    pthread_spin_lock(&edr_wq.qlock);
+    list_add_tail(&rq->list, &edr_wq.qhead);
+    edr_wq.size++;
+    pthread_spin_unlock(&edr_wq.qlock);
+    pthread_cond_signal(&edr_wq.wake);
 
     return 0;
 }

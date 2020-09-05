@@ -23,6 +23,7 @@
 #include "f_layout_ctl.h"
 #include "f_recovery.h"
 #include "f_encode_recovery.h"
+#include "f_ec.h"
 
 
 /* Virtual map iterator function, filters degraded slabs */
@@ -40,17 +41,16 @@ static F_COND_t sm_slab_degraded = {
 int recovery_batch_done_cb(F_EDR_t *rq, void *ctx)
 {
 	F_RECOVERY_t *rec = (F_RECOVERY_t *)ctx;
-	F_EDR_WD_t *wdata = &rq->wdata;
-	F_LO_PART_t *lp;
 	F_LAYOUT_t *lo;
+        F_LO_PART_t *lp;
 
-	ASSERT(rec && wdata);
-	lp = wdata->lp;
-	lo = lp->layout;
+	ASSERT(rec && rq);
+	lo = rq->lo;
+        lp = lo->lp;
 
 	LOG(LOG_DBG, "%s[%d]: recovery rq completed with status %d", lo->info.name, lp->part_num, rq->status);
 	
-//	ss_free(wdata->ss);
+	ss_free(rq->ss);
 	atomic_dec(&rec->in_progress);
 	pthread_cond_signal(&rec->r_batch_done);
 	return 0;
@@ -67,7 +67,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 
 	if (!ss) return -ENOMEM;
 
-	LOG(LOG_INFO, "%s[%d]: recovering slab %u", lo->info.name, lp->part_num, slab);
+	LOG(LOG_INFO, "%s[%d]: recovering slab %u, fvec=%lx", lo->info.name, lp->part_num, slab, *bmap);
 	rc = f_mark_slab_recovering(lo, slab);
 	if (rc) { ss_free(ss); return rc; }
 
@@ -81,9 +81,9 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 		}
 
 		ss->stripes[n] = s;
-		ss->count = n;
+		ss->count = ++n;
 
-		if (++n < batch_size) continue;
+		if (n < batch_size) continue;
 
 		n = 0;
 
@@ -133,18 +133,22 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 			lo->info.name, lp->part_num, slab, rec->done_slabs, rec->slabs2recover,
 			rec->error_slabs, rec->skipped_slabs);
 	} else
-
 		LOG(LOG_WARN, "%s[%d]: slab %u recovery interrupted, done: %lu of %lu, errors: %lu, skipped: %lu", 
 			lo->info.name, lp->part_num, slab, rec->done_slabs, rec->slabs2recover,
 			rec->error_slabs, rec->skipped_slabs);
 	return rc;
 }
 
-static int get_chunks_to_recover(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
+//
+// Return: <0 if error, >=0 - number of error'ed chunks
+// Also fill error vector (ev) with indicies of failed chunk
+//
+static int get_chunks_to_recover(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap, u8 *ev)
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_RECOVERY_t *rec = (F_RECOVERY_t *)lp->rctx;
 	F_SLABMAP_ENTRY_t *sme;
+        int nerr = 0;
 	int n;
 
 	if (slab_in_sync(lp, slab)) {
@@ -183,6 +187,7 @@ static int get_chunks_to_recover(F_LO_PART_t *lp, f_slab_t slab, unsigned long *
 	for (n = 0; n < lo->info.chunks; n++) {
 		if (sme->extent_rec[n].failed) {
 			set_bit(n, bmap);
+                        ev[nerr++] = n;
 		}
 	}
 
@@ -192,15 +197,19 @@ static int get_chunks_to_recover(F_LO_PART_t *lp, f_slab_t slab, unsigned long *
 		return -ESRCH;
 	}
 		
-	return 0;	
+	return nerr;	
 }
 
 static int do_recovery(F_LO_PART_t *lp)
 {
 	F_LAYOUT_t *lo = lp->layout;
+        int lid = lo->info.conf_id;
 	F_RECOVERY_t *rec = (F_RECOVERY_t *)lp->rctx;
 	F_ITER_t *sm_it;
 	int rc = 0;
+        u8 err_vec[sizeof(u64)];
+
+        rec->decode_table = NULL;
 
 	LOG(LOG_DBG2, "%s[%d]: recovering %d slabs", lo->info.name, lp->part_num, atomic_read(&lp->degraded_slabs));
 	sm_it = f_map_get_iter(lp->slabmap, sm_slab_degraded, 0);
@@ -215,16 +224,32 @@ static int do_recovery(F_LO_PART_t *lp)
 			rec->skipped_slabs++;
 			continue;
 		}
-		rc = get_chunks_to_recover(lp, slab, rec->failed_bmap);
+                
+		rc = get_chunks_to_recover(lp, slab, rec->failed_bmap, err_vec);
 		if (rc == -ESRCH) continue; 
-		if (rc) {
+		if (rc < 0) {
 			LOG(LOG_ERR, "%s[%d]: slab %u lookup error %d", lo->info.name, lp->part_num, slab, rc);
 			break;
-		} 
+		}
+                if (rc > 1) {
+                    // number of error > 1, can't use simple XOR recovery
+                    ASSERT(edr_rs_matrices[lid]);
+                    if (rec->decode_table)
+                        free(rec->decode_table);
+                    rec->decode_table = make_decode_matrix(lo->info.data_chunks, 
+                                            rc, err_vec, edr_rs_matrices[lid]);
+                    if (!rec->decode_table) {
+                        LOG(LOG_ERR, "%s[%d]: slab %u recovry: can't make decode table", 
+                            lo->info.name, lp->part_num, slab);
+                        rc = -EINVAL;
+                        break;
+                    }
+                }
 
 		rc = recover_slab(lp, slab, rec->failed_bmap);
 		if (rc) {
-			LOG(LOG_ERR, "%s[%d]: slab %u recovry error %d", lo->info.name, lp->part_num, slab, rc);
+			LOG(LOG_ERR, "%s[%d]: slab %u recovry error %d", 
+                            lo->info.name, lp->part_num, slab, rc);
 			break;
 		}
 
@@ -236,6 +261,8 @@ static int do_recovery(F_LO_PART_t *lp)
 	LOG(LOG_INFO, "%s[%d]: recovered: %lu of %lu, errors: %lu, skipped: %lu", 
 		lo->info.name, lp->part_num, rec->done_slabs, rec->slabs2recover,
 		rec->error_slabs, rec->skipped_slabs);
+        if (rec->decode_table)
+            free(rec->decode_table);
 	return rc;
 }
 
@@ -251,6 +278,7 @@ static inline void free_rec_ctx(F_LO_PART_t *lp)
 	pthread_mutex_destroy(&rec->r_done_lock);
 	pthread_cond_destroy(&rec->r_batch_done);
 	if (rec->failed_bmap) free(rec->failed_bmap);
+        if (rec->decode_table) free(rec->decode_table);
 	free(rec);
 	lp->rctx = NULL;
 }
@@ -265,7 +293,7 @@ static inline int alloc_rec_ctx(F_LO_PART_t *lp)
 	int bmap_size = max(sizeof(long), BITS_TO_BYTES(lo->info.chunks));
 	int rc = -ENOMEM;
 
-	
+        ASSERT(lo->info.chunks <= 64);	
 	rec = calloc(1, sizeof(F_RECOVERY_t));
 	if (!rec) goto _err;
 	lp->rctx = rec;
