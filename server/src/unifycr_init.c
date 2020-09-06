@@ -403,7 +403,7 @@ int main(int argc, char *argv[])
 	    goto _err;
 	}
 	LOG(LOG_DBG, "helper threads started");
-#if 0 /* 1: test helper */
+#if 1 /* 1: test helper */
 	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
 	    usleep(500);
 	    if ((rc = f_test_helper(pool)))

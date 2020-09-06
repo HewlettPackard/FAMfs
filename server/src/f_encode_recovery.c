@@ -153,6 +153,13 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
 	local_desc = NULL; // FIXME
 	buf = &rq->iobuf[i*len];
 	tx_ep = fdev->ep;
+        if (!tx_ep || DevFailed(pdev->sha)) {
+            LOG(LOG_ERR, "%s[%d]: %s - stripe %lu, chunk %d: dev %u has failed or EP not setup",
+                rq->lo->info.name, rq->lo->lp->part_num, EDR_PR_R(rq),
+                rq->ss->stripes[rq->scur], i, media_id);
+            rc = -EINVAL;
+            break;
+        } 
 
 	// remote address
 	off = 1ULL*stripe->stripe_in_part*chunk_sz + chunk->p_stripe0_off;
@@ -203,6 +210,13 @@ static int edr_read(F_EDR_t *rq) {
     F_LAYOUT_t *lo = rq->lo;
 
     LOG(LOG_DBG2, "stripe %lu (%d of %d)", s, x + 1, rq->ss->count);
+    if (rq->op == EDR_OP_ENC || rq->op == EDR_OP_VFY) {
+        if (!f_stripe_slab_healthy(lo, s)) {
+            LOG(LOG_ERR, "%s[%d]: %s - stripe %lu, slab is degraded or failed", 
+                    lo->info.name, lo->lp->part_num, EDR_PR_R(rq), s);
+            goto _err;
+        }
+    }
     if (!rq->sattr || rq->sattr->stripe_0 + rq->sattr->stripe_in_part != s) {
         // map to physical stripe
         if ((rc = f_map_fam_stripe(lo, &rq->sattr, s, 0))) {
@@ -230,8 +244,8 @@ static int vfy_read_done(F_EDR_t *rq, void *ctx) {
 
 //
 // Current stripe is written out
-// Porcess next stripe in SS: if the last one is doen, finish up
-// this request
+// Porcess next stripe in SS: if the last one is done, finish up
+// and retire this request
 //
 static int edr_read_done(F_EDR_t *rq, void *ctx);
 static int edr_write_done(F_EDR_t *rq, void *ctx) {
@@ -243,9 +257,14 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
 
     do {
         if (!rq->err) {
-            f_laminate_stripe(lp->layout, s);
-            LOG(LOG_DBG3, "%s[%d]: stripe %lu laminated (%d of %d)",
-                lo->info.name, lp->part_num, s, x + 1, rq->ss->count);
+            if (rq->op == EDR_OP_ENC) {
+                f_laminate_stripe(lp->layout, s);
+                LOG(LOG_DBG3, "%s[%d]: stripe %lu laminated (%d of %d)",
+                    lo->info.name, lp->part_num, s, x + 1, rq->ss->count);
+            } else {
+                LOG(LOG_DBG3, "%s[%d]: %d stripes recovered, s0=%lu, %d to go",
+                    lo->info.name, lp->part_num, rq->scnt, s, rq->ss->count - x -1);
+            }
         } else {
             LOG(LOG_DBG3, "%s[%d]: stripe %lu in error (%d of %d): %d",
                 lo->info.name, lp->part_num, s, x + 1, rq->ss->count, rq->err);
@@ -254,16 +273,21 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
         rq->scur += rq->scnt;
         if (rq->scur >= rq->ss->count) {
             // last stripe in set done
-            int l = lo->info.conf_id;
             rq->status = rq->nerr ? -EIO : 0;
 
             // Mark the claim vector to be flushed
-            SetLPCVFlush(lp);
-            if (rq->completion)
-                rq->completion(rq, rq->ctx);
-            else 
+            if (rq->op == EDR_OP_ENC) 
+                SetLPCVFlush(lp);
+
+            if (rq->completion) {
+                if (rq->completion(rq, rq->ctx)) {
+                    LOG(LOG_ERR, "%s[%d]: %s done callback failed",
+                        lo->info.name, lp->part_num, EDR_PR_R(rq));
+                }
+            } else {
                 LOG(LOG_DBG, "%s[%d]: s0=%lu - %d stripes laminated, %d errors (no CB)",
                     lo->info.name, lp->part_num, s0, rq->ss->count - rq->nerr, rq->nerr);
+            }
 
             // return request to free queue
             rq->state = F_EDR_FREE;
@@ -271,14 +295,16 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
             rq->nerr = 0;
             rq->status = 0;
 
-            pthread_spin_lock(&free_s[l].qlock);
-            list_add_tail(&rq->list, &free_s[l].qhead);
-            free_s[l].size++;
-            pthread_spin_unlock(&free_s[l].qlock);
+            pthread_spin_lock(&rq->myq->qlock);
+            list_add_tail(&rq->list, &rq->myq->qhead);
+            rq->myq->size++;
+            pthread_spin_unlock(&rq->myq->qlock);
 
             // wake up any client(s) that could be waiting for ree RQ
-            pthread_cond_broadcast(&free_s[l].wake);
+            pthread_cond_broadcast(&rq->myq->wake);
             //pthread_cond_signal(&free_s[l].wake);
+            LOG(LOG_DBG3, "%s[%d]: retiring rq to '%s' queue",
+                lo->info.name, lp->part_num, EDR_PR_Q(rq->myq));
 
         } else {
             // repeat the whole process for the next stripe(s) in set
@@ -687,31 +713,7 @@ int f_edr_quit() {
     return 0;
 }
 
-int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id)
-{
-#if 0
-	struct ec_worker_data *ecw_data = (struct ec_worker_data *)arg;
-	F_LO_PART_t *lp = ecw_data->lp;
-	F_LAYOUT_t *lo = lp->layout;
-	struct f_stripe_set *ss = &ecw_data->ss;
-	int i, rc = 0;
-
-	ASSERT(cmd == F_WT_DECODE);
-	for (i = 0; i < ss->count; i++) {
-		f_stripe_t s = ss->stripes[i];
-
-		LOG(LOG_DBG3, "%s[%d]-w%d: recovering stripe %lu (%d of %d)",
-			lo->info.name, lp->part_num, thread_id, s, i, ecw_data->ss.count);
-		usleep(500);
-
-		if (rc ) return -EAGAIN;
-	}
-
-	if (ss->stripes) free(ss->stripes);
-	if (ecw_data) free(ecw_data);
-	return 0;
-#endif
-
+int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
     F_EDR_t *rq = (F_EDR_t *)arg;
     F_LO_PART_t *lp = rq->lo->lp;
     F_LAYOUT_t *lo = rq->lo;
@@ -1044,6 +1046,7 @@ static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
     list_del_init(&rq->list);
     q->size--;
     pthread_spin_unlock(&q->qlock);
+    rq->myq = q;    // remeber where to return this request
 
     return rq;
 }
@@ -1097,7 +1100,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
         if (!(rq = get_free_rq(&q, l, ss->count, -1)))
             return -errno;
         rq->fvec = *fvec;
-        rq->scnt = min(q->size, ss->count);
+        rq->scnt = min(rq->sall, ss->count);
         rq->op = EDR_OP_REC;
 
     }
@@ -1116,6 +1119,8 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
     edr_wq.size++;
     pthread_spin_unlock(&edr_wq.qlock);
     pthread_cond_signal(&edr_wq.wake);
+
+    //printf("EDR rq '%s' from '%s' Q submitted\n", EDR_PR_R(rq), EDR_PR_Q(rq->myq));
 
     return 0;
 }

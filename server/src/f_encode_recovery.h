@@ -69,6 +69,22 @@ struct f_edr_;
 typedef int (*F_EDR_CB_t)(struct f_edr_ *rq, void *ctx);
 
 //
+// EDR operations queue
+// Need two: submitted requests and completed ones (an optional Q for pre-allocated RQs)
+// New(Rq) or Get(Rq from PreQ) -> SubmitQ -> thread removes it from Sq and starts operation -> 
+//   Rq completes -> CB -> CompletedQ -> another thread removes it from Cq -> CB -> etc.
+typedef struct f_edr_opq_ {
+    pthread_mutex_t     wlock;          // wake signal lock
+    pthread_cond_t      wake;           // wake signal
+    pthread_spinlock_t  qlock;          // queue ops spinlock
+    pthread_t           tid;            // owner thread's id
+    struct list_head    qhead;          // queue head
+    int                 size;           // queue current size
+    int                 quit;           // quit flag
+    int                 idy;            // queue identity
+} F_EDR_OPQ_t;
+
+//
 // Encode-Decode Request
 // While request is being processed, it does not belong to any Q
 // lf_read/write will provide *Rq in cq context field
@@ -78,6 +94,7 @@ typedef int (*F_EDR_CB_t)(struct f_edr_ *rq, void *ctx);
 // <max allocated stripes>*<chunk size> in length
 typedef struct f_edr_ {
     struct list_head        list;       // Request list links
+    F_EDR_OPQ_t             *myq;       // Free queue to return this request to when done
     struct f_stripe_set     *ss;        // Stripe set of this request
     int                     sall;       // Allocated number of stripes
     int                     op;         // Operation being performed: encode/recover/verify
@@ -106,22 +123,6 @@ typedef struct f_edr_ {
     int                     nerr;       // Number of errors (only if status != 0)
 
 } F_EDR_t;
-
-//
-// EDR operations queue
-// Need two: submitted requests and completed ones (an optional Q for pre-allocated RQs)
-// New(Rq) or Get(Rq from PreQ) -> SubmitQ -> thread removes it from Sq and starts operation -> 
-//   Rq completes -> CB -> CompletedQ -> another thread removes it from Cq -> CB -> etc.
-typedef struct f_edr_opq_ {
-    pthread_mutex_t     wlock;          // wake signal lock
-    pthread_cond_t      wake;           // wake signal
-    pthread_spinlock_t  qlock;          // queue ops spinlock
-    pthread_t           tid;            // owner thread's id
-    struct list_head    qhead;          // queue head
-    int                 size;           // queue current size
-    int                 quit;           // quit flag
-    int                 idy;            // queue identity
-} F_EDR_OPQ_t;
 
 /*
  * Submnit Encode/Decode/Recover(/Verify) Request
