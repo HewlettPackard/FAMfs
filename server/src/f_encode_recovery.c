@@ -205,7 +205,7 @@ static int edr_read(F_EDR_t *rq) {
     LOG(LOG_DBG2, "stripe %lu (%d of %d)", s, x + 1, rq->ss->count);
     if (!rq->sattr || rq->sattr->stripe_0 + rq->sattr->stripe_in_part != s) {
         // map to physical stripe
-        if ((rc = f_map_fam_stripe(lo, &rq->sattr, s))) {
+        if ((rc = f_map_fam_stripe(lo, &rq->sattr, s, 0))) {
             LOG(LOG_ERR,"stripe:%lu in layout %s - mapping error:%d", s, lo->info.name, rc);
             goto _err;
         }

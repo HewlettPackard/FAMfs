@@ -1584,7 +1584,7 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
 	lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != stripe_phy_id)
     {
 	/* map to physical stripe */
-	if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, stripe_phy_id))) {
+	if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, stripe_phy_id, 1))) {
 	    DEBUG("%s: stripe %lu in layout %s - mapping error:%d",
 		  pool->mynode.hostname, stripe_phy_id, lo->info.name, rc);
 	    errno = EIO;
@@ -1651,7 +1651,7 @@ static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
         lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != s)
     {
         /* map to physical stripe */
-        if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, s))) {
+        if ((rc = f_map_fam_stripe(lo, &lo->fam_stripe, s, 1))) {
             DEBUG("%s: stripe %lu in layout %s - read mapping error:%d",
                   pool->mynode.hostname, s, lo->info.name, rc);
             errno = EIO;

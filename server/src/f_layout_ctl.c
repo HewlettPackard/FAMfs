@@ -1045,3 +1045,29 @@ int f_mark_slab_recovered(F_LAYOUT_t *lo, f_slab_t slab)
 	return 0;
 }
 
+/*
+ * Check if the stripe belongs to a heathy slab, i.e. not degraded or failed
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	s		stripe to check
+ *
+ *  Returns
+ *	true		healthy slab
+ *	false		not mapped or failed or degraded
+ */
+bool f_stripe_slab_healthy(F_LAYOUT_t *lo, f_stripe_t s)
+{
+	F_LO_PART_t *lp = lo->lp;
+	f_slab_t slab = stripe_to_slab(lo, s);
+	volatile F_SLABMAP_ENTRY_t *sme;
+
+	ASSERT(slab < lp->slab_count);
+	sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lp->slabmap, slab);
+	if (!sme) {
+		LOG(LOG_ERR, "%s[%d]: error getting SM entry %u", lo->info.name, lp->part_num, slab);
+		return false;
+	}	
+
+	return (sme->slab_rec.mapped && !sme->slab_rec.failed && !sme->slab_rec.degraded);
+}
