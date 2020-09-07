@@ -1071,6 +1071,12 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
     F_EDR_OPQ_t *q = NULL;
     F_EDR_t *rq = NULL;
 
+    if (!(lo->info.chunks - lo->info.data_chunks)) {
+        LOG(LOG_ERR, "EDR request for %s[%d] layout rejected:no P-chunks",
+            lo->info.name, lo->lp->part_num);
+        return -EINVAL;
+    }
+
 // FIXME
 //return 0;
 
