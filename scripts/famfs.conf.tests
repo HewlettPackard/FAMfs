@@ -51,6 +51,7 @@ memreg = "basic,local" ; basic|local|basic,local|scalable, default:basic
 progress = manual ; auto|manual|default, default:auto
 use_cq = true ; use completion queue instead of counters
 timeout = 30*1000 ; 30 sec
+single_ep = off ; use single EP per domain, default:on
 
 [device] # FAM module or emulated FAM
 id = 1 ; Unique device id

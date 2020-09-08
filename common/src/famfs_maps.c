@@ -579,6 +579,14 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	lf_info->opts.use_cq = 1;
     if (configurator_int_val(c->devices_timeout, &l)) goto _noarg;
     lf_info->io_timeout_ms = (uint64_t)l;
+    if (configurator_bool_val(c->devices_single_ep, &b)) goto _noarg;
+    if (b) {
+	lf_info->single_ep = 1;
+	if (!lf_info->opts.use_cq) {
+	    ERROR("Cannot use counters with single EP!");
+	    lf_info->opts.use_cq = 1;
+	}
+    }
     s = c->devices_memreg;
     lf_info->mrreg.scalable = strcasecmp(s, LF_MR_MODEL_SCALABLE)? 0:1;
     lf_info->mrreg.basic = strncasecmp(s, LF_MR_MODEL_BASIC,
@@ -1099,9 +1107,9 @@ static void print_lf_info(LF_INFO_t *info) {
 	m. virt_addr?"virt_addr, ":"", m.allocated?"allocated":"");
     printf("Data/control progress: %s%s\n",
 	pgs.progress_manual?"manual ":"", pgs.progress_auto?"progress_auto":"");
-    printf("Options: %s%s%s\n",
+    printf("Options: %s%s%s%s\n",
 	o.zhpe_support?"zhpe_support, ":"", o.true_fam?"true_fam, ":"",
-	o.use_cq?"use_cq":"");
+	o.use_cq?"use_cq, ":"", info->single_ep?"single_EP":"multiple_EPs");
 }
 
 void f_print_layouts(void) {

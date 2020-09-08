@@ -78,7 +78,7 @@ function add_mynode() {
 # update key($2) value to $3 for section($1) in $FAMFS_CONF
 function update_ini() {
   local s=$1 k=$2 v=$3
-  sed -r -i "/^\[$s\]\$/,/^\[/{s/^$k = [^\s]*( ; .*)\$/$k = $v\1/; t; s/^$k = [^\s]*\$/$k = $v/}" ${FAMFS_CONF}
+  sed -r -i "/^\[$s\]\$/,/^\[/{s/^$k = .* (; .*)\$/$k = $v \1/; t; s/^$k = [^\s]*\$/$k = $v/}" ${FAMFS_CONF}
 }
 
 #
@@ -90,7 +90,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:tx:X:O: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra: -n 'parse-options' -- "$@"`
+OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:tx:X:O:U -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -169,6 +169,7 @@ oFStype="FAMfs"
 oExtraOpt=
 oExtraSrvOpt=
 oTCP=0
+oMultiEP=0
 
 declare -a SrvIter
 declare -a ClnIter
@@ -201,6 +202,7 @@ while true; do
   -x | --suffix)     oNodeSuffix="$2"; shift; shift ;;
   -X | --extra)      oExtraOpt="$2"; shift; shift ;; # Pass extra options to the test command line
   -O | --srv_extra)  oExtraSrvOpt="$2"; shift; shift ;; # Pass extra options to FAMFS server
+  -U | --multi_ep)   ((oMultiEP=1)); shift ;; # create multiple endpoints in domain (per device)
   -- ) shift; break ;;
   * ) break ;;
   esac
@@ -297,10 +299,11 @@ if ((mpich)); then
   fi
 fi
 if ((tVERBOSE)); then
+  echo -n "MPI favor: "
   ((mpich))&& echo "MPICH"
   ((ompi))&& echo "ompi"
   echo "App: ${TEST_BIN}"
-  ((fstype==2)) && echo "FS type FAMfs" || echo "FS type $fstype"
+  ((fstype==2)) && echo "FS type: FAMfs" || echo "FS type: $fstype"
 fi
 
 # Set constants in config file (FAMFS_CONF)
@@ -313,8 +316,10 @@ if [ ! -f "$FAMFS_CONF" ]; then
     ((oVERBOSE))&& update_ini log verbosity 6
     if ((ns==1)); then
         Servers=`make_list "$hh" 1 "$oNodeSuffix"`
-        update_ini ionode host ${Servers[0]}
+        update_ini ionode host "${Servers[0]}"
     fi
+    ((oMultiEP))&& SingleEP="false" || SingleEP="true"
+    update_ini devices single_ep $SingleEP
 fi
 echo "Layout moniker: $moniker"
 echo "configuration file: ${PWD}/${FAMFS_CONF}"

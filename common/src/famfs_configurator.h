@@ -94,6 +94,7 @@
     UNIFYCR_CFG(devices, progress, STRING, FAMFS_PROGRESS_AUTO, "data and control progress", NULL) \
     UNIFYCR_CFG(devices, use_cq, BOOL, off, "use completion queue instead of counters", NULL) \
     UNIFYCR_CFG(devices, timeout, INT, IO_TIMEOUT_MS, "libfabric timeout", NULL) \
+    UNIFYCR_CFG(devices, single_ep, BOOL, on, "use single endpoint per domain", NULL) \
     /* Each multi-section should have 'id' field defined as INT, NULLSTRING, of size 1 */ \
     UNIFYCR_CFG_MULTI(ionode, id, INT, NULLSTRING, "IO node unique ID", NULL, 1) \
     UNIFYCR_CFG_MULTI(ionode, uuid, STRING, NULLSTRING, "IO node UUID", configurator_uuid_check, 1) \
