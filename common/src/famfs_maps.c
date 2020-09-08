@@ -1031,8 +1031,16 @@ int f_set_layouts_info(unifycr_cfg_t *cfg)
     int rc = -1;
 
     if (cfg && pool == NULL) {
+	int flag;
+
 	f_crc4_init_table();
-	if (!(rc = cfg_load(cfg)))
+	if ((rc = cfg_load(cfg)))
+	    return rc;
+	if ((rc = MPI_Initialized(&flag)) != MPI_SUCCESS) {
+		err("MPI_Initialized failed:%d", rc);
+		return rc;
+	}
+	if (flag)
 	    rc = mpi_comm_dup(&pool->helper_comm, NULL);
     }
     return rc;
