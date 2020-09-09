@@ -26,7 +26,7 @@ process_is_running()
     local i=0
 
     while test "$i" -le "$max_loops"; do
-        if ! test -z $(pidof $proc) ; then
+        if ! test -z "$(pidof $proc)" ; then
             return 0
         else
             sleep .5
