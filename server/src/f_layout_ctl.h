@@ -249,4 +249,8 @@ static inline void ss_free(struct f_stripe_set *ss)
 	if (ss) free(ss);
 }
 
+static inline bool lo_has_parity(F_LAYOUT_t *lo) {
+    return (lo->info.data_chunks < lo->info.chunks);
+}
+
 #endif
