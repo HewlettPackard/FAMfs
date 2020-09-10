@@ -286,7 +286,12 @@ static int dev_ionode(F_POOL_t *p, struct f_dev_ *dev)
     uint32_t i;
 
     for (i = 0; i < p->ionode_count; i++, ionode++) {
-	if (!strncmp(topo, ionode->zfm.topo, strlen(ionode->zfm.topo)))
+	size_t l = strlen(ionode->zfm.topo);
+	char *p = strrchr(topo, '.');
+
+	if (!p || (p - topo) != (ssize_t)l)
+	    continue;
+	if (!strncmp(topo, ionode->zfm.topo, l))
 	    return (int)i;
     }
     return -1;
