@@ -35,6 +35,7 @@ typedef struct lf_dom_ {
 	struct fi_info	*fi;
 	struct fid_av	*av;
 	struct fid_ep	*ep;		/* per-domain endpoint or NULL */
+	struct fid_cq	*cq;		/* per-domain comlition queue or NULL */
 } LF_DOM_t;
 
 typedef struct fam_dev_ {
@@ -59,7 +60,6 @@ typedef struct fam_dev_ {
 	int		cq_affinity;	/* CQ affinity or zero */
 	struct {
 	    unsigned int    per_dom:1;	/* FAM_DEV_t::ep is a reference to per-domain EP */
-	    unsigned int    enable:1;	/* enable LF_DOM_t::ep at f_conn_open() */
 	}		ep_flags;
 	uint16_t	ionode_idx;	/* ionode index where device is located */
 
@@ -113,6 +113,7 @@ typedef struct lf_info_ {
 	uint64_t	io_timeout_ms;
 	int		service;	/* libfabric service (port) - base */
 	int		verbosity;	/* debug verbosity level, pool->verbose */
+	int		single_ep;	/* 1: open single EP per domain */
 } LF_INFO_t;
 
 
@@ -120,9 +121,10 @@ typedef struct lf_info_ {
 #define LF_CLIENT false	/* bool const for f_domain_open/f_conn_open: libfabric client */
 #define LF_SERVER true	/* libfabric server */
 int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
-    bool lf_srv);
+    bool is_srv);
 int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *domain, LF_INFO_t *info,
-    int media_id, bool lf_srv);
+    int media_id, bool is_srv);
+int f_conn_enable(struct fid_ep *ep, struct fi_info *fi);
 int f_domain_close(LF_DOM_t **domain_p);
 int f_conn_close(FAM_DEV_t *d);
 

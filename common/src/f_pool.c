@@ -139,6 +139,15 @@ _cont:
 	}
     }
 
+    /* Enable per-domain endpoint */
+    if (lf_info->single_ep) {
+	rc = f_conn_enable(domain->ep, domain->fi);
+	if (rc) {
+	    err("faied ebable per-domain endpoint");
+	    goto _err;
+	}
+    }
+
     if (verbose) {
 	printf("LF initiator prov:%s scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
 		node->domain->fi->domain_attr->name,
@@ -206,8 +215,6 @@ int lf_servers_init(F_POOL_t *p)
 	FAM_DEV_t *fdev = &pdev->dev->f;
 	unsigned int media_id = pdev->pool_index;
 
-	/* enable EP if last fdev */
-	fdev->ep_flags.enable = (_i == (p->mynode.emul_devs - 1))?1:0;
 	/* create domain->ep; register MR for each fdev; enable EP */
 	rc = f_conn_open(fdev, domain, lf_info, media_id, LF_SERVER);
 	if (rc) {
@@ -223,8 +230,35 @@ int lf_servers_init(F_POOL_t *p)
 	}
     }
 
+    rc = f_conn_enable(domain->ep, domain->fi);
+    if (rc) {
+	err("faied ebable per-domain endpoint");
+	goto _err;
+    }
+
+    char name[128];
+    size_t n = sizeof(name);
+    rc = fi_getname(&domain->ep->fid, name, &n);
+    if (rc) {
+	fi_err(rc, "fi_getname failed");
+	goto _err;
+    }
+    if (n >=128) {
+	err("name > 128 chars!");
+	rc = -E2BIG;
+	goto _err;
+    }
+    name[n] = 0;
+    if (lf_info->verbosity >= 7) {
+	printf("%s: server addr is %zu:\n", p->mynode.hostname, n);
+	for (int i = 0; i < (int)n; i++)
+	     printf("%02x ", (unsigned char)name[i]);
+	printf("\n");
+    }
+
     if (verbose) {
-	printf("LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+	printf("%s: LF target scalable:%d local:%d basic:%d (prov_key:%d virt_addr:%d allocated:%d)\n",
+		p->mynode.hostname,
 		lf_info->mrreg.scalable, lf_info->mrreg.local, lf_info->mrreg.basic,
 		lf_info->mrreg.prov_key, lf_info->mrreg.virt_addr, lf_info->mrreg.allocated);
     }

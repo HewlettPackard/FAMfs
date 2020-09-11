@@ -8,6 +8,7 @@
 #define F_RECOVERY_H
 
 #include "famfs_stats.h"
+#include "f_ec.h"
 
 #define F_RC_MAX_IO_SIZE	(16*MiB)	/* Max recovery I/O size */
 
@@ -21,6 +22,8 @@ typedef struct f_recovery_ {
 	unsigned long	clean_slabs;	/* slabs that didn't need recovery */
 	unsigned long	error_slabs;	/* slabs skipped due to error(s) */
 	unsigned long	skipped_slabs;	/* slabs that were skipped (not degraded and not error'ed) */
+
+        u8              *decode_table;  /* R-S decode table for this particualr error vector */
 
 	atomic_t	in_progress;	/* # of recovery batches in progress */
 } F_RECOVERY_t;

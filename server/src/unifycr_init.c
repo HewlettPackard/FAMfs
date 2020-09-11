@@ -352,6 +352,8 @@ int main(int argc, char *argv[])
 	mlog_priority = 7 - mlog_priority;
 	db_opts->debug_level &= ~MLOG_PRIMASK;
 	db_opts->debug_level |= mlog_priority << MLOG_PRISHIFT;
+        if (pool->verbose > 7)
+	    db_opts->debug_level |= MLOG_DBG;
     }
 
     rc = meta_init_store(db_opts);
@@ -412,9 +414,12 @@ int main(int argc, char *argv[])
 
     /* Create file for automated testing */
     char fname[256];
+    mode_t old_umask = umask(S_IRWXG);
     sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
-    int flag = open(fname, O_RDWR | O_CREAT, 0644);
+    umask(0111);
+    int flag = open(fname, O_RDWR | O_CREAT, 0666);
     close(flag);
+    umask(old_umask);
 
     if (PoolFAMFS(pool)) {
 	while (1) {

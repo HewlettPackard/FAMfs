@@ -54,14 +54,17 @@ _free:
 /*
  * Map to physical stripe.
  * Set references to pool devices in stripe->chunks[] with D and P chunk order,
- * following Slab map for given layout 'lo' and [global] stripe 's'.
+ * following Slab map for given layout 'lo' and [global] or [local] stripe 's'
+ * depending on the global flag.
  * Allocate N_STRIPE_t on demand.
  * Return -1 if no slab in map or unmapped, -ENOMEM or 0 for success.
  **/
-int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
+int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s, bool global)
 {
     N_STRIPE_t *stripe = *stripe_p;
     F_POOL_t *pool = lo->pool;
+    F_LO_PART_t *lp = lo->lp;
+    F_MAP_t *slabmap = global ? lo->slabmap : lp->slabmap;
     F_SLAB_ENTRY_t *se;
     F_EXTENT_ENTRY_t *ee;
     N_CHUNK_t *chunk;
@@ -82,11 +85,11 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
     stripe_in_ext = s - stripe_0;
 
     /* read Slab map */
-    se = (F_SLAB_ENTRY_t *)f_map_get_p(lo->slabmap, stripe->extent);
+    se = (F_SLAB_ENTRY_t *)f_map_get_p(slabmap, stripe->extent);
     if (se == NULL) {
 	ERROR("%s: failed to get Slab map record for %lu in slab %u",
 	      lo->info.name, s, stripe->extent);
-	f_print_sm(stderr, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+	f_print_sm(stderr, slabmap, lo->info.chunks, lo->info.slab_stripes);
 	return -1;
     }
     /* TODO: Move the assert below to EXTRA_CHECK */
@@ -96,7 +99,7 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s)
     if (se->mapped == 0) {
 	ERROR("%s:%d:%s: failed to get Slab map record:%lu - not mapped!",
 	      pool->mynode.hostname, pool->dbg_rank, lo->info.name, stripe_0);
-	f_print_sm(stderr, lo->slabmap, lo->info.chunks, lo->info.slab_stripes);
+	f_print_sm(stderr, slabmap, lo->info.chunks, lo->info.slab_stripes);
 	return -1;
     }
 
@@ -257,8 +260,8 @@ int chunk_rma_start(N_STRIPE_t *stripe, int use_cq, int wr)
 	off = chunk_offset + 1ULL * stripe->stripe_in_part * chunk_sz;
 	off += chunk->p_stripe0_off; /* +fdev->offset +fdev->virt_addr */
 
-	DEBUG_LVL(7, "%s:%d: %s stripe:%lu @%jd - %u/%u/%s "
-		  "on device %u(@%lu) len:%u desc:%p off:0x%16lx mr_key:%lu",
+	DEBUG_LVL(7, "%s:%d: %s stripe %lu @%jd - %u/%u/%s "
+		  "on device %u(@%lu) len:%u desc:%p off:0x%lx mr_key:%lu",
 		  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank,
 		  wr?"write":"read", s, chunk_offset,
 		  stripe->extent, stripe->stripe_in_part,
@@ -364,7 +367,7 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
 	}
 
 	if (rc == -FI_ETIMEDOUT) {
-	    err("%s:%d: fi_%s timeout stripe:%lu - %u/%u/%s on device %u len:%u",
+	    err("%s:%d: fi_%s timeout stripe %lu - %u/%u/%s on device %u len:%u",
 		f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, wr?"write":"read",
 		s, stripe->extent, stripe->stripe_in_part,
 		pr_chunk(pr_buf, chunk->data, chunk->parity),
@@ -390,7 +393,7 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
 		if (ret)
 		    err("failed to reset counter error!");
 	    }
-	    err("%s:%d: fi_%s stripe:%lu has %lu error(s):%d/%d "
+	    err("%s:%d: fi_%s stripe %lu has %lu error(s):%d/%d "
 		    "- %u/%u/%s on device %u count:%lu/%lu",
 		    f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank, wr?"write":"read",
 		    s, count, rc, err,
@@ -400,7 +403,7 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
 	    break;
 	}
     }
-    DEBUG_LVL(7, "%s:%d: %s completed stripe:%lu - %u/%u/%s "
+    DEBUG_LVL(7, "%s:%d: %s completed stripe %lu - %u/%u/%s "
 	  "on device %u len:%u time:%lu",
 	  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank,
 	  wr?"write":"read", s,

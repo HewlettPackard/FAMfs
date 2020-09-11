@@ -90,6 +90,18 @@ int f_clear_slab_recovering(F_LAYOUT_t *lo, f_slab_t slab);
  */
 int f_mark_slab_recovered(F_LAYOUT_t *lo, f_slab_t slab);
 
+/*
+ * Check if the stripe belongs to a heathy slab, i.e. mapped and not degraded or failed
+ *
+ *  Params
+ *	lo		FAMfs layout pointer
+ *	s		stripe to check
+ *
+ *  Returns
+ *	true		healthy slab
+ *	false		not mapped or failed or degraded
+ */
+bool f_stripe_slab_healthy(F_LAYOUT_t *lo, f_stripe_t s);
 
 /* 
  * Slab allocation bitmap manipulation routines 
@@ -235,6 +247,10 @@ static inline void ss_free(struct f_stripe_set *ss)
 {
 	if (ss && ss->stripes) free(ss->stripes);
 	if (ss) free(ss);
+}
+
+static inline bool lo_has_parity(F_LAYOUT_t *lo) {
+    return (lo->info.data_chunks < lo->info.chunks);
 }
 
 #endif

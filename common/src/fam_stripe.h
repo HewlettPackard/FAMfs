@@ -9,6 +9,7 @@
 
 #include <sys/types.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "famfs_error.h"
 #include "famfs_stripe.h"
@@ -44,7 +45,7 @@ static inline N_CHUNK_t *get_fam_chunk(N_STRIPE_t *stripe, int stripe_chunk)
 }
 
 /* Map chunks to physical stripe; allocate N_STRIPE_t on demand. */
-int f_map_fam_stripe(struct f_layout_ *lo, N_STRIPE_t **stripe_p, uint64_t s);
+int f_map_fam_stripe(struct f_layout_ *lo, N_STRIPE_t **stripe_p, uint64_t s, bool global);
 /* Free N_STRIPE_t memory */
 void free_fam_stripe(N_STRIPE_t *stripe);
 /* Map logical I/O to stripe's physical chunks */

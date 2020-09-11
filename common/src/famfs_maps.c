@@ -286,7 +286,12 @@ static int dev_ionode(F_POOL_t *p, struct f_dev_ *dev)
     uint32_t i;
 
     for (i = 0; i < p->ionode_count; i++, ionode++) {
-	if (!strncmp(topo, ionode->zfm.topo, strlen(ionode->zfm.topo)))
+	size_t l = strlen(ionode->zfm.topo);
+	char *p = strrchr(topo, '.');
+
+	if (!p || (p - topo) != (ssize_t)l)
+	    continue;
+	if (!strncmp(topo, ionode->zfm.topo, l))
 	    return (int)i;
     }
     return -1;
@@ -579,6 +584,14 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	lf_info->opts.use_cq = 1;
     if (configurator_int_val(c->devices_timeout, &l)) goto _noarg;
     lf_info->io_timeout_ms = (uint64_t)l;
+    if (configurator_bool_val(c->devices_single_ep, &b)) goto _noarg;
+    if (b) {
+	lf_info->single_ep = 1;
+	if (!lf_info->opts.use_cq) {
+	    ERROR("Cannot use counters with single EP!");
+	    lf_info->opts.use_cq = 1;
+	}
+    }
     s = c->devices_memreg;
     lf_info->mrreg.scalable = strcasecmp(s, LF_MR_MODEL_SCALABLE)? 0:1;
     lf_info->mrreg.basic = strncasecmp(s, LF_MR_MODEL_BASIC,
@@ -1028,8 +1041,17 @@ int f_set_layouts_info(unifycr_cfg_t *cfg)
     int rc = -1;
 
     if (cfg && pool == NULL) {
+	int flag;
+
 	f_crc4_init_table();
-	rc = cfg_load(cfg);
+	if ((rc = cfg_load(cfg)))
+	    return rc;
+	if ((rc = MPI_Initialized(&flag)) != MPI_SUCCESS) {
+		err("MPI_Initialized failed:%d", rc);
+		return rc;
+	}
+	if (flag)
+	    rc = mpi_comm_dup(&pool->helper_comm, NULL);
     }
     return rc;
 }
@@ -1103,9 +1125,9 @@ static void print_lf_info(LF_INFO_t *info) {
 	m. virt_addr?"virt_addr, ":"", m.allocated?"allocated":"");
     printf("Data/control progress: %s%s\n",
 	pgs.progress_manual?"manual ":"", pgs.progress_auto?"progress_auto":"");
-    printf("Options: %s%s%s\n",
+    printf("Options: %s%s%s%s\n",
 	o.zhpe_support?"zhpe_support, ":"", o.true_fam?"true_fam, ":"",
-	o.use_cq?"use_cq":"");
+	o.use_cq?"use_cq, ":"", info->single_ep?"single_EP":"multiple_EPs");
 }
 
 void f_print_layouts(void) {

@@ -52,36 +52,34 @@ enum flock_enum {
     SH_LOCKED
 };
 
-#if 0
 typedef struct unifycr_chunkmeta_t_ {
-    int location; /* CHUNK_LOCATION specifies how chunk is stored */
-    off_t id;     /* physical id of chunk in its respective storage */
-} unifycr_chunkmeta_t;
-#endif
-typedef struct unifycr_chunkmeta_t_ {
-    int location; /* CHUNK_LOCATION specifies how chunk is stored */
     union {
-        int flags;
+        int         location;   /* unifycr: CHUNK_LOCATION specifies how chunk is stored */
+        int         flags;      /* stripe meta flags */
         struct {
             unsigned int in_use:1;      /* we have got it from helper */
-            unsigned int written:1;     /* [partially] written */
             unsigned int committed:1;   /* been committed */
         } f;
     };
-    off_t id;     /* physical id of chunk in its respective storage */
+    unsigned int    data_w;     /* number of data bytes written */
+    off_t           id;         /* physical id of chunk in its respective storage */
 } __attribute__((aligned(8))) unifycr_chunkmeta_t;
 
 typedef struct unifycr_filemeta_t_ {
     off_t size;                     /* current file size */
-    off_t real_size;                                /* real size of the file for logio*/
+    off_t real_size;                /* real size of the file for logio*/
     int is_dir;                     /* is this file a directory */
     pthread_spinlock_t fspinlock;   /* file lock variable */
     enum flock_enum flock_status;   /* file lock status */
 
     int storage;                    /* FILE_STORAGE specifies file data management */
 
-    off_t chunks;                   /* number of chunks allocated to file */
-    unifycr_chunkmeta_t *chunk_meta; /* meta data for chunks */
+    off_t chunks;                   /* UNIFYCR: number of chunks allocated to file */
+    unsigned int stripes;           /* number of stripes allocated for write iops */
+    unsigned int stripe_idx;        /* current meta data index in chunk_meta array */
+    unsigned long ttl_stripes;      /* number of stripes allocated for file */
+    
+    unifycr_chunkmeta_t *chunk_meta; /* meta data for allocated stripes */
     int loid;                       /* FAMFS layout id */
 
 } unifycr_filemeta_t;

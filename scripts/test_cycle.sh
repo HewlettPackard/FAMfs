@@ -9,7 +9,8 @@ pid=$!
 ((waiting=0))
 ((_dt=2)) # Check every 2 sec
 echo -n "Waiting for the servers to come up"
-while
+for hst in ${AllNodes//,/$IFS}; do
+  while
     if ((waiting > 60000))
     then
         echo "***ERROR: Server start timeout" >> $SRV_LOG
@@ -21,9 +22,11 @@ while
         sleep $_dt
     fi
     ((waiting += _dt))
-    ! ls /tmp/unifycrd.running.* 1>/dev/null 2>&1
-do
+    ssh -q "${hst}" exit || { echo "Cannot ssh to ${hst}"; exit 1; }
+    ssh -q ${hst} test "! -e /tmp/unifycrd.running.*"
+  do
     :
+  done
 done
 echo
 
@@ -31,9 +34,9 @@ echo "### $DSC" >>$TEST_LOG
 echo "### $DSC" >>$MPI_LOG
 echo "### $DSC" >>$SRV_LOG
 TEST_BASH_ARG="ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}"
-((tVERBOSE)) && echo "$mpirun $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c ""${TEST_BASH_ARG}"" 2>>$MPI_LOG 1>>$TEST_LOG"
+((tVERBOSE)) && echo "$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c ""${TEST_BASH_ARG}"" 2>>$MPI_LOG 1>>$TEST_LOG"
 echo "Starting test..."
-$mpirun $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c "${TEST_BASH_ARG}" 2>>$MPI_LOG 1>>$TEST_LOG
+$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c "${TEST_BASH_ARG}" 2>>$MPI_LOG 1>>$TEST_LOG
 
 if (($? == 0))
 then

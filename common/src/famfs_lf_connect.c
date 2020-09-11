@@ -49,6 +49,18 @@ int f_domain_close(LF_DOM_t **dom_p)
 	}
 	dom->ep = NULL;
     }
+    if (dom->cq) {
+	do {
+	    if (!(rc = fi_close(&dom->cq->fid)))
+		break;
+	    sleep(1);
+	} while (rc == -EAGAIN);
+	if (rc) {
+	    fi_err(rc, "close single-ep cq");
+	    return rc;
+	}
+	dom->cq = NULL;
+    }
     if (dom->av) {
 	do {
 	    if (!(rc = fi_close(&dom->av->fid)))
@@ -153,7 +165,7 @@ int f_conn_close(FAM_DEV_t *d)
     }
     d->wcnt = NULL;
 
-    if (d->cq) {
+    if (!d->ep_flags.per_dom && d->cq) {
 	do {
 	    if (!(rc = fi_close(&d->cq->fid)))
 		break;
@@ -320,6 +332,7 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
     const char		*node;
     char		port[6] = { 0 };
     int			service, i, rc;
+    bool		single_ep = lf_srv || info->single_ep;
 
     assert( fdev ); /* device structure must be already allocated in config parser */
     assert( dom ); /* domain should be already open */
@@ -335,8 +348,8 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
     node = fdev->lf_name;
 
     /* non-scalable endpoint */
-    if (lf_srv && dom->ep) {
-	ep = dom->ep;
+    if (single_ep && dom->ep) {
+	fdev->ep = ep = dom->ep;
     } else {
 	rc = fi_endpoint(domain, fi, &ep, NULL);
 	if (rc) {
@@ -351,12 +364,11 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 	    goto _err;
 	}
     }
-    if (lf_srv) {
+    if (single_ep) {
 	dom->ep = ep;
 	fdev->ep_flags.per_dom = 1; /* FAM_DEV_t has a reference to LF_DOM_t::ep */
-	if (fdev->ep_flags.enable == 0)
-	    ep = NULL; /* defer fi_enable(ep) till the last mr registered */
-	goto _cont;
+	if (lf_srv)
+	    goto _cont;
     }
 
     // Create completion queue and bind to endpoint
@@ -366,36 +378,35 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 	cq_attr.signaling_vector = fdev->cq_affinity;
     }
     //flags = FI_RECV | FI_TRANSMIT; /* bind CQ flags */
-    if (lf_srv == LF_SERVER) {
-	cq_attr.format = FI_CQ_FORMAT_TAGGED;
-	cq_attr.size = 100;
-    } else {
-	cq_attr.format = FI_CQ_FORMAT_CONTEXT;
-	cq_attr.wait_obj = FI_WAIT_NONE;
-	cq_attr.size = fi->tx_attr->size;
-    }
+    cq_attr.format = FI_CQ_FORMAT_CONTEXT;
+    cq_attr.wait_obj = FI_WAIT_NONE;
+    cq_attr.size = fi->tx_attr->size;
     if (info->opts.use_cq) {
-	/* TODO: Set CQ affinity: fdev->cq_affinity = cq_attr.signaling_vector = ... */
-	rc = fi_cq_open(domain, &cq_attr, &cq, NULL);
-	if (rc) {
-	    fi_err(rc, "fi_cq_open failed");
-	    goto _err;
+	if (single_ep && dom->cq) {
+	    fdev->cq = cq = dom->cq;
+	} else {
+	    /* TODO: Set CQ affinity: fdev->cq_affinity = cq_attr.signaling_vector = ... */
+	    rc = fi_cq_open(domain, &cq_attr, &cq, NULL);
+	    if (rc) {
+		fi_err(rc, "fi_cq_open failed");
+		goto _err;
+	    }
+	    fdev->cq = cq;
+	    // Bind completion queues to endpoint
+	    rc = fi_ep_bind(ep, &cq->fid, /* FI_SEND |*/FI_RECV | FI_TRANSMIT);
+	    if (rc) {
+		fi_err(rc, "fi_ep_bind CQ failed");
+		goto _err;
+	    }
 	}
-	fdev->cq = cq;
-
-        // Bind completion queues to endpoint
-        rc = fi_ep_bind(ep, &cq->fid, /* FI_SEND |*/FI_RECV | FI_TRANSMIT);
-	if (rc) {
-	    fi_err(rc, "fi_ep_bind CQ failed");
-	    goto _err;
-	}
+	if (single_ep)
+	    dom->cq = cq;
     } else {
+	assert( !single_ep ); /* Counter not supported */
 	// Create counters
 	memset(&cntr_attr, 0, sizeof(cntr_attr));
-	if (lf_srv == LF_CLIENT) {
-	    cntr_attr.events = FI_CNTR_EVENTS_COMP;
-	    cntr_attr.wait_obj = FI_WAIT_FD;
-	}
+	cntr_attr.events = FI_CNTR_EVENTS_COMP;
+	cntr_attr.wait_obj = FI_WAIT_FD;
 
 	rc = fi_cntr_open(domain, &cntr_attr, &rcnt, NULL);
 	if (rc) {
@@ -404,35 +415,31 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *dom, LF_INFO_t *info,
 	}
 	fdev->rcnt = rcnt;
 
-	if (lf_srv == LF_SERVER) {
-	    /* counter flags */
-	    flags = FI_REMOTE_READ | FI_REMOTE_WRITE;
-	} else {
-	    rc = fi_cntr_open(domain, &cntr_attr, &wcnt, NULL);
-	    if (rc) {
-		fi_err(rc, "fi_cntr_open (W) failed");
-		goto _err;
-	    }
-	    fdev->wcnt = wcnt;
-	    flags = FI_READ;
+	/* counter flags */
+	//flags = FI_REMOTE_READ | FI_REMOTE_WRITE; /* passive side */
+	rc = fi_cntr_open(domain, &cntr_attr, &wcnt, NULL);
+	if (rc) {
+	    fi_err(rc, "fi_cntr_open (W) failed");
+	    goto _err;
 	}
+	fdev->wcnt = wcnt;
 
 	// Bind counters to endpoint
+	flags = FI_READ;
 	rc = fi_ep_bind(ep, &rcnt->fid, flags);
 	if (rc) {
 	    fi_err(rc, "fi_ep_bind counter (R) failed");
 	    goto _err;
 	}
 
-	if (lf_srv == LF_CLIENT) {
-	    rc = fi_ep_bind(ep, &wcnt->fid, FI_WRITE);
-	    if (rc) {
-		fi_err(rc, "fi_ep_bind counter (W) failed");
-		goto _err;
-	    }
-        }
+	rc = fi_ep_bind(ep, &wcnt->fid, FI_WRITE);
+	if (rc) {
+	    fi_err(rc, "fi_ep_bind counter (W) failed");
+	    goto _err;
+	}
     }
 _cont:
+    fdev->ep = ep;
 
     if (!info->opts.true_fam)
 	fdev->mr_key = id;
@@ -514,7 +521,7 @@ _cont:
 	fdev->fi_addr = srv_addr;
     }
 
-    if (ep) {
+    if (!info->single_ep) {
 	// Enable endpoint
 	rc = fi_enable(ep);
 	if (rc) {
@@ -526,28 +533,6 @@ _cont:
     }
 
     if (lf_srv) {
-	if (ep) {
-	    char name[128];
-	    size_t n = sizeof(name);
-
-	    rc = fi_getname(&dom->ep->fid, name, &n);
-	    if (rc) {
-		fi_err(rc, "fi_getname failed");
-		goto _err;
-	    }
-	    if (n >=128) {
-		err("name > 128 chars!");
-		rc = -E2BIG;
-		goto _err;
-	    }
-	    name[n] = 0;
-	    if (lf_verbosity >= 7) {
-		printf("%d: server addr is %zu:\n", id, n);
-		for (int i = 0; i < (int)n; i++)
-		    printf("%02x ", (unsigned char)name[i]);
-		printf("\n");
-	    }
-	}
 	DEBUG_LF(3, "%d: Emulated %zuMB FAM on %s:%d if:%s",
 		 id, fdev->mr_size/1024/1024, node, service, fi->domain_attr->name);
     }
@@ -559,6 +544,20 @@ _err:
 	   lf_srv? "server":"client",
 	   id, node, port);
     (void)f_conn_close(fdev);
+    return rc;
+}
+
+int f_conn_enable(struct fid_ep *ep, struct fi_info *fi)
+{
+    int rc;
+
+    // Enable endpoint
+    rc = fi_enable(ep);
+    if (rc) {
+	fi_err(rc, "failed to enable per-domain enpoint, prov:%s fab:%s dom:%s",
+	       fi->fabric_attr->prov_name, fi->fabric_attr->name,
+	       fi->domain_attr->name);
+    }
     return rc;
 }
 

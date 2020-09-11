@@ -266,9 +266,9 @@ int UNIFYCR_WRAP(truncate)(const char *path, off_t length)
         }
 
         /* truncate the file */
-        int rc = unifycr_fid_truncate(fid, length);
+        int rc = fd_iface->fid_truncate(fid, length);
         if (rc != UNIFYCR_SUCCESS) {
-            DEBUG("unifycr_fid_truncate failed for %s in UNIFYCR\n", path);
+            DEBUG("fid_truncate failed for %s in UNIFYCR\n", path);
             errno = EIO;
             return -1;
         }
@@ -533,7 +533,7 @@ int unifycr_fd_read(int fd, off_t pos, void *buf, size_t count,
 
     /* check that we don't try to read past the end of the file */
     off_t lastread = pos + (off_t) count;
-    off_t filesize = unifycr_fid_size(fid);
+    off_t filesize = fd_iface->fid_size(fid);
     if (filesize < lastread) {
         /* adjust count so we don't read past end of file */
         if (filesize > pos) {
@@ -595,7 +595,7 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
 
     /* get current file size before extending the file */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
-    off_t filesize = unifycr_fid_size(fid);
+    off_t filesize = fd_iface->fid_size(fid);
     off_t newpos;
 
     if (meta->storage == FILE_STORAGE_FIXED_CHUNK) {
@@ -633,7 +633,8 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
         unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
         if (write_rc == 0) {
             meta->size = newpos;
-            meta->real_size = pos + count;
+            if (pos + count > (long unsigned int)meta->real_size)
+                meta->real_size = pos + count;
         }
     }
 
@@ -824,7 +825,8 @@ off_t UNIFYCR_WRAP(lseek)(int fd, off_t offset, int whence)
             break;
         case SEEK_END:
             /* seek to EOF + offset */
-            current_pos = meta->size + offset;
+            //current_pos = meta->size + offset;
+            current_pos = fd_iface->fid_size(fid) + offset;
             break;
         default:
             errno = EINVAL;
@@ -1131,7 +1133,7 @@ int unifycr_locate_req(read_req_t *read_req, int count,
  * @param slice_range: the slice size of the key-value store
  * @return read_req_set: the set of split read requests
  * */
-int unifycr_split_read_requests(read_req_t *cur_read_req,
+static int unifycr_split_read_requests(read_req_t *cur_read_req,
                                 read_req_set_t *read_req_set,
                                 long slice_range)
 {
@@ -1202,7 +1204,7 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
  * @return read_req_set: the coalesced read requests
  *
  * */
-static int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
+int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
                                read_req_set_t *tmp_read_req_set, long unifycr_key_slice_range,
                                read_req_set_t *read_req_set)
 {
@@ -1624,7 +1626,7 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
         }
 
         /* truncate the file */
-        int rc = unifycr_fid_truncate(fid, length);
+        int rc = fd_iface->fid_truncate(fid, length);
         if (rc != UNIFYCR_SUCCESS) {
             errno = EIO;
             return -1;
@@ -1824,7 +1826,7 @@ void *UNIFYCR_WRAP(mmap)(void *addr, size_t length, int prot, int flags,
 
         /* check that we don't copy past the end of the file */
         off_t last_byte = offset + length;
-        off_t file_size = unifycr_fid_size(fid);
+        off_t file_size = fd_iface->fid_size(fid);
         if (last_byte > file_size) {
             /* trying to copy past the end of the file, so
              * adjust the total amount to be copied */

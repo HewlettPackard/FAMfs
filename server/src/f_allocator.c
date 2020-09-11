@@ -283,6 +283,13 @@ int f_start_allocator_threads(void)
 		pthread_cond_wait(&pool->event_cond, &pool->event_lock);
 	pthread_mutex_unlock(&pool->event_lock);
 
+        rc = f_edr_init();
+        if (rc) {
+            LOG(LOG_ERR, "%s[%d]: error %s starting EDR threads",
+                lo->info.name, lo->lp->part_num, strerror(-rc));
+        }
+
+
 //	test_get_stripe();
 
 	return rc;
@@ -293,6 +300,11 @@ int f_stop_allocator_threads(void)
 	F_POOL_t *pool = f_get_pool();
 	F_LAYOUT_t *lo;
 	int rc = 0;
+
+        do {
+            rc = f_edr_quit();
+            usleep(1000);
+        } while (rc == -EAGAIN);
 
 	if (pool) {
 		struct list_head *l, *tmp;
@@ -2648,10 +2660,11 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 	
 	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 
 
-	rc = f_submit_encode_stripes(lo, ss);
-	if (rc) LOG(LOG_ERR, "%s[%d]: error %d submitting stripes for encoding", 
-		lo->info.name, lp->part_num, rc);
-
+	if (lo_has_parity(lo)) {
+		rc = f_submit_encode_stripes(lo, ss);
+		if (rc) LOG(LOG_ERR, "%s[%d]: error %d submitting stripes for encoding", 
+			lo->info.name, lp->part_num, rc);
+	}
 	rc = f_map_flush(lp->claimvec);
 	if (rc) LOG(LOG_ERR, "%s[%d]: error %d flushing claim vector", lo->info.name, lp->part_num, rc);
 
@@ -2799,19 +2812,19 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 	F_LO_PART_t *lp = lo->lp;
 	F_POOL_DEV_t *pdev;
 	F_POOLDEV_INDEX_t *pdi;
-	int i;
+	int i, rc = 0;
 
 	for (i = 0; i < lo->devlist_sz; i++) {
 		pdi = &lo->devlist[i];
 		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
 		if (pdev && DevFailed(pdev->sha)) {
-			f_fail_pdev(lo, pdi->pool_index);
-			f_replace(lo, pdi->pool_index, F_PDI_NONE);
+			rc = f_fail_pdev(lo, pdi->pool_index);
+			if (!rc) rc = f_replace(lo, pdi->pool_index, F_PDI_NONE);
 //			f_replace(lo, F_PDI_NONE, F_PDI_NONE);
 //			f_replace(lo, pdi->pool_index, 2);
 		}
 	}
-	if (atomic_read(&lp->degraded_slabs)) 
+	if (!rc && atomic_read(&lp->degraded_slabs)) 
 		f_start_recovery_thread(lo);
 }
 

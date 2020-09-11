@@ -78,7 +78,7 @@ function add_mynode() {
 # update key($2) value to $3 for section($1) in $FAMFS_CONF
 function update_ini() {
   local s=$1 k=$2 v=$3
-  sed -r -i "/^\[$s\]\$/,/^\[/{s/^$k = [^\s]*( ; .*)\$/$k = $v\1/; t; s/^$k = [^\s]*\$/$k = $v/}" ${FAMFS_CONF}
+  sed -r -i "/^\[$s\]\$/,/^\[/{s/^$k = .* (; .*)\$/$k = $v \1/; t; s/^$k = [^\s]*\$/$k = $v/}" ${FAMFS_CONF}
 }
 
 #
@@ -90,7 +90,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:x:X:O: -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,suffix:,extra:,srv_extra: -n 'parse-options' -- "$@"`
+OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:tx:X:O:U -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -168,6 +168,8 @@ oAPP="test_prw_static"
 oFStype="FAMfs"
 oExtraOpt=
 oExtraSrvOpt=
+oTCP=0
+oMultiEP=0
 
 declare -a SrvIter
 declare -a ClnIter
@@ -196,9 +198,11 @@ while true; do
   -F | --fs_type)    oFStype="$2"; shift; shift ;;
   -M | --mpi)        oMPIchEnv="$2"; shift; shift ;;
   -m | --md)         oMdServers="$2"; shift; shift ;; # Default: Servers
+  -t | --tcp)        oTCP=1; shift ;; # use TCP/IP (sockets) instead of ofi zhpi
   -x | --suffix)     oNodeSuffix="$2"; shift; shift ;;
   -X | --extra)      oExtraOpt="$2"; shift; shift ;; # Pass extra options to the test command line
   -O | --srv_extra)  oExtraSrvOpt="$2"; shift; shift ;; # Pass extra options to FAMFS server
+  -U | --multi_ep)   ((oMultiEP=1)); shift ;; # create multiple endpoints in domain (per device)
   -- ) shift; break ;;
   * ) break ;;
   esac
@@ -278,17 +282,28 @@ else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
   ((cycles = oCycles))
 fi
+clMPImap=
 if ((ompi)); then
-  oMPIchEnv="${oMPIchEnv} -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS"
+  oMPIchEnv="${oMPIchEnv} --bind-to none -x FI_MR_CACHE_MONITOR -x LD_LIBRARY_PATH -x PATH -x MPIROOT"
+  oMPIchEnv+=" -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS"
+  if ((oTCP)); then
+    oMPIchEnv+=" --mca btl ^ofi,openib,vader --mca mtl ^ofi,psm,psm2,portals4 --mca pml ^ucx --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
+  else
+    oMPIchEnv+=" --mca btl ^openib,tcp,vader --mca mtl ^psm,psm2,portals4 --mca pml ^ucx --mca mtl_ofi_provider_include zhpe --mca mtl_ofi_data_progress manual --mca btl_ofi_provider_include zhpe --mca btl_ofi_progress_mode manual --mca osc_rdma_aggregation_limit 0 --mca opal_leave_pinned 0 --mca opal_leave_pinned_pipeline 0 --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
+  fi
+  clMPImap="--map-by :OVERSUBSCRIBE"
 fi
-#if ((mpich)); then
-#  oMPIchEnv="${oMPIchEnv} MPIR_CVAR_OFI_USE_PROVIDER=sockets"
-#fi
+if ((mpich)); then
+  if ((oTCP)); then
+    oMPIchEnv+=" MPIR_CVAR_OFI_USE_PROVIDER=sockets"
+  fi
+fi
 if ((tVERBOSE)); then
+  echo -n "MPI favor: "
   ((mpich))&& echo "MPICH"
   ((ompi))&& echo "ompi"
   echo "App: ${TEST_BIN}"
-  ((fstype==2)) && echo "FS type FAMfs" || echo "FS type $fstype"
+  ((fstype==2)) && echo "FS type: FAMfs" || echo "FS type: $fstype"
 fi
 
 # Set constants in config file (FAMFS_CONF)
@@ -301,8 +316,10 @@ if [ ! -f "$FAMFS_CONF" ]; then
     ((oVERBOSE))&& update_ini log verbosity 6
     if ((ns==1)); then
         Servers=`make_list "$hh" 1 "$oNodeSuffix"`
-        update_ini ionode host ${Servers[0]}
+        update_ini ionode host "${Servers[0]}"
     fi
+    ((oMultiEP))&& SingleEP="false" || SingleEP="true"
+    update_ini devices single_ep $SingleEP
 fi
 echo "Layout moniker: $moniker"
 echo "configuration file: ${PWD}/${FAMFS_CONF}"
@@ -337,6 +354,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
         nc=`count $Clients`
 
         for ((i = 0; i < ${#RANK[*]}; i++)); do
+            export Ranks="${RANK[$i]}"
+            if ((ompi)); then
+                ((tnc=nc*Ranks))
+                cMPImap="${clMPImap} -n $tnc"
+            fi
             for ((j = 0; j < ${#TXSZ[*]}; j++)); do
                 dsc="[$nc*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
                 dsc="$dsc Writes=${TXSZ[$j]}"
@@ -377,7 +399,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 vfy=""
                 if ((oVFY)); then
                     dsc="$dsc with VFY"
-                    ((tIOR)) && vfy="-R" || vfy="-V"
+                    ((tIOR)) && vfy="-w -r -R" || vfy="-V"
                 fi
                 for ((k = 0; k < cycles; k++)); do
                     ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
@@ -393,13 +415,13 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     SEQ="$seq"
                     VFY="$vfy"
                     export DSC="$dsc"
-                    export Ranks="${RANK[$i]}"
                     export AllNodes
                     export all_n
                     export oMPIchEnv
+                    export cMPImap
                     export SRV_OPT="$srv_opt"
                     ((tIOR)) \
-                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -ge $oExtraOpt" \
+                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -g $oExtraOpt" \
                       || opts="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
                     opts=( $(echo $opts) )
                     TEST_OPTS=${opts[*]} # jam whitespaces

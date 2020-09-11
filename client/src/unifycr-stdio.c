@@ -695,7 +695,7 @@ static int unifycr_stream_write(
             errno = EBADF;
             return UNIFYCR_ERR_BADF;
         }
-        current = unifycr_fid_size(fid);
+        current = fd_iface->fid_size(fid);
 
         /* like a seek, we discard push back bytes */
         //s->ubuflen;
@@ -896,7 +896,7 @@ static int unifycr_fseek(FILE *stream, off_t offset, int whence)
         break;
     case SEEK_END:
         /* seek to EOF + offset */
-        filesize = unifycr_fid_size(fid);
+        filesize = fd_iface->fid_size(fid);
         if (unifycr_would_overflow_offt(filesize, offset)) {
             s->err = 1;
             errno  = EOVERFLOW;

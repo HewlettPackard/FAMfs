@@ -1060,8 +1060,9 @@ int f_test_helper(F_POOL_t *pool)
 	int rc = f_ah_attach();
 	if (rc) return rc;
 	printf("attached\n");
+        int cnt = 1024;
 
-    	while (!exit_flag) {
+    	while (!exit_flag && cnt--) {
 		//int n = 0;
 		for (int i = 0; i < pool->info.layouts_count; i++) {
 			f_stripe_t s;

@@ -1116,7 +1116,9 @@ void mlog_setmasks(char *mstr, int mlen0)
 {
     char *m, *current, *fac, *pri, pbuf[8];
     size_t faclen;
-    int mlen, facno, clen, elen, prilen, prino;
+    int mlen, facno, clen, elen, prino;
+    unsigned int prilen;
+
     /* not open? */
     if (!mlog_xst.tag) {
         return;
