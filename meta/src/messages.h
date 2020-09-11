@@ -86,8 +86,8 @@ extern "C"
 #define MDHIM_RANGE_BGET 6
 
 //Message Types
-#define RANGESRV_WORK_MSG         10
-#define RANGESRV_WORK_SIZE_MSG    20
+#define RANGESRV_WORK_MSG         1
+#define RANGESRV_WORK_SIZE_MSG    2
 //#define RANGESRV_INFO             3
 #define CLIENT_RESPONSE_MSG       4
 #define CLIENT_RESPONSE_SIZE_MSG  5
