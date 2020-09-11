@@ -512,8 +512,8 @@ static void *stoker(void *arg) {
 
     char qname[MAX_RBQ_NAME];
     f_rbq_t    *salq;
-    int depth = lo->info.sq_depth;
-    int lwm = depth*lo->info.sq_lwm/100;
+    int depth = max(64, lo->info.sq_depth);
+    int lwm = max(8, depth*lo->info.sq_lwm/100);
 
     struct f_stripe_set ss = {.count = 0, .stripes = NULL};
     F_MAP_KEYSET_u keyset = {.slabs = NULL};
@@ -564,28 +564,32 @@ static void *stoker(void *arg) {
         dst = pool->mynode.my_ion;
     }
 
-    LOG(LOG_DBG, "%s: helper alloc thread %s is up", lo->info.name, qname);
+    LOG(LOG_DBG, "%s: helper alloc thread %s is up: qd=%d lwm=%d", lo->info.name, qname, depth, lwm);
 
     f_ah_ipc_t *arq = NULL;
     int cur_ss_sz = 0;
     while (!quit) {
 
         // wait until queue is sufficiently empty
-        if ((rc = f_rbq_waitlwm(salq, F_SALQ_LWTMO)) == -ETIMEDOUT) {
-            if (f_rbq_isfull(salq))
-                LOG(LOG_DBG, "%s: rbq %s: LW TMO\n", lo->info.name, qname);
-        } else if (rc == -ECANCELED) {
-            LOG(LOG_INFO, "%s: rbq %s wak-up signal", lo->info.name, qname);
-        } else if (rc) {
-            LOG(LOG_ERR, "%s: rbq %s wait lwm: %s", lo->info.name, qname, strerror(-rc));
+        if (f_rbq_count(salq) < f_rbq_getlwm(salq)) {
+            if ((rc = f_rbq_waitlwm(salq, F_SALQ_LWTMO)) == -ETIMEDOUT) {
+                if (f_rbq_isfull(salq))
+                    LOG(LOG_DBG, "%s: rbq %s: LW TMO\n", lo->info.name, qname);
+            } else if (rc == -ECANCELED) {
+                LOG(LOG_INFO, "%s: rbq %s wak-up signal", lo->info.name, qname);
+            } else if (rc) {
+                LOG(LOG_ERR, "%s: rbq %s wait lwm: %s", lo->info.name, qname, strerror(-rc));
+            }
+
+            if (quit) break;
         }
-        if (quit)
-            break;
 
         // stuff stripes into the queue untill it's full
         int to_do = f_rbq_size(salq) - f_rbq_count(salq);
-        while (to_do) {
-            int batch = min(f_rbq_size(salq) - f_rbq_count(salq), F_MAX_IPC_ME);
+        while (to_do > 0) {
+            int batch = min(to_do, F_MAX_IPC_ME);
+            if (!batch) break;
+
             if (F_AH_MSG_ALLOC(arq, batch, cur_ss_sz, ss)) {
                 if (keyset.slabs)
                     free(keyset.slabs);
@@ -655,6 +659,7 @@ static void *stoker(void *arg) {
                     if (arq->flag == -ENOSPC) backoff += 10*RBQ_TMO_1S;
                     continue;
                 } else if (arq->cnt != ss.count) {
+                    ASSERT(arq->cnt <= ss.count); // can't get more than i asked for
                     LOG(LOG_WARN, "LO:%d remote allocator returnd %d stripes, %d requested",
                         arq->lid, arq->cnt, ss.count);
                     ss.count = arq->cnt;
@@ -710,9 +715,9 @@ _retry:
                     goto _retry;
                 }
             }
-        }
-            
-    }
+        } // something to_do
+
+    } // loop until quit
 
     LOG(LOG_DBG, "%s: rbq %s rceived quit signal", lo->info.name, qname);
 
