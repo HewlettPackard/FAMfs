@@ -252,9 +252,8 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs) {
 			     md->mdhim_rank, return_code, (i == MPI_UNDEFINED)?0:status.MPI_ERROR);
 			ret = MDHIM_ERROR;
 		} else {
- mlog(MDHIM_CLIENT_INFO, "send_all_rangesrv_work - rank:%d index %d msg id %d size %d sent to RS %d, %d of %d ret=%d",
-      md->mdhim_rank, ((struct mdhim_basem_t *) messages[i])->index,
-      ((struct mdhim_basem_t *) messages[i])->msg_id, sizes[i], dsts[i], i, num_msgs, ret);
+ mlog(MDHIM_CLIENT_INFO, "send_all_rangesrv_work - rank:%d size %d sent to RS %d, %d of %d",
+      md->mdhim_rank, sizes[i], dsts[i], done, num_msgs);
 			return_code = MPI_Isend(sendbufs[i], sizes[i], MPI_PACKED, dsts[i],
 						RANGESRV_WORK_MSG, md->mdhim_comm, &reqs[i]);
 			if (return_code != MPI_SUCCESS) {
@@ -290,9 +289,8 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs) {
 	}
 	free(statuses);
 	free(dsts);
- mlog(MDHIM_CLIENT_INFO, "send_all_rangesrv_work - rank:%d index %d msg id %d sent to RS, %d done, ret=%d",
-      md->mdhim_rank, ((struct mdhim_basem_t *) messages[0])->index,
-      ((struct mdhim_basem_t *) messages[0])->msg_id, done, ret);
+ mlog(MDHIM_CLIENT_INFO, "send_all_rangesrv_work - rank:%d sent to RS, %d done, ret=%d",
+      md->mdhim_rank, done, ret);
 
 	for (i = 0; i < num_msgs; i++) {
 		if (!sendbufs[i]) {
