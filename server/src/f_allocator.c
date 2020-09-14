@@ -374,7 +374,7 @@ int f_prepare_layouts_maps(F_POOL_t *pool, int global)
 	}
 	lo->claimvec->geometry.intl_factor = lo->info.cv_intl_factor;
 
-	rc = f_map_init_prt(lo->claimvec, lo->part_count, part, 0, 1);
+	rc = f_map_init_prt(lo->claimvec, lo->part_count, part, 0, global);
 	if (rc) {
 	    LOG(LOG_ERR, "%s[%d]: error %d initializing %sclaim vector",
 		lo->info.name, msg_partid, rc, global?"global ":"");
