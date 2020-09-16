@@ -116,7 +116,9 @@ int send_rangesrv_work(struct mdhim_t *md, int dest, void *message) {
 		return MDHIM_ERROR;
 	}
 
-	return_code = MPI_Ssend(&sendsize, 1, MPI_INT, dest, RANGESRV_WORK_SIZE_MSG,
+ mlog(MDHIM_CLIENT_INFO, "send_rangesrv_work - rank:%d index %d msg id %d is about to send %d bytes to RS %d",
+      md->mdhim_rank, ((struct mdhim_basem_t *) message)->index, ((struct mdhim_basem_t *) message)->msg_id, sendsize, dest);
+	return_code = MPI_Send(&sendsize, 1, MPI_INT, dest, RANGESRV_WORK_SIZE_MSG,
 			       md->mdhim_comm);
 	if (return_code != MPI_SUCCESS) {
  pthread_mutex_unlock(md->mdhim_comm_lock);
@@ -228,7 +230,7 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs) {
 		sizes[num_msgs] = sendsize;
 		req = &size_reqs[num_msgs];
 
-		return_code = MPI_Issend(&sizes[num_msgs], 1, MPI_INT, dest, RANGESRV_WORK_SIZE_MSG, 
+		return_code = MPI_Isend(&sizes[num_msgs], 1, MPI_INT, dest, RANGESRV_WORK_SIZE_MSG, 
 					md->mdhim_comm, req);
 		if (return_code != MPI_SUCCESS) {
 			mlog(MPI_CRIT, "Rank: %d - " 
@@ -330,28 +332,15 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 
   mlog(MDHIM_SERVER_INFO, "at receive_rangesrv_work"); 
 	gettimeofday(&recv_comm_start, NULL);
-/*
+
 	return_code = MPI_Recv(&recvsize, 1, MPI_INT, MPI_ANY_SOURCE, RANGESRV_WORK_SIZE_MSG,
 			       md->mdhim_comm, &status);
-*/
-	MPI_Request req;
-	return_code = MPI_Irecv(&recvsize, 1, MPI_INT, MPI_ANY_SOURCE, RANGESRV_WORK_SIZE_MSG,
-			       md->mdhim_comm, &req);
-
 	if ( return_code != MPI_SUCCESS ) {
 		mlog(MDHIM_SERVER_CRIT, "MDHIM Rank: %d - Error: %d "
 		     "receive size message failed.", md->mdhim_rank, return_code);
 		return MDHIM_ERROR;
 	}
 
-		memset(&status, 0, sizeof(MPI_Status));
-		return_code = MPI_Wait(&req, &status);
-		// If the receive did not succeed then return the error code back
-		if (return_code != MPI_SUCCESS) {
-			mlog(MDHIM_CLIENT_CRIT, "Rank: %d - Error receiving message size", 
-			     md->mdhim_rank);
-			return MDHIM_ERROR;
-		}
 	if (status.MPI_ERROR != 0) {
 		mlog(MDHIM_SERVER_INFO, "MDHIM Rank: %d - error (%d) from rank %d.",
 		     md->mdhim_rank, status.MPI_ERROR, status.MPI_SOURCE);
@@ -489,7 +478,7 @@ int send_client_response(struct mdhim_t *md, int dest, void *message, int *sizeb
  mlog(MDHIM_SERVER_INFO, "at send_client_response - from rank:%d to %d message id:%d type:%d for index:%d, tag:%d size:%d",
   md->mdhim_rank, dest, ((struct mdhim_basem_t *)message)->msg_id, ((struct mdhim_basem_t *)message)->mtype,
   ((struct mdhim_basem_t *)message)->index, tag, *sizebuf);
-	return_code = MPI_Ssend(sizebuf, 1, MPI_INT, dest, tag,
+	return_code = MPI_Send(sizebuf, 1, MPI_INT, dest, tag,
 				md->mdhim_comm);
 	if (return_code != MPI_SUCCESS) {
 		mlog(MPI_CRIT, "Rank: %d - " 
