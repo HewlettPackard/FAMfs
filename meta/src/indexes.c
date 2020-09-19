@@ -1826,11 +1826,11 @@ int get_stat_flush(struct mdhim_t *md, struct index_t *index) {
 }
 
 int mdhimSetSliceSizes(struct index_t *gi, size_t *sizes, int len) {
-	if (gi->key_type != MDHIM_UNIFYCR_KEY || len < 0)
- {
- printf("SetSliceSizes key_type:%d not %d len=%d\n", gi->key_type, MDHIM_UNIFYCR_KEY, len);
+	if (gi->key_type != MDHIM_UNIFYCR_KEY || len < 0) {
+		mlog(MDHIM_SERVER_CRIT, "Index:%d - Error setting SliceSizes key_type:%d not %d len=%d",
+		     gi->id, gi->key_type, MDHIM_UNIFYCR_KEY, len);
 		return -1;
- }
+	}
 
 	free(gi->key_slice_size_per_lo);
 	if (len == 0)
@@ -1840,8 +1840,11 @@ int mdhimSetSliceSizes(struct index_t *gi, size_t *sizes, int len) {
 	if (!gi->key_slice_size_per_lo)
 		return -1;
 
-	for (int i = 0; i < len; i++)
+	for (int i = 0; i < len; i++) {
 		gi->key_slice_size_per_lo[i] = sizes[i];
+		mlog(MDHIM_SERVER_DBG, "index:%d - lid:%d set SliceSizes to %lu",
+		     gi->id, i, gi->key_slice_size_per_lo[i]);
+	}
 
 	gi->lo_count = len;
 	return 0;
