@@ -1796,7 +1796,6 @@ static int f_stripe_write(
      * */
     unifycr_split_index(&cur_idx, &tmp_index_set,
                         key_slice_range);
- ASSERT( tmp_index_set.count == 1 );
     i = 0;
     if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
         < (long)unifycr_max_index_entries) {
