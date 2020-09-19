@@ -577,6 +577,7 @@ static void *edr_cq_thread(void *arg) {
 
             FAM_DEV_t *fdev = &pd->dev->f;
             struct fid_cq *cq = fdev->cq;
+            rq = NULL;
 
             // check progress
             if ((rc = check_cq(cq, &rq)) == -EAGAIN)
