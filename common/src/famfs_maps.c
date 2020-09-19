@@ -1255,7 +1255,9 @@ int f_get_lo_stripe_sizes(F_POOL_t *p, size_t **stripe_sz_per_lo) {
 	return -ENOMEM;
 
     list_for_each_entry(lo, &p->layouts, list) {
-	stripe_sizes[rc++] = lo->info.stripe_sz;
+	ASSERT( lo->info.conf_id < p->info.layouts_count );
+	stripe_sizes[lo->info.conf_id] = lo->info.stripe_sz;
+	rc++;
     }
     if (*stripe_sz_per_lo == NULL && rc > 0)
 	*stripe_sz_per_lo = stripe_sizes;
