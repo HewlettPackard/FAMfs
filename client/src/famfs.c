@@ -1796,6 +1796,7 @@ static int f_stripe_write(
      * */
     unifycr_split_index(&cur_idx, &tmp_index_set,
                         key_slice_range);
+ ASSERT( tmp_index_set.count == 1 );
     i = 0;
     if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
         < (long)unifycr_max_index_entries) {
@@ -1859,6 +1860,32 @@ static int cmp_md(const void *ap, const void *bp) {
         return 1;
     else if (mda->file_pos < mdb->file_pos)
         return -1;
+    return 0;
+}
+
+static int compare_read_req(const void *a, const void *b)
+{
+    const read_req_t *ptr_a = a;
+    const read_req_t *ptr_b = b;
+
+    if (ptr_a->lid - ptr_b->lid > 0)
+        return 1;
+
+    if (ptr_a->lid - ptr_b->lid < 0)
+        return -1;
+
+    if (ptr_a->fid - ptr_b->fid > 0)
+        return 1;
+
+    if (ptr_a->fid - ptr_b->fid < 0)
+        return -1;
+
+    if (ptr_a->offset - ptr_b->offset > 0)
+        return 1;
+
+    if (ptr_a->offset - ptr_b->offset < 0)
+        return -1;
+
     return 0;
 }
 
@@ -2030,7 +2057,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     qsort(read_req, count, sizeof(read_req_t), compare_read_req);
 
-    DEBUG_LVL(6, "lid:%d read %d request(s):", 
+    DEBUG_LVL(6, "lid:%d read %d request(s):",
 	      lid, count);
     for (i = 0; i < count; i++) {
         DEBUG_LVL(6, "  [%d] fid=%d off/len=%ld/%ld",
@@ -2047,17 +2074,13 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         rq_cnt = read_req_set.count;
     }
 #endif
-        rq_cnt = count;
+    rq_cnt = count;
     rq_ptr = read_req_set.read_reqs;
-#if 0
-     memcpy(rq_ptr, read_req, sizeof(read_req_t)*(unsigned)count);
-#else
-    /*coalesce the contiguous read requests*/
+    /* Split to stripe(s) and coalesce the contiguous read requests */
     unifycr_coalesce_read_reqs(read_req, count,
                                &tmp_read_req_set, stripe_sz,
                                &read_req_set);
     rq_cnt = read_req_set.count;
-#endif
 
     fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
     int *rc_ptr = (int *)shm_recvbuf;
@@ -2081,10 +2104,11 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     }
 
     md_rq = (shm_meta_t *)(shm_reqbuf);
-    long prev_offset = -1;
-    int prev_fid = -1;
+//    long prev_offset = -1;
+//    int prev_fid = -1;
     for (i = 0, j = 0; i < rq_cnt; i++) {
-        long offset;
+#if 0
+    long offset;
 
         /* request the whole stripe */
         while ((rq_ptr[i].offset % stripe_sz) + rq_ptr[i].length > stripe_sz) {
@@ -2114,6 +2138,12 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         md_rq[j].length = stripe_sz;
         //md_rq[j].offset  = rq_ptr[i].offset;
         md_rq[j].offset  = offset;
+#else
+  md_rq[j].loid = lid;
+  md_rq[j].src_fid = rq_ptr[i].fid;
+  md_rq[j].length = rq_ptr[i].length;
+  md_rq[j].offset  = rq_ptr[i].offset;
+#endif
         j++;
     }
     rq_cnt = j;

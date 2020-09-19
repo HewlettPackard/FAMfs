@@ -907,6 +907,48 @@ error:
 
 }
 
+/* Merge range (new_key, new_val) to the array @tmp_records_cnt */
+static int merge_kv(char ***out_key, int **out_key_len, char ***out_val, int **out_val_len,
+    int *tmp_records_cnt, int *tmp_out_cap,
+    const char *new_key, const char *new_val, int key_len, int val_len)
+{
+	int i = *tmp_records_cnt - 1;
+	ASSERT( i >= 0 );
+	long offset = UNIFYCR_OFFSET((*out_key)[i]);
+	long len = UNIFYCR_LEN((*out_val)[i]);
+	long new_offset = UNIFYCR_OFFSET(new_key);
+	long new_len = UNIFYCR_LEN(new_val);
+
+	/* Is current range included in new one ? */
+	if (offset >= new_offset && (offset + len) <= (new_offset + new_len)) {
+		ASSERT( key_len == (*out_key_len)[i] );
+		ASSERT( val_len == (*out_val_len)[i] );
+		/* Update KV */
+		if (offset > new_offset || (offset + len) < (new_offset + new_len)) {
+			memcpy((*out_key)[i], new_key, key_len);
+			memcpy((*out_val)[i], new_val, val_len);
+
+			mlog(MDHIM_SERVER_DBG, "update [%d] lid=%d fid=%d off/len=%lu/%lu sid=%lu addr=%lu",
+			     i, FAMFS_PK_LID(new_key), FAMFS_PK_FID(new_key),
+			     UNIFYCR_OFFSET(new_key), UNIFYCR_LEN(new_val),
+			     FAMFS_STRIPE(new_val), UNIFYCR_ADDR(new_val));
+		}
+		return 0;
+	} else {
+		/* Add KV */
+		char *ret_key = malloc(key_len);
+		char *ret_val = malloc(val_len);
+
+		memcpy(ret_key, new_key, key_len);
+		memcpy(ret_val, new_val, val_len);
+
+		(void)add_kv(out_key, out_key_len, out_val,
+			     out_val_len, tmp_records_cnt, tmp_out_cap,
+			     ret_key, ret_val, key_len, val_len);
+		return 1;
+	}
+}
+
 /**
  * levedb_batch_ranges
  * get a list of key-value pairs that fall in the range of a list of
@@ -929,9 +971,10 @@ error:
 int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 		char ***out_key, int **out_key_len,\
 			char ***out_val, int **out_val_len,\
+				size_t *key_slice_size_per_lo,\
 				int tot_records, int *out_records_cnt) {
 
-	int i;
+	int i, j;
 	struct mdhim_leveldb_t *mdhim_db = (struct mdhim_leveldb_t *) dbh;
 
 	int tmp_records_cnt = 0; /*the temporary number of out records*/
@@ -950,33 +993,61 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 
 	/*ToDo: return different error types if leveldb_process_range fails*/
 
-	for (i = 0; i < tot_records/2; i++) {
-/*
-        printf("%dth offset is %ld, fid is %d, %d offset is %ld, len:%ld\n", 2 * i, 
-        UNIFYCR_OFFSET(key[2 * i]), UNIFYCR_FID(key[2 * i]), 2 * i + 1, 
-        UNIFYCR_OFFSET(key[ 2 * i + 1]), key_len[2 * i]); 
-*/
+	for (i = j = 0; i < tot_records/2; i++) {
 
-		leveldb_process_range(iter, 
-            key[2 * i], key[2 * i + 1], key_len[2 * i], 
-            out_key, out_key_len, out_val, out_val_len, 
-            &tmp_records_cnt, &tmp_out_cap);
+		 mlog(MDHIM_SERVER_DBG, "Rq %dth fid=%lu offset %ld to %ld, len:%d",
+		    i, UNIFYCR_FID(key[2 * i]),
+		    UNIFYCR_OFFSET(key[2 * i]), UNIFYCR_OFFSET(key[ 2 * i + 1]), key_len[2 * i]);
 
+		leveldb_process_range(iter,
+			key[2 * i], key[2 * i + 1], key_len[2 * i],
+			out_key, out_key_len, out_val, out_val_len,
+			&tmp_records_cnt, &tmp_out_cap);
+
+		/* FAMFS: Pick up all KVs in this stripe, key goes up */
+		if (j >= tmp_records_cnt || key_slice_size_per_lo == NULL)
+			continue;
+
+		j = tmp_records_cnt - 1; /* last KV for range i */
+		int loid = FAMFS_PK_LID((*out_key)[j]);
+		ASSERT( loid == FAMFS_PK_LID(key[2 * i]) );
+		size_t key_slice_size = key_slice_size_per_lo[loid];
+		int klen = (*out_key_len)[j];
+		int vlen = (*out_val_len)[j];
+		ASSERT( klen == key_len[2 * i] );
+		long offset = UNIFYCR_OFFSET((*out_key)[j]);
+		unsigned long s = FAMFS_STRIPE((*out_val)[j]);
+		const char *ret_key, *ret_val;
+		size_t len;
+
+		 mlog(MDHIM_SERVER_DBG, "Rsp %dth lid=%d fid=%d str_sz=%zu key_len=%d off/len=%ld/%ld in stripe %lu",
+		    j, loid, FAMFS_PK_FID((*out_key)[j]), key_slice_size, klen,
+		    offset, UNIFYCR_LEN((*out_val)[j]), s);
+
+		while (leveldb_iter_valid(iter)) {
+			ret_val = leveldb_iter_value(iter, &len);
+			if (!ret_val || FAMFS_STRIPE(ret_val) != s || (int)len != vlen)
+				break;
+			ret_key = leveldb_iter_key(iter, &len);
+			if (!ret_key || (int)len != klen)
+				break;
+
+			/* Merge KV */
+			mlog(MDHIM_SERVER_DBG, "  merge offset=%ld len=%ld",
+			    UNIFYCR_OFFSET(ret_key), UNIFYCR_LEN(ret_val));
+
+			j += merge_kv(out_key, out_key_len, out_val, out_val_len,
+				      &tmp_records_cnt, &tmp_out_cap,
+				      ret_key, ret_val, klen, vlen);
+
+			leveldb_iter_next(iter);
+		}
+ mlog(MDHIM_SERVER_DBG, "Rsp while done");
 	}
-
 	*out_records_cnt = tmp_records_cnt;
 
-/*
-    printf("out_records_cnt is %d\n", *out_records_cnt);
-	for (i = 0; i < *out_records_cnt; i++) {
-		printf("%dth out offset is %ld, fid is %ld, addr is %ld\n", 
-            i, UNIFYCR_OFFSET((*out_key)[i]), UNIFYCR_FID((*out_key)[i]), 
-            UNIFYCR_ADDR((*out_val)[i]));
-		fflush(stdout);
-	}
-*/
-
 	leveldb_iter_destroy(iter);
+ mlog(MDHIM_SERVER_DBG, "Rsp exit, %d records", tmp_records_cnt);
 	return 0;
 }
 
@@ -1330,7 +1401,7 @@ int add_kv(
 	}
 
 	mlog(MDHIM_SERVER_DBG, "add_kv [%d] lid=%d fid=%d off/len=%lu/%lu sid=%lu addr=%lu",
-	     *tmp_records_cnt, FAMFS_PK_FID(ret_key), FAMFS_PK_LID(ret_key),
+	     *tmp_records_cnt, FAMFS_PK_LID(ret_key), FAMFS_PK_FID(ret_key),
 	     UNIFYCR_OFFSET(ret_key), UNIFYCR_LEN(ret_val),
 	     FAMFS_STRIPE(ret_val), UNIFYCR_ADDR(ret_val));
 

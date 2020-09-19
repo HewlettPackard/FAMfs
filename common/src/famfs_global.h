@@ -69,7 +69,7 @@ typedef struct shm_meta_t_ {
     long length;
 } shm_meta_t;
 
-typedef struct {
+typedef struct fsmd_key_t_ {
     union {
         unsigned long fid;
         struct {
@@ -79,6 +79,8 @@ typedef struct {
     };
     unsigned long offset;
 } fsmd_key_t;
+/* ds_leveldb.c: MDHIM Range compare function wants .offset at long */
+_Static_assert( offsetof(struct fsmd_key_t_, offset) == sizeof(long),  "MDHIM Range Key offset");
 
 typedef struct {
     unsigned long addr; /* famfs: data offset in stripe */

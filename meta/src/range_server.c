@@ -841,6 +841,7 @@ int range_server_bget(struct mdhim_t *md, struct mdhim_bgetm_t *bgm, int source)
                                     (char **)bgm->keys, bgm->key_lens,
                                     (char ***)&ret_keys, &ret_key_lens,
                                     (char ***)&values, &value_lens,
+                                    index->key_slice_size_per_lo,
                                     bgm->num_keys, &out_record_cnt);
 
 		if (source != md->mdhim_rank) {

@@ -1045,7 +1045,7 @@ int UNIFYCR_WRAP(lio_listio)(int mode __attribute__((unused)),
     return ret;
 }
 
-int compare_read_req(const void *a, const void *b)
+static int compare_read_req(const void *a, const void *b)
 {
     const read_req_t *ptr_a = a;
     const read_req_t *ptr_b = b;
@@ -1168,9 +1168,10 @@ static int unifycr_split_read_requests(read_req_t *cur_read_req,
         cur_slice_end = cur_slice_start + slice_range - 1;
 
         while (1) {
-            if (cur_read_end <= cur_slice_end) 
+            if (cur_read_end <= cur_slice_end)
                 break;
 
+            read_req_set->read_reqs[read_req_set->count].lid = cur_read_req->lid;
             read_req_set->read_reqs[read_req_set->count].fid = cur_read_req->fid;
             read_req_set->read_reqs[read_req_set->count].offset = cur_slice_start;
             read_req_set->read_reqs[read_req_set->count].length = slice_range;
@@ -1181,6 +1182,7 @@ static int unifycr_split_read_requests(read_req_t *cur_read_req,
 
         }
 
+        read_req_set->read_reqs[read_req_set->count].lid = cur_read_req->lid;
         read_req_set->read_reqs[read_req_set->count].fid = cur_read_req->fid;
         read_req_set->read_reqs[read_req_set->count].offset = cur_slice_start;
         read_req_set->read_reqs[read_req_set->count].length = cur_read_end - cur_slice_start + 1;
@@ -1219,9 +1221,10 @@ int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
         unifycr_split_read_requests(&read_req[i], tmp_read_req_set,
                                     unifycr_key_slice_range);
         if (cursor != 0) {
-            if (read_req_set->read_reqs[cursor - 1].fid == tmp_read_req_set->read_reqs[0].fid) {
-                if (read_req_set->read_reqs[cursor - 1].offset + 
-                    read_req_set->read_reqs[cursor - 1].length 
+            if (read_req_set->read_reqs[cursor - 1].lid == tmp_read_req_set->read_reqs[0].lid &&
+                read_req_set->read_reqs[cursor - 1].fid == tmp_read_req_set->read_reqs[0].fid) {
+                if (read_req_set->read_reqs[cursor - 1].offset +
+                    read_req_set->read_reqs[cursor - 1].length
                     == tmp_read_req_set->read_reqs[0].offset) {
                     /*
                      * if not within the same slice, then don't coalesce

@@ -48,7 +48,7 @@
 #include "data_store.h"
 #include "famfs_global.h"
 
-#define UNIFYCR_FID(key)    (*(long *)(&(((fsmd_key_t*)(key))->fid)))
+#define UNIFYCR_FID(key)    (*(unsigned long *)(&(((fsmd_key_t*)(key))->fid)))
 #define UNIFYCR_OFFSET(key) (*(long *)(&(((fsmd_key_t*)(key))->offset)))
 #define UNIFYCR_ADDR(val)   (*(long *)(&(((fsmd_val_t*)(val))->addr)))
 #define UNIFYCR_LEN(val)    (*(long *)(&(((fsmd_val_t*)(val))->len)))
@@ -89,6 +89,7 @@ int mdhim_levedb_batch_next(void *dbh, char **key,\
 int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 		char ***out_key, int **out_key_len,\
 			char ***out_val, int **out_val_len,\
+				size_t *key_slice_size_per_lo,\
 				int tot_records, int *out_records_cnt);
 int leveldb_process_range(leveldb_iterator_t *iter,\
 		char *start_key, char *end_key, \
