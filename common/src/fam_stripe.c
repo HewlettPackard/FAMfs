@@ -328,7 +328,7 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
     struct fid_cq *tx_cq = NULL;
     ssize_t wcnt;
     uint64_t *event;
-    unsigned int i, nchunks, media_id = 0;
+    unsigned int i, nchunks, media_id = 0, chunks_read = 0;
     uint32_t len = 0;
     int rc = 0;
     struct timespec start = now();
@@ -402,14 +402,11 @@ int chunk_rma_wait(N_STRIPE_t *stripe, int use_cq, int wr, uint64_t io_timeout_m
 		    media_id, count, *event);
 	    break;
 	}
+	chunks_read++;
     }
-    DEBUG_LVL(7, "%s:%d: %s completed stripe %lu - %u/%u/%s "
-	  "on device %u len:%u time:%lu",
+    DEBUG_LVL(7, "%s:%d: %s completed %u chunks in stripe %lu - time:%lu",
 	  f_get_pool()->mynode.hostname, f_get_pool()->dbg_rank,
-	  wr?"write":"read", s,
-	  stripe->extent, stripe->stripe_in_part,
-	  pr_chunk(pr_buf, chunk->data, chunk->parity),
-	  media_id, len, elapsed(&start));
+	  wr?"write":"read", chunks_read, s, elapsed(&start));
 
     return rc;
 }
