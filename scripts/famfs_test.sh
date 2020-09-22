@@ -90,7 +90,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o A:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:tx:X:O:U -l app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
+OPTS=`getopt -o aA:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:tx:X:O:U -l adaptive,app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -170,12 +170,14 @@ oExtraOpt=
 oExtraSrvOpt=
 oTCP=0
 oMultiEP=0
+oAdaptiveRouting=0
 
 declare -a SrvIter
 declare -a ClnIter
 
 while true; do
   case "$1" in
+  -a | --adaptive)    ((oAdaptiveRouting=1)); shift ;;
   -A | --app)        oAPP="$2"; shift; shift ;;
   -D | --data)       oDATA="$2"; shift; shift ;;
   -v | --verbose)    ((oVERBOSE++)); shift ;;
@@ -267,6 +269,10 @@ if [ ! -x ${TEST_BIN} ]; then
 fi
 SRV_BIN="${TEST_DIR}/bin/unifycrd"
 export TEST_BIN SRV_BIN
+# Adaptive routing on/off
+if ((oAdaptiveRouting)); then
+  export FI_ZHPE_QUEUE_TC="0x101"
+fi
 # FS type?
 case "${oFStype^^}" in
   FAM* | 2)    fstype=2 ;;
@@ -290,6 +296,9 @@ if ((ompi)); then
     oMPIchEnv+=" --mca btl ^ofi,openib,vader --mca mtl ^ofi,psm,psm2,portals4 --mca pml ^ucx --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
   else
     oMPIchEnv+=" --mca btl ^openib,tcp,vader --mca mtl ^psm,psm2,portals4 --mca pml ^ucx --mca mtl_ofi_provider_include zhpe --mca mtl_ofi_data_progress manual --mca btl_ofi_provider_include zhpe --mca btl_ofi_progress_mode manual --mca osc_rdma_aggregation_limit 0 --mca opal_leave_pinned 0 --mca opal_leave_pinned_pipeline 0 --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
+  fi
+  if ((oAdaptiveRouting)); then
+    oMPIchEnv+=" -x FI_ZHPE_QUEUE_TC"
   fi
   clMPImap="--map-by :OVERSUBSCRIBE"
 fi
