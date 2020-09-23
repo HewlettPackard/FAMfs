@@ -90,10 +90,7 @@ typedef struct {
             unsigned long delegator_id;
             unsigned long app_rank_id; /*include both app and rank id*/
         };
-        struct {
-	    //unsigned long node; /* deprecated */
-	    unsigned long stripe;
-        };
+	unsigned long stripe;
     };
 } fsmd_val_t;
 

@@ -80,8 +80,8 @@ void seg_tree_destroy(struct seg_tree* seg_tree)
 };
 
 /* Allocate a node for the range tree.  Free node with free() when finished */
-static struct seg_tree_node*
-seg_tree_node_alloc(unsigned long start, unsigned long end, unsigned long ptr)
+static struct seg_tree_node* seg_tree_node_alloc(unsigned long start, unsigned long end,
+    unsigned long ptr, unsigned long stripe)
 {
     /* allocate a new node structure */
     struct seg_tree_node* node;
@@ -94,6 +94,7 @@ seg_tree_node_alloc(unsigned long start, unsigned long end, unsigned long ptr)
     node->start = start;
     node->end = end;
     node->ptr = ptr;
+    node->stripe = stripe;
 
     return node;
 }
@@ -155,7 +156,7 @@ static int get_non_overlapping_range(
  * Add an entry to the range tree.  Returns 0 on success, nonzero otherwise.
  */
 int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
-    unsigned long end, unsigned long ptr)
+    unsigned long end, unsigned long ptr, unsigned long stripe)
 {
     /* Assume we'll succeed */
     int rc = 0;
@@ -172,7 +173,7 @@ int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
     int ret;
 
     /* Create our range */
-    node = seg_tree_node_alloc(start, end, ptr);
+    node = seg_tree_node_alloc(start, end, ptr, stripe);
     if (!node) {
         return ENOMEM;
     }
@@ -214,7 +215,8 @@ int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
              * on the next pass of this while() loop.
              */
             resized = seg_tree_node_alloc(new_start, new_end,
-                overlap->ptr + (new_start - overlap->start));
+                overlap->ptr + (new_start - overlap->start),
+                overlap->stripe);
             if (!resized) {
                 free(node);
                 rc = ENOMEM;
@@ -235,7 +237,8 @@ int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
                  */
                 remaining = seg_tree_node_alloc(
                     resized->end + 1, overlap->end,
-                    overlap->ptr + (resized->end + 1 - overlap->start));
+                    overlap->ptr + (resized->end + 1 - overlap->start),
+                    overlap->stripe);
                 if (!remaining) {
                     free(node);
                     free(resized);
@@ -279,7 +282,8 @@ int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
 
     /* Check whether we can coalesce new extent with any preceding extent. */
     prev = RB_PREV(inttree, &seg_tree->head, target);
-    if ((prev != NULL) && ((prev->end + 1) == target->start)) {
+    if ((prev != NULL) && prev->stripe == target->stripe &&
+        ((prev->end + 1) == target->start)) {
         /*
          * We found a extent that ends just before the new extent starts.
          * Check whether they are also contiguous in the log.
@@ -308,7 +312,8 @@ int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
 
     /* Check whether we can coalesce new extent with any trailing extent. */
     next = RB_NEXT(inttree, &seg_tree->head, target);
-    if ((next != NULL) && ((target->end + 1) == next->start)) {
+    if ((next != NULL) && next->stripe == target->stripe &&
+        ((target->end + 1) == next->start)) {
         /*
          * We found a extent that starts just after the new extent ends.
          * Check whether they are also contiguous in the log.
@@ -349,7 +354,7 @@ struct seg_tree_node* seg_tree_find_nolock(
     unsigned long end)
 {
     /* Create a range of just our starting byte offset */
-    struct seg_tree_node* node = seg_tree_node_alloc(start, start, 0);
+    struct seg_tree_node* node = seg_tree_node_alloc(start, start, 0, 0);
     if (!node) {
         return NULL;
     }

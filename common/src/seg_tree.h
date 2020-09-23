@@ -7,7 +7,8 @@ struct seg_tree_node {
     RB_ENTRY(seg_tree_node) entry;
     unsigned long start; /* starting logical offset of range */
     unsigned long end;   /* ending logical offset of range */
-    unsigned long ptr;   /* physical offset of data in log */
+    unsigned long ptr;   /* physical offset of data in stripe */
+    unsigned long stripe;/* physical stripe */
 };
 
 struct seg_tree {
@@ -35,7 +36,7 @@ void seg_tree_destroy(struct seg_tree* seg_tree);
  * Add an entry to the range tree.  Returns 0 on success, nonzero otherwise.
  */
 int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
-    unsigned long end, unsigned long ptr);
+    unsigned long end, unsigned long ptr, unsigned long stripe);
 
 /*
  * Find the first seg_tree_node that falls in a [start, end] range.
