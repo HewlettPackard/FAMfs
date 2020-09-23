@@ -8,6 +8,8 @@ debug = on
 # cq_hwm = 75 ; high water mark for committed stripes queue
 # cq_hwm_tmo = 30 ; time to wait (in sec) for commit que to read HWM, flush
 # fs_type = famfs | unifycr | both ; default: famfs
+# cache_wr = on ; turn on write cache, default: off
+# cache_rd = on ; turn on metadata cache on read, default: off
 
 [log]
 # verbosity = 7 ; the highest level:7

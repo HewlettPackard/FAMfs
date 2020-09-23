@@ -329,6 +329,8 @@ typedef off_t (*f_fid_size) (int fid);
  * less than size and allocates and zero-fills new bytes if length
  * is more than size */
 typedef int (*f_fid_truncate) (int fid, off_t length);
+/* delete a file id and free data management resource for file */
+typedef int (*f_fid_unlink) (int fid);
 
 typedef int (*f_fd_logreadlist) (read_req_t *read_req, int count);
 typedef int (*f_fd_fsync) (int fd);
@@ -341,6 +343,7 @@ typedef struct f_fd_iface_ {
     f_fid_write		fid_write;
     f_fid_size		fid_size;
     f_fid_truncate	fid_truncate;
+    f_fid_unlink	fid_unlink;
     /* direct wrapper fn used in unifycr-sysio.c */
     f_fd_logreadlist	fd_logreadlist;
     f_fd_fsync		fd_fsync;
@@ -548,25 +551,6 @@ int unifycr_fid_write(int fid, off_t pos, const void *buf, size_t count);
 /* given a file id, write zero bytes to region of specified offset
  * and length, assumes space is already reserved */
 int unifycr_fid_write_zero(int fid, off_t pos, off_t count);
-
-#if 0 /* Moved to F_FD_IFACE_t */
-/* increase size of file if length is greater than current size,
- * and allocate additional chunks as needed to reserve space for
- * length bytes */
-int unifycr_fid_extend(int fid, off_t length);
-
-/* opens a new file id with specified path, access flags, and permissions,
- * fills outfid with file id and outpos with position for current file pointer,
- * returns UNIFYCR error code */
-int unifycr_fid_open(const char *path, int flags, mode_t mode, int *outfid,
-                     off_t *outpos);
-
-int unifycr_fid_close(int fid);
-#endif
-
-/* delete a file id and return file its resources to free pools */
-int unifycr_fid_unlink(int fid);
-
 
 /*functions used in UnifyCR*/
 int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,

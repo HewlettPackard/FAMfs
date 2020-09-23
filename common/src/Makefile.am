@@ -25,7 +25,7 @@ BASE_SRCS = famfs_env.h famfs_error.h famfs_stats.h \
 	famfs_rbq.h famfs_rbq.c \
 	famfs_lfa.h famfs_lfa.c \
 	f_wpool.h f_wpool.c \
-	seg_tree.h seg_tree.c
+	tree.h seg_tree.h seg_tree.c
 
 libfamfs_common_la_SOURCES = $(BASE_SRCS)
 libfamfs_common_la_CPPFLAGS =	-D_GNU_SOURCE=1 $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) \

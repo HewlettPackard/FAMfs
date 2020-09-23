@@ -552,6 +552,12 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	SetPoolFAMFS(p);
 	SetPoolUNIFYCR(p);
     } else goto _syntax;
+    if (configurator_bool_val(c->unifycr_cache_wr, &b)) goto _noarg;
+    if (b)
+	SetPoolWCache(p);
+    if (configurator_bool_val(c->unifycr_cache_rd, &b)) goto _noarg;
+    if (b)
+	SetPoolRCache(p);
 
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
@@ -1174,6 +1180,8 @@ void f_print_layouts(void) {
 	   u, pool_info->pdev_max_idx, pool_info->max_extents);
     printf("  lfa_port:%d commit queue hwm:%d, TMO:%d sec.\n",
 	   pool_info->lfa_port, pool_info->cq_hwm,  pool_info->cq_hwm_tmo);
+    printf("  enabled pool cache(s): %s%s%s\n",
+	   PoolWCache(p)?"W,":"", PoolRCache(p)?"R,":"", (PoolWCache(p)||PoolRCache(p))?"":"NONE");
 
     /* IO nodes */
     printf("Configuration has %u IO nodes:\n", p->ionode_count);

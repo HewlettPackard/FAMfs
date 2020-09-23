@@ -1408,12 +1408,12 @@ static int unifycr_fid_close(int fid __attribute__((unused)))
 }
 
 /* delete a file id and return file its resources to free pools */
-int unifycr_fid_unlink(int fid)
+static int unifycr_fid_unlink(int fid)
 {
     DEBUG_LVL(6, "fid %d unlink", fid);
 
     /* return data to free pools */
-    fd_iface->fid_truncate(fid, 0);
+    unifycr_fid_truncate(fid, 0);
 
     /* finalize the storage we're using for this file */
     unifycr_fid_store_free(fid);
@@ -1967,6 +1967,7 @@ static F_FD_IFACE_t unifycr_fd_iface = {
     .fid_write		= &unifycr_fid_write,
     .fid_size		= &unifycr_fid_size,
     .fid_truncate	= &unifycr_fid_truncate,
+    .fid_unlink		= &unifycr_fid_unlink,
     /* direct wrapper fn used in unifycr-sysio.c */
     .fd_logreadlist	= &unifycr_fd_logreadlist,
     .fd_fsync		= &unifycr_fsync,

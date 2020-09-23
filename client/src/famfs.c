@@ -81,6 +81,7 @@
 #include "f_layout.h"
 #include "f_helper.h"
 #include "famfs_rbq.h"
+#include "seg_tree.h"
 
 
 /*
@@ -103,6 +104,8 @@ LFS_CTX_t *lfs_ctx = NULL;
 f_rbq_t *adminq;
 f_rbq_t *rplyq;
 f_rbq_t *lo_cq[F_CMDQ_MAX];
+
+bool famfs_local_extents; /* enable tracking of local extents (write cache config option) */
 
 /* TODO: Remove me! */
 static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
@@ -318,6 +321,7 @@ int famfs_fid_create_file(const char *path, const char *fpath, int loid)
     meta->is_dir  = 0;
     meta->real_size = 0;
     meta->storage = FILE_STORAGE_NULL;
+    meta->fid     = fid;
     meta->flock_status = UNLOCKED;
     meta->loid = loid;
     meta->stripes  = 0;
@@ -485,6 +489,38 @@ static off_t famfs_fid_size(int fid)
     /* get meta data for this file */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
     return meta->real_size;
+}
+
+static int fid_store_alloc(int fid) {
+    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    if ((meta != NULL) && (meta->fid == fid)) {
+        meta->storage = FILE_STORAGE_LOGIO;
+
+        /* Initialize our segment tree to track extents for all writes
+         * by this process, can be used to read back local data */
+        if (famfs_local_extents) {
+            int rc = seg_tree_init(&meta->extents);
+            if (rc != 0)
+                return rc;
+        }
+        return UNIFYCR_SUCCESS;
+    }
+    return UNIFYCR_FAILURE;
+}
+
+/* free data management resource for file */
+static int fid_store_free(int fid) {
+    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    if ((meta != NULL) && (meta->fid == fid)) {
+        meta->storage = FILE_STORAGE_NULL;
+
+        /* Free our extent seg_tree */
+        if (famfs_local_extents)
+            seg_tree_destroy(&meta->extents);
+
+        return UNIFYCR_SUCCESS;
+    }
+    return UNIFYCR_FAILURE;
 }
 
 /* increase size of file if length is greater than current size,
@@ -771,6 +807,8 @@ static int famfs_fid_open(const char *path, int flags,
             }
 
             /* initialize the storage for the file */
+            if (fid_store_alloc(fid))
+                return UNIFYCR_FAILURE;
 
             /* initialize the global metadata
              * */
@@ -807,7 +845,8 @@ static int famfs_fid_open(const char *path, int flags,
             }
 
             /* initialize the storage for the file */
-            unifycr_get_meta_from_fid(fid)->storage = FILE_STORAGE_LOGIO;
+            if (fid_store_alloc(fid))
+                return UNIFYCR_FAILURE;
 
             /*create a file and send its attribute to key-value store*/
             f_fattr_t *new_fmeta = (f_fattr_t *)malloc(sizeof(f_fattr_t));
@@ -915,15 +954,16 @@ static int famfs_fid_close(int fid)
     return UNIFYCR_SUCCESS;
 }
 
-#if 0
 /* delete a file id and return file its resources to free pools */
-int unifycr_fid_unlink(int fid)
+static int famfs_fid_unlink(int fid)
 {
     /* return data to free pools */
     famfs_fid_truncate(fid, 0);
 
     /* finalize the storage we're using for this file */
-    unifycr_fid_store_free(fid);
+    int rc = fid_store_free(fid);
+    if (rc != UNIFYCR_SUCCESS)
+        return rc;
 
     /* set this file id as not in use */
     unifycr_filelist[fid].in_use = 0;
@@ -934,6 +974,7 @@ int unifycr_fid_unlink(int fid)
     return UNIFYCR_SUCCESS;
 }
 
+#if 0
 /* ---------------------------------------
  * Operations to mount file system
  * --------------------------------------- */
@@ -1149,6 +1190,7 @@ int famfs_mount(const char prefix[] __attribute__((unused)),
     ASSERT(pool); /* f_set_layouts_info must fail if no pool */
     ASSERT(rank==dbg_rank);
     pool->dbg_rank = rank; /* use application's rank for the log and error messages */
+    famfs_local_extents = PoolWCache(pool); /* enable tracking of local ranges on write*/
 
     /* DEBUG */
     if (pool->verbose && rank == 0) {
@@ -2296,6 +2338,7 @@ static F_FD_IFACE_t f_fd_iface = {
     .fid_write		= &famfs_fid_write,
     .fid_size		= &famfs_fid_size,
     .fid_truncate	= &famfs_fid_truncate,
+    .fid_unlink		= &famfs_fid_unlink,
     /* read fn used in unifycr-sysio.c */
     .fd_logreadlist	= &famfs_fd_logreadlist,
     .fd_fsync		= &famfs_fd_fsync,

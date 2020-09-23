@@ -236,11 +236,15 @@ enum f_pool_flags {
     _POOL_FAM_EMUL,	/* FAM device emulation enabled on IO nodes */
     _POOL_FSTYPE_FAMFS,	/* Server support FAMFS mount option */
     _POOL_FSTYPE_OLD,	/* Legacy: server support UNIFYCR mount option(s) */
+    _POOL_CACHE_WR,	/* write cache enabled */
+    _POOL_CACHE_RD,	/* read cache enabled */
 };
 BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
 BITOPS(Pool, FAMFS,	f_pool_, _POOL_FSTYPE_FAMFS)
 BITOPS(Pool, UNIFYCR,	f_pool_, _POOL_FSTYPE_OLD)
+BITOPS(Pool, WCache,	f_pool_, _POOL_CACHE_WR)
+BITOPS(Pool, RCache,	f_pool_, _POOL_CACHE_RD)
 
 
 //F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx);

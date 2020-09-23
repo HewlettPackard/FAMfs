@@ -185,7 +185,7 @@ int UNIFYCR_WRAP(rmdir)(const char *path)
         }
 
         /* remove the directory from the file list */
-        ret = unifycr_fid_unlink(fid);
+        ret = fd_iface->fid_unlink(fid);
     } else {
         MAP_OR_FAIL(rmdir);
         ret = UNIFYCR_REAL(rmdir)(path);
@@ -303,7 +303,7 @@ int UNIFYCR_WRAP(unlink)(const char *path)
         }
 
         /* delete the file */
-        unifycr_fid_unlink(fid);
+        fd_iface->fid_unlink(fid);
 
         return 0;
     } else {
@@ -337,7 +337,7 @@ int UNIFYCR_WRAP(remove)(const char *path)
 
         /* shall be equivalent to unlink(path) */
         /* delete the file */
-        unifycr_fid_unlink(fid);
+        fd_iface->fid_unlink(fid);
 
         return 0;
     } else {

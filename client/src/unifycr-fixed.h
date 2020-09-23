@@ -44,6 +44,7 @@
 #define UNIFYCR_FIXED_H
 
 #include "unifycr-internal.h"
+#include "seg_tree.h"
 
 
 enum flock_enum {
@@ -82,6 +83,8 @@ typedef struct unifycr_filemeta_t_ {
     unifycr_chunkmeta_t *chunk_meta; /* meta data for allocated stripes */
     int loid;                       /* FAMFS layout id */
 
+    int fid;                        /* local file index in filemetas array */
+    struct seg_tree extents;        /* Segment tree of all local data extents (write cache) */
 } unifycr_filemeta_t;
 
 /* if length is greater than reserved space,
@@ -119,5 +122,7 @@ int unifycr_fid_store_fixed_write(
     const void *buf,         /* user buffer holding data */
     size_t count             /* number of bytes to write */
 );
+
+extern bool famfs_local_extents;    /* track data extents in client to read local */
 
 #endif /* UNIFYCR_FIXED_H */
