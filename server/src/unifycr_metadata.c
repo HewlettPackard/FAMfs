@@ -35,6 +35,9 @@
 #include "arraylist.h"
 #include "unifycr_const.h"
 #include "famfs_global.h"
+#include "f_pool.h"
+#include "f_layout.h"
+#include "f_layout_ctl.h"
 
 
 fsmd_key_t **fsmd_keys;
@@ -794,8 +797,11 @@ int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
     int tot_num = 0;
     shm_meta_t *tmp_cli_req = (shm_meta_t *)shm_reqbuf;
     int legacy = (fam_fs == 0);
+    F_POOL_t *pool = f_get_pool();
+    F_SLABMAP_ENTRY_t *sme;
+    F_MAP_KEYSET_u *keysets = NULL;
 
-    int i, rc = 0;
+    int i, j, rc = 0;
     for (i = 0; i < num; i++) {
         /* legacy delegator shall not set layout id */
         if (legacy && tmp_cli_req[i].loid) {
@@ -843,6 +849,55 @@ int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
         bgrmp = bgrmp->next;
         mdhim_full_release_msg(bgrm);
         bgrm = bgrmp;
+    }
+
+    /*
+     *  Check the slab map for every stripe received and update it 
+     *  if that slab is missing 
+     */
+    keysets = calloc(pool->info.layouts_count, sizeof(F_MAP_KEYSET_u));
+    if (keysets) {
+	for (i = 0; i < tot_num; i++) {
+	    F_LAYOUT_t *lo = f_get_layout(res_kv[i].k.pk.loid);
+	    f_stripe_t stripe = res_kv[i].v.stripe;
+	    f_slab_t slab;
+	    F_MAP_KEYSET_u *keyset;
+	    ASSERT(lo);
+
+	    keyset = &keysets[res_kv[i].k.pk.loid];
+	    if (!keyset->slabs)
+    	    	keyset->slabs = calloc(tot_num, sizeof(f_slab_t));
+	    slab = stripe_to_slab(lo, stripe);
+	    for (j = 0; j < keyset->count; j++) {
+		if (keyset->slabs[j] == slab) break;
+	    }
+
+	    if (j == keyset->count) {
+		sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+		if (!sme || !sme->slab_rec.mapped) {
+		    keyset->slabs[keyset->count] = slab;
+		    keyset->count++;
+		    printf("added slab %u (s %lu) to update count %d\n",
+			slab, stripe, keyset->count);
+		}
+	    }
+	}
+
+	for (i = 0; i < pool->info.layouts_count; i++) {
+	    F_LAYOUT_t *lo = f_get_layout(i);
+	    F_MAP_KEYSET_u *keyset = &keysets[i];
+	    if (keyset->count > 0) {
+		LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, keyset->count);
+	    	if ((rc = f_slabmap_update(lo->slabmap, keyset)))
+		    LOG(LOG_ERR, "%s: error %d updating global slabmap", 
+			lo->info.name, rc);
+	    	if (log_print_level > 0)
+		    f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, 
+			lo->info.slab_stripes);
+	    }
+	    free(keyset->slabs);
+	}
+	free(keysets);
     }
 
     if (total_kv)
