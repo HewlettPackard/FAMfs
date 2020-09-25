@@ -662,6 +662,7 @@ int UNIFYCR_WRAP(creat)(const char *path, mode_t mode)
         /* TODO: allocate a free file descriptor and associate it with fid */
         /* set in_use flag and file pointer, flags include O_WRONLY */
         unifycr_fd_t *filedesc = &(unifycr_fds[fid]);
+        filedesc->fid   = fid;
         filedesc->pos   = pos;
         filedesc->read  = 0;
         filedesc->write = 1;
@@ -717,6 +718,7 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
         /* TODO: allocate a free file descriptor and associate it with fid */
         /* set in_use flag and file pointer */
         unifycr_fd_t *filedesc = &(unifycr_fds[fid]);
+        filedesc->fid   = fid;
         filedesc->pos   = pos;
         filedesc->read  = ((flags & O_RDONLY) == O_RDONLY)
                           || ((flags & O_RDWR) == O_RDWR);
@@ -1935,6 +1937,11 @@ int UNIFYCR_WRAP(close)(int fd)
             errno = EIO;
             return -1;
         }
+
+        /* reinitialize file descriptor to indicate that
+         * it is no longer associated with a file,
+         * not technically needed but may help catch bugs */
+        unifycr_fd_init(fd);
 
         DUMP_STATS(LF_RD_STATS_FN, lf_rd_stat);
         DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);

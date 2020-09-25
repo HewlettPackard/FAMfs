@@ -232,6 +232,8 @@ typedef struct {
     off_t pos;   /* current file pointer */
     int   read;  /* whether file is opened for read */
     int   write; /* whether file is opened for write */
+
+    int   fid;   /* local file id associated with fd */
 } unifycr_fd_t;
 
 enum unifycr_stream_orientation {
@@ -483,6 +485,9 @@ int unifycr_get_fid_from_norm_path(const char *norm_path);
 
 /* given a file descriptor, return the file id */
 int unifycr_get_fid_from_fd(int fd);
+
+/* initialze file descriptor structure corresponding to fd value */
+void unifycr_fd_init(int fd);
 
 /* given a file descriptor, calculate MD5 hash and return gfid */
 int unifycr_get_global_fid(const char *path, int *gfid);

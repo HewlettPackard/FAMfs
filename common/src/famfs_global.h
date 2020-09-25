@@ -53,12 +53,12 @@ typedef enum {
 
 
 typedef struct {
-    off_t   file_pos;
-    off_t   mem_pos;
+    off_t   file_pos;   /* file offset */
+    off_t   mem_pos;    /* offset in stripe */
     size_t  length;
-    int     fid;
-    int     loid;
-    uint64_t sid; /* global stripe number */
+    int     fid;        /* global fid */
+    int     loid;       /* layout id */
+    uint64_t sid;       /* global stripe number */
 } md_index_t;
 
 /*metadata format in the shared memory*/

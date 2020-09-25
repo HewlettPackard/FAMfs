@@ -107,82 +107,9 @@ f_rbq_t *lo_cq[F_CMDQ_MAX];
 
 bool famfs_local_extents; /* enable tracking of local extents (write cache config option) */
 
-/* TODO: Remove me! */
-static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
-
 static int f_stripe_write(int fid, long pos, unifycr_filemeta_t *meta,
     const void *buf, size_t count, F_LAYOUT_t *lo);
 
-//
-// ===========================================
-//
-
-static int layout_of_path(const char *path, char *ln){
-    char lo_name[FVAR_MONIKER_MAX];
-    F_LAYOUT_t *lo;
-    int id;
-
-    bzero(lo_name, sizeof(lo_name));
-    const char *fpath = strstr(path, "::");
-    if (fpath) {
-        strncpy(lo_name, path, min(fpath - path, FVAR_MONIKER_MAX));
-        if (!(lo = f_get_layout_by_name(lo_name)))
-            return -1;
-        id = lo->info.conf_id;
-    } else {
-        lo = f_get_layout(0);
-        id = 0;
-    }
-    if (ln)
-        strcpy(ln, lo->info.name);
-    return id;
-}
-
-/* sets flag if the path is a special path */
-const char *famfs_intercept_path(const char *path)
-{
-    /* if the path starts with our mount point, intercept it */
-    const char *fpath = strstr(path, "::");
-    if (fpath) {
-        char lo_name[FVAR_MONIKER_MAX+1];
-        size_t len = (size_t)(fpath - path);
-        strncpy(lo_name, path, FVAR_MONIKER_MAX);
-        if (len > FVAR_MONIKER_MAX)
-            len = FVAR_MONIKER_MAX;
-        lo_name[len] = '\0';
-        F_LAYOUT_t *lo = f_get_layout_by_name(lo_name);
-        if (!lo) {
-            DEBUG("layout not found '%s'", lo_name);
-            return NULL;
-        }
-        fpath += 2;
-    } else {
-        fpath = path;
-    }
-    return fpath;
-}
-
-/* ---------------------------------------
- * Operations on FAM storage
- * --------------------------------------- */
-
-/* total, free data in FS */
-int famfs_report_storage(int fid, size_t *total, size_t *free)
-{
-    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
-    if (!meta)
-        return UNIFYCR_FAILURE;
-    F_LAYOUT_t *lo = f_get_layout(meta->loid);
-    if (lo == NULL)
-        return UNIFYCR_FAILURE;
-
-    size_t stripe_sz = lo->info.stripe_sz; /* one stripe data size */
-    /* TODO: Have Helper to scan SM&CV */
-    *total = unifycr_spillover_max_chunks * stripe_sz; /* *glb_size */
-    /* TODO; Gather spillover free blocks globally */
-    *free = (unifycr_spillover_max_chunks - meta->ttl_stripes) * stripe_sz;
-    return UNIFYCR_SUCCESS;
-}
 
 /* ---------------------------------------
  * Operations on write stripe cache
@@ -278,6 +205,334 @@ static int invalidate_stripe_cache(int fid, F_LAYOUT_t *lo, unifycr_filemeta_t *
 }
 
 /* ---------------------------------------
+ * Operations on client write index
+ * --------------------------------------- */
+
+/*
+ * Clear all entries in the log index.  This only clears the metadata,
+ * not the data itself.
+ */
+static void clear_index(void)
+{
+    *unifycr_indices.ptr_num_entries = 0;
+}
+
+/*
+ * Remove all entries in the current index and re-write it using the write
+ * metadata stored in the target file's extents_sync segment tree. This only
+ * re-writes the metadata in the index. All the actual data is still kept
+ * in the write log and will be referenced correctly by the new metadata.
+ *
+ * After this function is done, 'unifycr_indices' will have been totally
+ * re-written. The writes in the index will be flattened, non-overlapping,
+ * and sequential. The extents_sync segment tree will be cleared.
+ *
+ * This function is called when we sync our extents with the server.
+ *
+ * Returns maximum write log offset for synced extents.
+ */
+off_t famfs_rewrite_index_from_seg_tree(unifycr_filemeta_t* meta)
+{
+   /* get pointer to index buffer */
+    md_index_t* indexes = unifycr_indices.index_entry;
+
+    /* Erase the index before we re-write it */
+    clear_index();
+
+    /* count up number of entries we wrote to buffer */
+    unsigned long idx = 0;
+
+    /* record maximum write log offset */
+    off_t max_log_offset = 0;
+
+    int gfid = meta->gfid;
+
+    seg_tree_rdlock(&meta->extents_sync);
+
+    /* For each write in this file's seg_tree ... */
+    struct seg_tree_node* node = NULL;
+    while ((node = seg_tree_iter(&meta->extents_sync, node))) {
+           indexes[idx].file_pos = node->start;
+        indexes[idx].mem_pos  = node->ptr;
+        indexes[idx].length   = node->end - node->start + 1;
+        indexes[idx].fid      = gfid;
+        indexes[idx].loid     = meta->loid;
+        indexes[idx].sid      = node->stripe;
+        idx++;
+        if ((off_t)(node->end) > max_log_offset) {
+            max_log_offset = (off_t) node->end;
+        }
+    }
+    seg_tree_unlock(&meta->extents_sync);
+    /* All done processing this files writes.  Clear its seg_tree */
+    seg_tree_clear(&meta->extents_sync);
+
+    /* record total number of entries in index buffer */
+    *unifycr_indices.ptr_num_entries = idx;
+
+    return max_log_offset;
+}
+
+static int client_sync_md(unifycr_filemeta_t *meta) {
+    int rc;
+    f_svcrply_t r;
+    f_svcrq_t c = {
+        .opcode = CMD_META,
+        .cid = local_rank_idx,
+        .md_type = MDRQ_FSYNC
+    };
+
+    ASSERT( *unifycr_indices.ptr_num_entries > 0 );
+
+    STATS_START(start);
+
+    f_rbq_t *cq = lo_cq[meta->loid];
+    ASSERT(cq);
+
+    if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
+        ERROR("can't push fsync command onto layout %d queue: %s", meta->loid, strerror(-rc));
+        return rc;
+    }
+
+    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
+        ERROR("couldn't get response for fsync from layout %d queue: %s", meta->loid, strerror(-rc));
+        return rc;
+    }
+
+    UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries, start);
+
+    return r.rc;
+}
+
+/*
+ * Sync all the write extents for the target file(s) to the server.
+ * The target_fid identifies a specific file, or all files (-1).
+ * Clears the metadata index afterwards.
+ *
+ * Returns 0 on success, nonzero otherwise.
+ */
+static int famfs_sync(int target_fid)
+{
+    int ret = UNIFYCR_SUCCESS;
+
+    /* For each open file descriptor .. */
+    for (int i = 0; i < unifycr_max_files; i++) {
+        /* get file id for each file descriptor */
+        int fid = unifycr_fds[i].fid;
+        if (-1 == fid) {
+            /* file descriptor is not currently in use */
+            continue;
+        }
+
+        /* is this the target file? */
+        if ((target_fid != -1) && (fid != target_fid)) {
+            continue;
+        }
+
+        unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+        if ((NULL == meta) || (meta->fid != fid)) {
+            ERROR("missing filemeta for fid=%d", fid);
+            ret = UNIFYCR_FAILURE;
+            goto _cont;
+        }
+
+        if (meta->needs_sync) {
+            /* write contents from segment tree to index buffer */
+            (void)famfs_rewrite_index_from_seg_tree(meta);
+
+            /* if there are no index entries, we've got nothing to sync */
+            if (*unifycr_indices.ptr_num_entries == 0) {
+                meta->needs_sync = 0;
+                goto _cont;
+            }
+
+            STATS_START(start);
+
+            F_LAYOUT_t *lo = f_get_layout(meta->loid);
+            ASSERT(lo);
+
+            /* uncommited stripe? */
+            unifycr_chunkmeta_t *stripe = meta->chunk_meta;
+            for (unsigned int n = 0; n < meta->stripes; n++, stripe++) {
+                f_stripe_t s = stripe->id;
+
+                if (stripe->data_w == 0 || stripe->f.committed)
+                    continue;
+
+                if (!stripe->f.in_use) {
+                    ERROR("fid:%d in layout %s - unallocated stripe %lu",
+                          fid, lo->info.name, s);
+                    goto io_err;
+                }
+
+                if ((ret = f_ah_commit_stripe(lo, s))) {
+                    ERROR("fid:%d in layout %s - error %d committed stripe %lu",
+                          fid, lo->info.name, ret, s);
+                    goto io_err;
+                }
+                stripe->f.committed = 1;
+
+                DEBUG_LVL(6, "fid:%d lid:%d commit %s stripe %lu",
+                          fid, meta->loid,
+                          (stripe->data_w < lo->info.stripe_sz)?"partial":"", s);
+            }
+
+            if ((ret = invalidate_stripe_cache(fid, lo, meta))) {
+                ERROR("fid:%d in layout %s - failed to drop %u stripes",
+                      fid, lo->info.name, meta->stripes);
+                goto io_err;
+            }
+
+            UPDATE_STATS(fd_syn_stat, *unifycr_indices.ptr_num_entries,
+                         *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
+
+            /* tell the server to grab our new extents */
+            ret = client_sync_md(meta);
+            if (ret != UNIFYCR_SUCCESS) {
+                /* something went wrong when trying to flush extents */
+                ERROR("failed to flush write index to server for gfid=%d",
+                       meta->gfid);
+            }
+            meta->needs_sync = 0;
+
+            /* flushed, clear buffer and refresh number of entries
+             * and number remaining */
+            clear_index();
+        }
+
+        /* break out of loop when targeting a specific file */
+_cont:
+        if (fid == target_fid) {
+            break;
+        }
+    }
+    return ret;
+
+io_err:
+    errno = EIO;
+    return ret;
+}
+
+/* Add the metadata for a single write to the index */
+static int add_write_meta_to_index(unifycr_filemeta_t* meta,
+                                   off_t file_pos,
+                                   unsigned long stripe,
+                                   off_t offset,
+                                   size_t length)
+{
+    STATS_START(start);
+
+    /* add write extent to our segment trees */
+    if (famfs_local_extents) {
+        /* record write extent in our local cache */
+        seg_tree_add(&meta->extents,
+                     file_pos,
+                     file_pos + length - 1,
+                     offset,
+                     stripe);
+    }
+
+    /*
+     * We want to make sure this write will not overflow the maximum
+     * number of index entries we can sync with server. A write can at most
+     * create two new nodes in the seg_tree. If we're close to potentially
+     * filling up the index, sync it out.
+     */
+    unsigned long count_before = seg_tree_count(&meta->extents_sync);
+    if (count_before >= (unifycr_max_index_entries - 2)) {
+        /* this will flush our segments, sync them, and set the running
+         * segment count back to 0 */
+        famfs_sync(meta->fid);
+    }
+
+    /* store the write in our segment tree used for syncing with server. */
+    seg_tree_add(&meta->extents_sync,
+                 file_pos,
+                 file_pos + length - 1,
+                 offset,
+                 stripe);
+
+    /* we have new metadata that needs to be synced with the server */
+    meta->needs_sync = 1;
+
+    UPDATE_STATS(wr_upd_stat, 1, 1, start);
+
+    return UNIFYCR_SUCCESS;
+}
+
+
+//
+/// ===========================================
+//
+
+static int layout_of_path(const char *path, char *ln){
+    char lo_name[FVAR_MONIKER_MAX];
+    F_LAYOUT_t *lo;
+    int id;
+
+    bzero(lo_name, sizeof(lo_name));
+    const char *fpath = strstr(path, "::");
+    if (fpath) {
+        strncpy(lo_name, path, min(fpath - path, FVAR_MONIKER_MAX));
+        if (!(lo = f_get_layout_by_name(lo_name)))
+            return -1;
+        id = lo->info.conf_id;
+    } else {
+        lo = f_get_layout(0);
+        id = 0;
+    }
+    if (ln)
+        strcpy(ln, lo->info.name);
+    return id;
+}
+
+/* sets flag if the path is a special path */
+const char *famfs_intercept_path(const char *path)
+{
+    /* if the path starts with our mount point, intercept it */
+    const char *fpath = strstr(path, "::");
+    if (fpath) {
+        char lo_name[FVAR_MONIKER_MAX+1];
+        size_t len = (size_t)(fpath - path);
+        strncpy(lo_name, path, FVAR_MONIKER_MAX);
+        if (len > FVAR_MONIKER_MAX)
+            len = FVAR_MONIKER_MAX;
+        lo_name[len] = '\0';
+        F_LAYOUT_t *lo = f_get_layout_by_name(lo_name);
+        if (!lo) {
+            DEBUG("layout not found '%s'", lo_name);
+            return NULL;
+        }
+        fpath += 2;
+    } else {
+        fpath = path;
+    }
+    return fpath;
+}
+
+/* ---------------------------------------
+ * Operations on FAM storage
+ * --------------------------------------- */
+
+/* total, free data in FS */
+int famfs_report_storage(int fid, size_t *total, size_t *free)
+{
+    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    if (!meta)
+        return UNIFYCR_FAILURE;
+    F_LAYOUT_t *lo = f_get_layout(meta->loid);
+    if (lo == NULL)
+        return UNIFYCR_FAILURE;
+
+    size_t stripe_sz = lo->info.stripe_sz; /* one stripe data size */
+    /* TODO: Have Helper to scan SM&CV */
+    *total = unifycr_spillover_max_chunks * stripe_sz; /* *glb_size */
+    /* TODO; Gather spillover free blocks globally */
+    *free = (unifycr_spillover_max_chunks - meta->ttl_stripes) * stripe_sz;
+    return UNIFYCR_SUCCESS;
+}
+
+/* ---------------------------------------
  * File creation
  * --------------------------------------- */
 
@@ -317,16 +572,17 @@ int famfs_fid_create_file(const char *path, const char *fpath, int loid)
 
     /* initialize meta data */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
-    meta->size    = 0;
-    meta->is_dir  = 0;
-    meta->real_size = 0;
-    meta->storage = FILE_STORAGE_NULL;
-    meta->fid     = fid;
+    meta->size         = 0;
+    meta->is_dir       = 0;
+    meta->real_size    = 0;
+    meta->storage      = FILE_STORAGE_NULL;
     meta->flock_status = UNLOCKED;
-    meta->loid = loid;
-    meta->stripes  = 0;
-    meta->ttl_stripes  = 0; /* TODO: Make it persistent file attr */
-    meta->stripe_idx  = 0;
+    meta->stripes      = 0;
+    meta->ttl_stripes  = 0; /* TODO: Make ttl_stripes persistent file attr */
+    meta->stripe_idx   = 0;
+    meta->fid          = fid;
+    meta->gfid         = 0; /* TODO: Generate gfid here */
+    meta->loid         = loid;
     /* PTHREAD_PROCESS_SHARED allows Process-Shared Synchronization*/
     pthread_spin_init(&meta->fspinlock, PTHREAD_PROCESS_SHARED);
 
@@ -496,10 +752,15 @@ static int fid_store_alloc(int fid) {
     if ((meta != NULL) && (meta->fid == fid)) {
         meta->storage = FILE_STORAGE_LOGIO;
 
+        /* Initialize our segment tree that will record our writes */
+        int rc = seg_tree_init(&meta->extents_sync);
+        if (rc != 0)
+            return rc;
+
         /* Initialize our segment tree to track extents for all writes
          * by this process, can be used to read back local data */
         if (famfs_local_extents) {
-            int rc = seg_tree_init(&meta->extents);
+            rc = seg_tree_init(&meta->extents);
             if (rc != 0)
                 return rc;
         }
@@ -513,6 +774,9 @@ static int fid_store_free(int fid) {
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
     if ((meta != NULL) && (meta->fid == fid)) {
         meta->storage = FILE_STORAGE_NULL;
+
+        /* Free our write seg_tree */
+        seg_tree_destroy(&meta->extents_sync);
 
         /* Free our extent seg_tree */
         if (famfs_local_extents)
@@ -774,6 +1038,7 @@ static int famfs_fid_open(const char *path, int flags,
 
     int gfid = -1, rc = 0;
     if (fid < 0) {
+        /* hash a path to gfid */
         rc = unifycr_get_global_fid(norm_path, &gfid);
         if (rc != UNIFYCR_SUCCESS) {
             DEBUG_LVL(2, "Failed to generate fid for file %s", norm_path);
@@ -810,12 +1075,11 @@ static int famfs_fid_open(const char *path, int flags,
             if (fid_store_alloc(fid))
                 return UNIFYCR_FAILURE;
 
-            /* initialize the global metadata
-             * */
+            /* initialize the global metadata */
             unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
-            meta->storage = FILE_STORAGE_LOGIO;
             meta->real_size = ptr_meta->file_attr.st_size;
-            meta->loid = loid;
+            meta->gfid = gfid;
+
             /* cache attributes locally */
             ptr_meta->fid = fid;
             ptr_meta->gfid = gfid;
@@ -847,6 +1111,10 @@ static int famfs_fid_open(const char *path, int flags,
             /* initialize the storage for the file */
             if (fid_store_alloc(fid))
                 return UNIFYCR_FAILURE;
+
+            /* initialize the global metadata */
+            unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+            meta->gfid = gfid;
 
             /*create a file and send its attribute to key-value store*/
             f_fattr_t *new_fmeta = (f_fattr_t *)malloc(sizeof(f_fattr_t));
@@ -926,24 +1194,17 @@ static int famfs_fid_close(int fid)
 	if (stripe->f.in_use == 0 || stripe->f.committed == 1)
 	    continue;
 
-	if (stripe->data_w == 0) {
-	    if ((rc = f_ah_release_stripe(lo, s))) {
-		ERROR("fid:%d in layout %s - failed to release stripe %lu on close, error:%d",
-		      fid, lo->info.name, s, rc);
-		return UNIFYCR_FAILURE;
-	    }
-	    meta->ttl_stripes--;
-	    DEBUG_LVL(6, "fid:%d lid:%d - release stripe %lu on close",
-		      fid, meta->loid, s);
-	} else {
-	    ASSERT( stripe->data_w == lo->info.stripe_sz ); 
+	if (stripe->data_w > 0) {
 	    if ((rc = f_ah_commit_stripe(lo, s))) {
 		ERROR("fid:%d in layout %s - failed to commit stripe %lu on close, error:%d",
 		      fid, lo->info.name, s, rc);
 		return UNIFYCR_FAILURE;
 	    }
+	    stripe->f.committed = 1;
+	    DEBUG_LVL(6, "fid:%d lid:%d - commit %s stripe %lu on close",
+		      fid, meta->loid,
+		      (stripe->data_w < lo->info.stripe_sz)?"partial":"", s);
 	}
-	stripe->flags = 0;
     }
 
     if (invalidate_stripe_cache(fid, lo, meta)) {
@@ -1119,43 +1380,6 @@ static int unifycr_get_spillblock(size_t size, const char *path)
     }
 
     return spillblock_fd;
-}
-
-/* create superblock of specified size and name, or attach to existing
- * block if available */
-static void *unifycr_superblock_shmget(size_t size, key_t key)
-{
-    void *scr_shmblock = NULL;
-    int scr_shmblock_shmid;
-
-    DEBUG("Key for superblock = %x", key);
-
-    /* Use mmap to allocated share memory for UnifyCR*/
-    int ret = -1;
-    int fd = -1;
-    char shm_name[GEN_STR_LEN] = {0};
-    sprintf(shm_name, "%d-super-%d", app_id, key);
-    superblock_fd = shm_open(shm_name, MMAP_OPEN_FLAG, MMAP_OPEN_MODE);
-    if (-1 == (ret = superblock_fd)) {
-        return NULL;
-    }
-
-    ret = ftruncate(superblock_fd, size);
-    if (-1 == ret) {
-        return NULL;
-    }
-
-    scr_shmblock = mmap(NULL, size, PROT_WRITE | PROT_READ, MAP_SHARED,
-                        superblock_fd, SEEK_SET);
-    if (NULL == scr_shmblock) {
-        return NULL;
-    }
-    /* init our global variables to point to spots in superblock */
-    if (scr_shmblock != NULL) {
-        unifycr_init_pointers(scr_shmblock);
-        unifycr_init_structures();
-    }
-    return scr_shmblock;
 }
 #endif
 
@@ -1752,7 +1976,6 @@ static int f_stripe_write(
     F_LAYOUT_t *lo)           /* layout structure pointer for this fid */
 {
     long key_slice_range;
-    int i;
 
     /* get chunk meta data */
     ASSERT( meta->stripe_idx < meta->stripes );
@@ -1767,6 +1990,8 @@ static int f_stripe_write(
 
     DEBUG_LVL(5, "%s: write %zu bytes @%ld (logical %lu) to stripe %lu @%lu",
               lfs_ctx->pool->mynode.hostname, count, pos, stripe_id, s, stripe_offset);
+
+    ASSERT( stripe_offset + count <= (unsigned long)key_slice_range );
 
     int rc = lf_write(lo, (char *)buf, count, s, stripe_offset);
     if (rc) {
@@ -1814,8 +2039,8 @@ static int f_stripe_write(
         UPDATE_STATS(wr_cmt_stat, 1, count, start_cmt);
     }
 
+#if 0 /* unifycr legacy */
     /* find the corresponding file attr entry and update attr*/
-    STATS_START(start);
     md_index_t cur_idx;
     f_fattr_t tmp_meta_entry;
     tmp_meta_entry.fid = fid;
@@ -1838,7 +2063,7 @@ static int f_stripe_write(
      * */
     unifycr_split_index(&cur_idx, &tmp_index_set,
                         key_slice_range);
-    i = 0;
+    int i = 0;
     if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
         < (long)unifycr_max_index_entries) {
         /*coalesce contiguous indices*/
@@ -1877,31 +2102,11 @@ static int f_stripe_write(
     } else {
         /*Todo:page out existing metadata buffer to disk*/
     }
-    UPDATE_STATS(wr_upd_stat, 1, tmp_index_set.count, start);
+#else
+    rc = add_write_meta_to_index(meta, pos, s, stripe_offset, count);
+#endif
 
-    return UNIFYCR_SUCCESS;
-}
-
-static int cmp_md(const void *ap, const void *bp) {
-    md_index_t *mda = (md_index_t *)ap, *mdb = (md_index_t *)bp;
-
-    if (mda->loid > mdb->loid)
-        return 1;
-    else if (mda->loid < mdb->loid)
-        return -1;
-    if (mda->fid > mdb->fid)
-        return 1;
-    else if (mda->fid < mdb->fid)
-        return -1;
-    if (mda->sid > mdb->sid)
-        return 1;
-    else if (mda->sid < mdb->sid)
-        return -1;
-    if (mda->file_pos > mdb->file_pos)
-        return 1;
-    else if (mda->file_pos < mdb->file_pos)
-        return -1;
-    return 0;
+    return rc;
 }
 
 static int compare_read_req(const void *a, const void *b)
@@ -1927,6 +2132,29 @@ static int compare_read_req(const void *a, const void *b)
     if (ptr_a->offset - ptr_b->offset < 0)
         return -1;
 
+    return 0;
+}
+
+#if 0
+static int cmp_md(const void *ap, const void *bp) {
+    md_index_t *mda = (md_index_t *)ap, *mdb = (md_index_t *)bp;
+
+    if (mda->loid > mdb->loid)
+        return 1;
+    else if (mda->loid < mdb->loid)
+        return -1;
+    if (mda->fid > mdb->fid)
+        return 1;
+    else if (mda->fid < mdb->fid)
+        return -1;
+    if (mda->sid > mdb->sid)
+        return 1;
+    else if (mda->sid < mdb->sid)
+        return -1;
+    if (mda->file_pos > mdb->file_pos)
+        return 1;
+    else if (mda->file_pos < mdb->file_pos)
+        return -1;
     return 0;
 }
 
@@ -1970,6 +2198,7 @@ void famfs_merge_md() {
     if (j < i)
         *nrp = j;
 }
+#endif
 
 static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int rq_cnt,
     int lid, fsmd_kv_t *md, int md_cnt, size_t ttl)
@@ -2244,89 +2473,19 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     return 0;
 }
 
-static int famfs_fd_fsync(int fd) {
-    int rc;
-    f_svcrply_t r;
-    f_svcrq_t c = {
-        .opcode = CMD_META,
-        .cid = local_rank_idx,
-        .md_type = MDRQ_FSYNC
-    };
+static int famfs_fd_fsync(int fid) {
+    int ret = UNIFYCR_SUCCESS;
 
-    if (!*unifycr_indices.ptr_num_entries)
-        return 0;
+    /* sync any writes to disk */
+    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    ASSERT( meta != NULL );
 
-#ifdef FAMFS_STATS
-    int md_cnt=0;
-    STATS_START(start_m);
-#endif
-
-    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fd);
-    ASSERT(meta);
-
-    F_LAYOUT_t *lo = f_get_layout(meta->loid);
-    ASSERT(lo);
-
-    /* uncommited stripe? */
-    unifycr_chunkmeta_t *stripe = meta->chunk_meta;
-    for (unsigned int i = 0; i < meta->stripes; i++, stripe++) {
-	f_stripe_t s = stripe->id;
-
-	if (stripe->data_w == 0 || stripe->f.committed)
-	    continue;
-
-	if (!stripe->f.in_use) {
-	    ERROR("fid:%d in layout %s - unallocated stripe %lu",
-		  fd, lo->info.name, s);
-	    goto io_err;
-	}
-        if ((rc = f_ah_commit_stripe(lo, s))) {
-            ERROR("fid:%d in layout %s - error %d committed stripe %lu",
-                  fd, lo->info.name, rc, s);
-            goto io_err;
-        }
-#ifdef FAMFS_STATS
-        md_cnt++;
-#endif
-        DEBUG_LVL(6, "fid:%d lid:%d commit stripe %lu",
-                  fd, meta->loid, s);
-        stripe->f.committed = 1;
+    if (meta->needs_sync) {
+        /* sync data with server */
+        ret = famfs_sync(fid);
     }
 
-    if ((rc = invalidate_stripe_cache(fd, lo, meta))) {
-        ERROR("fid:%d in layout %s - failed to drop %u stripes", fd, lo->info.name, meta->stripes);
-        goto io_err;
-    }
-
-    if (allow_merge)
-        famfs_merge_md();
-
-    STATS_START(start);
-
-    f_rbq_t *cq = lo_cq[meta->loid];
-    ASSERT(cq);
-
-    if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
-        ERROR("can't push fsync command onto layout %d queue: %s", meta->loid, strerror(-rc));
-        return rc;
-    }
-
-    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for fsync from layout %d queue: %s", meta->loid, strerror(-rc));
-        return rc;
-    }
-
-    *unifycr_indices.ptr_num_entries = 0;
-    //*unifycr_fattrs.ptr_num_entries = 0;
-
-    UPDATE_STATS(md_fp_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries, start);
-    UPDATE_STATS(fd_syn_stat, *unifycr_indices.ptr_num_entries, *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start_m);
-
-    return r.rc;
-
-io_err:
-    errno = EIO;
-    return -1;
+    return ret;
 }
 
 /* sysio/stdio interface to UNIFYCR or FAMFS filesystem */

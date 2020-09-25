@@ -439,6 +439,20 @@ inline int unifycr_stack_unlock()
     return 0;
 }
 
+void unifycr_fd_init(int fd)
+{
+    /* get pointer to file descriptor struct for this fd value */
+    unifycr_fd_t *filedesc = &(unifycr_fds[fd]);
+
+    /* set fid to -1 to indicate fd is not active,
+     * set file position to max value,
+     * disable read and write flags */
+    filedesc->fid   = -1;
+    filedesc->pos   = (off_t) -1;
+    filedesc->read  = 0;
+    filedesc->write = 0;
+}
+
 /* sets flag if the path is a special path */
 inline int unifycr_intercept_path(const char *path)
 {
@@ -850,6 +864,8 @@ int unifycr_fid_create_directory(const char *path)
     /* ...and a little more */
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
     meta->is_dir = 1;
+    meta->gfid = -1; /* there isn't global entry for directory */ 
+
     return fid;
 }
 
@@ -1524,6 +1540,8 @@ static int unifycr_init_structures()
         filemeta->chunk_meta = chunkmetas;
     }
 
+    for (i = 0; i < UNIFYCR_MAX_FILEDESCS; i++)
+        unifycr_fd_init(i);
     unifycr_stack_init(free_fid_stack, unifycr_max_files);
 
     unifycr_stack_init(free_chunk_stack, unifycr_max_chunks);
@@ -1703,10 +1721,17 @@ static void *unifycr_superblock_shmget(size_t size, key_t key)
             return NULL;
         }
         /* init our global variables to point to spots in superblock */
-        if (scr_shmblock != NULL) {
-            unifycr_init_pointers(scr_shmblock);
-            unifycr_init_structures();
-        }
+        unifycr_init_pointers(scr_shmblock);
+        unifycr_init_structures();
+
+        /* TODO: reattach to an existing superblock from an earlier run */
+        // *(unifycr_indices.ptr_num_entries) = 0;
+        // for (i = 0; i < unifyfs_max_files; i++)
+        //     if (unifycr_filelist[i].in_use) {
+        //         unifycr_filemeta_t* meta = unifyfs_get_meta_from_fid(i);
+        //         seg_tree_destroy(&meta->extents_sync);
+        //         if (famfs_local_extents)
+        //             seg_tree_init(&meta->extents);
     }
     return scr_shmblock;
 }

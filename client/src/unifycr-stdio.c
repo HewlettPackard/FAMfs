@@ -397,6 +397,7 @@ static int unifycr_fopen(
 
     /* set file pointer and read/write mode in file descriptor */
     unifycr_fd_t *filedesc = unifycr_get_filedesc_from_fd(fd);
+    filedesc->fid   = fid;
     filedesc->pos   = pos;
     filedesc->read  = read  || plus;
     filedesc->write = write || plus;
@@ -1827,6 +1828,11 @@ int UNIFYCR_WRAP(fclose)(FILE *stream)
             errno = unifycr_err_map_to_errno(close_rc);
             return EOF;
         }
+
+        /* reinitialize file descriptor to indicate that
+         * it is no longer associated with a file,
+         * not technically needed but may help catch bugs */
+        unifycr_fd_init(s->fd);
 
         /* set file descriptor to -1 to indicate stream is invalid */
         s->fd = -1;

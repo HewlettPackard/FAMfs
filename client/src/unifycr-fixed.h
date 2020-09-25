@@ -84,7 +84,10 @@ typedef struct unifycr_filemeta_t_ {
     int loid;                       /* FAMFS layout id */
 
     int fid;                        /* local file index in filemetas array */
+    int gfid;                       /* global file id for this file */
+    int needs_sync;                 /* have unsynced writes */
     struct seg_tree extents;        /* Segment tree of all local data extents (write cache) */
+    struct seg_tree extents_sync;   /* segment tree of written extents to sync */
 } unifycr_filemeta_t;
 
 /* if length is greater than reserved space,
