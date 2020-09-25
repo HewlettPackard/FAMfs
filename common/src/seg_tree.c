@@ -179,7 +179,7 @@ int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
     }
 
     /* Lock the tree so we can modify it */
-    seg_tree_wrlock(seg_tree);
+    //seg_tree_wrlock(seg_tree);
 
     /*
      * Try to insert our range into the RB tree.  If it overlaps with any other
@@ -336,7 +336,7 @@ int seg_tree_add(struct seg_tree* seg_tree, unsigned long start,
 
 release_add:
 
-    seg_tree_unlock(seg_tree);
+    //seg_tree_unlock(seg_tree);
 
     return rc;
 }

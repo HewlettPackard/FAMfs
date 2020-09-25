@@ -217,6 +217,50 @@ static void clear_index(void)
     *unifycr_indices.ptr_num_entries = 0;
 }
 
+#if 0
+/* Add the metadata for a single write to the index */
+static int add_write_meta_to_index(unifycr_filemeta_t* meta,
+                                   off_t file_pos,
+                                   unsigned long stripe,
+                                   off_t offset,
+                                   size_t length)
+{
+    /* add write extent to our segment trees */
+    if (famfs_local_extents) {
+        /* record write extent in our local cache */
+        seg_tree_add(&meta->extents,
+                     file_pos,
+                     file_pos + length - 1,
+                     offset,
+                     stripe);
+    }
+
+    /*
+     * We want to make sure this write will not overflow the maximum
+     * number of index entries we can sync with server. A write can at most
+     * create two new nodes in the seg_tree. If we're close to potentially
+     * filling up the index, sync it out.
+     */
+    unsigned long count_before = seg_tree_count(&meta->extents_sync);
+    if (count_before >= (unifycr_max_index_entries - 2)) {
+        /* this will flush our segments, sync them, and set the running
+         * segment count back to 0 */
+        famfs_sync(meta->fid);
+    }
+
+    /* store the write in our segment tree used for syncing with server. */
+    seg_tree_add(&meta->extents_sync,
+                 file_pos,
+                 file_pos + length - 1,
+                 offset,
+                 stripe);
+
+    /* we have new metadata that needs to be synced with the server */
+    meta->needs_sync = 1;
+
+    return UNIFYCR_SUCCESS;
+}
+
 /*
  * Remove all entries in the current index and re-write it using the write
  * metadata stored in the target file's extents_sync segment tree. This only
@@ -272,6 +316,29 @@ off_t famfs_rewrite_index_from_seg_tree(unifycr_filemeta_t* meta)
 
     return max_log_offset;
 }
+#endif
+
+void add_index_to_seg_tree(unifycr_filemeta_t* meta)
+{
+    /* get pointer to index buffer */
+    md_index_t* indexes = unifycr_indices.index_entry;
+    long idx = *unifycr_indices.ptr_num_entries;
+
+    seg_tree_rdlock(&meta->extents);
+
+    /* Add each write metadata to seg_tree ... */
+    while (--idx >= 0) {
+        off_t file_pos = indexes[idx].file_pos;
+
+        /* add metadata for a single write to meta->extents tree */
+        seg_tree_add(&meta->extents,
+                     file_pos,
+                     file_pos + indexes[idx].length - 1,
+                     indexes[idx].mem_pos,
+                     indexes[idx].sid);
+    }
+    seg_tree_unlock(&meta->extents);
+}
 
 static int client_sync_md(unifycr_filemeta_t *meta) {
     int rc;
@@ -293,6 +360,10 @@ static int client_sync_md(unifycr_filemeta_t *meta) {
         ERROR("can't push fsync command onto layout %d queue: %s", meta->loid, strerror(-rc));
         return rc;
     }
+
+    /* add metadata for a single write to meta->extents tree */
+    if (famfs_local_extents)
+        add_index_to_seg_tree(meta);
 
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
         ERROR("couldn't get response for fsync from layout %d queue: %s", meta->loid, strerror(-rc));
@@ -337,8 +408,10 @@ static int famfs_sync(int target_fid)
         }
 
         if (meta->needs_sync) {
+#if 0
             /* write contents from segment tree to index buffer */
             (void)famfs_rewrite_index_from_seg_tree(meta);
+#endif
 
             /* if there are no index entries, we've got nothing to sync */
             if (*unifycr_indices.ptr_num_entries == 0) {
@@ -411,53 +484,6 @@ _cont:
 io_err:
     errno = EIO;
     return ret;
-}
-
-/* Add the metadata for a single write to the index */
-static int add_write_meta_to_index(unifycr_filemeta_t* meta,
-                                   off_t file_pos,
-                                   unsigned long stripe,
-                                   off_t offset,
-                                   size_t length)
-{
-    STATS_START(start);
-
-    /* add write extent to our segment trees */
-    if (famfs_local_extents) {
-        /* record write extent in our local cache */
-        seg_tree_add(&meta->extents,
-                     file_pos,
-                     file_pos + length - 1,
-                     offset,
-                     stripe);
-    }
-
-    /*
-     * We want to make sure this write will not overflow the maximum
-     * number of index entries we can sync with server. A write can at most
-     * create two new nodes in the seg_tree. If we're close to potentially
-     * filling up the index, sync it out.
-     */
-    unsigned long count_before = seg_tree_count(&meta->extents_sync);
-    if (count_before >= (unifycr_max_index_entries - 2)) {
-        /* this will flush our segments, sync them, and set the running
-         * segment count back to 0 */
-        famfs_sync(meta->fid);
-    }
-
-    /* store the write in our segment tree used for syncing with server. */
-    seg_tree_add(&meta->extents_sync,
-                 file_pos,
-                 file_pos + length - 1,
-                 offset,
-                 stripe);
-
-    /* we have new metadata that needs to be synced with the server */
-    meta->needs_sync = 1;
-
-    UPDATE_STATS(wr_upd_stat, 1, 1, start);
-
-    return UNIFYCR_SUCCESS;
 }
 
 
@@ -751,16 +777,16 @@ static int fid_store_alloc(int fid) {
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
     if ((meta != NULL) && (meta->fid == fid)) {
         meta->storage = FILE_STORAGE_LOGIO;
-
+#if 0
         /* Initialize our segment tree that will record our writes */
         int rc = seg_tree_init(&meta->extents_sync);
         if (rc != 0)
             return rc;
-
+#endif
         /* Initialize our segment tree to track extents for all writes
          * by this process, can be used to read back local data */
         if (famfs_local_extents) {
-            rc = seg_tree_init(&meta->extents);
+            int rc = seg_tree_init(&meta->extents);
             if (rc != 0)
                 return rc;
         }
@@ -774,10 +800,10 @@ static int fid_store_free(int fid) {
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
     if ((meta != NULL) && (meta->fid == fid)) {
         meta->storage = FILE_STORAGE_NULL;
-
+#if 0
         /* Free our write seg_tree */
         seg_tree_destroy(&meta->extents_sync);
-
+#endif
         /* Free our extent seg_tree */
         if (famfs_local_extents)
             seg_tree_destroy(&meta->extents);
@@ -2039,7 +2065,8 @@ static int f_stripe_write(
         UPDATE_STATS(wr_cmt_stat, 1, count, start_cmt);
     }
 
-#if 0 /* unifycr legacy */
+    STATS_START(start);
+#if 0
     /* find the corresponding file attr entry and update attr*/
     md_index_t cur_idx;
     f_fattr_t tmp_meta_entry;
@@ -2063,6 +2090,17 @@ static int f_stripe_write(
      * */
     unifycr_split_index(&cur_idx, &tmp_index_set,
                         key_slice_range);
+#else
+    md_index_t *cur = &tmp_index_set.idxes[0];
+    tmp_index_set.count = 1;
+    cur->fid = meta->gfid;
+    cur->file_pos = pos;
+    cur->length = count;
+    cur->mem_pos = stripe_offset;
+    cur->sid = s;
+    cur->loid = meta->loid;
+
+#endif
     int i = 0;
     if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
         < (long)unifycr_max_index_entries) {
@@ -2070,9 +2108,9 @@ static int f_stripe_write(
 
         if (*unifycr_indices.ptr_num_entries >= 1) {
             md_index_t *ptr_last_idx = &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
-            if (ptr_last_idx->loid == tmp_index_set.idxes[0].loid &&
+            if (ptr_last_idx->sid == tmp_index_set.idxes[0].sid &&
                 ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
-                ptr_last_idx->sid == tmp_index_set.idxes[0].sid &&
+                ptr_last_idx->loid == tmp_index_set.idxes[0].loid &&
                 ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length
                 == tmp_index_set.idxes[0].file_pos) {
                 if (ptr_last_idx->file_pos / key_slice_range
@@ -2082,6 +2120,9 @@ static int f_stripe_write(
                 }
             }
         }
+        if (i == 0) {
+            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries] = tmp_index_set.idxes[0];
+        /*
         for (; i < tmp_index_set.count; i++) {
             unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].file_pos =
                 tmp_index_set.idxes[i].file_pos;
@@ -2096,15 +2137,18 @@ static int f_stripe_write(
                 = tmp_index_set.idxes[i].fid;
             unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].sid =
                 tmp_index_set.idxes[i].sid;
+        */
             (*unifycr_indices.ptr_num_entries)++;
         }
 
     } else {
         /*Todo:page out existing metadata buffer to disk*/
+           ERROR("Possible data loss! Please increase index_buf_size=%lu (max %lu entries)",
+                 unifycr_max_index_entries*sizeof(md_index_t), unifycr_max_index_entries);
     }
-#else
-    rc = add_write_meta_to_index(meta, pos, s, stripe_offset, count);
-#endif
+    meta->needs_sync = 1;
+
+    UPDATE_STATS(wr_upd_stat, 1, 1, start);
 
     return rc;
 }
