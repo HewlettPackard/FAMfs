@@ -201,6 +201,7 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define UNIFYCR_LFA_PORT	30000	/* port for lf_atomics */
 #define UNIFYCR_CQ_HWM		50	/* high water mark for committed stripes queue, % */
 #define UNIFYCR_CQ_HWM_TMO	3	/* high water mark TMO for stripes queue, sec */
+#define UNIFYCR_FSYNC_TMO	300	/* how many seconds client can wait for syncing metadata with RS */
 
 /* Limits: slab, stripe, device and layout */
 #define F_DEVICES_MAX		4096	/* Maximum number of FAMs, divisible by 8 */

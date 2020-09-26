@@ -100,6 +100,7 @@ extern int app_id;
 
 
 /* FAM */
+extern F_POOL_t *pool;
 LFS_CTX_t *lfs_ctx = NULL;
 f_rbq_t *adminq;
 f_rbq_t *rplyq;
@@ -340,7 +341,7 @@ void add_index_to_seg_tree(unifycr_filemeta_t* meta)
     seg_tree_unlock(&meta->extents);
 }
 
-static int client_sync_md(unifycr_filemeta_t *meta) {
+static int client_sync_md(unifycr_filemeta_t *meta, int fsync_tmo) {
     int rc;
     f_svcrply_t r;
     f_svcrq_t c = {
@@ -356,6 +357,7 @@ static int client_sync_md(unifycr_filemeta_t *meta) {
     f_rbq_t *cq = lo_cq[meta->loid];
     ASSERT(cq);
 
+    /* make Helper to send metadata to RS */
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
         ERROR("can't push fsync command onto layout %d queue: %s", meta->loid, strerror(-rc));
         return rc;
@@ -365,8 +367,10 @@ static int client_sync_md(unifycr_filemeta_t *meta) {
     if (famfs_local_extents)
         add_index_to_seg_tree(meta);
 
-    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
-        ERROR("couldn't get response for fsync from layout %d queue: %s", meta->loid, strerror(-rc));
+    /* wait for RS acknowledgement */
+    if ((rc = f_rbq_pop(rplyq, &r, fsync_tmo*RBQ_TMO_1S))) {
+        ERROR("couldn't get RS response for syncing metadata in %d s, lid: %d queue: %s",
+              fsync_tmo, meta->loid, strerror(-rc));
         return rc;
     }
 
@@ -384,6 +388,7 @@ static int client_sync_md(unifycr_filemeta_t *meta) {
  */
 static int famfs_sync(int target_fid)
 {
+    int fsync_tmo = pool->info.fsync_tmo;
     int ret = UNIFYCR_SUCCESS;
 
     /* For each open file descriptor .. */
@@ -460,7 +465,7 @@ static int famfs_sync(int target_fid)
                          *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
 
             /* tell the server to grab our new extents */
-            ret = client_sync_md(meta);
+            ret = client_sync_md(meta, fsync_tmo);
             if (ret != UNIFYCR_SUCCESS) {
                 /* something went wrong when trying to flush extents */
                 ERROR("failed to flush write index to server for gfid=%d",
@@ -1426,7 +1431,6 @@ int famfs_mount(const char prefix[] __attribute__((unused)),
     size_t size __attribute__((unused)),
     int rank)
 {
-    F_POOL_t *pool;
     int rc;
 
     ASSERT(fs_type == FAMFS);   // For now
@@ -1513,8 +1517,6 @@ int famfs_unmount() {
     f_svcrq_t    c = {.opcode = CMD_UNMOUNT, .cid = local_rank_idx};
     int rc;
 
-    F_POOL_t *pool;
-    pool = f_get_pool();
     if ((rc = f_rbq_push(adminq, &c, RBQ_TMO_1S))) {
         ERROR("couldn't push UNMOUNT command to srv");
 	goto _err;
@@ -1621,11 +1623,8 @@ int f_srv_connect()
 {
     int         rc;
     char        qname[MAX_RBQ_NAME];
-    F_POOL_t    *pool = f_get_pool();
     f_svcrq_t   c = {.opcode = CMD_SVCRQ, .cid = local_rank_idx};
     f_svcrply_t r;
-
-    ASSERT(pool);
 
     sprintf(qname, "%s-%02d", F_RPLYQ_NAME, local_rank_idx);
     if ((rc = f_rbq_create(qname, sizeof(f_svcrply_t), F_MAX_RPLYQ, &rplyq, 1))) {
@@ -1768,7 +1767,6 @@ famfs_mr_list_t known_mrs = {0, NULL};
 #define LMR_PID_SHIFT 8
 
 int famfs_buf_reg(char *buf, size_t len, void **rid) {
-    F_POOL_t *pool = lfs_ctx->pool;
     LF_INFO_t *lf_info = pool->lf_info;
     F_POOL_DEV_t *pdev;
     unsigned int i;
@@ -1827,7 +1825,6 @@ int famfs_buf_reg(char *buf, size_t len, void **rid) {
 }
 
 int famfs_buf_unreg(void *rid) {
-    F_POOL_t *pool = lfs_ctx->pool;
     LF_INFO_t *lf_info = pool->lf_info;
     F_POOL_DEV_t *pdev;
 
@@ -1847,7 +1844,6 @@ int famfs_buf_unreg(void *rid) {
 }
 
 static void *lookup_mreg(const char *buf, size_t len, int nid) {
-    F_POOL_t *pool = lfs_ctx->pool;
     LF_INFO_t *lf_info = pool->lf_info;
     unsigned int i;
 
@@ -1865,7 +1861,6 @@ static void *lookup_mreg(const char *buf, size_t len, int nid) {
 static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
     f_stripe_t stripe_phy_id, off_t stripe_offset)
 {
-    F_POOL_t *pool = lfs_ctx->pool;
     N_STRIPE_t *fam_stripe;
     LF_INFO_t *lf_info = pool->lf_info;
     struct famsim_stats *stats_fi_wr;
@@ -1930,7 +1925,6 @@ static int lf_write(F_LAYOUT_t *lo, char *buf, size_t len,
 static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
     off_t stripe_offset, f_stripe_t s)
 {
-    F_POOL_t *pool = lfs_ctx->pool;
     N_STRIPE_t *fam_stripe;
     LF_INFO_t *lf_info = pool->lf_info;
     //struct famsim_stats *stats_fi_rd;
@@ -2336,7 +2330,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     F_LAYOUT_t *lo = f_get_layout(meta->loid);
     if (lo == NULL) {
         DEBUG_LVL(2, "%s: fid:%d error: layout id:%d not found!",
-                  f_get_pool()->mynode.hostname, lid, meta->loid);
+                  pool->mynode.hostname, lid, meta->loid);
         errno = EIO;
         return -1;
     }
@@ -2484,7 +2478,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     struct timespec md_start = now();
     if ((rc = f_rbq_push(cq, &c, RBQ_TMO_1S))) {
         ERROR("%s: can't push MD_GET cmd, layout %d: %s(%d)", 
-	    f_get_pool()->mynode.hostname, lid, strerror(-rc), rc);
+              pool->mynode.hostname, lid, strerror(-rc), rc);
         return -EIO;
     }
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
@@ -2492,7 +2486,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
         return -EIO;
     }
     if (r.rc) {
-        ERROR("%s: error retrieving file MD: %d", f_get_pool()->mynode.hostname, r.rc);
+        ERROR("%s: error retrieving file MD: %d", pool->mynode.hostname, r.rc);
         return -EIO;
     }
     UPDATE_STATS(md_fg_stat, *rc_ptr, *rc_ptr*sizeof(fsmd_kv_t), start);

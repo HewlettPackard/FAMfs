@@ -544,6 +544,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     pool_info->cq_hwm = (int)l;
     if (configurator_int_val(c->unifycr_cq_hwm_tmo, &l)) goto _noarg;
     pool_info->cq_hwm_tmo = (int)l;
+    if (configurator_int_val(c->unifycr_fsync_tmo, &l)) goto _noarg;
+    pool_info->fsync_tmo = (int)l;
     if (!strcmp(c->unifycr_fs_type, "famfs"))
 	SetPoolFAMFS(p);
     else if (!strcmp(c->unifycr_fs_type, "unifycr"))

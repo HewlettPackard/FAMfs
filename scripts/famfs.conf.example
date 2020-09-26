@@ -10,6 +10,7 @@ debug = on
 # fs_type = famfs | unifycr | both ; default: famfs
 # cache_wr = on ; turn on write cache, default: off
 # cache_rd = on ; turn on metadata cache on read, default: off
+# fsync_tmo = 600 ; seconds client can wait for syncing metadata with RS, default: 300
 
 [log]
 # verbosity = 7 ; the highest level:7

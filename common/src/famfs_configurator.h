@@ -61,17 +61,18 @@
     UNIFYCR_CFG(unifycr, cq_hwm_tmo, INT, UNIFYCR_CQ_HWM_TMO, "high water mark stripes queue timeout, sec", NULL) \
     UNIFYCR_CFG(unifycr, cache_wr, BOOL, off, "enable write cache", NULL) \
     UNIFYCR_CFG(unifycr, cache_rd, BOOL, off, "enable metadata cache on read", NULL) \
+    UNIFYCR_CFG(unifycr, index_buf_size, INT, UNIFYCR_INDEX_BUF_SIZE, "log file system index buffer size", NULL) \
+    UNIFYCR_CFG(unifycr, fattr_buf_size, INT, UNIFYCR_FATTR_BUF_SIZE, "log file system file attributes buffer size", NULL) \
+    UNIFYCR_CFG(unifycr, chunk_bits, INT, UNIFYCR_CHUNK_BITS, "shared memory data chunk size in bits (i.e., size=2^bits)", NULL) \
+    UNIFYCR_CFG(unifycr, chunk_mem, INT, UNIFYCR_CHUNK_MEM, "shared memory segment size for data chunks", NULL) \
+    UNIFYCR_CFG(unifycr, fsync_tmo, INT, UNIFYCR_FSYNC_TMO, "range server fsync timeout, sec", NULL) \
     UNIFYCR_CFG_CLI(log, verbosity, INT, 0, "log verbosity level", NULL, 'v', "specify logging verbosity level") \
     UNIFYCR_CFG_CLI(log, file, STRING,  UNIFYCR_DEFAULT_LOG_FILE, "log file name", NULL, 'l', "specify log file name") \
     UNIFYCR_CFG_CLI(log, dir, STRING, LOGDIR, "log file directory", configurator_directory_check, 'L', "specify full path to directory to contain log file") \
-    UNIFYCR_CFG(unifycr, index_buf_size, INT, UNIFYCR_INDEX_BUF_SIZE, "log file system index buffer size", NULL) \
-    UNIFYCR_CFG(unifycr, fattr_buf_size, INT, UNIFYCR_FATTR_BUF_SIZE, "log file system file attributes buffer size", NULL) \
     UNIFYCR_CFG(meta, db_name, STRING, META_DEFAULT_DB_NAME, "metadata database name", NULL) \
     UNIFYCR_CFG(meta, db_path, STRING, META_DEFAULT_DB_PATH, "metadata database path", NULL) \
     UNIFYCR_CFG(meta, server_ratio, INT, META_DEFAULT_SERVER_RATIO, "metadata server ratio", NULL) \
     UNIFYCR_CFG(meta, range_size, INT, META_DEFAULT_RANGE_SZ, "metadata range size", NULL) \
-    UNIFYCR_CFG(unifycr, chunk_bits, INT, UNIFYCR_CHUNK_BITS, "shared memory data chunk size in bits (i.e., size=2^bits)", NULL) \
-    UNIFYCR_CFG(unifycr, chunk_mem, INT, UNIFYCR_CHUNK_MEM, "shared memory segment size for data chunks", NULL) \
     UNIFYCR_CFG(shmem, recv_size, INT, UNIFYCR_SHMEM_RECV_SIZE, "shared memory segment size in bytes for receiving data from delegators", NULL) \
     UNIFYCR_CFG(shmem, req_size, INT, UNIFYCR_SHMEM_REQ_SIZE, "shared memory segment size in bytes for sending requests to delegators", NULL) \
     UNIFYCR_CFG(shmem, single, BOOL, off, "use single shared memory region for all clients", NULL) \
