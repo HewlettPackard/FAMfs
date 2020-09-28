@@ -836,6 +836,7 @@ static void slabmap_load_cb(uint64_t e, void *arg, const F_PU_VAL_t *pu)
 				LOG(LOG_ERR, "%s[%d]: slab %u ext %u invalid dev idx %u", 
 					lo->info.name, lp->part_num, slab, n, sme->extent_rec[n].media_id);
 				data->err++;
+				continue;
 			}
 
 			if (f_crc4_fast_chk(&sme->extent_rec[n], sizeof(F_EXTENT_ENTRY_t))) {
@@ -2763,6 +2764,11 @@ static int process_degraded_slabs(F_LO_PART_t *lp)
 		f_stripe_t s0 = slab_to_stripe0(lo, slab);
 
 		/* double check bitmaps */
+		if (!slab_allocated(lp, slab) || slab_in_sync(lp, slab)) {
+			LOG(LOG_ERR, "%s[%d]: slab %u: allocated=%d in_sync=%d",
+				lo->info.name, lp->part_num, slab, 
+				slab_allocated(lp, slab), slab_in_sync(lp, slab)); 
+		}
 		ASSERT(slab_allocated(lp, slab) && !slab_in_sync(lp, slab));
 
 		/* Degraded and not used slab, just release it */

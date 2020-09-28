@@ -80,6 +80,7 @@ int f_map_fam_stripe(F_LAYOUT_t *lo, N_STRIPE_t **stripe_p, f_stripe_t s, bool g
     }
     stripe->extent = s / stripe->extent_stipes;
     stripe_0 = stripe->extent * stripe->extent_stipes;
+    if (!global) stripe_0 = f_map_prt_to_global(lp->claimvec, stripe_0);
     parities = stripe->p;
     nchunks = stripe->d + parities;
     stripe_in_ext = s - stripe_0;
