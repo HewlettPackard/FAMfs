@@ -671,7 +671,7 @@ struct mdhim_bgetrm_t *mdhimGet(struct mdhim_t *md, struct index_t *index,
 	keys[0] = key;
 	key_lens[0] = key_len;
 
-	//Get the linked list of return messages from mdhimBGet
+	//Get the linked list of return messages from mdhimGet
 	bgrm_head = _bget_records(md, index, keys, key_lens, 1, 1, op);
 
 	//Clean up
@@ -840,7 +840,7 @@ struct mdhim_bgetrm_t *mdhimBGetOp(struct mdhim_t *md, struct index_t *index,
 	keys[0] = key;
 	key_lens[0] = key_len;
 
-	//Get the linked list of return messages from mdhimBGet
+	//Get the linked list of return messages from mdhimBGetOp
 	bgrm_head = _bget_records(md, index, keys, key_lens, 1, num_records, op);
 
 	//Clean up
@@ -860,7 +860,7 @@ struct mdhim_bgetrm_t *mdhimBGetRange(struct mdhim_t *md, struct index_t *index,
 		return NULL;
 	}
 
-	//Get the linked list of return messages from mdhimBGet
+	//Get the linked list of return messages from mdhimBGetRange
 	bgrm_head = _bget_range_records(md, index, start_key, end_key, key_len);
 
 	return bgrm_head;
@@ -924,7 +924,7 @@ struct mdhim_brm_t *mdhimBDelete(struct mdhim_t *md, struct index_t *index,
 	//Check to see that we were given a sane amount of records
 	if (num_records > MAX_BULK_OPS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
-		     "To many bulk operations requested in mdhimBGetOp", 
+		     "To many bulk operations requested in mdhimBDelete", 
 		     md->mdhim_rank);
 		return NULL;
 	}
@@ -1186,7 +1186,7 @@ int mdhim_ps_bdel(struct mdhim_t *md, struct index_t *index, size_t num_records,
 	//Check to see that we were given a sane amount of records
 	if (num_records > MAX_BULK_OPS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
-		     "To many bulk operations requested in mdhimBGetOp",
+		     "To many bulk operations requested in mdhimBDelete",
 		     md->mdhim_rank);
 		return MDHIM_ERROR;
 	}

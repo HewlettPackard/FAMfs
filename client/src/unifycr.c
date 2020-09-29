@@ -599,6 +599,20 @@ unifycr_filemeta_t *unifycr_get_meta_from_fid(int fid)
     return NULL;
 }
 
+int famfs_fid_from_gfid(int gfid)
+{
+    for (int i = 0; i < unifycr_max_files; i++) {
+	if (unifycr_filemetas[i].gfid == gfid &&
+	    unifycr_filelist[i].in_use) {
+	    /* found a file id that's in use and it matches
+	     * the target fid, this is the one */
+	    return i;
+	}
+    }
+    return -1;
+}
+
+
 /* ---------------------------------------
  * Operations on file storage
  * --------------------------------------- */

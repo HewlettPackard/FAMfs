@@ -1039,7 +1039,7 @@ int UNIFYCR_WRAP(lio_listio)(int mode __attribute__((unused)),
         glb_read_reqs[i].buf = (char *)aiocb_list[i]->aio_buf;
         glb_read_reqs[i].length = aiocb_list[i]->aio_nbytes;
         glb_read_reqs[i].offset = aiocb_list[i]->aio_offset;
-        glb_read_reqs[i].lid = unifycr_get_meta_from_fid(fid)->loid;
+        glb_read_reqs[i].lid = 0; /* TODO: check fd and get lid from meta */
     }
 
     ret = fd_iface->fd_logreadlist(glb_read_reqs, nitems);

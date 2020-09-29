@@ -289,8 +289,8 @@ typedef struct {
 /*unifycr structures*/
 typedef struct read_req_t_ {
     /* --> this substructure must match shm_meta_t */
-    int fid;
-    int lid;                        /* layout id */
+    int fid;            /* client fid then FAMfs global fid */
+    int lid;            /* layout id */
     long offset;
     long length;
     /* <-- */
@@ -491,6 +491,9 @@ void unifycr_fd_init(int fd);
 
 /* given a file descriptor, calculate MD5 hash and return gfid */
 int unifycr_get_global_fid(const char *path, int *gfid);
+
+/* lookup in filedesc array for gfid, return local fid or -1 */
+int famfs_fid_from_gfid(int gfid);
 
 /* return address of file descriptor structure or NULL if fd is out
  * of range */

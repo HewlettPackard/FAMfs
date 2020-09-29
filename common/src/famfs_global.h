@@ -73,7 +73,7 @@ typedef struct fsmd_key_t_ {
     union {
         unsigned long fid;
         struct {
-            int       fid;  /* actual fid */
+            int       fid;  /* global fid */
             int       loid; /* Little endian: sort by layout id first */
         } pk;
     };
