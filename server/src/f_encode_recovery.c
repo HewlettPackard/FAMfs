@@ -10,6 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <mpi.h>
 
 #include "log.h"
 #include "unifycr_debug.h"
@@ -26,6 +27,7 @@
 #include "f_layout_ctl.h"
 #include "f_allocator.h"
 #include "fam_stripe.h"
+#include "f_helper.h"
 #include "f_ec.h"
 #include "f_encode_recovery.h"
 #include "f_recovery.h"
@@ -37,7 +39,11 @@ static F_EDR_OPQ_t  *free_s;
 static F_EDR_OPQ_t  *free_m;
 static F_EDR_OPQ_t  *free_l;
 
+static F_RNTFY_t    *rntfy;
+pthread_mutex_t     ntfy_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static atomic_t edr_io_total;
+static atomic_t *enc_ops;
 
 static int edr_quit = 0;
 
@@ -111,9 +117,11 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
     rq->ready = 0;
     rq->state = wr ? F_EDR_WRITE : F_EDR_READ;
     int px = 0, dx = 0;
-    for (int i = 0; i < nchunks; i++) {
 
-	chunk = get_fam_chunk(stripe, i);
+    atomic_set(&rq->busy, nchunks);
+    for (int i = 0; i < nchunks && !rc; i++) {
+        
+        chunk = get_fam_chunk(stripe, i);
         if (rq->op == EDR_OP_ENC) {
             // encode: skip parity on read and data on write
             // remeber wich chunks are data and parity
@@ -122,25 +130,35 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
             else
                 rq->pchnk[px++] = i;
 
-            if ((chunk->data < 0 && !wr) || (chunk->data >= 0 && wr))
+            if ((chunk->data < 0 && !wr) || (chunk->data >= 0 && wr)) {
+                atomic_dec(&rq->busy);
                 continue;
+            }
         } else if (rq->op == EDR_OP_REC) {
             // recover: skip error chunks on read and good ones on write
             // remeber good chunk and failed ones (the latter go as 'parity')
             if (test_bit(i, &rq->fvec)) {
                 rq->pchnk[px++] = i;
-                if (!wr) continue; 
+                if (!wr) {
+                    atomic_dec(&rq->busy);
+                    continue;
+                }
             } else {
                 rq->dchnk[dx++] = i;
-                if (wr) continue;
+                if (wr) {
+                    atomic_dec(&rq->busy);
+                    continue;
+                }
             }
         } else if (rq->op == EDR_OP_VFY) {
             if (chunk->data >= 0)
                 rq->dchnk[dx++] = i;
             else
                 rq->pchnk[px++] = i;
-            if (wr)
+            if (wr) {
+                atomic_dec(&rq->busy);
                 continue;   // verify: don't write and dont't skip
+            }
         } else {
             ASSERT(0);
         }
@@ -165,13 +183,10 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
 	off = 1ULL*stripe->stripe_in_part*chunk_sz + chunk->p_stripe0_off;
 
 	LOG(LOG_DBG3,"%s: %s stripe:%lu - %u/%u/%s "
-		  "on device %u(@%lu) len:%u desc:%p off:0x%16lx mr_key:%lu",
-		  f_get_pool()->mynode.hostname,
-		  wr?"write":"read",rq->ss->stripes[rq->scur],
-		  stripe->extent, stripe->stripe_in_part,
-		  pr_chunk(pr_buf, chunk->data, chunk->parity),
-		  media_id, (unsigned long)*tgt_srv_addr,
-		  len, local_desc, off, fdev->mr_key);
+            "on device %u(@%lu) len:%u desc:%p off:0x%16lx mr_key:%lu",
+            f_get_pool()->mynode.hostname, wr?"write":"read",rq->ss->stripes[rq->scur],
+            stripe->extent, stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
+            media_id, (unsigned long)*tgt_srv_addr, len, local_desc, off, fdev->mr_key);
 
 	do {
 	    rc = wr ? fi_write(tx_ep, buf, len, local_desc, *tgt_srv_addr, off,
@@ -179,16 +194,17 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
                       fi_read(tx_ep, buf, len, local_desc, *tgt_srv_addr, off,
                               fdev->mr_key, (void*)rq);
 
-	    if (rc == 0) {
+	    if (!rc) {
                 atomic_inc(&rq->busy);
                 atomic_inc(&edr_io_total);
                 atomic_inc(&pdev->edr_io_cnt);
                 break;
-	    } else if (rc < 0 && rc != -FI_EAGAIN) {
+	    } else if (rc != -FI_EAGAIN) {
                 fi_err(rc, "%s: fi_%s failed on dev %u",
                        f_get_pool()->mynode.hostname, wr ? "write" : "read", media_id);
+            } else {
+                LOG(LOG_ERR, "fi_%s returned EAGAIN on dev %u", wr ? "write" : "read", media_id);
             }
-            LOG(LOG_ERR, "fi_%s returned EAGAIN on dev %u", wr ? "write" : "read", media_id);
             usleep(1000);
 	} while (rc == -FI_EAGAIN);
     }
@@ -266,8 +282,8 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
                     lo->info.name, lp->part_num, rq->scnt, s, rq->ss->count - x -1);
             }
         } else {
-            LOG(LOG_DBG3, "%s[%d]: stripe %lu in error (%d of %d): %d",
-                lo->info.name, lp->part_num, s, x + 1, rq->ss->count, rq->err);
+            LOG(LOG_ERR, "%s[%d]: stripe %lu in error, not laminated (%d of %d): %d (%d)",
+                lo->info.name, lp->part_num, s, x + 1, rq->ss->count, rq->err, rq->nerr);
         }
 
         rq->scur += rq->scnt;
@@ -275,9 +291,11 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
             // last stripe in set done
             rq->status = rq->nerr ? -EIO : 0;
 
-            // Mark the claim vector to be flushed
-            if (rq->op == EDR_OP_ENC) 
+            // Mark the claim vector to be flushed & enc op finished
+            if (rq->op == EDR_OP_ENC) { 
                 SetLPCVFlush(lp);
+                atomic_dec(&enc_ops[lo->info.conf_id]);
+            }
 
             if (rq->completion) {
                 if (rq->completion(rq, rq->ctx)) {
@@ -337,7 +355,7 @@ static int edr_calc_done(F_EDR_t *rq, void *ctx) {
             goto _err;
 
         }
-        // I/O submitted successfully, this is WP thread context so just retun
+        // I/O submitted successfully, this is WP thread context so just return
         // and wait for the completion event to be read from CQ
         return 0;
     }
@@ -357,7 +375,7 @@ _err:
 //
 static int edr_read_done(F_EDR_t *rq, void *ctx) {
     F_LO_PART_t *lp = rq->lo->lp;
-    int rc = 0;
+    int rc = 0, n = 0;
     int cmd;
     int prio;
 
@@ -372,16 +390,30 @@ static int edr_read_done(F_EDR_t *rq, void *ctx) {
 
     LOG(LOG_DBG3, "stripe batch %lu[%d] (%d of %d): %s read done", 
         rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq));
-    ASSERT(atomic_read(&rq->busy) == 0);
 
-    rq->state = F_EDR_CALC;
-    if ((rc = f_wpool_add_work(lp->wpool, cmd, prio, rq))) {
-        LOG(LOG_ERR, "stripe batch %lu[%d] (%d of %d): %s calc failed:%d",
-            rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq), rc);
+    //ASSERT(atomic_read(&rq->busy) == 0);
+    if ((n = atomic_read(&rq->busy))) {
+        LOG(LOG_ERR, "stripe batch %lu[%d] (%d of %d): %s Busy(%d) <>0, err=%d, nerr=%d",
+            rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq),
+            n, rq->err, rq->nerr);
         rq->nerr++;
-        rq->err = rc;
-        rq->next_call(rq, rq->ctx);
+        rq->err = -EINVAL;
     }
+
+    if (rq->err) {
+        rq->next_call(rq, rq->ctx);
+    } else {
+        rq->state = F_EDR_CALC;
+        if ((rc = f_wpool_add_work(lp->wpool, cmd, prio, rq))) {
+            LOG(LOG_ERR, "stripe batch %lu[%d] (%d of %d): %s calc failed:%d",
+                rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, 
+                EDR_PR_R(rq), rc);
+            rq->nerr++;
+            rq->err = rc;
+            rq->next_call(rq, rq->ctx);
+        }
+    }
+
     return 0;
 }
 
@@ -462,6 +494,7 @@ static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
             LOG(LOG_ERR, "cq got error: %d/%d", cer.err, cer.prov_errno);
             ret = -cer.err;
             rq = (F_EDR_t *)cer.op_context;
+            rq->nerr++;
             rq->err = ret;
             rq->prov_err = cer.prov_errno;
             *prq = rq;
@@ -480,18 +513,13 @@ static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
 static void advance_rq(F_EDR_t *rq) {
     LOG(LOG_DBG3, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur + 1, rq->ss->count);
     if (rq->err) {
-        rq->nerr++;
         LOG(LOG_ERR, "I/O error (%d/%d) on %s rq, s[%d]=%lu, ss cnt=%d, lid=%d",
             rq->err, rq->prov_err, EDR_PR_R(rq), rq->scur, rq->ss->stripes[rq->scur], 
             rq->ss->count, rq->lo->info.conf_id);
     }
     if (atomic_dec_and_test(&rq->busy)) {
-        if (rq->ready || rq->err) {
-            // all ops completed (some may had failed), see what's next
-            rq->next_call(rq, rq->ctx);
-        } else {
-            // not all ops started yet, wait
-        }
+        // all ops completed (some may had failed), see what's next
+        rq->next_call(rq, rq->ctx);
     }
 }
 
@@ -622,8 +650,12 @@ int f_edr_init() {
     ON_NOMEM_RET(free_m = calloc(N, sizeof(F_EDR_OPQ_t)), "free M");
     ON_NOMEM_RET(free_l = calloc(N, sizeof(F_EDR_OPQ_t)), "free L");
 
+    ON_NOMEM_RET(enc_ops = calloc(N, sizeof(atomic_t)), "encode ops cnt");
+    ON_NOMEM_RET(rntfy = calloc(N, sizeof(F_RNTFY_t)), "ranks notify");
+
     ON_NOMEM_RET(edr_encode_tables = calloc(N, sizeof(u8 *)), "encode tables");
     ON_NOMEM_RET(edr_rs_matrices = calloc(N, sizeof(u8 *)), "R-S matricies");
+
 
     // for each layout
     for (int i = 0; i < N; i++) {
@@ -644,6 +676,11 @@ int f_edr_init() {
         free_s[i].idy = EDR_SQ;
         free_m[i].idy = EDR_MQ;
         free_l[i].idy = EDR_LQ;
+        atomic_set(&enc_ops[i], 0);
+
+        rntfy[i].size = 64;
+        rntfy[i].cnt = 0;
+        rntfy[i].ranks = calloc(rntfy[i].size, sizeof(int));
 
         if (!(edr_encode_tables[i] = make_encode_matrix(k, p, &edr_rs_matrices[i]))) {
             LOG(LOG_ERR, "making encode matrix for lo %d", i);
@@ -658,6 +695,37 @@ int f_edr_init() {
 _out:
 
     return rc;
+}
+
+//
+// Add a client rank to notify list
+// "Client" here means compute-node side of the server, i.e. helper/client arm
+//
+void f_edr_add_ntfy(F_LAYOUT_t *lo, int src_rank) {
+    int l = lo->info.conf_id;
+    int i;
+
+    ASSERT(lo->info.chunks - lo->info.data_chunks);
+    pthread_mutex_lock(&ntfy_lock);
+
+    // see if we already have him
+    for (i = 0; i < rntfy[l].cnt; i++)
+        if (rntfy[l].ranks[i] == src_rank)
+            goto _out;
+
+    // extend the list as needed
+    if (i == rntfy[l].size) {
+        rntfy[l].size += rntfy[l].size;
+        rntfy[l].ranks = realloc(rntfy[l].ranks, sizeof(int)*rntfy[l].size);
+        ASSERT(rntfy[l].ranks);
+    }
+
+    rntfy[l].ranks[i] = src_rank;
+    rntfy[l].cnt++;
+
+_out:
+    pthread_mutex_lock(&ntfy_lock);
+    return;
 }
 
 static void free_q(F_EDR_OPQ_t *q) {
@@ -702,6 +770,8 @@ int f_edr_quit() {
         free_q(&free_m[i]);
         free_q(&free_l[i]);
 
+        free(rntfy[i].ranks);
+
         free(edr_encode_tables[i]);
         free(edr_rs_matrices[i]);
     }
@@ -709,6 +779,8 @@ int f_edr_quit() {
     // drop anything that still seats in work q
     free_q(&edr_wq);
     free(edr_encode_tables);
+    free(enc_ops);
+    free(rntfy);
 
     return 0;
 }
@@ -801,13 +873,44 @@ struct ss_data {
 // Encode batch completed callback
 //
 int encode_batch_done_cb(F_EDR_t *rq, void *ctx) {
-	F_LAYOUT_t *lo = rq->lo;;
+	F_LAYOUT_t *lo = rq->lo;
 	F_LO_PART_t *lp = lo->lp;
+        int l = lo->info.conf_id;
 
         LOG(LOG_DBG, "%s[%d]: encode rq (s0=%lu, cnt=%d) completed, status %d, err=%d)", 
             lo->info.name, lp->part_num, rq->ss->stripes[0], rq->ss->count, rq->status, rq->nerr);
 
 	ss_free(rq->ss);
+
+        if (!atomic_read(&enc_ops[l])) {
+            f_ah_ntfy_t msg = {.op = F_NTFY_EC_DONE, .lid = l};
+            F_POOL_t *pool = lo->pool;
+            int rc;
+            F_RNTFY_t ntfy; 
+
+            // no encoding ops in progress on this layout, at least for now
+            // notify remote helpers
+            pthread_mutex_lock(&ntfy_lock);
+            ntfy.cnt = rntfy[l].cnt;
+            ntfy.ranks = alloca(sizeof(int)*ntfy.cnt);
+            memcpy(ntfy.ranks, rntfy[l].ranks, sizeof(int)*ntfy.cnt);
+            rntfy[l].cnt = 0;
+            pthread_mutex_unlock(&ntfy_lock);
+
+            for (int i = 0; i < ntfy.cnt; i++) {
+                LOG(LOG_DBG3, "%s[%d]: ENC done notify rank %d", 
+                    lo->info.name, lp->part_num, ntfy.ranks[i]);
+
+                rc = MPI_Send(&msg, sizeof(msg), MPI_BYTE, ntfy.ranks[i], 
+                              F_TAG_NTFY, pool->helper_comm);
+                if (rc != MPI_SUCCESS) {
+                    LOG(LOG_ERR, "%s[%d]: MPI_Send error %d, ntfy %d", 
+                        lo->info.name, lp->part_num, rc, ntfy.ranks[i]);
+                    continue;
+                }
+            }
+        }
+
 	return 0;
 }
 
@@ -1091,6 +1194,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
         rq->fvec = 0;
         rq->scnt = 1;   // one stripe at a time
         rq->op = EDR_OP_ENC;
+        atomic_inc(&enc_ops[l]);
 
     } else if (*fvec == ~0UL) {
         // VERIFY

@@ -100,8 +100,8 @@ typedef struct f_edr_ {
     int                     op;         // Operation being performed: encode/recover/verify
     F_LAYOUT_t              *lo;        //   and Layout it belongs to
     uint64_t                fvec;       // Bitmap of failed chunks
-    u8                      dchnk[64];  // Data chunk indecies
-    u8                      pchnk[64];  // Data chunk indecies
+    u8                      dchnk[64];  // Data chunks indecies
+    u8                      pchnk[64];  // Parity chunks indecies
     F_EDR_STATE_t           state;      // Request state
     F_EDR_CB_t              next_call;  // Operation end callback
     F_EDR_CB_t              completion; // Request completion callback
@@ -123,6 +123,12 @@ typedef struct f_edr_ {
     int                     nerr;       // Number of errors (only if status != 0)
 
 } F_EDR_t;
+
+typedef struct f_rntfy_ {
+    int     cnt;
+    int     size;
+    int     *ranks;
+} F_RNTFY_t;
 
 /*
  * Submnit Encode/Decode/Recover(/Verify) Request
@@ -206,6 +212,7 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss);
 
 int f_edr_quit();
 int f_edr_init();
+void f_edr_add_ntfy(F_LAYOUT_t *lo, int src_rank);
 
 extern u8 **edr_encode_tables, **edr_rs_matrices;
 

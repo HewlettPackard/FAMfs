@@ -38,6 +38,7 @@
 #include "f_allocator.h"
 #include "mpi_utils.h"
 #include "f_layout_ctl.h"
+#include "f_encode_recovery.h"
 #include "f_helper.h"
 
 extern volatile int exit_flag;
@@ -172,6 +173,10 @@ static void *commit_srv(void *arg) {
             LOG(LOG_ERR, "get layout [%d] info\n", msg->lid);
             continue;
         }
+
+        // if this is protected layout, add to notify list
+        if (lo->info.chunks - lo->info.data_chunks)
+            f_edr_add_ntfy(lo, sts.MPI_SOURCE);
 
         // commit or release stripes and continue, no respose required
         if (msg->cmd == F_AH_COMS) {

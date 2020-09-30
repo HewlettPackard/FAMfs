@@ -25,6 +25,7 @@ typedef enum {
     CMD_SVCRQ     = 0x1,    // request service
     CMD_MOUNT     = 0x2,    // mount FAMfs
     CMD_META      = 0x10,   // file metadata ops
+    CMD_FCLOSE    = 0x11,   // file close op
     CMD_MDGET     = 0x20,   // retrieve file data access metadata
     CMD_UNMOUNT   = 0x31,   // unmount FAMfs
     CMD_QUIT      = 0x32,   // exit command for worker thread
@@ -159,7 +160,12 @@ typedef struct {
                 int         fm_gfid;
                 int         fam_id;
                 int         md_rcnt;
+                int         fm_lid;
             };
+        };
+        struct {
+            int     fid;
+            int     lid;
         };
     };
 } f_svcrq_t;
@@ -181,6 +187,13 @@ typedef struct {
         f_fattr_t       fattr;
     };
 } f_svcrply_t;
+
+typedef struct {
+    uint64_t    sync_bm;
+    uint64_t    edr_bm;
+    uint64_t    wait_bm;
+    int         valid;
+} f_close_ntfy_t;
 
 
 

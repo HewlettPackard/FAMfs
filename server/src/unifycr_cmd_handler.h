@@ -43,6 +43,7 @@ int attach_to_shm(app_config_t *app_config,
                   int app_id, int qid);
 
 void *f_command_thrd(void *arg);
+void *f_notify_thrd(void *arg);
 int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin);
 int f_setup_client(f_svcrq_t *pcmd);
 int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval);
