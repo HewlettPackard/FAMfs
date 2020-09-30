@@ -725,7 +725,7 @@ void f_edr_add_ntfy(F_LAYOUT_t *lo, int src_rank) {
     rntfy[l].cnt++;
 
 _out:
-    pthread_mutex_lock(&ntfy_lock);
+    pthread_mutex_unlock(&ntfy_lock);
     return;
 }
 
