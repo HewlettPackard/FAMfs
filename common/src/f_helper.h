@@ -16,7 +16,10 @@
 
 #define F_MAX_IPC_ME 1024 // max count of Message Elements to snd at once 
 
-#define F_TAG_BASE  65536
+/* helper srv<->cln MPI tag base, individual layouts tags: <bas>+<id> */
+#define F_TAG_BASE  (1U<<24) // 16777216: should not interfere with MDHIM CLIENT_RSP_TAG */
+/* allocator->cln EDR done notification MPI tag */
+#define F_TAG_NTFY  (F_TAG_BASE + F_LAYOUTS_MAX)
 
 typedef struct _f_ah_scme {
     f_stripe_t  str;
@@ -40,9 +43,20 @@ typedef struct _f_ah_ipc {
 } f_ah_ipc_t;
 
 typedef struct _f_ah_ipci {
-    f_ah_ipc_t  hdr;
-    f_stripe_t  str;
+    f_ah_ipc_t      hdr;
+    f_stripe_t      str;
 } f_ah_ipci_t;
+
+typedef enum {
+    F_NTFY_EC_DONE = 1,
+    F_NTFY_RC_DONE,
+    F_NTFY_QUIT
+} f_ntfy_op_t;
+
+typedef struct _f_ah_ntfy_ {
+    f_ntfy_op_t     op;
+    int             lid;
+} f_ah_ntfy_t;
 
 #define F_AH_MSG(var, sz) struct {\
     f_ah_ipc_t      hdr;          \

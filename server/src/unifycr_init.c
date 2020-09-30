@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
     long l;
     f_svcrq_t acmd;
     char qname[MAX_RBQ_NAME];
-    pthread_t lo_thrd[F_CMDQ_MAX];
+    pthread_t lo_thrd[F_CMDQ_MAX], ntfy_thrd;
 
     rc = unifycr_config_init(&server_cfg, argc, argv);
     if (rc != 0)
@@ -276,6 +276,10 @@ int main(int argc, char *argv[])
 		    goto _err;
 		}
 	    }
+            if ((rc = pthread_create(&ntfy_thrd, NULL, f_notify_thrd, NULL))) {
+                LOG(LOG_ERR, "ntfy thread create failed");
+                goto _err;
+            }
 	}
     }
 

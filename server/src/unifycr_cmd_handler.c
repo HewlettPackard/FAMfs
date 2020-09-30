@@ -44,11 +44,17 @@
 #include "unifycr_sock.h"
 #include "unifycr_metadata.h"
 #include "famfs_rbq.h"
+#include "f_pool.h"
+#include "f_layout.h"
+#include "f_helper.h"
 
 extern f_rbq_t *rplyq[MAX_NUM_CLIENTS];
 extern f_rbq_t *cmdq[F_CMDQ_MAX];
 extern f_rbq_t *admq;
 extern volatile int exit_flag;
+
+pthread_mutex_t cntfy_lock = PTHREAD_MUTEX_INITIALIZER;
+f_close_ntfy_t cntfy[MAX_NUM_CLIENTS];
 
 /**
 * handle client-side requests, including init, open, fsync,
@@ -278,7 +284,17 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             /*synchronize both index and file attribute
              *metadata to the key-value store*/
 
-            rply.rc = f_do_fsync(pcmd);
+            if (!(rply.rc = f_do_fsync(pcmd))) {
+                F_LAYOUT_t *lo = f_get_layout(pcmd->fm_lid);
+                ASSERT(lo);
+                if (lo->info.chunks - lo->info.data_chunks) {
+                    // mark this client as having written stuff to this layout
+                    pthread_mutex_lock(&cntfy_lock);
+                    set_bit(pcmd->lid, &cntfy[pcmd->cid].sync_bm);
+                    pthread_mutex_unlock(&cntfy_lock);
+                }
+            }
+
             break;
         }
 
@@ -296,6 +312,31 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
         }
         if ((rply.rc = f_rm_fetch_md(pcmd->cid, pcmd->md_rcnt)))
             LOG(LOG_ERR, "md_get err %d\n", rc);
+        break;
+
+    case CMD_FCLOSE:
+        if (admin) {
+            LOG(LOG_ERR, "non-admin command (%d) on admin queue: %s", cmd, qn);
+            return EINVAL;
+        } else {
+            F_LAYOUT_t *lo = f_get_layout(pcmd->lid);
+            ASSERT(lo);
+
+            int wait = 0;
+            if (lo->info.chunks - lo->info.data_chunks) {
+                // see if EDR is done for this client/layout
+                pthread_mutex_lock(&cntfy_lock);
+                if (test_bit(pcmd->lid, &cntfy[pcmd->cid].sync_bm)) {
+                    // if we saw fsync, see if EDR is also done
+                    wait = test_bit(pcmd->lid, &cntfy[pcmd->cid].edr_bm);
+                    if (wait)
+                        set_bit(pcmd->lid, &cntfy[pcmd->cid].wait_bm);
+                }
+                pthread_mutex_unlock(&cntfy_lock);
+            }
+            if (wait) return 0; // EDR still in progress, do not reply
+        }
+
         break;
 
     case CMD_UNMOUNT:
@@ -330,6 +371,51 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
         LOG(LOG_ERR, "filed to post reply to client %d: %s", pcmd->cid, strerror(-rc));
     }
     return rc;
+}
+
+void *f_notify_thrd(void *arg) {
+    int clients[MAX_NUM_CLIENTS], cnt = 0, rc = 0;
+    f_ah_ntfy_t msg;
+    F_POOL_t *pool = f_get_pool();
+    MPI_Status sts;
+    f_svcrply_t rply = {.rc = 0, .more = 0, .ackcode = CMD_FCLOSE};
+
+    ASSERT(pool);
+
+    while (1) {
+        rc = MPI_Recv(&msg, sizeof(msg), MPI_BYTE, MPI_ANY_SOURCE,
+                      F_TAG_NTFY, pool->helper_comm, &sts);
+        if  (rc != MPI_SUCCESS || sts.MPI_ERROR != MPI_SUCCESS) {
+            LOG(LOG_ERR, "MPI_Recv returnd error %d/sts=%d", rc, sts.MPI_ERROR);
+            continue;
+        }
+        if (msg.op == F_NTFY_QUIT)
+            break;
+        ASSERT(msg.op == F_NTFY_EC_DONE);
+        LOG(LOG_DBG, "Got EDR DONE on lid %d", msg.lid);
+
+        pthread_mutex_lock(&cntfy_lock);
+        for (int i = 0; i < MAX_NUM_CLIENTS; i++) {
+            if (test_bit(msg.lid, &cntfy[i].wait_bm)) {
+                // client is waiting on close for EDR to finish
+                clients[cnt++] = i;
+                clear_bit(msg.lid, &cntfy[i].wait_bm);
+                clear_bit(msg.lid, &cntfy[i].sync_bm);
+                clear_bit(msg.lid, &cntfy[i].edr_bm);
+            }
+        }
+        pthread_mutex_unlock(&cntfy_lock);
+
+        for (int i = 0; i < cnt; i++) {
+            LOG(LOG_DBG, "Sending CLOSE reply to rank %d, lid %d", clients[i], msg.lid);
+            if ((rc = f_rbq_push(rplyq[clients[i]], &rply, RBQ_TMO_1S))) {
+                LOG(LOG_ERR, "failed to post CLOSE reply to client %d: %s", clients[i], strerror(-rc));
+            }
+        }
+        cnt = 0;
+    }
+
+    return NULL;
 }
 
 void *f_command_thrd(void *arg) {

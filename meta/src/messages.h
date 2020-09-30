@@ -92,7 +92,7 @@ extern "C"
 #define CLIENT_RESPONSE_MSG       4
 #define CLIENT_RESPONSE_SIZE_MSG  5
 
-#define CLIENT_RSP_TAG_INDEX_SHIFT 8 /* CLIENT_RESPONSE tag: 8..15 - index_id; 0..7 - message type */
+#define CLIENT_RSP_TAG_INDEX_SHIFT 4 /* CLIENT_RESPONSE tag: 4..11 - index_id; 0..3 - message type */
 #define CLIENT_RSP_TAG_INDEX_MAX   255
 #define CLIENT_RSP_TAG(index, msg_type) (((int)index & CLIENT_RSP_TAG_INDEX_MAX) << CLIENT_RSP_TAG_INDEX_SHIFT \
                                          | (unsigned char)msg_type)

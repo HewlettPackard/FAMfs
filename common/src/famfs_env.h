@@ -193,7 +193,6 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define UNIFYCR_EXTENT_SIZE	(1 * GIB)
 #define UNIFYCR_EXTENT0_OFFSET	0
 #define UNIFYCR_ION_COUNT	1
-#define UNIFYCR_LAYOUTS_COUNT	1
 #define LAYOUT0_NAME		"1D:1M"
 #define LAYOUT_SQ_DEPTH		4096	/* preallocated stripes queue size per layout and compute node */
 #define LAYOUT_SQ_LWM		25	/* low water mark for preallocated queue */

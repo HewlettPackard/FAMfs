@@ -98,6 +98,8 @@ extern char external_data_dir[1024];
 extern char external_meta_dir[1024];
 extern int app_id;
 
+int wait_edr_on_close = 1;  // *FIXME* this should be driven by config file
+
 
 /* FAM */
 extern F_POOL_t *pool;
@@ -356,6 +358,7 @@ static int client_sync_md(unifycr_filemeta_t *meta, int fsync_tmo) {
 
     f_rbq_t *cq = lo_cq[meta->loid];
     ASSERT(cq);
+    c.fm_lid = meta->loid;
 
     /* make Helper to send metadata to RS */
     if ((rc = f_rbq_push(cq, &c, 10*RBQ_TMO_1S))) {
@@ -1243,6 +1246,31 @@ static int famfs_fid_close(int fid)
 	      fid, lo->info.name, meta->stripes);
 	return UNIFYCR_FAILURE;
     }
+
+    if ((lo->info.chunks - lo->info.data_chunks) && wait_edr_on_close) {
+        f_svcrq_t   c = {.opcode = CMD_FCLOSE, .cid = local_rank_idx, .fid = fid, .lid = meta->loid};
+        f_svcrply_t r;
+        int lid = meta->loid;
+        f_rbq_t *cq = lo_cq[lid];
+
+        if ((rc = f_rbq_push(cq, &c, RBQ_TMO_1S))) {
+            ERROR("%s: can't push FCLOSE cmd, layout %d: %s(%d)",
+                  f_get_pool()->mynode.hostname, lid, strerror(-rc), rc);
+            return UNIFYCR_FAILURE;
+        }
+
+        int n = 0;
+        do {
+            rc = f_rbq_pop(rplyq, &r, RBQ_TMO_1M);
+            if (++n > 3) break;
+        } while (rc == -EAGAIN);
+        if (rc) {
+            ERROR("%s: can't push FCLOSE cmd, layout %d: %s(%d)",
+                  f_get_pool()->mynode.hostname, lid, strerror(-rc), rc);
+            return UNIFYCR_FAILURE;
+        }
+    }
+
     return UNIFYCR_SUCCESS;
 }
 
