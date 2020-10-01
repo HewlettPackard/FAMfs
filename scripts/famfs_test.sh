@@ -316,9 +316,9 @@ if ((tVERBOSE)); then
 fi
 
 # Set constants in config file (FAMFS_CONF)
-moniker="${oDATA}D:${oCHUNK}"
 #copy FAMFS config file to current dir
 if [ ! -f "$FAMFS_CONF" ]; then
+    moniker="${oDATA}D:${oCHUNK}"
     cp -Pf ${SCRIPT_DIR}/famfs.conf.template ${WRK_DIR}/${FAMFS_CONF}
     update_ini "layout" "name" "\"$moniker\""
     update_ini "devices" "extent_size" "${ExtSize}"
@@ -329,8 +329,8 @@ if [ ! -f "$FAMFS_CONF" ]; then
     fi
     ((oMultiEP))&& SingleEP="false" || SingleEP="true"
     update_ini devices single_ep $SingleEP
+    echo "Layout moniker: $moniker"
 fi
-echo "Layout moniker: $moniker"
 echo "configuration file: ${PWD}/${FAMFS_CONF}"
 
 for ((si = 0; si < ${#SrvIter[*]}; si++)); do
