@@ -2628,7 +2628,6 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     if (*md_cnt) {
         // Have prev MD in cache, see if anything matches
-        //tot_sz = match_rq_and_read(lo, read_req, &count,
         tot_sz = match_rq_and_read(lo, rq_ptr, &read_req_set.count,
                                    md_ptr, *md_cnt, tot_sz);
         if (tot_sz < 0) {
@@ -2678,6 +2677,12 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
               pool->mynode.hostname, lid, strerror(-rc), rc);
         return -EIO;
     }
+
+    /* TODO: Add requrst ranges tree and fill gaps only */
+    // fill user buffer with zeros
+    for (i = 0; i < rq_cnt; i++)
+        memset(rq_ptr[i].buf, 0, rq_ptr[i].length);
+
     if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
         ERROR("can't get reply to MD_GET from layout %d: %s(%d)", lid, strerror(-rc), rc);
         return -EIO;
@@ -2699,17 +2704,15 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 	      tot_sz, ttl, *md_cnt, elapsed(&md_start));
 #endif
 
-    //tot_sz = match_rq_and_read(lo, read_req, &count,
+    // see if anything matches
     tot_sz = match_rq_and_read(lo, rq_ptr, &read_req_set.count,
                                md_ptr, *md_cnt, tot_sz);
     if (tot_sz < 0) {
         printf("lf_read error\n");
         return (int)tot_sz;
     }
-
     if (tot_sz) {
-        printf("residual length not 0: %ld\n", tot_sz);
-        return -ENODATA;
+        DEBUG_LVL(7, "residual length: %ld\n", tot_sz);
     }
 
     return 0;
