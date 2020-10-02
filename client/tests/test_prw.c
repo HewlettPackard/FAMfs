@@ -603,13 +603,18 @@ int main(int argc, char *argv[]) {
 
     double read_bw = (double)blk_sz*seg_num/1048576/read_time;
     double agg_read_bw;
+    long e_sum;
 
     double max_read_time, min_read_bw;
     MPI_Reduce(&read_bw, &agg_read_bw, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&read_time, &max_read_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&e, &e_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
+        if (e_sum)
+            fprintf(stderr, "Data verification errors: %ld\n", e_sum);
+
         printf("### Aggregate Read BW is %.3lf MiB/s, Min Read BW is %.3lf\n", agg_read_bw,  min_read_bw);
         fflush(stdout);
     }
@@ -622,6 +627,8 @@ int main(int argc, char *argv[]) {
 	    if ((rc = unifycr_shutdown()))
 		fprintf(stderr, "error on FS shutdown: %d\n", rc);
     }
+    if (e_sum)
+        rc = 1; /* data verification failure */
 
     famsim_stats_free(famsim_ctx);
 
