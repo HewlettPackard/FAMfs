@@ -304,7 +304,7 @@ if ((ompi)); then
 fi
 if ((mpich)); then
   if ((oTCP)); then
-    oMPIchEnv+=" -x MPIR_CVAR_OFI_USE_PROVIDER=sockets"
+    oMPIchEnv+=" -genv MPIR_CVAR_OFI_USE_PROVIDER=sockets"
   fi
 fi
 if ((tVERBOSE)); then
