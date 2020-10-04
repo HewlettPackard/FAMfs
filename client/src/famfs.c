@@ -109,6 +109,8 @@ f_rbq_t *rplyq;
 f_rbq_t *lo_cq[F_CMDQ_MAX];
 
 bool famfs_local_extents; /* enable tracking of local extents (write cache config option) */
+static unsigned long shm_recv_max; /* max number of records in mdhim receive buffer in SHM */
+
 
 static int f_stripe_write(int fid, long pos, unifycr_filemeta_t *meta,
     const void *buf, size_t count, F_LAYOUT_t *lo);
@@ -1474,6 +1476,10 @@ int famfs_mount(const char prefix[] __attribute__((unused)),
     pool->dbg_rank = rank; /* use application's rank for the log and error messages */
     /* enable tracking of local ranges on write and/or on read */
     famfs_local_extents = PoolWCache(pool) || PoolRCache(pool);
+    /* metadata receive buffer size: max KV index */
+    shm_recv_max = shm_recv_size/sizeof(fsmd_kv_t);
+    ASSERT( shm_recv_max>0 );
+    shm_recv_max--;
 
     /* DEBUG */
     if (pool->verbose && rank == 0) {
@@ -1959,9 +1965,6 @@ static int lf_read(F_LAYOUT_t *lo, char *buf, size_t len,
     //struct famsim_stats *stats_fi_rd;
     int rc = 0;
 
-    DEBUG_LVL(5, "%s: read %zu bytes @%lu from stripe %lu",
-              lfs_ctx->pool->mynode.hostname, len, stripe_offset, s);
-
     /* new physical stripe? */
     if (!lo->fam_stripe ||
         lo->fam_stripe->stripe_0 + lo->fam_stripe->stripe_in_part != s)
@@ -2037,8 +2040,8 @@ static int f_stripe_write(
     key_slice_range = lo->info.stripe_sz;
     f_stripe_t s = stripe->id; /* global stripe number */
 
-    DEBUG_LVL(5, "%s: write %zu bytes @%ld (logical %lu) to stripe %lu @%lu",
-              lfs_ctx->pool->mynode.hostname, count, pos, stripe_id, s, stripe_offset);
+    DEBUG_LVL(5, "%s: write to stripe %lu @%lu %zu bytes pos %ld (logical %lu)",
+              lfs_ctx->pool->mynode.hostname, s, stripe_offset, count, pos, stripe_id);
 
     ASSERT( stripe_offset + count <= (unsigned long)key_slice_range );
 
@@ -2089,31 +2092,7 @@ static int f_stripe_write(
     }
 
     STATS_START(start);
-#if 0
-    /* find the corresponding file attr entry and update attr*/
-    md_index_t cur_idx;
-    f_fattr_t tmp_meta_entry;
-    tmp_meta_entry.fid = fid;
-    f_fattr_t *ptr_meta_entry
-        = (f_fattr_t *)bsearch(&tmp_meta_entry,
-                                     unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                                     sizeof(f_fattr_t), compare_fattr);
-    if (ptr_meta_entry !=  NULL) {
-        ptr_meta_entry->file_attr.st_size = pos + count;
-    }
-    cur_idx.fid = ptr_meta_entry->gfid;
-    cur_idx.file_pos = pos;
-    cur_idx.length = count;
-    cur_idx.mem_pos = stripe_offset;
-    cur_idx.sid = s;
-    cur_idx.loid = meta->loid;
 
-    /*split the write requests larger than key_slice_range into
-     * the ones smaller than key_slice_range
-     * */
-    unifycr_split_index(&cur_idx, &tmp_index_set,
-                        key_slice_range);
-#else
     md_index_t *cur = &tmp_index_set.idxes[0];
     tmp_index_set.count = 1;
     cur->fid = meta->gfid;
@@ -2123,7 +2102,6 @@ static int f_stripe_write(
     cur->sid = s;
     cur->loid = meta->loid;
 
-#endif
     int i = 0;
     if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
         < (long)unifycr_max_index_entries) {
@@ -2334,14 +2312,20 @@ static void famfs_split_read_requests(read_req_t *cur_read_req,
     }
 }
 
-static inline void md_cache_copy_item(fsmd_kv_t *md, struct seg_tree_node *n, int lid, int fid)
+static inline void md_cache_copy_item(fsmd_kv_t *md, int *pos, struct seg_tree_node *n, int lid, int fid)
 {
-    md->k.pk.loid = lid;
-    md->k.pk.fid = fid;
-    md->k.offset = n->start;
-    md->v.len = n->end - n->start + 1;
-    md->v.stripe = n->stripe;
-    md->v.addr = n->ptr;
+    int i = *pos;
+    ASSERT( IN_RANGE(i, 0, (int)shm_recv_max) ); 
+    md[i].k.pk.loid = lid;
+    md[i].k.pk.fid = fid;
+    md[i].k.offset = n->start;
+    md[i].v.len = n->end - n->start + 1;
+    md[i].v.stripe = n->stripe;
+    md[i].v.addr = n->ptr;
+
+    /* do not duplicate */
+    if (i == 0 || memcmp(&md[i-1], &md[i], sizeof(fsmd_kv_t)))
+        (*pos)++;
 }
 
 /* reset and fill md-> array of fsmd_kv_t with cached metadata which fit given read requests */
@@ -2377,7 +2361,8 @@ static void md_cache_fetch(struct seg_tree *extents, read_req_t *rq, int rq_cnt,
                   * bump up to the first byte past the end
                   * of this extent */
                  expected_start = next->end + 1;
-                 md_cache_copy_item(&md[k++], next, lid, fid);
+                 /* avoid duplicate */
+                 md_cache_copy_item(md, &k, next, lid, fid);
             } else {
                  /* there is a gap between extents so we're missing
                   * some bytes */
@@ -2400,16 +2385,28 @@ static void md_cache_fetch(struct seg_tree *extents, read_req_t *rq, int rq_cnt,
         if (!have_in_cache)
             continue;
 
-        for (j = md_cnt; j < k; j++) {
-	    DEBUG_LVL(7, "fetch md[%d] K lo=%d fid=%d @%lu V s=%lu len=%lu @%lu"
-			 " for rq[%d] fid=%d len=%zu @%lu",
-		      j, md[j].k.pk.loid, md[j].k.pk.fid, md[j].k.offset,
-		      md[j].v.stripe, md[j].v.len, md[j].v.addr,
-		      i, rq[i].fid, rq_len, rq[i].offset);
+        if (unifycr_debug_level >= 7) {
+            for (j = md_cnt; j < k; j++) {
+                ASSERT( lid == md[j].k.pk.loid );
+                ASSERT( fid == md[j].k.pk.fid );
+                if (j == md_cnt) {
+                    DEBUG_LVL(7, "fetch md[%d] K lo=%d fid=%d @%lu V s=%lu len=%lu @%lu"
+                                 " for rq[%d] off/len=%zu/%lu",
+                              j, lid, fid, md[j].k.offset,
+                              md[j].v.stripe, md[j].v.len, md[j].v.addr,
+                              i, rq[i].offset, rq_len);
+                } else {
+                    DEBUG_LVL(7, "fetch md[%d] K lo=%d fid=%d @%lu V s=%lu len=%lu @%lu"
+                                 " for rq[%d]",
+                              j, lid, fid, md[j].k.offset,
+                              md[j].v.stripe, md[j].v.len, md[j].v.addr,
+                              i);
+                }
+            }
         }
 
         /* copy the metadata */
-        md_cnt = j;
+        md_cnt = k;
     }
 
     seg_tree_unlock(extents);
@@ -2460,29 +2457,45 @@ static void md_cache_add(fsmd_kv_t *md, int md_cnt)
 	seg_tree_unlock(&meta->extents);
 }
 
-#define RQ_SERVED -1
+/*
+ * Match read requests rq[*rq_cnt_p] to metadata md[md_cnt], read FAM and return
+ * unmatched requests in rq.
+ */
 static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int *rq_cnt_p,
-    fsmd_kv_t *md, int md_cnt, size_t ttl)
+    fsmd_kv_t *md, int md_cnt, size_t ttl, int force_read)
 {
+    md_index_t *cur = tmp_index_set.idxes; /* temporary storage for rq[i] matches, [n] */ 
+    size_t nread = 0;
     int lid = lo->info.conf_id;
     int rq_cnt = *rq_cnt_p;
-    int i, j, rc;
-    for (i = 0; i < rq_cnt; i++) {
+    int i, j, k, n, rc;
+
+    /* i -> IN rq[i], k -> OUT rq[k] */
+    for (i = k = 0; i < rq_cnt && ttl > 0; i++) {
         off_t fam_off;
         size_t fam_len, rq_len = rq[i].length;
         off_t rq_b = rq[i].offset;
         off_t rq_e = rq_b + rq_len;
         char *bufp;
+        uint64_t s;
 
-        for (j = 0; j < md_cnt; j++) {
+        DEBUG_LVL(7, "rq[%d] %s fid=%d off/len=%zu/%lu buf=%p",
+		  i, force_read?"F":"",
+                  rq[i].fid, rq[i].offset, rq_len, rq[i].buf);
+
+        /* j -> md[j], n -> cur[n] */
+        nread = 0;
+        tmp_index_set.count = n = 0;
+        for (j = 0; j < md_cnt && ttl > 0; j++) {
+            s          = md[j].v.stripe;
             off_t md_b = md[j].k.offset;
             off_t md_e = md[j].k.offset + md[j].v.len;
 
-	    DEBUG_LVL(7, "match md[%d] K lo=%d fid=%d @%lu V s=%lu len=%lu @%lu,"
-			 " rq[%d] fid=%d len=%zu @%lu buf=%p, ttl:%zu",
+	    DEBUG_LVL(7, "  md[%d] K lo=%d fid=%d @%lu V s=%lu len=%lu @%lu,"
+			 " ttl:%zu",
 		      j, md[j].k.pk.loid, md[j].k.pk.fid, md[j].k.offset,
-		      md[j].v.stripe, md[j].v.len, md[j].v.addr,
-		      i, rq[i].fid, rq_len, rq[i].offset, rq[i].buf, ttl);
+		      s, md[j].v.len, md[j].v.addr,
+		      ttl);
 
             fam_off = fam_len = 0;
             if (md[j].k.pk.loid != lid || md[j].k.pk.fid != rq[i].fid)
@@ -2507,45 +2520,82 @@ static ssize_t match_rq_and_read(F_LAYOUT_t *lo, read_req_t *rq, int *rq_cnt_p,
 
             if (fam_len) {
                 ASSERT( fam_len <= rq_len );
-                bool served = (fam_len == rq_len);
-                //fam_len = min(fam_len, ttl);
+                fam_len = min(fam_len, ttl);
+                nread += fam_len;
 
-                DEBUG_LVL(6, "lo %d fid %d read %lu bytes from stripe %lu @%lu to %lu",
-                          lid, rq[i].fid, fam_len, md[j].v.stripe, fam_off, bufp-rq[i].buf);
+                DEBUG_LVL(6, "rq[%d] match [%d] %lu bytes @%lu to buf @%lu, rem: %zu",
+                          i, j, fam_len, fam_off, bufp-rq[i].buf, nread);
 
-                if ((rc = lf_read(lo, bufp, fam_len, fam_off, md[j].v.stripe)))
-                {
-                    ioerr("lf_read failed ret:%d", rc);
-                    return (ssize_t)rc;
-                }
+                // forced segment read
+                if (force_read) {
+                    DEBUG_LVL(5, "%s: read from stripe %lu seg @%lu %zu bytes to pos %ld",
+                              lfs_ctx->pool->mynode.hostname, s,
+                              fam_off, fam_len, rq_b+bufp-rq[i].buf);
 
-                /* count read bytes and mark rq if fully served */
-                if (served) {
-                    rq[i].lid = RQ_SERVED;
-                     ttl -= fam_len;
-                    if (ttl == 0) {
-                        *rq_cnt_p = 0;
-                        return 0;
+                    if ((rc = lf_read(lo, bufp, fam_len, fam_off, s)))
+                    {
+                        ioerr("lf_read failed ret:%d", rc);
+                        return (ssize_t)rc;
                     }
+                    ttl -= fam_len;
+
+                } else {
+                    // store segment metadata in temp array
+                    // cur->loid = lid;
+                    // cur->fid = rq[i].fid;
+                    cur[n].file_pos = bufp - rq[i].buf;
+                    cur[n].mem_pos  = fam_off;
+                    cur[n].length   = fam_len;
+                    cur[n].sid      = s;
+                    n++;
                 }
             }
         }
+
+        /* evict rq which is fully served */
+        if (nread != rq_len) {
+            if (k < i)
+                memcpy(&rq[k], &rq[i], sizeof(read_req_t));
+            k++;
+        } else {
+            if (!force_read) {
+                // read all segments of rq[i]
+                for (j = 0; j < n && ttl > 0; j++) {
+                    bufp    = cur[j].file_pos + rq[i].buf;
+                    s       = cur[j].sid;
+                    fam_off = cur[j].mem_pos;
+                    fam_len = cur[j].length;
+
+                    DEBUG_LVL(5, "%s: read from stripe %lu seg:%d @%lu %zu bytes to pos %ld",
+                              lfs_ctx->pool->mynode.hostname, s, j,
+                              fam_off, fam_len, rq_b+cur[j].file_pos);
+
+                    if ((rc = lf_read(lo, bufp, fam_len, fam_off, s)))
+                    {
+                        ioerr("lf_read failed ret:%d", rc);
+                        return (ssize_t)rc;
+                    }
+                    ttl -= fam_len;
+                    if (ttl == 0)
+                        break;
+                }
+            }
+            DEBUG_LVL(7, "rq[%d] fullfilled", i);
+        }
     }
 
-    /* evict rq if fully served */
-    for (i = 0, j = 0; i < rq_cnt; i++) {
-        if (rq[i].lid == RQ_SERVED)
-            continue;
-        if (j < i)
-            memcpy(&rq[j], &rq[i], sizeof(read_req_t));
-        j++;
+    if (ttl == 0 && i < rq_cnt) {
+        ERROR("%s: read premature end, %d request(s) not served, lid:%d fid:%d nread:%zu",
+              lfs_ctx->pool->mynode.hostname, rq_cnt-i, lid, rq[i].fid, nread);
+        *rq_cnt_p = 0;
+        errno = EIO;
+        return -1;
     }
-    ASSERT(j > 0);
-    *rq_cnt_p = j;
+
+    *rq_cnt_p = k;
 
     return ttl;
 }
-#undef RQ_SERVED
 
 #define DEBUG_RC 1
 #ifdef DEBUG_RC
@@ -2600,12 +2650,10 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     qsort(read_req, count, sizeof(read_req_t), compare_read_req);
 
-    DEBUG_LVL(6, "lid:%d read %d request(s):",
-	      lid, count);
     for (i = 0; i < count; i++) {
-        DEBUG_LVL(6, "  [%d] fid=%d off/len=%ld/%ld buf=%p",
-		  i, read_req[i].fid, read_req[i].offset, read_req[i].length,
-		  read_req[i].buf);
+        DEBUG_LVL(6, "rq[%d] (%d) lid=%d fid=%d off/len=%ld/%ld buf=%p",
+                  i, count, lid, read_req[i].fid,
+                  read_req[i].offset, read_req[i].length, read_req[i].buf);
     }
 
     /* split request so it may overlap one RS boundary at most */
@@ -2629,7 +2677,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     if (*md_cnt) {
         // Have prev MD in cache, see if anything matches
         tot_sz = match_rq_and_read(lo, rq_ptr, &read_req_set.count,
-                                   md_ptr, *md_cnt, tot_sz);
+                                   md_ptr, *md_cnt, tot_sz, 0);
         if (tot_sz < 0) {
             printf("lf_read error\n");
             return (int)tot_sz;
@@ -2637,7 +2685,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
 #ifdef DEBUG_RC
 	if (tot_sz < ttl)
-	    DEBUG_LVL(7, "hit:%lu %d of %d, sz:%ld of %lu",
+	    DEBUG_LVL(7, "hit:%lu %d of %d reqs, remaining sz:%ld of %lu",
 		      ++c_hit, (count - read_req_set.count), count,
 		      tot_sz, ttl);
 #endif
@@ -2663,7 +2711,7 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
 
     STATS_START(start);
 
-    DEBUG_LVL(6, "MD/read: loid:%d poll %d rq:", lid, rq_cnt);
+    DEBUG_LVL(6, "read MD loid:%d %d Rqs:", lid, rq_cnt);
     for (i = 0; i < rq_cnt; i++) {
         DEBUG_LVL(7, "  [%d] fid=%d off/len=%ld/%ld",
 		  i, md_rq[i].src_fid, md_rq[i].offset, md_rq[i].length);
@@ -2699,14 +2747,14 @@ int famfs_fd_logreadlist(read_req_t *read_req, int count)
     UPDATE_STATS(md_fg_stat, *md_cnt, *md_cnt*sizeof(fsmd_kv_t), start);
 
 #ifdef DEBUG_RC
-    DEBUG_LVL(7, "miss:%lu %d, sz:%ld of %ld, MD records found:%d time:%lu",
-	      ++c_miss, read_req_set.count,
-	      tot_sz, ttl, *md_cnt, elapsed(&md_start));
+    DEBUG_LVL(7, "miss:%lu sz:%ld of %ld, MD records found:%d for %d reqs, time:%lu",
+	      ++c_miss,
+	      tot_sz, ttl, *md_cnt, rq_cnt, elapsed(&md_start));
 #endif
 
     // see if anything matches
     tot_sz = match_rq_and_read(lo, rq_ptr, &read_req_set.count,
-                               md_ptr, *md_cnt, tot_sz);
+                               md_ptr, *md_cnt, tot_sz, 1);
     if (tot_sz < 0) {
         printf("lf_read error\n");
         return (int)tot_sz;

@@ -912,41 +912,52 @@ static int merge_kv(char ***out_key, int **out_key_len, char ***out_val, int **o
     int *tmp_records_cnt, int *tmp_out_cap,
     const char *new_key, const char *new_val, int key_len, int val_len)
 {
-	int i = *tmp_records_cnt - 1;
-	ASSERT( i >= 0 );
-	long offset = UNIFYCR_OFFSET((*out_key)[i]);
-	long len = UNIFYCR_LEN((*out_val)[i]);
-	long new_offset = UNIFYCR_OFFSET(new_key);
-	long new_len = UNIFYCR_LEN(new_val);
+	int i = *tmp_records_cnt;
 
-	/* Is current range included in new one ? */
-	if (offset >= new_offset && (offset + len) <= (new_offset + new_len)) {
+	if (i-- > 0) {
+	    unsigned long s = FAMFS_STRIPE((*out_val)[i]);
+	    unsigned long new_s = FAMFS_STRIPE(new_val);
+	    unsigned long fid = UNIFYCR_FID((*out_key)[i]);
+	    unsigned long new_fid = UNIFYCR_FID(new_key);
+
+	    /* In the same stripe? */
+	    if (fid == new_fid && s == new_s) {
 		ASSERT( key_len == (*out_key_len)[i] );
 		ASSERT( val_len == (*out_val_len)[i] );
-		/* Update KV */
-		if (offset > new_offset || (offset + len) < (new_offset + new_len)) {
-			memcpy((*out_key)[i], new_key, key_len);
-			memcpy((*out_val)[i], new_val, val_len);
+		long offset = UNIFYCR_OFFSET((*out_key)[i]);
+		long len = UNIFYCR_LEN((*out_val)[i]);
+		long new_offset = UNIFYCR_OFFSET(new_key);
+		long new_len = UNIFYCR_LEN(new_val);
 
-			mlog(MDHIM_SERVER_DBG, "update [%d] lid=%d fid=%d off/len=%lu/%lu sid=%lu addr=%lu",
-			     i, FAMFS_PK_LID(new_key), FAMFS_PK_FID(new_key),
-			     UNIFYCR_OFFSET(new_key), UNIFYCR_LEN(new_val),
-			     FAMFS_STRIPE(new_val), UNIFYCR_ADDR(new_val));
+		/* Is new range included in previous one ? */
+		if (new_offset >= offset && (new_offset + new_len) <= (offset + len)) {
+		    /* merge */
+		    return 0;
+		} else if (offset >= new_offset && (offset + len) <= (new_offset + new_len)) {
+		    /* Update KV */
+		    memcpy((*out_key)[i], new_key, key_len);
+		    memcpy((*out_val)[i], new_val, val_len);
+
+		    mlog(MDHIM_SERVER_DBG, "update [%d] lid=%d fid=%d off/len=%lu/%lu sid=%lu addr=%lu",
+			 i, FAMFS_PK_LID(new_key), FAMFS_PK_FID(new_key),
+			 UNIFYCR_OFFSET(new_key), UNIFYCR_LEN(new_val),
+			 FAMFS_STRIPE(new_val), UNIFYCR_ADDR(new_val));
+		    return 0;
 		}
-		return 0;
-	} else {
-		/* Add KV */
-		char *ret_key = malloc(key_len);
-		char *ret_val = malloc(val_len);
-
-		memcpy(ret_key, new_key, key_len);
-		memcpy(ret_val, new_val, val_len);
-
-		(void)add_kv(out_key, out_key_len, out_val,
-			     out_val_len, tmp_records_cnt, tmp_out_cap,
-			     ret_key, ret_val, key_len, val_len);
-		return 1;
+	    }
 	}
+
+	/* Add KV */
+	char *ret_key = malloc(key_len);
+	char *ret_val = malloc(val_len);
+
+	memcpy(ret_key, new_key, key_len);
+	memcpy(ret_val, new_val, val_len);
+
+	(void)add_kv(out_key, out_key_len, out_val,
+		     out_val_len, tmp_records_cnt, tmp_out_cap,
+		     ret_key, ret_val, key_len, val_len);
+	return 1;
 }
 
 /**
@@ -1020,13 +1031,13 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 		const char *ret_key, *ret_val;
 		size_t len;
 
-		 mlog(MDHIM_SERVER_DBG, "Rsp %dth lid=%d fid=%d str_sz=%zu key_len=%d off/len=%ld/%ld in stripe %lu",
-		    j, loid, FAMFS_PK_FID((*out_key)[j]), key_slice_size, klen,
-		    offset, UNIFYCR_LEN((*out_val)[j]), s);
+		mlog(MDHIM_SERVER_DBG, "Rsp %dth lid=%d fid=%d str_sz=%zu key_len=%d off/len=%ld/%ld in stripe %lu",
+		     j, loid, FAMFS_PK_FID((*out_key)[j]), key_slice_size, klen,
+		     offset, UNIFYCR_LEN((*out_val)[j]), s);
 
 		while (leveldb_iter_valid(iter)) {
 			ret_val = leveldb_iter_value(iter, &len);
-			if (!ret_val || FAMFS_STRIPE(ret_val) != s || (int)len != vlen)
+			if (!ret_val || (int)len != vlen || FAMFS_STRIPE(ret_val) != s)
 				break;
 			ret_key = leveldb_iter_key(iter, &len);
 			if (!ret_key || (int)len != klen)
@@ -1042,12 +1053,11 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 
 			leveldb_iter_next(iter);
 		}
- mlog(MDHIM_SERVER_DBG, "Rsp while done");
 	}
 	*out_records_cnt = tmp_records_cnt;
 
 	leveldb_iter_destroy(iter);
- mlog(MDHIM_SERVER_DBG, "Rsp exit, %d records", tmp_records_cnt);
+	mlog(MDHIM_SERVER_DBG, "Rsp exit, %d records", tmp_records_cnt);
 	return 0;
 }
 
@@ -1155,7 +1165,7 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 			UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
 			UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
 
-			add_kv(out_key, out_key_len, out_val, out_val_len, 
+			(void)merge_kv(out_key, out_key_len, out_val, out_val_len, 
                 tmp_records_cnt, tmp_out_cap, ret_out_key, ret_out_val, 
                 tmp_key_len, tmp_val_len);
 
@@ -1220,7 +1230,7 @@ int leveldb_process_range(leveldb_iterator_t *iter,
 				UNIFYCR_LEN(ret_out_val) = tmp_end - UNIFYCR_OFFSET(start_key) + 1;
 				UNIFYCR_OFFSET(ret_out_key) = UNIFYCR_OFFSET(start_key);
 
-				add_kv(out_key, out_key_len, out_val, out_val_len, 
+				(void)merge_kv(out_key, out_key_len, out_val, out_val_len, 
                     tmp_records_cnt, tmp_out_cap, 
                     ret_out_key, ret_out_val, 
                     tmp_key_len, tmp_val_len);
@@ -1285,7 +1295,7 @@ int handle_next_half(
 			UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) +1;
 			UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(ret_key) - UNIFYCR_OFFSET(start_key);
 
-			add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+			(void)merge_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                 ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
 
 			return 0;
@@ -1306,7 +1316,7 @@ int handle_next_half(
 			memcpy(ret_out_key, ret_key, tmp_key_len);
 			memcpy(ret_out_val, ret_val, tmp_val_len);
 
-			add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+			(void)merge_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                 ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
 
 			while (1) {
@@ -1355,7 +1365,7 @@ int handle_next_half(
 				memcpy(ret_out_key, ret_key, tmp_key_len);
 				memcpy(ret_out_val, ret_val, tmp_val_len);
 
-				add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+				(void)merge_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                     ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
 			}
 
@@ -1376,7 +1386,7 @@ int handle_next_half(
 				UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) + 1;
 				UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val);
 
-				add_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
+				(void)merge_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                     ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
 
 			}
