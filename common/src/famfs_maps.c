@@ -561,6 +561,11 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (b)
 	SetPoolRCache(p);
 
+    /* encode section */
+    if (configurator_bool_val(c->encode_wait_on_close, &b)) goto _noarg;
+    if (b)
+	SetPoolEncWaitOnClose(p);
+
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);
     if (!lf_info) goto _nomem;

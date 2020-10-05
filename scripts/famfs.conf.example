@@ -27,6 +27,12 @@ size = 2G
 # data_dir = /dev/shm
 # meta_dir = /dev/shm
 
+[client]
+# max_files = 128 ; default:128
+
+[encode]
+# wait_on_close = on ; default:off
+
 [ionode]
 # id = 0 ; this is a default
 # uuid
