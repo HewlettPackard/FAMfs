@@ -792,10 +792,19 @@ static int unifycr_exit()
     if (PoolFAMFS(pool)) {
         exit_flag = 1;
         f_svcrq_t c = {.opcode = CMD_QUIT, .cid = 0};
+        f_ah_ntfy_t nq = {.op = F_NTFY_QUIT, .lid = 0};
+        int me;
+
+        // shutdown command threads
         for (int i = 0; i < pool->info.layouts_count; i++)
             if (cmdq[i])
                 f_rbq_push(cmdq[i], &c, RBQ_TMO_1S);
 
+        // tell close-notify thread to quit
+        MPI_Comm_rank(pool->helper_comm, &me);
+        MPI_Send(&nq, sizeof(nq), MPI_BYTE, me, F_TAG_NTFY, pool->helper_comm);
+
+        // destroy layout-specific command queues
         for (int i = 0; i < pool->info.layouts_count; i++) {
             if (cmdq[i]) {
                 if ((rc = f_rbq_destroy(cmdq[i]))) {
@@ -804,10 +813,12 @@ static int unifycr_exit()
 	    }
 	}
 
+        // close server's side of client reply queues
         for (int i = 0; i < MAX_NUM_CLIENTS; i++)
             if (rplyq[i])
                 f_rbq_close(rplyq[i]);
 
+        // destroy admin command queue
         f_rbq_destroy(admq);
 
         if (f_ah_shutdown(pool))

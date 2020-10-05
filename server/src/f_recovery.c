@@ -223,6 +223,7 @@ static int do_recovery(F_LO_PART_t *lp)
 	F_ITER_t *sm_it;
 	int rc = 0;
         u8 err_vec[sizeof(u64)];
+        struct timespec ts = now();
 
         rec->decode_table = NULL;
 
@@ -273,6 +274,14 @@ static int do_recovery(F_LO_PART_t *lp)
 		atomic_inc(&lp->slabmap_version);
 
 	}
+        uint64_t et = elapsed(&ts);
+        char fn[64];
+        snprintf(fn, 64, "/tmp/EDR.%d-%d.%d", lo->info.conf_id, lp->part_num, getpid());
+        FILE *f = fopen(fn, "w+");
+        if (f) {
+            fprintf(f, "%lu", et);
+            fclose(f);
+        }
 	LOG(LOG_INFO, "%s[%d]: recovered: %lu of %lu, errors: %lu, skipped: %lu", 
 		lo->info.name, lp->part_num, rec->done_slabs, rec->slabs2recover,
 		rec->error_slabs, rec->skipped_slabs);
