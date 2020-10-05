@@ -36,7 +36,7 @@ echo "### $DSC" >>$SRV_LOG
 TEST_BASH_ARG="ulimit -s 1024; ulimit -c unlimited; $TEST_BIN ${TEST_OPTS}"
 ((tVERBOSE)) && echo "$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c ""${TEST_BASH_ARG}"" 2>>$MPI_LOG 1>>$TEST_LOG"
 echo "Starting test..."
-$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c "${TEST_BASH_ARG}" 2>>$MPI_LOG 1>>$TEST_LOG
+$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c "${SCRIPT_DIR}/mpi_numactl.sh ${TEST_BASH_ARG}" 2>>$MPI_LOG 1>>$TEST_LOG
 
 if (($? == 0))
 then
