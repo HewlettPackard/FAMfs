@@ -1,4 +1,5 @@
 #!/bin/bash
+[ -z "$TEST_DIR" ]&& { echo "Error: TEST_DIR is not set!"; exit 1; }
 SRC_DIR="${TEST_DIR}/src"
 SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
 WRK_DIR=${SCRIPT_DIR}/t
@@ -90,7 +91,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o aA:D:I:i:S:C:R:b:s:nw:r:W:c:vqVE:u:F:M:m:tx:X:O:U -l adaptive,app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
+OPTS=`getopt -o aA:D:I:i:S:C:R:b:s:nNw:r:W:c:vqVE:u:F:M:m:tx:X:O:U -l adaptive,app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,numactl,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -171,6 +172,7 @@ oExtraSrvOpt=
 oTCP=0
 oMultiEP=0
 oAdaptiveRouting=0
+oNUMActl=0
 
 declare -a SrvIter
 declare -a ClnIter
@@ -182,6 +184,7 @@ while true; do
   -D | --data)       oDATA="$2"; shift; shift ;;
   -v | --verbose)    ((oVERBOSE++)); shift ;;
   -n | --n2n)        oN2N=1; shift ;;
+  -N | --numactl)    oNUMActl=1; shift ;;
   -q | --sequential) oSEQ=1; shift ;;
   -S | --servers)    oSERVERS="$2"; shift; shift ;;
   -C | --clients)    oCLIENTS="$2"; shift; shift ;;
@@ -314,6 +317,10 @@ if ((tVERBOSE)); then
   echo "App: ${TEST_BIN}"
   ((fstype==2)) && echo "FS type: FAMfs" || echo "FS type: $fstype"
 fi
+cNUMAshell=
+if ((oNUMActl)); then
+    cNUMAshell="${SCRIPT_DIR}/mpi_numactl.sh"
+fi
 
 # Set constants in config file (FAMFS_CONF)
 #copy FAMFS config file to current dir
@@ -337,6 +344,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     Servers=`make_list "$hh" "${SrvIter[$si]}" "$oNodeSuffix"`
     export Servers
     ns=`count $Servers`
+    (($ns==0))&& { echo "Error: zero Servers!"; exit 1; }
     mdExclusive=""
     if [ -z "$oMdServers" ]; then
         mdServers="$Servers"
@@ -428,6 +436,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     export all_n
                     export oMPIchEnv
                     export cMPImap
+                    export cNUMAshell
                     export SRV_OPT="$srv_opt"
                     ((tIOR)) \
                       && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -g $oExtraOpt" \
