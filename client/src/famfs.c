@@ -98,9 +98,6 @@ extern char external_data_dir[1024];
 extern char external_meta_dir[1024];
 extern int app_id;
 
-int wait_edr_on_close = 1;  // *FIXME* this should be driven by config file
-
-
 /* FAM */
 extern F_POOL_t *pool;
 LFS_CTX_t *lfs_ctx = NULL;
@@ -1249,7 +1246,7 @@ static int famfs_fid_close(int fid)
 	return UNIFYCR_FAILURE;
     }
 
-    if ((lo->info.chunks - lo->info.data_chunks) && wait_edr_on_close) {
+    if ((lo->info.chunks - lo->info.data_chunks) && PoolEncWaitOnClose(pool)) {
         f_svcrq_t   c = {.opcode = CMD_FCLOSE, .cid = local_rank_idx, .fid = fid, .lid = meta->loid};
         f_svcrply_t r;
         int lid = meta->loid;
