@@ -236,6 +236,7 @@ int chunk_rma_start(N_STRIPE_t *stripe, int use_cq, int wr)
 	if (len == 0)
 	    continue;
 
+	ASSERT(chunk->parity = -1); /* must be a data chunk */
 	pdev = chunk->pdev;
 	media_id = pdev->pool_index;
 	chunk_offset = chunk->offset;

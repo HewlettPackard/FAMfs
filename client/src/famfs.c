@@ -2024,7 +2024,7 @@ static int f_stripe_write(
     size_t count,             /* number of bytes to write */
     F_LAYOUT_t *lo)           /* layout structure pointer for this fid */
 {
-    long key_slice_range;
+    size_t key_slice_range;
 
     /* get chunk meta data */
     ASSERT( meta->stripe_idx < meta->stripes );
@@ -2040,7 +2040,7 @@ static int f_stripe_write(
     DEBUG_LVL(5, "%s: write to stripe %lu @%lu %zu bytes pos %ld (logical %lu)",
               lfs_ctx->pool->mynode.hostname, s, stripe_offset, count, pos, stripe_id);
 
-    ASSERT( stripe_offset + count <= (unsigned long)key_slice_range );
+    ASSERT( stripe_offset + count <= key_slice_range );
 
     int rc = lf_write(lo, (char *)buf, count, s, stripe_offset);
     if (rc) {
@@ -2106,15 +2106,37 @@ static int f_stripe_write(
 
         if (*unifycr_indices.ptr_num_entries >= 1) {
             md_index_t *ptr_last_idx = &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
-            if (ptr_last_idx->sid == tmp_index_set.idxes[0].sid &&
-                ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
-                ptr_last_idx->loid == tmp_index_set.idxes[0].loid &&
-                ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length
-                == tmp_index_set.idxes[0].file_pos) {
-                if (ptr_last_idx->file_pos / key_slice_range
-                    == tmp_index_set.idxes[0].file_pos / key_slice_range) {
-                    ptr_last_idx->length  += tmp_index_set.idxes[0].length;
-                    i++;
+
+            if (ptr_last_idx->sid == cur->sid &&
+                ptr_last_idx->fid == cur->fid &&
+                ptr_last_idx->loid == cur->loid)
+            {
+                off_t prev_e = ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length;
+
+                if (prev_e == cur->file_pos) {
+                    off_t slice_b = (ptr_last_idx->file_pos / key_slice_range + 1) * key_slice_range;
+                    off_t cur_e = prev_e + (ssize_t)cur->length;
+
+                    /* if new range end is in the next slice */
+                    if (cur_e > slice_b) {
+                        off_t adj = slice_b - prev_e;
+
+                        /* extend former range upto slice boundary */  
+                        ptr_last_idx->length += adj;
+                        ASSERT( ptr_last_idx->length < key_slice_range );
+
+                        /* adjust new range to the slice boundary */
+                        cur->file_pos = slice_b;
+                        cur->mem_pos += adj;
+                        cur->length -= adj;
+                        ASSERT( cur->length < key_slice_range );
+
+                    } else {
+                        /* both in the same slice, coalesce */
+                        ptr_last_idx->length += cur->length;
+                        ASSERT( ptr_last_idx->length <= key_slice_range );
+                        i++;
+                    }
                 }
             }
         }

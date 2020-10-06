@@ -572,7 +572,7 @@ int f_do_fsync(f_svcrq_t *pcmd) {
         (md_index_t *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset + page_sz);
 
-    LOG(LOG_DBG3, "srv fsync k/v[%d] cl_id=%d num=%lu meta_offset=%ld",
+    LOG(LOG_DBG3, "srv fsync from qid %d rank [%d] k/v num=%lu meta_offset=%ld",
         qid, client_side_id, num_entries, app_config->meta_offset);
 
     for (i = 0; i < num_entries; i++) {
@@ -583,9 +583,9 @@ int f_do_fsync(f_svcrq_t *pcmd) {
         fsmd_vals[i]->len = meta_payload[i].length;
         fsmd_vals[i]->stripe  = meta_payload[i].sid;
 
-        LOG(LOG_DBG3, "  k/v[%d] loid=%d fid=%d off=%ld/addr=%ld len=%ld s=%lu",
+        LOG(LOG_DBG3, "  k/v[%d] loid=%d fid=%d off/len=%ld/%ld addr=%ld s=%lu",
             i, fsmd_keys[i]->pk.loid, fsmd_keys[i]->pk.fid, fsmd_keys[i]->offset,
-            fsmd_vals[i]->addr, fsmd_vals[i]->len, fsmd_vals[i]->stripe);
+            fsmd_vals[i]->len, fsmd_vals[i]->addr, fsmd_vals[i]->stripe);
 
         fsmd_ley_lens[i] = sizeof(fsmd_key_t);
         unifycr_val_lens[i] = sizeof(fsmd_val_t);
