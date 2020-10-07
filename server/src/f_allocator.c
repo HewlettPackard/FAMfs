@@ -1903,8 +1903,10 @@ static inline int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
 	/* Set the stripe preallocated */
 	old = atomic_test_and_set_bbit(BBIT_NR_IN_LONG(s), CVE_ALLOCATED, p);
 
+	if (old == CVE_ALLOCATED) return -EEXIST;
+
 	/* Check the previous state */
-	ASSERT(old == CVE_PREALLOC || old == CVE_ALLOCATED);
+	ASSERT(old == CVE_PREALLOC);
 
 	/* Set the dirty bit */
 	f_map_mark_dirty(lp->claimvec, s);
@@ -2653,11 +2655,14 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 
 	for (i = 0; i < ss->count; i++) {
 		f_stripe_t stripe;
+		int r;
 
 		ASSERT(f_map_prt_my_global(lp->claimvec, ss->stripes[i]));
 		stripe = f_map_prt_to_local(lp->claimvec, ss->stripes[i]);
-		rc += commit_stripe(lp, stripe);
-	}
+		r = commit_stripe(lp, stripe);
+		if (r == -EEXIST) continue;
+		rc += r;
+	}	
 	
 	if (rc) atomic_inc(lo->stats + FL_STRIPE_COMMIT_ERR); 
 
