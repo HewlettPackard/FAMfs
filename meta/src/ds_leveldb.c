@@ -1031,9 +1031,11 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 		const char *ret_key, *ret_val;
 		size_t len;
 
+		/*
 		mlog(MDHIM_SERVER_DBG, "Rsp %dth lid=%d fid=%d str_sz=%zu key_len=%d off/len=%ld/%ld in stripe %lu",
 		     j, loid, FAMFS_PK_FID((*out_key)[j]), key_slice_size, klen,
 		     offset, UNIFYCR_LEN((*out_val)[j]), s);
+		*/
 
 		while (leveldb_iter_valid(iter)) {
 			ret_val = leveldb_iter_value(iter, &len);
@@ -1057,7 +1059,6 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 	*out_records_cnt = tmp_records_cnt;
 
 	leveldb_iter_destroy(iter);
-	mlog(MDHIM_SERVER_DBG, "Rsp exit, %d records", tmp_records_cnt);
 	return 0;
 }
 
@@ -1293,7 +1294,7 @@ int handle_next_half(
 			memcpy(ret_out_val, ret_val, tmp_val_len);
 
 			UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) +1;
-			UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(ret_key) - UNIFYCR_OFFSET(start_key);
+ //			UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val) + UNIFYCR_OFFSET(ret_key) - UNIFYCR_OFFSET(start_key);
 
 			(void)merge_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                 ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
@@ -1384,7 +1385,7 @@ int handle_next_half(
 				memcpy(ret_out_val, ret_val, tmp_val_len);
 
 				UNIFYCR_LEN(ret_out_val) = UNIFYCR_OFFSET(end_key) - UNIFYCR_OFFSET(ret_key) + 1;
-				UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val);
+ //				UNIFYCR_ADDR(ret_out_val) = UNIFYCR_ADDR(ret_val);
 
 				(void)merge_kv(out_key, out_key_len, out_val, out_val_len, tmp_records_cnt, tmp_out_cap, 
                     ret_out_key, ret_out_val, tmp_key_len, tmp_val_len);
