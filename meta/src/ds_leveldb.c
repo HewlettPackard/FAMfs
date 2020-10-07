@@ -982,7 +982,6 @@ static int merge_kv(char ***out_key, int **out_key_len, char ***out_val, int **o
 int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 		char ***out_key, int **out_key_len,\
 			char ***out_val, int **out_val_len,\
-				size_t *key_slice_size_per_lo,\
 				int tot_records, int *out_records_cnt) {
 
 	int i, j;
@@ -1016,17 +1015,15 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 			&tmp_records_cnt, &tmp_out_cap);
 
 		/* FAMFS: Pick up all KVs in this stripe, key goes up */
-		if (j >= tmp_records_cnt || key_slice_size_per_lo == NULL)
+		if (j >= tmp_records_cnt)
 			continue;
 
 		j = tmp_records_cnt - 1; /* last KV for range i */
 		int loid = FAMFS_PK_LID((*out_key)[j]);
 		ASSERT( loid == FAMFS_PK_LID(key[2 * i]) );
-		size_t key_slice_size = key_slice_size_per_lo[loid];
 		int klen = (*out_key_len)[j];
 		int vlen = (*out_val_len)[j];
 		ASSERT( klen == key_len[2 * i] );
-		long offset = UNIFYCR_OFFSET((*out_key)[j]);
 		unsigned long s = FAMFS_STRIPE((*out_val)[j]);
 		const char *ret_key, *ret_val;
 		size_t len;
