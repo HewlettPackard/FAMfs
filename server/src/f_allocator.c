@@ -2660,7 +2660,12 @@ int f_commit_stripe(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 		ASSERT(f_map_prt_my_global(lp->claimvec, ss->stripes[i]));
 		stripe = f_map_prt_to_local(lp->claimvec, ss->stripes[i]);
 		r = commit_stripe(lp, stripe);
-		if (r == -EEXIST) continue;
+		if (r == -EEXIST) {
+			LOG(LOG_WARN, "%s[%d]: skipping allocated(duplicate?) stripes %lu", 
+				lo->info.name, lp->part_num, stripe);
+			ss->stripes[i] = F_STRIPE_INVALID;
+			r = 0;
+		}
 		rc += r;
 	}	
 	

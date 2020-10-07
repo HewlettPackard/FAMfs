@@ -977,6 +977,8 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 		f_slab_t slab;
 		unsigned long devmap[F_DEVMAP_SIZE];
 
+		if (ss->stripes[i] == F_STRIPE_INVALID) continue;
+
 		/* Remap global stripe # to local */
 		ASSERT(f_map_prt_my_global(lp->claimvec, ss->stripes[i]));
 		stripe = f_map_prt_to_local(lp->claimvec, ss->stripes[i]);
