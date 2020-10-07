@@ -92,11 +92,10 @@ int main(int argc, char *argv[]) {
     static const char * opts = "b:s:t:f:p:u:M:m:dD:S:w:r:i:v:W:GRC:VU:";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
     char mount_point[GEN_STR_LEN] = { 0 };
-    long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
-    //long num_reqs;
+    long blk_sz = 0, seg_num = 1, tran_sz = 0, read_sz = 0, write_sz = 0;
     int pat = 0, c, rank_num, rank, fd, \
             to_unmount = 0;
-    int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
+    int mount_burstfs = 1, direct_io = 0, sequential_io = 0;
     int shutdown = 0;
     int initialized, provided, rrc = MPI_SUCCESS;
     int gbuf = 0, mreg = 0;
@@ -145,7 +144,7 @@ int main(int argc, char *argv[]) {
                blk_sz = getv(optarg); break;
             case 's': /*number of blocks each process writes*/
                seg_num = getv(optarg); break;
-            case 't': /*size of each write*/
+            case 't': /*default size of each read and write*/
                tran_sz = getv(optarg); break;
             case 'r': /*size of each read*/
                read_sz= getv(optarg); break;
@@ -166,7 +165,7 @@ int main(int argc, char *argv[]) {
             case 'S':
                sequential_io = atoi(optarg); break; /* 1: Write/read blocks sequentially */
             case 'w':
-               write_only = atoi(optarg); break;
+               write_sz = getv(optarg); break; /* size of each write */
             case 'v':
                vmax = atoi(optarg); break;
             case 'G':
@@ -185,8 +184,10 @@ int main(int argc, char *argv[]) {
                unifycr_fs = atoi(optarg); break; /* 2: FAMFS, 1: UNIFYCR_LOG */
         }
     }
-    if (read_sz == 0)
+    if (read_sz == 0 && write_sz == 0) {
         read_sz = tran_sz;
+        write_sz = tran_sz;
+    }
     if (blk_sz == 0)
         blk_sz = tran_sz;
 
@@ -197,12 +198,11 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    if (rank == 0) printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
+    if (rank == 0) printf(" %s, %s, %s I/O, transfer block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
         (pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
         (direct_io)? "direct":"buffered",
         (sequential_io)? "sequential":"randomized",
-        (write_only)? "W":"W/R",
-        tran_sz, read_sz, blk_sz, ini_off);
+        write_sz, read_sz, blk_sz, ini_off);
 
     famsim_stats_init(&famsim_ctx, carbon_stats?"/tmp":NULL, "famsim", rank);
     if (carbon_stats != 0) {
@@ -270,7 +270,7 @@ int main(int argc, char *argv[]) {
         len = blk_sz*seg_num;
         buf = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     } else {
-        len = max(tran_sz, read_sz);
+        len = max(write_sz, read_sz);
         rc = posix_memalign((void**)&buf, getpagesize(), max(len,1024*1024));
         if (rc) {
             printf("posix_memalign error:%d - %m\n", rc);
@@ -282,7 +282,10 @@ int main(int argc, char *argv[]) {
         printf("[%02d] can't allocate %luMiB of  memory\n", rank, len/1024/1024);
         exit(1);
     }
-    memset(buf, 0, max(tran_sz, read_sz));
+    memset(buf, 0, len);
+
+    if (write_sz == 0)
+	goto only_read;
 
     if (warmup) {
         print0("warming up...\n");
@@ -348,26 +351,26 @@ int main(int argc, char *argv[]) {
 
     for (i = 0; i < seg_num; i++) {
         long jj;
-        for (jj = 0; jj < blk_sz/tran_sz; jj++) {
+        for (jj = 0; jj < blk_sz/write_sz; jj++) {
             if (sequential_io) {
                 j = jj;
             } else {
-                j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
+                j = (blk_sz/write_sz - 1) - 2*jj; /* reverse */
                 if (j < 0)
-                    j += (blk_sz/tran_sz - 1);
+                    j += (blk_sz/write_sz - 1);
             }
             if (pat == 0)
-                offset = i*rank_num*blk_sz + rank*blk_sz + j*tran_sz;
+                offset = i*rank_num*blk_sz + rank*blk_sz + j*write_sz;
             else if (pat == 1)
-                offset = i*blk_sz + j*tran_sz;
+                offset = i*blk_sz + j*write_sz;
 
             int k;
             lw_off = 0;
 
             if (gbuf)
-                bufp = buf + i*blk_sz + j*tran_sz;
+                bufp = buf + i*blk_sz + j*write_sz;
 
-            for (k = 0; vfy && k < tran_sz/sizeof(unsigned long); k++) {
+            for (k = 0; vfy && k < write_sz/sizeof(unsigned long); k++) {
                 if (gbuf)
                     p = &(((unsigned long *)bufp)[k]);
                 else
@@ -380,7 +383,7 @@ int main(int argc, char *argv[]) {
 
             famsim_stats_start(famsim_ctx, famsim_stats_send);
 
-            ssize_t bcount = pwrite(fd, bufp, tran_sz, offset);
+            ssize_t bcount = pwrite(fd, bufp, write_sz, offset);
 
             /* TODO: Ensure tran_sz equals to the chunk size */
             if (i==0 && jj<(fam_cnt/rank_num))
@@ -392,7 +395,7 @@ int main(int argc, char *argv[]) {
                 printf("%02d write failure - %m\n", rank);
                 fflush(stdout);
                 exit(1);
-            } else if (bcount != tran_sz) {
+            } else if (bcount != write_sz) {
                 printf("%02d write failure - %zd bytes written\n", rank, bcount);
                 fflush(stdout);
                 exit(1);
@@ -458,22 +461,12 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
     }
 
+only_read:
     MPI_Barrier(MPI_COMM_WORLD);
-    if (write_only) {
+    if (read_sz == 0) {
         MPI_Finalize();
         exit(0);
     }
-
-    //num_reqs = blk_sz*seg_num/tran_sz;
-    //char *read_buf = malloc(blk_sz * seg_num); /*read buffer*/
-    //char *read_buf; /*read buffer*/
-    /*
-    if (direct_io)
-            posix_memalign((void**)&read_buf, getpagesize(), blk_sz);
-    else
-            read_buf = malloc(blk_sz);
-
-    */
 
     if (pat == 1) {
         sprintf(tmpfname, "%s%d", fname, rank);
@@ -504,6 +497,7 @@ int main(int argc, char *argv[]) {
     printv("%02d reading\n", rank);
 
     long vcnt, e = 0;
+    bufp = buf;
     //long cursor;
     offset = 0;
     for (i = 0; i < seg_num; i++) {

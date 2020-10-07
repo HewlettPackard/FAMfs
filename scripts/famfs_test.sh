@@ -380,14 +380,14 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 dsc="[$nc*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
                 dsc="$dsc Writes=${TXSZ[$j]}"
                 if [ -z "${RDSZ[$j]}" ]; then
-                    reads="-w"
+                    reads=""
                     dsc="$dsc <no reads>"
                 else
                     if ((RDSZ[$j] < 0)); then
-                        reads="-w"
+                        reads=""
                         dsc="$dsc <no reads>"
                     else
-                        ((tIOR)) || reads="-r ${RDSZ[$j]}"
+                        ((tIOR)) || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}"
                         dsc="$dsc Reads=${RDSZ[$j]}"
                     fi
                 fi
