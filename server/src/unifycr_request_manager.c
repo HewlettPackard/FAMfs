@@ -175,7 +175,7 @@ int f_rm_fetch_md(int cid, int rcnt) {
     int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
     fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1);
 
-    LOG(LOG_DBG, "[%d] fetch_md %d keys, k0=(%d@%lu)", client_id, rcnt, pmd->k.pk.fid, pmd->k.offset);
+    LOG(LOG_DBG, "[%d] fetch_md %d keys", client_id, rcnt);
     rc = meta_md_get(app_config->shm_req_bufs[client_id], rcnt, pmd, pcnt);
     LOG(LOG_DBG, "[%d] fetch_md rc=%d", client_id, rc);
 

@@ -906,9 +906,10 @@ int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
     IF_LOG(LOG_DBG3) {
 	LOG(LOG_DBG3, "srv: got %d k/v pairs:", tot_num);
 	for (i = 0; i < tot_num; i++) {
-	    LOG(LOG_DBG3, "  k/v[%d] lo %d fid=%d off=%jd/len=%jd stripe=%lu",
+	    LOG(LOG_DBG3, "  k/v[%d] lo %d fid=%d off/len=%jd/%jd addr=%ld s=%lu",
 		i, res_kv[i].k.pk.loid, res_kv[i].k.pk.fid,
-		res_kv[i].k.offset, res_kv[i].v.len, res_kv[i].v.stripe);
+		res_kv[i].k.offset, res_kv[i].v.len,
+		res_kv[i].v.addr, res_kv[i].v.stripe);
 	}
     }
 
