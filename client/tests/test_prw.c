@@ -473,7 +473,7 @@ int main(int argc, char *argv[]) {
     MPI_Gather(&write_time, 1, MPI_DOUBLE, write_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     if (rank == 0)
         for (i=0; i<rank_num; i++)
-            fprintf(stat_file, "%ld,%s,W,%lf\n", i, names+i*ULFS_MAX_FILENAME, write_times[i]);
+            fprintf(stat_file, "%ld,%s,W,%ld,%lf\n", i, names+i*ULFS_MAX_FILENAME, write_sz, write_times[i]);
 
     /* write out FAM simulator stats */
     famsim_stats_stop(famsim_stats_send, 1);
@@ -634,7 +634,7 @@ only_read:
     MPI_Gather(&read_time, 1, MPI_DOUBLE, read_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     if (rank == 0)
         for (i=0; i<rank_num; i++)
-            fprintf(stat_file, "%ld,%s,R,%lf\n", i, names+i*ULFS_MAX_FILENAME, read_times[i]);
+            fprintf(stat_file, "%ld,%s,R,%ld,%lf\n", i, names+i*ULFS_MAX_FILENAME, read_sz, read_times[i]);
 
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
