@@ -683,6 +683,7 @@ int receive_all_client_responses(struct mdhim_t *md, int *srcs, int nsrcs,
 			}
 		}
 	}
+	free(statuses);
 
 	for (i = 0; i < nsrcs; i++) {			
 		recvbuf = recvbufs[i];

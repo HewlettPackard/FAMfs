@@ -151,6 +151,7 @@ int send_locally_or_remote(struct mdhim_t *md, int dest, void *message, void *ta
 		ret = send_client_response(md, dest, message,
 			&sizebuf, &sendbuf);
 		mdhim_full_release_msg(message);
+		free(sendbuf);
 	} else {
 		struct mdhim_basem_t *msg = (struct mdhim_basem_t *) message;
 
