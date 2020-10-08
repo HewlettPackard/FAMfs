@@ -52,6 +52,7 @@
 #include <sys/time.h>
 #include <aio.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include <unifycr.h>
 
@@ -72,9 +73,11 @@
 
 struct timeval read_start, read_end;
 double read_time = 0;
+double *read_times = NULL;
 
 struct timeval write_start, write_end;
 double write_time = 0;
+double *write_times = NULL;
 
 struct timeval meta_start, meta_end;
 double meta_time = 0;
@@ -284,17 +287,32 @@ int main(int argc, char *argv[]) {
     }
     memset(buf, 0, len);
 
+    char sfn[256];
+    mode_t old_umask = umask(S_IRWXG);
+    sprintf(sfn, "/tmp/famfs_stat_file.%d.csv", getpid());
+    umask(0111);
+    FILE *stat_file = fopen(sfn, "w");
+    umask(old_umask);
+    char *names = NULL;
+    if (rank == 0) {
+	names = malloc(rank_num*ULFS_MAX_FILENAME);
+    }
+    MPI_Gather(hostname, ULFS_MAX_FILENAME, MPI_CHAR, names, ULFS_MAX_FILENAME, MPI_CHAR, 0, MPI_COMM_WORLD);
+
     if (write_sz == 0)
 	goto only_read;
+    if (rank == 0)
+	write_times = malloc(rank_num*sizeof(double));
 
     if (warmup) {
+        rc = 1;
         print0("warming up...\n");
         printv("%02d warming up\n", rank);
         sprintf(tmpfname, "%s-%d.warmup", fname, rank);
         fd = open(tmpfname, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             printf("%02d warm-up file %s open failure\n", rank, fname);
-            exit(1);
+            goto _exit;
         }
         while (warmup > 0) {
             off_t off = 0;
@@ -302,7 +320,7 @@ int main(int argc, char *argv[]) {
 
             if (l < 0) {
                 printf("%02d warm-up file %s write error\n", rank, fname);
-                exit(1);
+                goto _exit;
             }
             warmup -= l;
             off += l;
@@ -314,7 +332,8 @@ int main(int argc, char *argv[]) {
        rc = famfs_buf_reg(buf, len, &rid);
        if (rc) {
            printf("%02d buf register error %d\n", rank, rc);
-           exit(1);
+           rc = 1;
+           goto _exit;
        }
     }
 
@@ -393,12 +412,12 @@ int main(int argc, char *argv[]) {
 
             if (bcount < 0) {
                 printf("%02d write failure - %m\n", rank);
-                fflush(stdout);
-                exit(1);
+                rc = 1;
+                goto _exit;
             } else if (bcount != write_sz) {
                 printf("%02d write failure - %zd bytes written\n", rank, bcount);
-                fflush(stdout);
-                exit(1);
+                rc = 1;
+                goto _exit;
             }
         }
     }
@@ -424,7 +443,8 @@ int main(int argc, char *argv[]) {
         rc = system("echo 1 > /proc/sys/vm/drop_caches");
         if (rc) {
             printf("Faied to drop caches:%d - %m\n", rc);
-            exit(1);
+            rc = 1;
+            goto _exit;
         }
     }
     MPI_Barrier(MPI_COMM_WORLD);
@@ -450,6 +470,11 @@ int main(int argc, char *argv[]) {
     double max_meta_time;
     MPI_Reduce(&meta_time, &max_meta_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
+    MPI_Gather(&write_time, 1, MPI_DOUBLE, write_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    if (rank == 0)
+        for (i=0; i<rank_num; i++)
+            fprintf(stat_file, "%ld,%s,W,%lf\n", i, names+i*ULFS_MAX_FILENAME, write_times[i]);
+
     /* write out FAM simulator stats */
     famsim_stats_stop(famsim_stats_send, 1);
 
@@ -464,9 +489,11 @@ int main(int argc, char *argv[]) {
 only_read:
     MPI_Barrier(MPI_COMM_WORLD);
     if (read_sz == 0) {
-        MPI_Finalize();
-        exit(0);
+        rc = 0;
+        goto _exit;
     }
+    if (rank == 0)
+	read_times = malloc(rank_num*sizeof(double));
 
     if (pat == 1) {
         sprintf(tmpfname, "%s%d", fname, rank);
@@ -530,12 +557,12 @@ only_read:
             famsim_stats_pause(famsim_stats_recv);
             if (ret < 0) {
                 printf("%02d read failure - %m\n", rank);
-                fflush(stdout);
-                exit(1);
+                rc = 1;
+                goto _exit;
             } else if (ret != read_sz) {
                 printf("%02d read failure, %zd bytes read\n", rank, ret);
-                fflush(stdout);
-                exit(1);
+                rc = 1;
+                goto _exit;
             }
 
             vcnt = 0;
@@ -604,6 +631,11 @@ only_read:
     MPI_Reduce(&read_time, &max_read_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&e, &e_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 
+    MPI_Gather(&read_time, 1, MPI_DOUBLE, read_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    if (rank == 0)
+        for (i=0; i<rank_num; i++)
+            fprintf(stat_file, "%ld,%s,R,%lf\n", i, names+i*ULFS_MAX_FILENAME, read_times[i]);
+
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
         if (e_sum)
@@ -626,6 +658,9 @@ only_read:
 
     famsim_stats_free(famsim_ctx);
 
+_exit:
+    fflush(stdout);
+    fclose(stat_file);
     MPI_Finalize();
     exit(rc);
 }
