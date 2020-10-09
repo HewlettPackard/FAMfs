@@ -159,13 +159,13 @@ static int famfs_stripe_free(int fid, unifycr_filemeta_t *meta, int id,
 
     /* get physical id of chunk */
     f_stripe_t s = stripe->id;
-    DEBUG_LVL(7, "free stripe %ld (logical id %d) fl:%x", s, id, stripe->flags);
+    DEBUG_LVL(7, "free logical id %d stripe %lu fl:%x", id, s, stripe->flags);
 
     /* release stripe; check uncommited stripe */
 
     if (!stripe->f.in_use) {
-        ERROR("free unallocated stripe %lu in layout %s",
-              s, lo->info.name);
+        ERROR("free unallocated stripe %lu in layout %s fl:%x",
+              s, lo->info.name, stripe->flags);
         ASSERT(0);
     }
 
@@ -2142,22 +2142,6 @@ static int f_stripe_write(
         }
         if (i == 0) {
             unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries] = tmp_index_set.idxes[0];
-        /*
-        for (; i < tmp_index_set.count; i++) {
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].file_pos =
-                tmp_index_set.idxes[i].file_pos;
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].mem_pos =
-                tmp_index_set.idxes[i].mem_pos;
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
-                tmp_index_set.idxes[i].length;
-
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].loid
-                = tmp_index_set.idxes[i].loid;
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
-                = tmp_index_set.idxes[i].fid;
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].sid =
-                tmp_index_set.idxes[i].sid;
-        */
             (*unifycr_indices.ptr_num_entries)++;
         }
 
@@ -2795,6 +2779,8 @@ static int famfs_fd_fsync(int fid) {
     if (meta->needs_sync) {
         /* sync data with server */
         ret = famfs_sync(fid);
+        /* invalidate last metadata in read path */
+        *((int *)shm_recvbuf) = 0;
     }
 
     return ret;
