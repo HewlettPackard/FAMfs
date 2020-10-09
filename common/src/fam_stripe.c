@@ -272,6 +272,7 @@ int chunk_rma_start(N_STRIPE_t *stripe, int use_cq, int wr)
 		  len, local_desc, off, fdev->mr_key);
 
 	do {
+ ASSERT( ((uint64_t)buf) > 0x10000 );
 	    rc = fi_rma(tx_ep, buf, len, local_desc,
 			*tgt_srv_addr, off, fdev->mr_key, (void*)buf);
 	    if (rc == 0) {
