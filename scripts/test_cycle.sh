@@ -1,39 +1,39 @@
 #!/bin/bash
-$mpirun $mpi_hosts ${all_n} $mpi_ppn 1 $oMPIchEnv /bin/bash -c "${SCRIPT_DIR}/cleanup.sh"
+TESTCYCLE_PID_FN="/tmp/testcycle.pid"
+if ((iPattern==0)); then
+  $mpirun $mpi_hosts ${all_n} $mpi_ppn 1 $oMPIchEnv /bin/bash -c "${SCRIPT_DIR}/cleanup.sh"
 
-((tVERBOSE)) && echo "$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c \"ulimit -s 1024; $SRV_BIN ${SRV_OPT}\" 2>>$MPI_LOG 1>>$SRV_LOG"
-echo "Starting unifycrd..."
-$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c "ulimit -s 1024; $SRV_BIN ${SRV_OPT}" 2>>$MPI_LOG 1>>$SRV_LOG &
-pid=$!
+  ((tVERBOSE)) && echo "$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c \"ulimit -s 1024; $SRV_BIN ${SRV_OPT}\" 2>>$MPI_LOG 1>>$SRV_LOG"
+  echo "Starting unifycrd..."
+  $mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c "ulimit -s 1024; $SRV_BIN ${SRV_OPT}" 2>>$MPI_LOG 1>>$SRV_LOG &
+  pid=$!
+  echo $pid > $TESTCYCLE_PID_FN
 
-((waiting=0))
-((_dt=2)) # Check every 2 sec
-echo -n "Waiting for the servers to come up"
-for hst in ${AllNodes//,/$IFS}; do
-  while
-    if ((waiting > 60000))
-    then
-        echo "***ERROR: Server start timeout" >> $SRV_LOG
-        exit 1
-    fi
-    ((waiting % 30 == 0)) && echo -n "."
-    if ((waiting > 0))
-    then
-        sleep $_dt
-    fi
-    ((waiting += _dt))
-    ssh -q "${hst}" exit || { echo "Cannot ssh to ${hst}"; exit 1; }
-    ssh -q ${hst} test "! -e /tmp/unifycrd.running.*"
-  do
-    :
+  ((_dt=2)) # Check every 2 sec
+  echo -n "Waiting for the servers to come up"
+  for hst in ${AllNodes//,/$IFS}; do
+    ((waiting=0))
+    while
+      if ((waiting > 6000))
+      then
+          echo "***ERROR: Server start timeout" >> $SRV_LOG
+          exit 1
+      fi
+      ((waiting % 30 == 0)) && echo -n "."
+      ((waiting > 0))&& sleep $_dt
+      ((waiting += _dt))
+      ssh -q "${hst}" exit || { echo "Cannot ssh to ${hst}"; exit 1; }
+      ssh -q ${hst} test "! -e /tmp/unifycrd.running.*"
+    do
+      :
+    done
   done
-done
-echo
+  echo
+  echo "### $DSC" >>$MPI_LOG
+  echo "### $DSC" >>$SRV_LOG
+fi
 
 echo "### $DSC" >>$TEST_LOG
-echo "### $DSC" >>$MPI_LOG
-echo "### $DSC" >>$SRV_LOG
-# TEST_BASH_ARG="ulimit -s 1024; ulimit -c unlimited; $cNUMAshell \"${TEST_BIN} ${TEST_OPTS}\""
 TEST_BASH_ARG="$cNUMAshell $TEST_BIN $TEST_OPTS"
 ((tVERBOSE)) && echo "$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c \"$TEST_BASH_ARG\" 2>>$MPI_LOG 1>>$TEST_LOG"
 echo "Starting test..."
@@ -50,11 +50,16 @@ else
     # sleep 10000
     sts=1
 fi
-echo "Stopping servers"
-kill -INT $pid
-while ps -p $pid 2>/dev/null 1>/dev/null; do
+
+if ((iPattern==nPatterns-1)); then
+  pid=$(cat $TESTCYCLE_PID_FN)
+  echo "Stopping servers ($pid)"
+  kill -INT $pid
+  while ps -p $pid 2>/dev/null 1>/dev/null; do
     echo "Waiting for unifycrd to exit"
     sleep 10
     kill -INT $pid 2>/dev/null 1>/dev/null
-done
+  done
+fi
+
 exit $sts

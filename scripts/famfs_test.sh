@@ -91,7 +91,7 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o aA:D:I:i:S:C:R:b:s:nNw:r:W:c:vqVE:u:F:M:m:tx:X:O:U -l adaptive,app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,numactl,writes:,reads:,warmup:,cycles:,verbose,sequential:verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
+OPTS=`getopt -o aA:D:I:i:S:C:R:b:s:nNw:r:W:c:vqQ:VE:u:F:M:m:tx:X:O:U -l adaptive,app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,numactl,writes:,reads:,warmup:,cycles:,verbose,sequential,two_passes:,verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -173,6 +173,7 @@ oTCP=0
 oMultiEP=0
 oAdaptiveRouting=0
 oNUMActl=0
+oTwoPasses=""
 
 declare -a SrvIter
 declare -a ClnIter
@@ -186,6 +187,7 @@ while true; do
   -n | --n2n)        oN2N=1; shift ;;
   -N | --numactl)    oNUMActl=1; shift ;;
   -q | --sequential) oSEQ=1; shift ;;
+  -Q | --two-passes) oTwoPasses="$2"; shift; shift ;; # separate writes and reads, set pattern (SEQ,RND)
   -S | --servers)    oSERVERS="$2"; shift; shift ;;
   -C | --clients)    oCLIENTS="$2"; shift; shift ;;
   -R | --ranks )     oRANKS="$2"; shift; shift ;;
@@ -233,6 +235,12 @@ for w in $oWRITES; do TXSZ[$i]=$(getval $w); if ((TXSZ[i] > max_tx)); then ((max
 
 ((i = 0))
 for r in $oREADS; do RDSZ[$i]=$(getval $r); ((i++)); done
+
+nPatterns=1
+if [ ! -z "$oTwoPasses" ]; then
+  oSEQ=1 # SEQ first
+  nPatterns=2
+fi
 
 blksz=$(getval $oBLOCK)
 wup=$(getval $oWARMUP)
@@ -377,27 +385,20 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 cMPImap="${clMPImap} -n $tnc"
             fi
             for ((j = 0; j < ${#TXSZ[*]}; j++)); do
+                transfersz=${TXSZ[$j]}
                 dsc="[$nc*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
-                dsc="$dsc Writes=${TXSZ[$j]}"
+                dsc="$dsc Writes=$transfersz"
                 if [ -z "${RDSZ[$j]}" ]; then
-                    reads=""
                     dsc="$dsc <no reads>"
                 else
                     if ((RDSZ[$j] < 0)); then
-                        reads=""
                         dsc="$dsc <no reads>"
                     else
-                        ((tIOR)) || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}"
                         dsc="$dsc Reads=${RDSZ[$j]}"
                     fi
                 fi
-                if (($oSEQ)); then
-                    ((tIOR)) && seq="" || seq="-S 1"
-                    dsc="$dsc SEQ"
-                else
-                    ((oVFY)) && ((tIOR)) && { echo "Can't combine verify & random"; exit 1; }
-                    ((tIOR)) && seq="-z" || seq="-S 0"
-                    dsc="$dsc RANDOM"
+                if ((nPatterns>1)); then
+                    dsc="$dsc $oTwoPasses"
                 fi
                 if ((oN2N)); then
                     ((tIOR)) && ptrn="-F" || ptrn="-p 1"
@@ -413,45 +414,93 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     ((tIOR)) && ITR="-i $((oCycles+1))" || wu="-W $wup"
                     ((tIOR)) || dsc="$dsc WARMUP=$wup"
                 fi
-                vfy=""
-                if ((oVFY)); then
-                    dsc="$dsc with VFY"
-                    ((tIOR)) && vfy="-w -r -R" || vfy="-V"
-                fi
-                for ((k = 0; k < cycles; k++)); do
-                    ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
-                    ((mem = (mem/1024/1024/1024 + 1)*1024*1024*1024))
-                    # TODO: check device size >= $mem
 
-                    BLK="-b $blksz"
-                    SEG="-s $seg"
-                    WSZ="-t ${TXSZ[$j]}"
-                    RSZ="$reads"
-                    WUP="$wu"
-                    PTR="$ptrn"
-                    SEQ="$seq"
-                    VFY="$vfy"
-                    export DSC="$dsc"
-                    export AllNodes
-                    export all_n
-                    export oMPIchEnv
-                    export cMPImap
-                    export cNUMAshell
-                    export SRV_OPT="$srv_opt"
-                    ((tIOR)) \
-                      && opts="-o ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -g $oExtraOpt" \
-                      || opts="-f ${tstFileName} $BLK $SEG $WSZ $VFY $RSZ $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
-                    opts=( $(echo $opts) )
-                    TEST_OPTS=${opts[*]} # jam whitespaces
-                    export TEST_OPTS
-                    ((kk = k + 1))
-                    echo "Starting cycle $kk of: $DSC"
-                    if ${SCRIPT_DIR}/test_cycle.sh; then
-                        echo "Finished OK"
+                # run Client app one or two times, with specific i/o pattern
+                for ((iPattern=0; iPattern<nPatterns; iPattern++)); do
+
+                    ((iPattern>0))&& oSEQ=0
+
+                    if [ -z "${RDSZ[$j]}" ]; then
+                        reads=""
                     else
-                        ((err++))
-                        echo "Finished with ERRORS"
+                        if ((RDSZ[$j] < 0)); then
+                            reads=""
+                        else
+                            reads="${RDSZ[$j]}"
+                        fi
                     fi
+                    if ((nPatterns==1)); then
+                        ((tIOR))&& reads="-w -r" || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}"
+                    elif ((iPattern==0)); then
+                        transfersz=${TXSZ[$j]}
+                        ((tIOR))&& reads="-w" || reads="-w $transfersz"
+                    else
+                        transfersz=${RDSZ[$j]}
+                        ((tIOR))&& reads="-r" || reads="-r $transfersz"
+                    fi
+
+                    vfy=""
+                    if ((oVFY)); then
+                        dsc="$dsc with VFY"
+                        if ((tIOR)); then
+                            ((iPattern==0))&& vfy="-G 1234567890" || vfy="-R -G 1234567890"
+                        else
+                            vfy="-V"
+                        fi
+                    fi
+                    if (($oSEQ)); then
+                        ((tIOR)) && seq="" || seq="-S 1"
+                        dsc="$dsc SEQ"
+                    else
+                        ((oVFY)) && ((tIOR)) && { echo "Can't combine verify & random"; exit 1; }
+                        ((tIOR)) && seq="-z" || seq="-S 0"
+                        dsc="$dsc RANDOM"
+                    fi
+
+                    for ((k = 0; k < cycles; k++)); do
+                        ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
+                        ((mem = (mem/1024/1024/1024 + 1)*1024*1024*1024))
+                        # TODO: check device size >= $mem
+
+                        BLK="-b $blksz"
+                        SEG="-s $seg"
+                        WSZ="-t $transfersz"
+                        RSZ="$reads"
+                        WUP="$wu"
+                        PTR="$ptrn"
+                        SEQ="$seq"
+                        VFY="$vfy"
+
+                        export DSC="$dsc"
+                        export AllNodes
+                        export all_n
+                        export oMPIchEnv
+                        export cMPImap
+                        export cNUMAshell
+                        export SRV_OPT="$srv_opt"
+                        export iPattern
+                        export nPatterns
+
+                        ((tIOR)) \
+                          && opts="-o ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -g $oExtraOpt" \
+                          || opts="-f ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
+                        opts=( $(echo $opts) )
+                        TEST_OPTS=${opts[*]} # jam whitespaces
+                        export TEST_OPTS
+
+                        ((kk = k + 1))
+                        if ((iPattern==0)); then
+                            echo "Starting cycle $kk of: $DSC"
+                        else
+                            echo "Starting cycle $kk (2nd) of: $DSC"
+                        fi
+                        if ${SCRIPT_DIR}/test_cycle.sh; then
+                            echo "Finished OK"
+                        else
+                            ((err++))
+                            echo "Finished with ERRORS"
+                        fi
+                    done
                 done
             done
         done
