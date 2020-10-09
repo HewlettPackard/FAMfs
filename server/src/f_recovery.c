@@ -369,7 +369,9 @@ static void *f_recovery_thread(void *ctx)
 	if (f_map_flush(lp->slabmap)) 
 		LOG(LOG_ERR, "%s[%d]: error flushing slab map", lo->info.name, lp->part_num);
 
-	LOG(LOG_INFO, "%s[%d]: recovery thread exiting on %s rc=%d",
+	pthread_cond_signal(&lp->r_done_cond);
+
+        LOG(LOG_INFO, "%s[%d]: recovery thread exiting on %s rc=%d",
 		lo->info.name, lp->part_num, pool->mynode.hostname, rc);
 
 	free_rec_ctx(lp);
@@ -385,6 +387,8 @@ int f_start_recovery_thread(F_LAYOUT_t *lo)
 
 	rc = pthread_mutex_init(&lp->r_thread_lock, NULL);
 	if (!rc) rc = pthread_cond_init(&lp->r_thread_cond, NULL);
+        if (!rc) rc = pthread_mutex_init(&lp->r_done_lock, NULL);
+        if (!rc) rc = pthread_cond_init(&lp->r_done_cond, NULL);
 
 	if (!rc) {
 		SetLayoutRecover(lo);

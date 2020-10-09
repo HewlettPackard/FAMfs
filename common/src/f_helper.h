@@ -25,6 +25,7 @@ typedef struct _f_ah_scme {
     f_stripe_t  str;
     int         lid;
     int         flag;
+    int         rank;
 } f_ah_scme_t;
 
 typedef enum {

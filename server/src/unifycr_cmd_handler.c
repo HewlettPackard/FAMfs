@@ -191,6 +191,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
     int cmd = pcmd->opcode;
     f_svcrply_t rply;
     char qname[MAX_RBQ_NAME];
+    F_POOL_t *pool = f_get_pool();
 
     LOG(LOG_DBG, "svc command %x, masked %x\n", cmd, cmd & ~CMD_OPT_MASK);
     bzero(&rply, sizeof(rply));
@@ -285,12 +286,15 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
              *metadata to the key-value store*/
 
             if (!(rply.rc = f_do_fsync(pcmd))) {
+                int me;
+                MPI_Comm_rank(pool->helper_comm, &me);
                 F_LAYOUT_t *lo = f_get_layout(pcmd->fm_lid);
                 ASSERT(lo);
                 if (lo->info.chunks - lo->info.data_chunks) {
                     // mark this client as having written stuff to this layout
                     pthread_mutex_lock(&cntfy_lock);
                     set_bit(pcmd->lid, &cntfy[pcmd->cid].sync_bm);
+                    set_bit(pcmd->lid, &cntfy[pcmd->cid].edr_bm);
                     pthread_mutex_unlock(&cntfy_lock);
                 }
             }
@@ -323,18 +327,25 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             ASSERT(lo);
 
             int wait = 0;
+            int me;
+            MPI_Comm_rank(pool->helper_comm, &me);
             if (lo->info.chunks - lo->info.data_chunks) {
                 // see if EDR is done for this client/layout
                 pthread_mutex_lock(&cntfy_lock);
                 if (test_bit(pcmd->lid, &cntfy[pcmd->cid].sync_bm)) {
                     // if we saw fsync, see if EDR is also done
                     wait = test_bit(pcmd->lid, &cntfy[pcmd->cid].edr_bm);
-                    if (wait)
+                    if (wait) {
                         set_bit(pcmd->lid, &cntfy[pcmd->cid].wait_bm);
+                        clear_bit(pcmd->lid, &cntfy[pcmd->cid].sync_bm);
+                        clear_bit(pcmd->lid, &cntfy[pcmd->cid].edr_bm);
+                    }
                 }
                 pthread_mutex_unlock(&cntfy_lock);
             }
-            if (wait) return 0; // EDR still in progress, do not reply
+            if (wait) {
+                return 0; // EDR still in progress, do not reply
+            }
         }
 
         break;
@@ -379,6 +390,8 @@ void *f_notify_thrd(void *arg) {
     F_POOL_t *pool = f_get_pool();
     MPI_Status sts;
     f_svcrply_t rply = {.rc = 0, .more = 0, .ackcode = CMD_FCLOSE};
+    int me;
+    MPI_Comm_rank(pool->helper_comm, &me);
 
     ASSERT(pool);
 
@@ -394,17 +407,17 @@ void *f_notify_thrd(void *arg) {
         ASSERT(msg.op == F_NTFY_EC_DONE);
         LOG(LOG_DBG, "Got EDR DONE on lid %d", msg.lid);
 
-        pthread_mutex_lock(&cntfy_lock);
         for (int i = 0; i < MAX_NUM_CLIENTS; i++) {
+            pthread_mutex_lock(&cntfy_lock);
             if (test_bit(msg.lid, &cntfy[i].wait_bm)) {
                 // client is waiting on close for EDR to finish
                 clients[cnt++] = i;
                 clear_bit(msg.lid, &cntfy[i].wait_bm);
-                clear_bit(msg.lid, &cntfy[i].sync_bm);
-                clear_bit(msg.lid, &cntfy[i].edr_bm);
             }
+            // always clear edr bm 'cause edr is done regardless of wait list
+            clear_bit(msg.lid, &cntfy[i].edr_bm);
+            pthread_mutex_unlock(&cntfy_lock);
         }
-        pthread_mutex_unlock(&cntfy_lock);
 
         for (int i = 0; i < cnt; i++) {
             LOG(LOG_DBG, "Sending CLOSE reply to rank %d, lid %d", clients[i], msg.lid);

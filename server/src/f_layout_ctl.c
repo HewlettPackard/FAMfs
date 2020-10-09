@@ -52,7 +52,7 @@ static inline int mark_extent_fail(F_LAYOUT_t *lo, F_SLABMAP_ENTRY_t *sme, unsig
 	F_LO_PART_t *lp = lo->lp;
 	F_SLAB_ENTRY_t se, old_se;
 	F_EXTENT_ENTRY_t ext, old_ext;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
 	volatile F_EXTENT_ENTRY_t *extp = &sme->extent_rec[n];
 	bool failed = false;
@@ -272,7 +272,7 @@ static inline int replace_extent(F_LAYOUT_t *lo, F_EXTENT_ENTRY_t *pext,
 {
 	F_LO_PART_t *lp = lo->lp;
 	F_SLAB_ENTRY_t se, old_se;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	F_EXTENT_ENTRY_t old_ext;
 	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
 	volatile F_EXTENT_ENTRY_t *extp = &sme->extent_rec[n];
@@ -345,7 +345,7 @@ static int alloc_extent_by_util(F_LO_PART_t *lp, F_EXTENT_ENTRY_t *pext, F_SLABM
 {
 	F_LAYOUT_t *lo = lp->layout;
 	F_POOL_t *pool = lo->pool;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	F_POOLDEV_INDEX_t *sorted_devlist = NULL;
 	unsigned devnum = pool->pool_ags * pool->ag_devs;
 	int i, rc = -ENOSPC;
@@ -633,7 +633,8 @@ static int replace_slab_extents(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
 
 		/* Skip unused slabs, the allocator will release them */
 		if (!slab_used(lp, slab_to_stripe0(lo, slab))) {
-			LOG(LOG_DBG, "%s[%d]: slab %u not used", lo->info.name, lp->part_num, slab);
+			LOG(LOG_DBG, "%s[%d]: slab %u not used in_sync:%d", 
+				lo->info.name, lp->part_num, slab, slab_in_sync(lp, slab));
 			continue;
 		}
 
@@ -792,7 +793,7 @@ static inline int mark_slab_recovering(F_LAYOUT_t *lo, volatile F_SLABMAP_ENTRY_
 {
 	F_LO_PART_t *lp = lo->lp;
 	F_SLAB_ENTRY_t se, old_se;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
 	int retries = 0, retries_max = 5;
 
@@ -869,7 +870,7 @@ static inline int clear_slab_recovering(F_LAYOUT_t *lo, volatile F_SLABMAP_ENTRY
 {
 	F_LO_PART_t *lp = lo->lp;
 	F_SLAB_ENTRY_t se, old_se;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
 	int retries = 0, retries_max = 5;
 
@@ -947,7 +948,7 @@ static inline int mark_slab_recovered(F_LAYOUT_t *lo, volatile F_SLABMAP_ENTRY_t
 	F_LO_PART_t *lp = lo->lp;
 	F_SLAB_ENTRY_t se, old_se;
 	F_EXTENT_ENTRY_t ext, old_ext;
-	f_slab_t slab = stripe_to_slab(lo, sme->slab_rec.stripe_0);
+	f_slab_t slab = f_map_prt_to_local(lp->slabmap, stripe_to_slab(lo, sme->slab_rec.stripe_0));
 	volatile F_SLAB_ENTRY_t *sep = &sme->slab_rec;
 	int retries = 0, retries_max = 5;
 	int n, rc = 0;
@@ -958,7 +959,7 @@ static inline int mark_slab_recovered(F_LAYOUT_t *lo, volatile F_SLABMAP_ENTRY_t
 			old_ext._v64 = __atomic_load_8(&sme->extent_rec[n], __ATOMIC_SEQ_CST);
 			do {
 				ext = old_ext;
-				ext.failed = 1;
+				ext.failed = 0;
 				ext.checksum = 0;
 				ext.checksum = f_crc4_fast((char*)&ext, sizeof(ext));
 				if (likely(__atomic_compare_exchange_8(extp, &old_ext, ext._v64,
@@ -1038,6 +1039,8 @@ int f_mark_slab_recovered(F_LAYOUT_t *lo, f_slab_t slab)
 	if (mark_slab_recovered(lo, sme) > 0) {
 		LOG(LOG_DBG, "%s[%d]: marked slab %u recovered", lo->info.name, lp->part_num, slab);
 		f_map_mark_dirty(lp->slabmap, slab);
+		if (log_print_level > 0)
+			f_print_sm(dbg_stream, lp->slabmap, lo->info.chunks, lo->info.slab_stripes);
 	}
 
 	f_map_mark_dirty(lp->slabmap, slab);

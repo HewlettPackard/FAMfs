@@ -2840,8 +2840,13 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 //			f_replace(lo, pdi->pool_index, 2);
 		}
 	}
-	if (!rc && atomic_read(&lp->degraded_slabs)) 
+	if (!rc && atomic_read(&lp->degraded_slabs)) { 
+		/* Check and release degraded and not used slabs prior to recovery */
+		rc = process_degraded_slabs(lp);
+		if (rc) LOG(LOG_WARN, "%s[%d]: error %s processing degraded slabs", 
+				lo->info.name, lp->part_num, strerror(rc));
 		f_start_recovery_thread(lo);
+	}
 }
 
 static inline void print_layout_devices(F_LAYOUT_t *lo)
@@ -3227,8 +3232,13 @@ static void *f_allocator_thread(void *ctx)
 			print_layout_devices(lo);
 		}
 		/* Wake-up recovery thread if needed */
-		if (LayoutRecover(lo))
+		if (LayoutRecover(lo)) {
 			pthread_cond_signal(&lp->r_thread_cond);
+                        pthread_mutex_lock(&lp->r_done_lock);
+                        pthread_cond_wait(&lp->r_done_cond, &lp->r_done_lock);
+                        pthread_mutex_unlock(&lp->r_done_lock);
+                }
+                MPI_Barrier(pool->helper_comm);
 	}
 
 	while (!LayoutQuit(lo) && !rc) {

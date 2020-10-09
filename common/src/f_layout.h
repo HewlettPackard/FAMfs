@@ -209,6 +209,9 @@ typedef struct f_layout_partition_ {
     pthread_mutex_t	r_thread_lock;	/* recovery thread wait condition mutex */
     pthread_cond_t	r_thread_cond;	/* recovery thread wait condition */
     int			r_thread_res;	/* recovery thread exit code */
+    pthread_mutex_t	r_done_lock;	/* recovery done wait condition mutex */
+    pthread_cond_t	r_done_cond;	/* recovery done wait condition */
+
     void		*rctx;		/* recovery context */
 
     uint32_t		slab0;		/* first slab in this partition */

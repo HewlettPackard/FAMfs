@@ -688,7 +688,7 @@ static int f_find_file_global(int gfid, int loid, f_fattr_t **file_meta) {
         return rc;
     }
 
-    if ((rc = f_rbq_pop(rplyq, &r, 30000*RBQ_TMO_1S))) {
+    if ((rc = f_rbq_pop(rplyq, &r, 30*RBQ_TMO_1S))) {
         ERROR("couldn't get response for 'find file' from layout %d queue: %s", loid, strerror(-rc));
         return rc;
     }
@@ -1262,10 +1262,12 @@ static int famfs_fid_close(int fid)
         do {
             rc = f_rbq_pop(rplyq, &r, RBQ_TMO_1M);
             if (++n > 3) break;
-        } while (rc == -EAGAIN);
+        } while (rc == -ETIMEDOUT);
+
         if (rc) {
-            ERROR("%s: can't push FCLOSE cmd, layout %d: %s(%d)",
-                  f_get_pool()->mynode.hostname, lid, strerror(-rc), rc);
+            ERROR("%s: FCLOSE %s, layout %d: %s(%d)",
+                  f_get_pool()->mynode.hostname, rc == -ETIMEDOUT ? "timed-out" : "failed", 
+                  lid, strerror(-rc), rc);
             return UNIFYCR_FAILURE;
         }
     }

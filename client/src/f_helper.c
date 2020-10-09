@@ -94,6 +94,7 @@ int f_ah_get_stripe(F_LAYOUT_t *lo, f_stripe_t *str) {
     return rc;
 }
 
+extern int local_rank_idx;
 static int _push_stripe(F_LAYOUT_t *lo, f_stripe_t str, int release) {
     F_POOL_t    *pool = f_get_pool();
     f_ah_scme_t scme;
@@ -105,6 +106,7 @@ static int _push_stripe(F_LAYOUT_t *lo, f_stripe_t str, int release) {
     scme.lid = lo->info.conf_id;
     scme.str = str;
     scme.flag = release;
+    scme.rank = local_rank_idx;
 
     return f_rbq_push(ccmq, &scme, 10*RBQ_TMO_1S);
 

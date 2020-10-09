@@ -117,27 +117,49 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
     rq->ready = 0;
     rq->state = wr ? F_EDR_WRITE : F_EDR_READ;
     int px = 0, dx = 0;
+    char c = '*';
+    unsigned int failed_media[nchunks];
+    int fcnt = 0;
+
+    if (rq->op == EDR_OP_REC)
+        for (int i = 0; i < nchunks; i++)
+            if (test_bit(i, &rq->fvec))
+                failed_media[fcnt++] = stripe->chunks[i].pdev->pool_index;
+
+    ASSERT(fcnt <= stripe->p);   // max 'p' chunks may fail
 
     atomic_set(&rq->busy, nchunks);
     for (int i = 0; i < nchunks && !rc; i++) {
         
         chunk = get_fam_chunk(stripe, i);
+	pdev = chunk->pdev;
+	media_id = pdev->pool_index;
+	fdev = &pdev->dev->f;
+	tgt_srv_addr = &fdev->fi_addr;
+
         if (rq->op == EDR_OP_ENC) {
-            // encode: skip parity on read and data on write
+            // encode: based on chunk's role (d/p), skip parity on read and data on write
             // remeber wich chunks are data and parity
-            if (chunk->data >= 0)
+            c = 'E';
+            if (chunk->data >= 0) {
                 rq->dchnk[dx++] = i;
-            else
+            } else {
                 rq->pchnk[px++] = i;
+            }
 
             if ((chunk->data < 0 && !wr) || (chunk->data >= 0 && wr)) {
                 atomic_dec(&rq->busy);
                 continue;
             }
         } else if (rq->op == EDR_OP_REC) {
-            // recover: skip error chunks on read and good ones on write
+            // recover: based on chunk's device, skip error chunks on read and good ones on write
             // remeber good chunk and failed ones (the latter go as 'parity')
-            if (test_bit(i, &rq->fvec)) {
+            c = 'R';
+            int failed = 0;
+            for (int j = 0; j < fcnt && !failed; j++) 
+                if (media_id == failed_media[j])
+                    failed = 1;
+            if (failed) {
                 rq->pchnk[px++] = i;
                 if (!wr) {
                     atomic_dec(&rq->busy);
@@ -151,6 +173,7 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
                 }
             }
         } else if (rq->op == EDR_OP_VFY) {
+            c = 'V';
             if (chunk->data >= 0)
                 rq->dchnk[dx++] = i;
             else
@@ -163,11 +186,6 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
             ASSERT(0);
         }
 
-	pdev = chunk->pdev;
-	media_id = pdev->pool_index;
-
-	fdev = &pdev->dev->f;
-	tgt_srv_addr = &fdev->fi_addr;
 	local_desc = NULL; // FIXME
 	buf = &rq->iobuf[i*len];
 	tx_ep = fdev->ep;
@@ -182,11 +200,12 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
 	// remote address
 	off = 1ULL*stripe->stripe_in_part*chunk_sz + chunk->p_stripe0_off;
 
-	LOG(LOG_DBG3,"%s: %s stripe:%lu - %u/%u/%s "
-            "on device %u(@%lu) len:%u desc:%p off:0x%16lx mr_key:%lu",
-            f_get_pool()->mynode.hostname, wr?"write":"read",rq->ss->stripes[rq->scur],
-            stripe->extent, stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-            media_id, (unsigned long)*tgt_srv_addr, len, local_desc, off, fdev->mr_key);
+	LOG(LOG_DBG2,"%s: %c-%s stripe:%lu[%d] - "
+            "%u/%u/%s ext:%u "
+            "on device %u(@%lu) len:%u off:0x%lx",
+            f_get_pool()->mynode.hostname, c, wr?"write":"read", rq->ss->stripes[rq->scur], i,
+            stripe->extent, stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), chunk->extent,
+            media_id, (unsigned long)*tgt_srv_addr, len, off);
 
 	do {
 	    rc = wr ? fi_write(tx_ep, buf, len, local_desc, *tgt_srv_addr, off,
@@ -195,7 +214,6 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
                               fdev->mr_key, (void*)rq);
 
 	    if (!rc) {
-                atomic_inc(&rq->busy);
                 atomic_inc(&edr_io_total);
                 atomic_inc(&pdev->edr_io_cnt);
                 break;
@@ -274,11 +292,11 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
     do {
         if (!rq->err) {
             if (rq->op == EDR_OP_ENC) {
-                f_laminate_stripe(lp->layout, s);
-                LOG(LOG_DBG3, "%s[%d]: stripe %lu laminated (%d of %d)",
+                LOG(LOG_DBG2, "%s[%d]: stripe %lu laminated (%d of %d)",
                     lo->info.name, lp->part_num, s, x + 1, rq->ss->count);
+                f_laminate_stripe(lp->layout, s);
             } else {
-                LOG(LOG_DBG3, "%s[%d]: %d stripes recovered, s0=%lu, %d to go",
+                LOG(LOG_DBG2, "%s[%d]: %d stripes recovered, s0=%lu, %d to go",
                     lo->info.name, lp->part_num, rq->scnt, s, rq->ss->count - x -1);
             }
         } else {
@@ -321,8 +339,11 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
             // wake up any client(s) that could be waiting for ree RQ
             pthread_cond_broadcast(&rq->myq->wake);
             //pthread_cond_signal(&free_s[l].wake);
-            LOG(LOG_DBG3, "%s[%d]: retiring rq to '%s' queue",
+            LOG(LOG_DBG2, "%s[%d]: retiring rq to '%s' queue",
                 lo->info.name, lp->part_num, EDR_PR_Q(rq->myq));
+
+            if (rq->sattr) free_fam_stripe(rq->sattr);
+            rq->sattr = 0;
 
         } else {
             // repeat the whole process for the next stripe(s) in set
@@ -345,11 +366,11 @@ static int edr_calc_done(F_EDR_t *rq, void *ctx) {
 
     rq->next_call = edr_write_done;
 
-    LOG(LOG_DBG3, "stripe batch %lu[%d] (%d of %d): %s calc done", 
+    LOG(LOG_DBG2, "stripe batch %lu[%d] (%d of %d): %s calc done", 
         rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq));
     if (!rq->err) {
         if ((rc = edr_io_submit(rq, 1))) {
-            LOG(LOG_DBG3, "stripe batch %lu[%d] (%d of %d): %s wr submit err:%d", 
+            LOG(LOG_DBG2, "stripe batch %lu[%d] (%d of %d): %s wr submit err:%d", 
                 rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, 
                 EDR_PR_R(rq), rc);
             goto _err;
@@ -388,7 +409,7 @@ static int edr_read_done(F_EDR_t *rq, void *ctx) {
     }
     rq->next_call = edr_calc_done;
 
-    LOG(LOG_DBG3, "stripe batch %lu[%d] (%d of %d): %s read done", 
+    LOG(LOG_DBG2, "stripe batch %lu[%d] (%d of %d): %s read done", 
         rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq));
 
     //ASSERT(atomic_read(&rq->busy) == 0);
@@ -461,7 +482,7 @@ static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
     // read completio queue
     ret = fi_cq_read(cq, &cqe, 1);
     if (ret > 0) {
-        LOG(LOG_DBG3, "got RQ @%p completion", cqe.op_context);
+        LOG(LOG_DBG2, "got RQ @%p completion", cqe.op_context);
         // got one rq completed successfully
         rq = (F_EDR_t *)cqe.op_context;
         rq->err = rq->prov_err = 0;
@@ -511,7 +532,7 @@ static int check_cq(struct fid_cq *cq, F_EDR_t **prq) {
 // Advance request propgress
 //
 static void advance_rq(F_EDR_t *rq) {
-    LOG(LOG_DBG3, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur + 1, rq->ss->count);
+    LOG(LOG_DBG2, "stripe %lu (%d of %d)", rq->ss->stripes[rq->scur], rq->scur + 1, rq->ss->count);
     if (rq->err) {
         LOG(LOG_ERR, "I/O error (%d/%d) on %s rq, s[%d]=%lu, ss cnt=%d, lid=%d",
             rq->err, rq->prov_err, EDR_PR_R(rq), rq->scur, rq->ss->stripes[rq->scur], 
@@ -519,6 +540,7 @@ static void advance_rq(F_EDR_t *rq) {
     }
     if (atomic_dec_and_test(&rq->busy)) {
         // all ops completed (some may had failed), see what's next
+        LOG(LOG_DBG, "stripe %lu (%d of %d) advancing", rq->ss->stripes[rq->scur], rq->scur + 1, rq->ss->count);
         rq->next_call(rq, rq->ctx);
     }
 }
@@ -735,7 +757,7 @@ static void free_q(F_EDR_OPQ_t *q) {
     list_for_each_entry_safe(rq, next, &q->qhead, list) {
         list_del(&rq->list);
         free(rq->iobuf);
-        free(rq->sattr);
+        if (rq->sattr) free_fam_stripe(rq->sattr);
         ss_free(rq->ss);
     }
 }
@@ -796,21 +818,46 @@ int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
     ASSERT(rctx);
     ASSERT(cmd == F_WT_DECODE);
     if (!rq->err) {
-        int cs = lo->info.chunk_sz*rq->scnt;
+        int sz = lo->info.chunk_sz*rq->scnt;
         int nerr = bitmap_weight(&rq->fvec, sizeof(u64));
         int nd = lo->info.chunks - nerr;
         u8 *dvec[nd], *evec[nerr];
 
         ASSERT(nerr);
 
-        LOG(LOG_DBG3, "%s[%d]-w%d: decoding %d stripes s0=%lu (%d of %d)",
-            lo->info.name, lp->part_num, thread_id, rq->scnt, s, rq->scur + 1, rq->ss->count);
-        for (int i = 0; i < nd; i++)
-            dvec[i] = rq->iobuf + rq->dchnk[i]*cs;
-        for (int i = 0; i < nerr; i++)
-            evec[i] = rq->iobuf + rq->pchnk[i]*cs;
+        LOG(LOG_DBG2, "%s[%d]-w%d: decoding %d stripes s0=%lu (%d of %d), fvec=0x%lx",
+            lo->info.name, lp->part_num, thread_id, rq->scnt, s, rq->scur + 1, rq->ss->count, rq->fvec);
+        for (int i = 0; i < nd; i++) {
+            dvec[i] = rq->iobuf + rq->dchnk[i]*sz;
+            LOG(LOG_DBG2, "D[%d] @ C%d", i, rq->dchnk[i]);
+        }
+        for (int i = 0; i < nerr; i++) {
+            evec[i] = rq->iobuf + rq->pchnk[i]*sz;
+            LOG(LOG_DBG2, "E[%d] @ C%d", i, rq->pchnk[i]);
+        }
 
-        decode_data(ISAL_CMD, cs, nd, nerr, rctx->decode_table, dvec, evec);
+        decode_data(ISAL_CMD, sz, nd, nerr, rctx->decode_table, dvec, evec);
+
+/*
+unsigned long x[8];
+for (int j = 0; j < rq->scnt; j++) {
+    bzero(x, sizeof(x));
+    for (int i = 0; i < nd; i++) {
+        unsigned long *v = (unsigned long*)(dvec[i] + j*lo->info.chunk_sz);
+        printf("=== DEC str[%lu] data[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->dchnk[i], dvec[i], sz, 
+               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+        x[0] ^= v[0]; x[1] ^= v[1]; x[2] ^= v[2]; x[3] ^= v[3];
+        x[4] ^= v[4]; x[5] ^= v[5]; x[6] ^= v[6]; x[7] ^= v[7];
+    }
+
+    for (int i = 0; i < nerr; i++) {
+        unsigned long *v = (unsigned long*)(evec[i] + j*lo->info.chunk_sz);
+        printf("=== DEC str[%lu] err[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->pchnk[i], evec[i], sz, 
+               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+    }
+    printf("$$$ XOR[%lu] xor=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
+}
+*/
 
     } else {
         LOG(LOG_INFO, "%s[%d]-w%d: not decoding %d stripes s0=%lu (%d of %d), rq nerr=%d",
@@ -833,20 +880,44 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
 
     ASSERT(cmd == F_WT_ENCODE);
     if (!rq->err) {
-        int cs = lo->info.chunk_sz*rq->scnt;
+        int sz = lo->info.chunk_sz*rq->scnt;
         int nd = lo->info.data_chunks;
         int lx = lo->info.conf_id;
         int np = lo->info.chunks - nd;
         u8 *dvec[nd], *pvec[np];
 
-        LOG(LOG_DBG3, "%s[%d]-w%d: encoding stripe %lu (%d of %d)",
+        LOG(LOG_DBG2, "%s[%d]-w%d: encoding stripe %lu (%d of %d)",
             lo->info.name, lp->part_num, thread_id, s, rq->scur + 1, rq->ss->count);
-        for (int i = 0; i < nd; i++)
-            dvec[i] = rq->iobuf + rq->dchnk[i]*cs;
-        for (int i = 0; i < np; i++)
-            pvec[i] = rq->iobuf + rq->pchnk[i]*cs;
+        for (int i = 0; i < nd; i++) {
+            dvec[i] = rq->iobuf + rq->dchnk[i]*sz;
+            LOG(LOG_DBG2, "D[%d] @ C%d", i, rq->dchnk[i]);
+        }
+        for (int i = 0; i < np; i++) {
+            pvec[i] = rq->iobuf + rq->pchnk[i]*sz;
+            LOG(LOG_DBG2, "P[%d] @ C%d", i, rq->pchnk[i]);
+        }
 
-        encode_data(ISAL_CMD, cs, nd, np, edr_encode_tables[lx], dvec, pvec);
+        encode_data(ISAL_CMD, sz, nd, np, edr_encode_tables[lx], dvec, pvec);
+/*
+unsigned long x[8];
+for (int j = 0; j < rq->scnt; j++) {
+    bzero(x, sizeof(x));
+    for (int i = 0; i < nd; i++) {
+        unsigned long *v = (unsigned long*)(dvec[i] + j*lo->info.chunk_sz);
+        printf("+++ ENC str[%lu] data[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->dchnk[i], dvec[i], sz, 
+               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+        x[0] ^= v[0]; x[1] ^= v[1]; x[2] ^= v[2]; x[3] ^= v[3];
+        x[4] ^= v[4]; x[5] ^= v[5]; x[6] ^= v[6]; x[7] ^= v[7];
+    }
+
+    for (int i = 0; i < np; i++) {
+        unsigned long *v = (unsigned long*)(pvec[i] + j*lo->info.chunk_sz);
+        printf("+++ ENC str[%lu] ecc[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->pchnk[i], pvec[i], sz, 
+               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+    }
+    printf("$$$ XOR[%lu] xor=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
+}
+*/
 
     } else {
         LOG(LOG_INFO, "%s[%d]-w%d: not encoding stripe %lu (%d of %d), rq error(s) %d",
@@ -899,7 +970,7 @@ int encode_batch_done_cb(F_EDR_t *rq, void *ctx) {
             pthread_mutex_unlock(&ntfy_lock);
 
             for (int i = 0; i < ntfy.cnt; i++) {
-                LOG(LOG_DBG3, "%s[%d]: ENC done notify rank %d", 
+                LOG(LOG_DBG2, "%s[%d]: ENC done notify rank %d", 
                     lo->info.name, lp->part_num, ntfy.ranks[i]);
 
                 rc = MPI_Send(&msg, sizeof(msg), MPI_BYTE, ntfy.ranks[i], 
@@ -1113,7 +1184,7 @@ static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
         }
         *this_q = q;
     }
-    LOG(LOG_DBG3, "getting EDR rq(size=%d) from '%s' q[%d]\n", cnt, EDR_PR_Q(q), qix);
+    LOG(LOG_DBG2, "getting EDR rq(size=%d) from '%s' q[%d]\n", cnt, EDR_PR_Q(q), qix);
 
     do {
         // get a free request
@@ -1163,8 +1234,9 @@ static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
  * Parmas
  *      lo              layout pointer
  *      ss              stripe set to encode/recover
- *      fvec            failed chunks bitmap, if == 0: encode parities according to layout
- *                          if == <all 1s>: verify stripes
+ *      fvec            failed extents bitmap, bit #N set means extent #N in this slab failed
+ *                          if fvec == 0: encode parities according to layout
+ *                          if fvec == <all 1s>: verify stripes
  *      done_cb         callaback function to call when state becomes DONE (or NULL if not needed)
  *      ctx             CB's parameter
  *
@@ -1190,7 +1262,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
         // ENCODE
 
         // since we can encode only one stripe at a time (due to rotating parity)
-        // we will set scur to 1, never mind the ss size
+        // we will set scnt to 1, never mind the ss size
         if (!(rq = get_free_rq(&q, l, 1, 1)))
             return -errno;
 
@@ -1213,7 +1285,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
         if (!(rq = get_free_rq(&q, l, ss->count, -1)))
             return -errno;
         rq->fvec = *fvec;
-        rq->scnt = min(rq->sall, ss->count);
+        rq->scnt = 1; // min(rq->sall, ss->count);
         rq->op = EDR_OP_REC;
 
     }
@@ -1232,8 +1304,6 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
     edr_wq.size++;
     pthread_spin_unlock(&edr_wq.qlock);
     pthread_cond_signal(&edr_wq.wake);
-
-    //printf("EDR rq '%s' from '%s' Q submitted\n", EDR_PR_R(rq), EDR_PR_Q(rq->myq));
 
     return 0;
 }

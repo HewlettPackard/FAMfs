@@ -42,6 +42,8 @@
 #include "f_helper.h"
 
 extern volatile int exit_flag;
+extern pthread_mutex_t cntfy_lock;
+extern f_close_ntfy_t cntfy[MAX_NUM_CLIENTS];
 
 static volatile int quit = 0;
 
@@ -154,8 +156,8 @@ static void *commit_srv(void *arg) {
         }
 
         MPI_Get_count(&sts, MPI_BYTE, &msg_sz);
-        LOG(LOG_DBG, "srv CT from %d: msg[%d].op=%d got %d stripes to commit to LO %d", 
-            sts.MPI_SOURCE, msg_sz, msg->cmd, msg->cnt, msg->lid);
+        LOG(LOG_DBG, "srv CT from %d: msg[%d].op=%d got %d stripes to commit to LO %d, s0=%lu", 
+            sts.MPI_SOURCE, msg_sz, msg->cmd, msg->cnt, msg->lid, msg->str[0]);
         if (msg->cmd == F_AH_QUIT) {
             LOG(LOG_INFO, "srv CT: received QUIT command");
             break;
@@ -164,7 +166,7 @@ static void *commit_srv(void *arg) {
             LOG(LOG_ERR, "srv CT: wrong command received: %d, LO %d", msg->cmd, msg->lid);
             continue;
         }
- ASSERT(F_TAG_BASE + N  == sts.MPI_TAG);
+        ASSERT(F_TAG_BASE + N  == sts.MPI_TAG);
         ASSERT(msg_sz == F_AH_MSG_SZ(msg->cnt));
 
         ss.count = msg->cnt;
@@ -538,6 +540,8 @@ static void *stoker(void *arg) {
 
     rcu_register_thread();
 
+    MPI_Barrier(pool->helper_comm);
+
     if ((rc = read_global_slabmap(lo))) {
 	LOG(LOG_ERR, "%s: slabmap load failed: %s", lo->info.name, strerror(-rc));
         goto _abort;
@@ -826,6 +830,7 @@ static void *drainer(void *arg) {
     int in_flight[N];
     MPI_Request mrq[N];
 
+
     bzero(in_flight, sizeof(in_flight));
     bzero(ssa, sizeof(ssa));
     bzero(sss, sizeof(sss));
@@ -901,7 +906,14 @@ static void *drainer(void *arg) {
                     }
                     in_flight[lid] = 1;
                 }
+                LOG(LOG_DBG, "%s: sent stripe %lu for release", lo[lid]->info.name, scme.str);
                 continue;
+            }
+
+            if (lo[lid]->info.chunks - lo[lid]->info.data_chunks) {
+                pthread_mutex_lock(&cntfy_lock);
+                set_bit(lid, &cntfy[scme.rank].edr_bm);
+                pthread_mutex_unlock(&cntfy_lock);
             }
 
             F_AH_MSG_APPEND(crq[lid], scme.str, sss[lid], ssa[lid]);
@@ -939,6 +951,7 @@ static void *drainer(void *arg) {
                     } else {
                         in_flight[i] = 1;
                     }
+                    LOG(LOG_DBG, "%s: sent %d stripes to commit, s0=%lu", lo[i]->info.name, crq[i]->cnt, crq[i]->str[0]); 
 
                 }
                 ssa[i].count = 0;
@@ -1048,6 +1061,7 @@ static int _push_stripe(F_LAYOUT_t *lo, f_stripe_t str, int release) {
     scme.lid = lo->info.conf_id;
     scme.str = str;
     scme.flag = release;
+    scme.rank = 0;
 
     return f_rbq_push(ccmq, &scme, 10*RBQ_TMO_1S);
 
@@ -1070,7 +1084,7 @@ int f_test_helper(F_POOL_t *pool)
 	int rc = f_ah_attach();
 	if (rc) return rc;
 	printf("attached\n");
-        int cnt = 1024;
+        int cnt = 128;
 
     	while (!exit_flag && cnt--) {
 		//int n = 0;

@@ -408,7 +408,9 @@ int main(int argc, char *argv[])
 	}
 	LOG(LOG_DBG, "helper threads started");
 #if 0 /* 1: test helper */
+	LOG(LOG_DBG, "+++ TESTING +++");
 	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
+            LOG(LOG_DBG, "+++ EXECUTING SELF TEST +++");
 	    usleep(500);
 	    if ((rc = f_test_helper(pool)))
 		LOG(LOG_ERR, "error %d in f_test_helper", rc);
