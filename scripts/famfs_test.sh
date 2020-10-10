@@ -418,7 +418,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 # run Client app one or two times, with specific i/o pattern
                 for ((iPattern=0; iPattern<nPatterns; iPattern++)); do
 
-                    ((iPattern>0))&& oSEQ=0
+                    ((iPattern==0))&& oSEQ=1 || oSEQ=0
 
                     if [ -z "${RDSZ[$j]}" ]; then
                         reads=""
