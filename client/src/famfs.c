@@ -2092,12 +2092,28 @@ static int f_stripe_write(
 
     md_index_t *cur = &tmp_index_set.idxes[0];
     tmp_index_set.count = 1;
-    cur->fid = meta->gfid;
+    cur->fid      = meta->gfid;
+    cur->loid     = meta->loid;
     cur->file_pos = pos;
-    cur->length = count;
-    cur->mem_pos = stripe_offset;
-    cur->sid = s;
-    cur->loid = meta->loid;
+    cur->length   = count;
+    cur->mem_pos  = stripe_offset;
+    cur->sid      = s;
+
+    /*split the write requests larger than key_slice_range into
+     * the ones smaller than key_slice_range
+     * */
+    if (pos % key_slice_range + count > key_slice_range) {
+        size_t new_len = pos % key_slice_range + count - key_slice_range;
+        md_index_t * snd = cur+1;
+        cur->length   -= new_len;
+        snd->file_pos  = cur->length + pos;
+        snd->mem_pos   = cur->length + stripe_offset;
+        snd->length    = new_len;
+        snd->loid = meta->loid;
+        snd->fid  = meta->gfid;
+        snd->sid  = s;
+        tmp_index_set.count++;
+    }
 
     int i = 0;
     if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
@@ -2140,8 +2156,8 @@ static int f_stripe_write(
                 }
             }
         }
-        if (i == 0) {
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries] = tmp_index_set.idxes[0];
+        for (; i < tmp_index_set.count; i++) {
+            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries] = tmp_index_set.idxes[i];
             (*unifycr_indices.ptr_num_entries)++;
         }
 
