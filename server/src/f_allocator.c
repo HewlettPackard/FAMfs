@@ -1903,7 +1903,7 @@ static inline int commit_stripe(F_LO_PART_t *lp, f_stripe_t s)
 	/* Set the stripe preallocated */
 	old = atomic_test_and_set_bbit(BBIT_NR_IN_LONG(s), CVE_ALLOCATED, p);
 
-	if (old == CVE_ALLOCATED) return -EEXIST;
+	if (old == CVE_ALLOCATED || old == CVE_LAMINATED) return -EEXIST;
 
 	/* Check the previous state */
 	ASSERT(old == CVE_PREALLOC);

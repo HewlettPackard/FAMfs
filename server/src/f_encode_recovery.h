@@ -97,6 +97,7 @@ typedef struct f_edr_ {
     F_EDR_OPQ_t             *myq;       // Free queue to return this request to when done
     struct f_stripe_set     *ss;        // Stripe set of this request
     int                     sall;       // Allocated number of stripes
+    int                     smax;       // Max allowed batch at a time
     int                     op;         // Operation being performed: encode/recover/verify
     F_LAYOUT_t              *lo;        //   and Layout it belongs to
     uint64_t                fvec;       // Bitmap of failed chunks

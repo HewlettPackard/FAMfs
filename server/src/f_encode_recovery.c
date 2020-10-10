@@ -108,6 +108,18 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
     off_t off;
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
+    if (!rq->sattr) {
+
+printf("!!! %s:sattr is 0 for %crq %p, s[0]=%lu/%u, s[%d]=%lu\n",
+       f_get_pool()->mynode.hostname, wr?'w':'r', rq, rq->ss->stripes[0], rq->ss->count, rq->scur,  rq->ss->stripes[rq->scur]);
+
+        // map to physical stripe
+        if ((rc = f_map_fam_stripe(rq->lo, &rq->sattr, rq->ss->stripes[rq->scur], 0))) {
+            LOG(LOG_ERR,"stripe:%lu mapping error:%d", rq->ss->stripes[rq->scur], rc);
+            return rc;
+        }
+    }
+
     N_STRIPE_t *stripe = rq->sattr;
     size_t chunk_sz = stripe->chunk_sz;
     uint32_t len = chunk_sz*rq->scnt;
@@ -127,6 +139,11 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
                 failed_media[fcnt++] = stripe->chunks[i].pdev->pool_index;
 
     ASSERT(fcnt <= stripe->p);   // max 'p' chunks may fail
+
+#if 0
+    printf(">>> @%s:%s stripes:\n", f_get_pool()->mynode.hostname, wr?"write":"read");
+    for (int i = 0; i < rq->scnt; i++) printf("    s[%d]=%lu\n", rq->scur + i, rq->ss->stripes[rq->scur + i]);
+#endif
 
     atomic_set(&rq->busy, nchunks);
     for (int i = 0; i < nchunks && !rc; i++) {
@@ -206,6 +223,12 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
             f_get_pool()->mynode.hostname, c, wr?"write":"read", rq->ss->stripes[rq->scur], i,
             stripe->extent, stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), chunk->extent,
             media_id, (unsigned long)*tgt_srv_addr, len, off);
+#if 0
+        printf("*** @%s:%c-%s s=%lu c[%d]=%s -> %u %u@0x%lx [s_in_p*cs=%lx, s0_off=%lx]\n",
+                f_get_pool()->mynode.hostname, c, wr?"write":"read", rq->ss->stripes[rq->scur], i,
+                pr_chunk(pr_buf, chunk->data, chunk->parity), media_id, len, off,
+                (unsigned long)stripe->stripe_in_part*chunk_sz, (unsigned long)chunk->p_stripe0_off);
+#endif
 
 	do {
 	    rc = wr ? fi_write(tx_ep, buf, len, local_desc, *tgt_srv_addr, off,
@@ -242,6 +265,7 @@ static int edr_read(F_EDR_t *rq) {
     int x = rq->scur;
     f_stripe_t s = rq->ss->stripes[x];
     F_LAYOUT_t *lo = rq->lo;
+    F_LO_PART_t *lp = lo->lp;
 
     LOG(LOG_DBG2, "stripe %lu (%d of %d)", s, x + 1, rq->ss->count);
     if (rq->op == EDR_OP_ENC || rq->op == EDR_OP_VFY) {
@@ -251,11 +275,26 @@ static int edr_read(F_EDR_t *rq) {
             goto _err;
         }
     }
-    if (!rq->sattr || rq->sattr->stripe_0 + rq->sattr->stripe_in_part != s) {
+
+    // Get stripe properties for the 1st stripe in the set
+    // This will work because encoding goes stripe-by-stripe and next stripe
+    // will be re-evaluated if needed and recovery doesn't care of any sequential 
+    // stripe attributes: we are not rotating parity on recovery
+    if (!rq->sattr || f_map_prt_to_local(lp->claimvec, rq->sattr->stripe_0) + 
+				rq->sattr->stripe_in_part != s) {
         // map to physical stripe
         if ((rc = f_map_fam_stripe(lo, &rq->sattr, s, 0))) {
             LOG(LOG_ERR,"stripe:%lu in layout %s - mapping error:%d", s, lo->info.name, rc);
             goto _err;
+        }
+    }
+
+    // Need to make sure that the stripe bunch is contigious, otherwise
+    // recovery's bulk read/write will not work
+    for (int i = 0; i < rq->scnt - 1; i++) {
+        if (rq->ss->stripes[x + i + 1] != rq->ss->stripes[x + i] + 1) {
+            rq->scnt = i + 1;
+            break;
         }
     }
 
@@ -348,7 +387,7 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
         } else {
             // repeat the whole process for the next stripe(s) in set
             atomic_set(&rq->busy, 0);
-            rq->scnt = min(rq->sall, rq->ss->count - rq->scur);
+            rq->scnt = min(rq->smax, rq->ss->count - rq->scur);
             rq->err = 0;
             rq->next_call = edr_read_done;
             rc = edr_read(rq);
@@ -838,26 +877,30 @@ int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
 
         decode_data(ISAL_CMD, sz, nd, nerr, rctx->decode_table, dvec, evec);
 
-/*
-unsigned long x[8];
-for (int j = 0; j < rq->scnt; j++) {
-    bzero(x, sizeof(x));
-    for (int i = 0; i < nd; i++) {
-        unsigned long *v = (unsigned long*)(dvec[i] + j*lo->info.chunk_sz);
-        printf("=== DEC str[%lu] data[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->dchnk[i], dvec[i], sz, 
-               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
-        x[0] ^= v[0]; x[1] ^= v[1]; x[2] ^= v[2]; x[3] ^= v[3];
-        x[4] ^= v[4]; x[5] ^= v[5]; x[6] ^= v[6]; x[7] ^= v[7];
-    }
+#if 0
+        unsigned long x[8];
+        for (int j = 0; j < rq->scnt; j++) {
+            bzero(x, sizeof(x));
+            for (int i = 0; i < nd; i++) {
+                unsigned long *v = (unsigned long*)(dvec[i] + j*lo->info.chunk_sz);
+                printf("=== @%s:DEC s=%lu data[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", 
+                       f_get_pool()->mynode.hostname,
+                       rq->ss->stripes[rq->scur + j], rq->dchnk[i], dvec[i], sz, 
+                       v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+                //x[0] ^= v[0]; x[1] ^= v[1]; x[2] ^= v[2]; x[3] ^= v[3];
+                //x[4] ^= v[4]; x[5] ^= v[5]; x[6] ^= v[6]; x[7] ^= v[7];
+            }
 
-    for (int i = 0; i < nerr; i++) {
-        unsigned long *v = (unsigned long*)(evec[i] + j*lo->info.chunk_sz);
-        printf("=== DEC str[%lu] err[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->pchnk[i], evec[i], sz, 
-               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
-    }
-    printf("$$$ XOR[%lu] xor=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
-}
-*/
+            for (int i = 0; i < nerr; i++) {
+                unsigned long *v = (unsigned long*)(evec[i] + j*lo->info.chunk_sz);
+                printf("=== @%s:DEC s=%lu err[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n",
+                       f_get_pool()->mynode.hostname,
+                       rq->ss->stripes[rq->scur + j], rq->pchnk[i], evec[i], sz,
+                       v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+            }
+            //printf("$$$ XOR[%lu] xor=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
+        }
+#endif
 
     } else {
         LOG(LOG_INFO, "%s[%d]-w%d: not decoding %d stripes s0=%lu (%d of %d), rq nerr=%d",
@@ -898,26 +941,31 @@ int f_encode_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
         }
 
         encode_data(ISAL_CMD, sz, nd, np, edr_encode_tables[lx], dvec, pvec);
-/*
-unsigned long x[8];
-for (int j = 0; j < rq->scnt; j++) {
-    bzero(x, sizeof(x));
-    for (int i = 0; i < nd; i++) {
-        unsigned long *v = (unsigned long*)(dvec[i] + j*lo->info.chunk_sz);
-        printf("+++ ENC str[%lu] data[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->dchnk[i], dvec[i], sz, 
-               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
-        x[0] ^= v[0]; x[1] ^= v[1]; x[2] ^= v[2]; x[3] ^= v[3];
-        x[4] ^= v[4]; x[5] ^= v[5]; x[6] ^= v[6]; x[7] ^= v[7];
-    }
 
-    for (int i = 0; i < np; i++) {
-        unsigned long *v = (unsigned long*)(pvec[i] + j*lo->info.chunk_sz);
-        printf("+++ ENC str[%lu] ecc[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, rq->pchnk[i], pvec[i], sz, 
-               v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+#if 0
+    unsigned long x[8];
+    for (int j = 0; j < rq->scnt; j++) {
+        bzero(x, sizeof(x));
+        for (int i = 0; i < nd; i++) {
+            unsigned long *v = (unsigned long*)(dvec[i] + j*lo->info.chunk_sz);
+            printf("+++ @%s:ENC s=%lu data[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n",
+                   f_get_pool()->mynode.hostname,
+                   rq->ss->stripes[rq->scur + j], rq->dchnk[i], dvec[i], sz, 
+                   v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+            //x[0] ^= v[0]; x[1] ^= v[1]; x[2] ^= v[2]; x[3] ^= v[3];
+            //x[4] ^= v[4]; x[5] ^= v[5]; x[6] ^= v[6]; x[7] ^= v[7];
+        }
+
+        for (int i = 0; i < np; i++) {
+            unsigned long *v = (unsigned long*)(pvec[i] + j*lo->info.chunk_sz);
+            printf("+++ @%s:ENC s=%lu ecc[%d] @%p:%d v=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", 
+                   f_get_pool()->mynode.hostname,
+                   rq->ss->stripes[rq->scur + j], rq->pchnk[i], pvec[i], sz, 
+                   v[0],v[1],v[2],v[3], v[4], v[5], v[6], v[7]);
+        }
+        //printf("$$$ XOR[%lu] xor=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
     }
-    printf("$$$ XOR[%lu] xor=%lx,%lx,%lx,%lx %lx,%lx,%lx,%lx\n", s+j, x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
-}
-*/
+#endif
 
     } else {
         LOG(LOG_INFO, "%s[%d]-w%d: not encoding stripe %lu (%d of %d), rq error(s) %d",
@@ -1254,6 +1302,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
             lo->info.name, lo->lp->part_num);
         return -EINVAL;
     }
+    LOG(LOG_DBG3, "EDR Rq: %d stripes, ss[0]=%lu\n", ss->count, ss->stripes[0]);
 
 // FIXME
 //return 0;
@@ -1263,11 +1312,11 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
 
         // since we can encode only one stripe at a time (due to rotating parity)
         // we will set scnt to 1, never mind the ss size
-        if (!(rq = get_free_rq(&q, l, 1, 1)))
+        if (!(rq = get_free_rq(&q, l, 1, 1))) 
             return -errno;
 
         rq->fvec = 0;
-        rq->scnt = 1;   // one stripe at a time
+        rq->scnt = rq->smax = 1;   // one stripe at a time
         rq->op = EDR_OP_ENC;
         atomic_inc(&enc_ops[l]);
 
@@ -1285,7 +1334,8 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
         if (!(rq = get_free_rq(&q, l, ss->count, -1)))
             return -errno;
         rq->fvec = *fvec;
-        rq->scnt = 1; // min(rq->sall, ss->count);
+        rq->scnt = min(rq->sall, ss->count);
+        rq->smax = rq->sall;
         rq->op = EDR_OP_REC;
 
     }
