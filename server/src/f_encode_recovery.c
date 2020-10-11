@@ -401,11 +401,14 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
 //
 static int edr_calc_done(F_EDR_t *rq, void *ctx) {
     int rc = 0;
+    uint64_t delay;
 
     rq->next_call = edr_write_done;
 
     LOG(LOG_DBG2, "stripe batch %lu[%d] (%d of %d): %s calc done", 
         rq->ss->stripes[rq->scur], rq->scnt, rq->scur + 1, rq->ss->count, EDR_PR_R(rq));
+    if ((delay = (uint64_t)f_get_pool()->info.enc_bdelay)) usleep(delay);
+
     if (!rq->err) {
         if ((rc = edr_io_submit(rq, 1))) {
             LOG(LOG_DBG2, "stripe batch %lu[%d] (%d of %d): %s wr submit err:%d", 
@@ -731,9 +734,15 @@ int f_edr_init() {
         if (!p)
             continue;   // no parity - no recovery
 
-        ON_ERROR_RC(init_edr_q(&free_s[i], lo, EDR_SQ_SZ, EDR_SQ_SC), "free S");
-        ON_ERROR_RC(init_edr_q(&free_m[i], lo, EDR_MQ_SZ, EDR_MQ_SC), "free M");
-        ON_ERROR_RC(init_edr_q(&free_l[i], lo, EDR_LQ_SZ, EDR_LQ_SC), "free L");
+        int qs = pool->info.enc_freeq_sz;
+        ON_ERROR_RC(init_edr_q(&free_s[i], lo, qs, EDR_SQ_SC), "free S");
+        LOG(LOG_INFO, "EDR 'S' free queue depth is set to %d, batch delay %dus", qs, pool->info.enc_bdelay);
+        qs = max(min(qs/8, EDR_MQ_SZ), 2);
+        ON_ERROR_RC(init_edr_q(&free_m[i], lo, qs, EDR_MQ_SC), "free M");
+        LOG(LOG_INFO, "EDR 'M' free queue depth is set to %d", qs);
+        qs = max(min(qs/8, EDR_LQ_SZ), 1);
+        ON_ERROR_RC(init_edr_q(&free_l[i], lo, qs, EDR_LQ_SC), "free L");
+        LOG(LOG_INFO, "EDR 'L' free queue depth is set to %d", qs);
         free_s[i].idy = EDR_SQ;
         free_m[i].idy = EDR_MQ;
         free_l[i].idy = EDR_LQ;

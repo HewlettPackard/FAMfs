@@ -565,6 +565,10 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (configurator_bool_val(c->encode_wait_on_close, &b)) goto _noarg;
     if (b)
 	SetPoolEncWaitOnClose(p);
+    if (configurator_int_val(c->encode_enc_freeq_sz, &l)) goto _noarg;
+    pool_info->enc_freeq_sz = (int)l;
+    if (configurator_int_val(c->encode_enc_bdelay, &l)) goto _noarg;
+    pool_info->enc_bdelay = (int)l;
 
     /* Generic device section: 'devices' */
     lf_info = (LF_INFO_t *) calloc(sizeof(LF_INFO_t), 1);

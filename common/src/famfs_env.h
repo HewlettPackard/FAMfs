@@ -197,6 +197,8 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define LAYOUT_SQ_DEPTH		4096	/* preallocated stripes queue size per layout and compute node */
 #define LAYOUT_SQ_LWM		25	/* low water mark for preallocated queue */
 
+#define EENCODE_FREEQ_SZ        64      /* default free queue depth */
+
 #define UNIFYCR_LFA_PORT	30000	/* port for lf_atomics */
 #define UNIFYCR_CQ_HWM		50	/* high water mark for committed stripes queue, % */
 #define UNIFYCR_CQ_HWM_TMO	3	/* high water mark TMO for stripes queue, sec */

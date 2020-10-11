@@ -81,6 +81,8 @@
     UNIFYCR_CFG(spillover, size, INT, UNIFYCR_SPILLOVER_SIZE, "spillover max data size in bytes", NULL) \
     UNIFYCR_CFG(client, max_files, INT, UNIFYCR_MAX_FILES, "client max file count", NULL) \
     UNIFYCR_CFG(encode, wait_on_close, BOOL, off, "wait for encode to finish on close ", NULL) \
+    UNIFYCR_CFG(encode, enc_freeq_sz, INT, EENCODE_FREEQ_SZ, "Encode free requests queue depth", NULL) \
+    UNIFYCR_CFG(encode, enc_bdelay, INT, 0, "Encode inter-batch delay", NULL) \
     UNIFYCR_CFG(mddevice, pk, INT, 0, "MD region protection key", NULL) \
     UNIFYCR_CFG(mddevice, size, INT, 1M, "MD size (bytes)", NULL) \
     UNIFYCR_CFG(mddevice, offset, INT, 0, "MD offset (bytes)", NULL) \
