@@ -109,9 +109,8 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     if (!rq->sattr) {
-
-printf("!!! %s:sattr is 0 for %crq %p, s[0]=%lu/%u, s[%d]=%lu\n",
-       f_get_pool()->mynode.hostname, wr?'w':'r', rq, rq->ss->stripes[0], rq->ss->count, rq->scur,  rq->ss->stripes[rq->scur]);
+        //printf("!!! %s:sattr is 0 for %crq %p, s[0]=%lu/%u, s[%d]=%lu\n",
+        f_get_pool()->mynode.hostname, wr?'w':'r', rq, rq->ss->stripes[0], rq->ss->count, rq->scur,  rq->ss->stripes[rq->scur]);
 
         // map to physical stripe
         if ((rc = f_map_fam_stripe(rq->lo, &rq->sattr, rq->ss->stripes[rq->scur], 0))) {

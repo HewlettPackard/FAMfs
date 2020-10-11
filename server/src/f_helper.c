@@ -803,6 +803,8 @@ static void *drainer(void *arg) {
     int qdepth = 0;
     uint64_t tmo = pool->info.cq_hwm_tmo*RBQ_TMO_1S;
 
+    if (!tmo) tmo = RBQ_TMO_1S/10;  // min tmo 100ms 
+
     for (int i = 0; i < N; i++) {
         if ((lo[i] = f_get_layout(i)) == NULL) {
             LOG(LOG_ERR, "get layout [%d] info\n", i);
@@ -858,7 +860,7 @@ static void *drainer(void *arg) {
         if (!do_more) {
             // wait until queue is sufficiently full 
             if ((rc = f_rbq_waithwm(scmq, tmo)) == -ETIMEDOUT) {
-                LOG(LOG_DBG, "rbq %s: HW TMO\n", qname);
+                LOG(LOG_DBG3, "rbq %s: HW TMO\n", qname);
             } else if (rc == -ECANCELED) {
                 if (!f_rbq_isempty(scmq))
                     LOG(LOG_INFO, "rbq %s: wake-up signal received", qname);
