@@ -29,6 +29,7 @@
 #define stringify_indirect(x) #x
 #define stringify(x) stringify_indirect(x)
 
+static void get_config_filename_from_environ(unifycr_cfg_t *cfg);
 static int validate_value(const char *section,
 			  const char *key,
 			  const char *val,
@@ -54,6 +55,7 @@ int unifycr_config_init(unifycr_cfg_t *cfg,
     rc = unifycr_config_set_defaults(cfg);
     if (rc)
         return rc;
+    get_config_filename_from_environ(cfg);
 
     // process system config file (if available)
     rc = validate_value("unifycr", NULL, cfg->unifycr_configfile,
@@ -556,6 +558,35 @@ char *getenv_helper(const char *section,
     return getenv(envname);
 }
 
+// update config struct based on environment variables
+static void get_config_filename_from_environ(unifycr_cfg_t *cfg)
+{
+    char *envval;
+
+    if (0)
+        ;
+
+#define UNIFYCR_CFG(sec, key, typ, dv, desc, vfn)
+#define UNIFYCR_CFG_CLI(sec, key, typ, dv, desc, vfn, opt, use)	\
+    else if ((strcmp("unifycr", #sec) == 0) &&			\
+	     (strcmp("configfile", #key) == 0)) {		\
+	envval = getenv_helper(#sec, #key, 0);			\
+	if (envval != NULL) {					\
+	    if (cfg->sec##_##key != NULL)			\
+		free(cfg->sec##_##key);				\
+	    cfg->sec##_##key = strdup(envval);			\
+	}							\
+    }
+#define UNIFYCR_CFG_MULTI(sec, key, typ, dv, desc, vfn, me)
+#define UNIFYCR_CFG_MULTI_CLI(sec, key, typ, desc, vfn, me, opt, use)
+
+    UNIFYCR_CONFIGS;
+
+#undef UNIFYCR_CFG
+#undef UNIFYCR_CFG_CLI
+#undef UNIFYCR_CFG_MULTI
+#undef UNIFYCR_CFG_MULTI_CLI
+}
 
 // update config struct based on environment variables
 int unifycr_config_process_environ(unifycr_cfg_t *cfg)

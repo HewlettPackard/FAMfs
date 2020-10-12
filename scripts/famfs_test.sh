@@ -346,7 +346,9 @@ if [ ! -f "$FAMFS_CONF" ]; then
     update_ini devices single_ep $SingleEP
     echo "Layout moniker: $moniker"
 fi
-echo "configuration file: ${PWD}/${FAMFS_CONF}"
+FP_FAMFS_CONF="${PWD}/${FAMFS_CONF}"
+export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF
+echo "configuration file: $FP_FAMFS_CONF"
 
 for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     Servers=`make_list "$hh" "${SrvIter[$si]}" "$oNodeSuffix"`
