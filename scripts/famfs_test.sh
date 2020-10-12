@@ -418,7 +418,10 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 # run Client app one or two times, with specific i/o pattern
                 for ((iPattern=0; iPattern<nPatterns; iPattern++)); do
 
-                    ((iPattern==0 && nPatterns>1))&& oSEQ=1 || oSEQ=0
+                    if ((nPatterns>1)); then
+                        # TODO: Parse oTwoPasses (-Q) into SEQ array
+                        ((iPattern==0))&& oSEQ=1 || oSEQ=0
+                    fi
 
                     if [ -z "${RDSZ[$j]}" ]; then
                         reads=""
