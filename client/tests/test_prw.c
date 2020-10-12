@@ -75,12 +75,16 @@ struct timeval read_start, read_end;
 double read_time = 0;
 double *read_times = NULL;
 
-struct timeval write_start, write_end;
+struct timeval write_start;
 double write_time = 0;
+double pwrite_time = 0; /* sync time not included */
 double *write_times = NULL;
 
 struct timeval meta_start, meta_end;
 double meta_time = 0;
+
+struct timeval op_start, op_end; /* write or read time, including open and close */
+double op_time = 0;
 
 typedef struct {
   int fid;
@@ -346,6 +350,7 @@ int main(int argc, char *argv[]) {
     }
 
     print0("opening files\n");
+    gettimeofday(&op_start, NULL);
 
     int flags = O_RDWR | O_CREAT | O_TRUNC;
     if (direct_io)
@@ -430,10 +435,10 @@ int main(int argc, char *argv[]) {
     meta_time += 1000000*(meta_end.tv_sec - meta_start.tv_sec) + 
         meta_end.tv_usec - meta_start.tv_usec;
     meta_time /= 1000000;
-    gettimeofday(&write_end, NULL);
-    write_time += 1000000*(write_end.tv_sec - write_start.tv_sec) + 
-        write_end.tv_usec - write_start.tv_usec;
+    write_time += 1000000*(meta_end.tv_sec - write_start.tv_sec) + 
+        meta_end.tv_usec - write_start.tv_usec;
     write_time = write_time/1000000;
+    pwrite_time = write_time - meta_time; /* fsync time not included */
 
 
     close(fd);
@@ -447,6 +452,11 @@ int main(int argc, char *argv[]) {
             goto _exit;
         }
     }
+    gettimeofday(&op_end, NULL);
+    op_time += 1000000*(op_end.tv_sec - op_start.tv_sec) + 
+        op_end.tv_usec - op_start.tv_usec;
+    op_time /= 1000000;
+
     MPI_Barrier(MPI_COMM_WORLD);
     print0("closed files\n");
 
@@ -457,6 +467,9 @@ int main(int argc, char *argv[]) {
 
     double max_write_time;
     MPI_Reduce(&write_time, &max_write_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    double max_pwrite_time;
+    MPI_Reduce(&pwrite_time, &max_pwrite_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     double min_write_bw;
     min_write_bw=(double)blk_sz*seg_num*rank_num/1048576/ max_write_time;
@@ -470,6 +483,9 @@ int main(int argc, char *argv[]) {
     double max_meta_time;
     MPI_Reduce(&meta_time, &max_meta_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
+    double max_op_time;
+    MPI_Reduce(&op_time, &max_op_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
     MPI_Gather(&write_time, 1, MPI_DOUBLE, write_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     if (rank == 0)
         for (i=0; i<rank_num; i++)
@@ -479,8 +495,11 @@ int main(int argc, char *argv[]) {
     famsim_stats_stop(famsim_stats_send, 1);
 
     if (rank == 0) {
-        printf("### Aggregate Write BW is %.3lf MiB/s, Min Write BW is %.3lf MiB/s\n",
+        printf("###  Aggregate Write BW is %.3lf MiB/s, Min Write BW is %.3lf MiB/s\n",
                 agg_write_bw, min_write_bw);
+        printf("#### Aggregate true write BW is %.3lf MiB/s, incl. open/close - %.3lf MiB/s\n",
+                (double)blk_sz*rank_num*seg_num/1048576/max_pwrite_time,
+                (double)blk_sz*rank_num*seg_num/1048576/max_op_time);
         printf("Per-process write time %lf sec, sync time %lf sec, Max %lf sec\n",
                 (agg_write_time-agg_meta_time)/rank_num, agg_meta_time/rank_num, max_meta_time);
         fflush(stdout);
@@ -508,6 +527,7 @@ only_read:
         flags = O_RDONLY;
 
     print0("open for read\n");
+    gettimeofday(&op_start, NULL);
 
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
@@ -608,6 +628,11 @@ only_read:
     read_time = read_time/1000000;
 
     close(fd);
+    gettimeofday(&op_end, NULL);
+    op_time += 1000000*(op_end.tv_sec - op_start.tv_sec) + 
+        op_end.tv_usec - op_start.tv_usec;
+    op_time /= 1000000;
+
     MPI_Barrier(MPI_COMM_WORLD);
 
     /* write out FAM simulator stats */
@@ -630,6 +655,7 @@ only_read:
     MPI_Reduce(&read_bw, &agg_read_bw, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&read_time, &max_read_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&e, &e_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&op_time, &max_op_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     MPI_Gather(&read_time, 1, MPI_DOUBLE, read_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     if (rank == 0)
@@ -641,7 +667,10 @@ only_read:
         if (e_sum)
             fprintf(stderr, "Data verification errors: %ld\n", e_sum);
 
-        printf("### Aggregate Read BW is %.3lf MiB/s, Min Read BW is %.3lf\n", agg_read_bw,  min_read_bw);
+        printf("###  Aggregate Read BW is %.3lf MiB/s\n", agg_read_bw);
+        printf("#### Aggregate true read BW is %.3lf MiB/s, incl. open/close - %.3lf MiB/s\n",
+                min_read_bw,
+                (double)blk_sz*seg_num*rank_num/1048576/max_op_time);
         fflush(stdout);
     }
 
