@@ -369,7 +369,7 @@ esac
 ITR=""
 if [[ "$oAPP" =~ ior ]]; then
   ((tIOR=1))
-  ((oVFY))&& { echo "Can't combine verify & random"; exit 1; }
+  ((oVFY && oSEQ==0))&& { echo "Can't combine verify & random"; exit 1; }
   cycles=1
 else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
