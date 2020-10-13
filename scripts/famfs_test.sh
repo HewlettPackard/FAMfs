@@ -125,6 +125,24 @@ function parseTwoPasses() {
   done <<< "$1,"
 }
 
+# wait until all EDR files appear: there should be exactly one file per node
+function wait_for_edrs() {
+  local n=0
+  while ! pdsh -w "$Servers" -N -S "r=\$(find /tmp -maxdepth 1 -type f -name 'EDR-0-*.*'|wc -l); exit \$((r!=1))" 2>/dev/null; do
+    ((n%10==0))&& echo -n .
+    sleep 1
+  done
+}
+
+function collect_edr_time() {
+  local n sum=0
+  wait_for_edrs
+  while read n; do
+    ((sum+=n))
+  done < <(pdsh -w "$Servers" -N "echo \$(< /tmp/EDR-0-*.* )")
+  echo $sum
+}
+
 
 #
 # Working DIR
