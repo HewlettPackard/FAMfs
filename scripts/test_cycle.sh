@@ -1,8 +1,8 @@
 #!/bin/bash
 TESTCYCLE_PID_FN="/tmp/testcycle.pid"
-if ((iPattern==0)); then
-  $mpirun $mpi_hosts ${all_n} $mpi_ppn 1 $oMPIchEnv /bin/bash -c "${SCRIPT_DIR}/cleanup.sh"
+sts=1
 
+function start_server() {
   ((tVERBOSE)) && echo "$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c \"ulimit -s 1024; $SRV_BIN ${SRV_OPT}\" 2>>$MPI_LOG 1>>$SRV_LOG"
   echo "Starting unifycrd..."
   $mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c "ulimit -s 1024; $SRV_BIN ${SRV_OPT}" 2>>$MPI_LOG 1>>$SRV_LOG &
@@ -33,35 +33,61 @@ if ((iPattern==0)); then
   echo
   echo "### $DSC" >>$MPI_LOG
   echo "### $DSC" >>$SRV_LOG
-fi
+}
 
-echo "### $DSC" >>$TEST_LOG
-TEST_BASH_ARG="$cNUMAshell $TEST_BIN $TEST_OPTS"
-((tVERBOSE)) && echo "$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c \"$TEST_BASH_ARG\" 2>>$MPI_LOG 1>>$TEST_LOG"
-echo "Starting test..."
-$mpirun $cMPImap $mpi_hosts $Clients $mpi_ppn $Ranks $oMPIchEnv /bin/bash -c "$TEST_BASH_ARG" 2>>$MPI_LOG 1>>$TEST_LOG
-
-if (($? == 0))
-then
-    echo "### OK" >>$TEST_LOG
-    echo "Test completed successfully"
-    sts=0
-else
-    echo "### ERRORS" >>$TEST_LOG
-    echo "Test failed"
-    # sleep 10000
-    sts=1
-fi
-
-if ((iPattern==nPatterns-1)); then
+function stop_server() {
   pid=$(cat $TESTCYCLE_PID_FN)
   echo "Stopping servers ($pid)"
   kill -INT $pid
   while ps -p $pid 2>/dev/null 1>/dev/null; do
     echo "Waiting for unifycrd to exit"
-    sleep 10
+    sleep 6
     kill -INT $pid 2>/dev/null 1>/dev/null
   done
+}
+
+function run_test() {
+  echo "### $DSC" >>$TEST_LOG
+  TEST_BASH_ARG="$cNUMAshell $TEST_BIN $TEST_OPTS"
+  ((tVERBOSE)) && echo "$mpirun $cMPImap $mpi_hosts $Clients $oMPIchEnv /bin/bash -c \"$TEST_BASH_ARG\" 2>>$MPI_LOG 1>>$TEST_LOG"
+  echo "Starting test..."
+  $mpirun $cMPImap $mpi_hosts $Clients $oMPIchEnv /bin/bash -c "$TEST_BASH_ARG" 2>>$MPI_LOG 1>>$TEST_LOG
+
+  if (($? == 0))
+  then
+    echo "### OK" >>$TEST_LOG
+    echo "Test completed successfully"
+    sts=0
+  else
+    echo "### ERRORS" >>$TEST_LOG
+    echo "Test failed"
+    # sleep 10000
+    sts=1
+  fi
+}
+
+# restart Server
+if ((iPattern==-1)); then
+  stop_server
+  start_server
+  sts=0
+  echo "    Server restarted" >>$TEST_LOG
+fi
+
+# start Server
+if ((iPattern==0)); then
+  $mpirun $mpi_hosts ${all_n} $mpi_ppn 1 $oMPIchEnv /bin/bash -c "${SCRIPT_DIR}/cleanup.sh"
+  start_server
+fi
+
+# run test
+if ((iPattern>=0)); then
+  run_test
+fi
+
+# stop Server
+if ((tStopServer)); then
+  stop_server
 fi
 
 exit $sts

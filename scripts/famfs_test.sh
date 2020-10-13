@@ -82,6 +82,50 @@ function update_ini() {
   sed -r -i "/^\[$s\]\$/,/^\[/{s/^$k = .* (; .*)\$/$k = $v \1/; t; s/^$k = [^\s]*\$/$k = $v/}" ${FAMFS_CONF}
 }
 
+# parseTwoPasses $optionQ aCNdelta aRECONF aSEQ
+function parseTwoPasses() {
+  local p token pref val
+  let p=0
+  while IFS=: read -a token -d,
+  do
+    case ${#token[@]} in
+      1) val=${token[0]}; pref= ;;
+      2) pref=${token[0]}; val=${token[1]}; ;;
+      *) echo "Syntax error in two_passes option, token >${token[@]}<"; exit 1 ;;
+    esac
+    # prefixes: CN-=<number> or CONF=<conf_file>
+    if [ -z "$pref" ]; then
+      eval $"$2"[p]=0
+      eval $"$3"[p]=""
+    else
+      prop=${pref#*=}
+      [ -z "$prop" ] && { echo "Syntax error in two_passes option @$p, missing '=*' in prefix >${pref}<"; exit 1; }
+      # CN down?
+      if [[ "$pref" =~ ^"CN-="[0-9]+$ ]]; then
+        eval $"$2"[p]=$prop
+        eval $"$3"[p]=""
+      elif [[ "$pref" =~ ^CONF ]]; then
+        eval $"$2"[p]=0
+        eval $"$3"[p]=$prop
+      else
+        echo "Syntax error in two_passes option @$p, wrong prefix >${pref}<"
+        exit 1
+      fi
+    fi
+    # values: SEQ or RND
+    case "$val" in
+      [sS] | SEQ) eval $"$4"[p]=1 ;;
+      [rR] | RND) eval $"$4"[p]=0 ;;
+      *) echo "Syntax error in two_passes option @$p, bad value >${val}<"; exit 1 ;;
+    esac
+    if ((tVERBOSE)); then
+      eval echo "two_passes: pass $((p+1)) - "'CN-=${'${2}'[p]} CONF=${'${3}'[p]} SEQ=${'${4}'[p]}'
+    fi
+    ((p++))
+  done <<< "$1,"
+}
+
+
 #
 # Working DIR
 #
@@ -236,17 +280,27 @@ for w in $oWRITES; do TXSZ[$i]=$(getval $w); if ((TXSZ[i] > max_tx)); then ((max
 ((i = 0))
 for r in $oREADS; do RDSZ[$i]=$(getval $r); ((i++)); done
 
+srv_opt="$oExtraSrvOpt"
+((tVERBOSE=0))
+if ((oVERBOSE)); then
+    export tVERBOSE=1
+    srv_opt="$srv_opt -v 6"
+fi
+
 nPatterns=1
 if [ ! -z "$oTwoPasses" ]; then
-  oSEQ=1 # SEQ first
   nPatterns=2
+  aCNdelta=()
+  aRECONF=()
+  aSEQ=()
+  # parse option into arrays: CNdelta, RECONF filename, SEQ/RND bit
+  parseTwoPasses "$oTwoPasses" aCNdelta aRECONF aSEQ
 fi
 
 blksz=$(getval $oBLOCK)
 wup=$(getval $oWARMUP)
 seg=$(getval $oSEGMENT)
 extsz=$(getval $ExtSize)
-((tVERBOSE=0))
 ((tIOR=0))
 
 # mpich or ompi?
@@ -264,11 +318,7 @@ if ((!${#SrvIter[*]})); then SrvIter[0]=$ns; fi
 if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 
 unset IFS
-srv_opt="$oExtraSrvOpt"
-if ((oVERBOSE)); then
-    export tVERBOSE=1
-    srv_opt="$srv_opt -v 6"
-fi
+
 ((err=0))
 TEST_BIN="${TEST_DIR}/libexec/${oAPP}"
 if [ ! -x ${TEST_BIN} ]; then
@@ -294,7 +344,6 @@ ITR=""
 if [[ "$oAPP" =~ ior ]]; then
   ((tIOR=1))
   cycles=1
-  ITR="-i $oCycles"
 else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
   ((cycles = oCycles))
@@ -302,7 +351,7 @@ fi
 clMPImap=
 if ((ompi)); then
   oMPIchEnv="${oMPIchEnv} --bind-to none -x FI_MR_CACHE_MONITOR -x LD_LIBRARY_PATH -x PATH -x MPIROOT"
-  oMPIchEnv+=" -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS"
+  oMPIchEnv+=" -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS -x UNIFYCR_CONFIGFILE"
   if ((oTCP)); then
     oMPIchEnv+=" --mca btl ^ofi,openib,vader --mca mtl ^ofi,psm,psm2,portals4 --mca pml ^ucx --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
   else
@@ -346,9 +395,9 @@ if [ ! -f "$FAMFS_CONF" ]; then
     update_ini devices single_ep $SingleEP
     echo "Layout moniker: $moniker"
 fi
-FP_FAMFS_CONF="${PWD}/${FAMFS_CONF}"
-export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF
-echo "configuration file: $FP_FAMFS_CONF"
+FP_FAMFS_CONF_DEF="${PWD}/${FAMFS_CONF}"
+export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF_DEF
+echo "configuration file: $UNIFYCR_CONFIGFILE"
 
 for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     Servers=`make_list "$hh" "${SrvIter[$si]}" "$oNodeSuffix"`
@@ -381,11 +430,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
         nc=`count $Clients`
 
         for ((i = 0; i < ${#RANK[*]}; i++)); do
-            export Ranks="${RANK[$i]}"
-            if ((ompi)); then
-                ((tnc=nc*Ranks))
-                cMPImap="${clMPImap} -n $tnc"
-            fi
+            nRanks="${RANK[$i]}"
             for ((j = 0; j < ${#TXSZ[*]}; j++)); do
                 transfersz=${TXSZ[$j]}
                 dsc="[$nc*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
@@ -413,16 +458,37 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 if ((wup == 0)); then
                     dsc="$dsc <no warmup>"
                 else
-                    ((tIOR)) && ITR="-i $((oCycles+1))" || wu="-W $wup"
-                    ((tIOR)) || dsc="$dsc WARMUP=$wup"
+                    if ((tIOR)); then
+                        echo "Error: ior has no support for warm-up!"
+                        exit 1
+                    else
+                        wu="-W $wup"
+                        dsc="$dsc WARMUP=$wup"
+                    fi
                 fi
 
                 # run Client app one or two times, with specific i/o pattern
                 for ((iPattern=0; iPattern<nPatterns; iPattern++)); do
 
+                    ((tnc=nc*nRanks))
                     if ((nPatterns>1)); then
-                        # TODO: Parse oTwoPasses (-Q) into SEQ array
-                        ((iPattern==0))&& oSEQ=1 || oSEQ=0
+                        vSEQ=${aSEQ[iPattern]}
+                        ((tnc-=${aCNdelta[iPattern]}))
+                        FP_FAMFS_CONF=${aRECONF[iPattern]}
+                        [ -z "$FP_FAMFS_CONF" ]&& FP_FAMFS_CONF=$FP_FAMFS_CONF_DEF
+                        # reconfigure server?
+                        if [[ "$FP_FAMFS_CONF" != "$UNIFYCR_CONFIGFILE" ]]; then
+                            dsc="$dsc RECONF"
+                            export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF
+                            iPattern=-1 ${SCRIPT_DIR}/test_cycle.sh || { echo "Failed to reconfigure Server!"; exit 1; }
+                        fi
+                    else
+                        vSEQ=$oSEQ
+                    fi
+                    if ((ompi)); then
+                        cMPImap="${clMPImap} -n $tnc"
+                    else
+                        cMPImap="-np $tnc"
                     fi
 
                     if [ -z "${RDSZ[$j]}" ]; then
@@ -434,9 +500,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             reads="${RDSZ[$j]}"
                         fi
                     fi
+                    vCycles=$cycles
                     if ((nPatterns==1)); then
                         ((tIOR))&& reads="-w -r" || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}"
                     elif ((iPattern==0)); then
+                        vCycles=1
                         transfersz=${TXSZ[$j]}
                         ((tIOR))&& reads="-w" || reads="-w $transfersz"
                     else
@@ -453,7 +521,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             vfy="-V"
                         fi
                     fi
-                    if (($oSEQ)); then
+                    if (($vSEQ)); then
                         ((tIOR)) && seq="" || seq="-S 1"
                         dsc="$dsc SEQ"
                     else
@@ -462,7 +530,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         dsc="$dsc RANDOM"
                     fi
 
-                    for ((k = 0; k < cycles; k++)); do
+                    if ((tIOR)); then
+                        ITR="-i $vCycles"
+                    fi
+
+                    for ((k = 0; k < vCycles; k++)); do
                         ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
                         ((mem = (mem/1024/1024/1024 + 1)*1024*1024*1024))
                         # TODO: check device size >= $mem
@@ -485,6 +557,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         export SRV_OPT="$srv_opt"
                         export iPattern
                         export nPatterns
+                        export tStopServer=$((iPattern==nPatterns-1 && k==vCycles-1))
 
                         ((tIOR)) \
                           && opts="-o ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -g $oExtraOpt" \
