@@ -555,15 +555,6 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         ioPatternRW=R
                     fi
 
-                    vfy=""
-                    if ((tVFY)); then
-                        if ((tIOR)); then
-                            ((iPattern==0))&& vfy="-G 1234567890" || vfy="-R -G 1234567890"
-                        else
-                            vfy="-V"
-                        fi
-                    fi
-
                     if (($vSEQ)); then
                         ((tIOR)) && seq="" || seq="-S 1"
                         dsc="$dsc SEQ"
@@ -573,8 +564,10 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     fi
 
                     if ((tIOR)); then
-                        ITR="-i $vCycles"
+                        ((nPatterns>1))&& ITR="-i 1" || ITR="-i $oCycles"
                     fi
+
+                    ((tVFY && tIOR==0))&& vfy="-V" || vfy=""
 
                     for ((k = 0; k < vCycles; k++)); do
                         ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
@@ -584,8 +577,22 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         # set i/o pattern
                         case $ioPatternRW in
                         RW ) ((tIOR))&& reads="-w -r" || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}" ;;
-                        W ) transfersz=${TXSZ[$j]}; ((tIOR))&& reads="-w" || reads="-w $transfersz" ;;
-                        R ) transfersz=${RDSZ[$j]}; ((tIOR))&& reads="-r" || reads="-r $transfersz" ;;
+                        W ) transfersz=${TXSZ[$j]}
+                            if ((tIOR)); then
+                                reads="-w"
+                                ((tVFY))&& vfy="-G 1234567890"
+                            else
+                                reads="-w $transfersz"
+                            fi
+                            ;;
+                        R ) transfersz=${RDSZ[$j]}
+                            if ((tIOR)); then
+                                reads="-r"
+                                ((tVFY))&& vfy="-R -G 1234567890"
+                            else
+                                reads="-r $transfersz"
+                            fi
+                            ;;
                         *) break ;;
                         esac
 
