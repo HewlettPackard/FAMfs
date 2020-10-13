@@ -23,7 +23,7 @@ function start_server() {
       ((waiting > 0))&& sleep $_dt
       ((waiting += _dt))
       ssh -q "${hst}" exit || { echo "Cannot ssh to ${hst}"; exit 1; }
-      let _nf=$(ssh -q r1c1t5n1 find /tmp -maxdepth 1 -type f -name 'unifycrd.running.*' 2>/dev/null | wc -l)
+      let _nf=$(ssh -q "${hst}" find /tmp -maxdepth 1 -type f -name 'unifycrd.running.*' 2>/dev/null | wc -l)
       ((_nf>1))&& { echo "Please clean ${hst}:/tmp/"; exit 1; }
       ((_nf==0))
     do

@@ -369,6 +369,7 @@ esac
 ITR=""
 if [[ "$oAPP" =~ ior ]]; then
   ((tIOR=1))
+  ((oVFY))&& { echo "Can't combine verify & random"; exit 1; }
   cycles=1
 else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
@@ -470,6 +471,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         dsc="$dsc Reads=${RDSZ[$j]}"
                     fi
                 fi
+                ((tVFY=oVFY))&& dsc="$dsc with VFY"
                 if ((nPatterns>1)); then
                     dsc="$dsc $oTwoPasses"
                 fi
@@ -541,32 +543,31 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             reads="${RDSZ[$j]}"
                         fi
                     fi
+                    # test pattern
                     vCycles=$cycles
+                    ioPatternRW=
                     if ((nPatterns==1)); then
-                        ((tIOR))&& reads="-w -r" || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}"
+                        ioPatternRW=RW
                     elif ((iPattern==0)); then
-                        vCycles=1
-                        transfersz=${TXSZ[$j]}
-                        ((tIOR))&& reads="-w" || reads="-w $transfersz"
+                        vCycles=$((tVFY?2:1))
+                        ioPatternRW=W
                     else
-                        transfersz=${RDSZ[$j]}
-                        ((tIOR))&& reads="-r" || reads="-r $transfersz"
+                        ioPatternRW=R
                     fi
 
                     vfy=""
-                    if ((oVFY)); then
-                        dsc="$dsc with VFY"
+                    if ((tVFY)); then
                         if ((tIOR)); then
                             ((iPattern==0))&& vfy="-G 1234567890" || vfy="-R -G 1234567890"
                         else
                             vfy="-V"
                         fi
                     fi
+
                     if (($vSEQ)); then
                         ((tIOR)) && seq="" || seq="-S 1"
                         dsc="$dsc SEQ"
                     else
-                        ((oVFY)) && ((tIOR)) && { echo "Can't combine verify & random"; exit 1; }
                         ((tIOR)) && seq="-z" || seq="-S 0"
                         dsc="$dsc RANDOM"
                     fi
@@ -579,6 +580,14 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         ((mem = (nc*RANK[i]*seg*blksz + nc*RANK[i]*wup)/ns))
                         ((mem = (mem/1024/1024/1024 + 1)*1024*1024*1024))
                         # TODO: check device size >= $mem
+
+                        # set i/o pattern
+                        case $ioPatternRW in
+                        RW ) ((tIOR))&& reads="-w -r" || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}" ;;
+                        W ) transfersz=${TXSZ[$j]}; ((tIOR))&& reads="-w" || reads="-w $transfersz" ;;
+                        R ) transfersz=${RDSZ[$j]}; ((tIOR))&& reads="-r" || reads="-r $transfersz" ;;
+                        *) break ;;
+                        esac
 
                         BLK="-b $blksz"
                         SEG="-s $seg"
@@ -619,6 +628,12 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         else
                             ((err++))
                             echo "Finished with ERRORS"
+                        fi
+
+                        # hack: amend ioPatternRW for read w/verify pass just after write
+                        if ((tVFY && nPatterns>1 && iPattern==0))&& [[ ioPatternRW == W ]]; then
+                            ioPatternRW=R
+                            echo "=== verify data after write ===" >> $TEST_LOG
                         fi
                     done
                 done
