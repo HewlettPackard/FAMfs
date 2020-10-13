@@ -421,19 +421,19 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
     fi
 
     for ((ci = 0; ci < ${#ClnIter[*]}; ci++)); do
-        Clients=`make_list "$cc" "${ClnIter[$ci]}" "$oNodeSuffix"`
-        export Clients
+        iCln=${ClnIter[$ci]}
+        Clients=`make_list "$cc" "$iCln" "$oNodeSuffix"`
+        nc=`count $Clients`
         AllNodes="$Servers,$Clients"
         [ -z "$mdExclusive" ] || AllNodes+=",$mdExclusive"
         all_n=$(add_mynode "$AllNodes") # Force my node included
         echo "=== $Clients -> $Servers [Meta: $mdServers] ===" >> $TEST_LOG
-        nc=`count $Clients`
 
         for ((i = 0; i < ${#RANK[*]}; i++)); do
             nRanks="${RANK[$i]}"
             for ((j = 0; j < ${#TXSZ[*]}; j++)); do
                 transfersz=${TXSZ[$j]}
-                dsc="[$nc*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
+                dsc="[${iCln}*${RANK[$i]}]->$ns Block=$blksz Segments=$seg"
                 dsc="$dsc Writes=$transfersz"
                 if [ -z "${RDSZ[$j]}" ]; then
                     dsc="$dsc <no reads>"
@@ -470,10 +470,14 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                 # run Client app one or two times, with specific i/o pattern
                 for ((iPattern=0; iPattern<nPatterns; iPattern++)); do
 
-                    ((tnc=nc*nRanks))
+                    tCln=$iCln
                     if ((nPatterns>1)); then
                         vSEQ=${aSEQ[iPattern]}
-                        ((tnc-=${aCNdelta[iPattern]}))
+
+                        tCNdelta=${aCNdelta[iPattern]}
+                        ((tCln-=tCNdelta))
+                        ((tCln<1)) && { echo "Error: Can't run test with ${tCln}-${tCNdelta} compute nodes!"; exit 1; }
+
                         FP_FAMFS_CONF=${aRECONF[iPattern]}
                         [ -z "$FP_FAMFS_CONF" ]&& FP_FAMFS_CONF=$FP_FAMFS_CONF_DEF
                         # reconfigure server?
@@ -482,9 +486,14 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF
                             iPattern=-1 ${SCRIPT_DIR}/test_cycle.sh || { echo "Failed to reconfigure Server!"; exit 1; }
                         fi
+                        Clients=`make_list "$cc" "$tCln" "$oNodeSuffix"`
+                        echo "=== on $tCln client nodes(-${tCNdelta}): $Clients ===" >> $TEST_LOG
                     else
                         vSEQ=$oSEQ
+                        Clients=`make_list "$cc" "$tCln" "$oNodeSuffix"`
                     fi
+
+                    ((tnc=nc*nRanks))
                     if ((ompi)); then
                         cMPImap="${clMPImap} -n $tnc"
                     else
@@ -549,6 +558,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         VFY="$vfy"
 
                         export DSC="$dsc"
+                        export Clients
                         export AllNodes
                         export all_n
                         export oMPIchEnv
