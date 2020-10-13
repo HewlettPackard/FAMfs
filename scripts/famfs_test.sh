@@ -134,13 +134,21 @@ function wait_for_edrs() {
   done
 }
 
+# wait for /tmp/EDR-0-*.* files to appear exactly one per IO node
+#and set edr_avg edr_min and edr_max vars
 function collect_edr_time() {
-  local n sum=0
+  local n i=0 sum=0 min=0 max=0 avg=0
   wait_for_edrs
   while read n; do
     ((sum+=n))
+    ((min=(min==0?n:(n<min?n:min))))
+    ((max=(n>max?n:max)))
+    ((i++))
   done < <(pdsh -w "$Servers" -N "echo \$(< /tmp/EDR-0-*.* )")
-  echo $sum
+  ((i>0))&& ((avg=sum/i))
+  eval $"$1"_avg=$avg
+  eval $"$1"_min=$min
+  eval $"$1"_max=$max
 }
 
 
@@ -495,6 +503,8 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         tCNdelta=${aCNdelta[iPattern]}
                         ((tCln-=tCNdelta))
                         ((tCln<1)) && { echo "Error: Can't run test with ${tCln}-${tCNdelta} compute nodes!"; exit 1; }
+                        Clients=`make_list "$cc" "$tCln" "$oNodeSuffix"`
+                        echo "=== on $tCln client nodes(-${tCNdelta}): $Clients ===" >> $TEST_LOG
 
                         FP_FAMFS_CONF=${aRECONF[iPattern]}
                         [ -z "$FP_FAMFS_CONF" ]&& FP_FAMFS_CONF=$FP_FAMFS_CONF_DEF
@@ -503,9 +513,13 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             dsc="$dsc RECONF"
                             export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF
                             iPattern=-1 ${SCRIPT_DIR}/test_cycle.sh || { echo "Failed to reconfigure Server!"; exit 1; }
+                            # wait for /tmp/EDR-0-*.* files to appear exactly one per IO node
+                            # and set edr_avg edr_min and edr_max vars
+                            if ((iPattern==1)); then
+                                collect_edr_time edr
+                                echo "### Recovery time: min: $edr_min max: $edr_max avg: $edr_avg" >> $TEST_LOG
+                            fi
                         fi
-                        Clients=`make_list "$cc" "$tCln" "$oNodeSuffix"`
-                        echo "=== on $tCln client nodes(-${tCNdelta}): $Clients ===" >> $TEST_LOG
                     else
                         vSEQ=$oSEQ
                         Clients=`make_list "$cc" "$tCln" "$oNodeSuffix"`
