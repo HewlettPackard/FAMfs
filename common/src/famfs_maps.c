@@ -567,6 +567,8 @@ static int cfg_load_pool(unifycr_cfg_t *c)
 	SetPoolEncWaitOnClose(p);
     if (configurator_int_val(c->encode_enc_freeq_sz, &l)) goto _noarg;
     pool_info->enc_freeq_sz = (int)l;
+    if (configurator_int_val(c->encode_rec_freeq_sz, &l)) goto _noarg;
+    pool_info->rec_freeq_sz = (int)l;
     if (configurator_int_val(c->encode_enc_bdelay, &l)) goto _noarg;
     pool_info->enc_bdelay = (int)l;
 

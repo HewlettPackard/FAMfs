@@ -125,6 +125,7 @@ typedef struct f_pool_info_ {
     int			cq_hwm_tmo;	/* high water mark timeout, sec */
     int			fsync_tmo;	/* seconds client waits for syncing metadata with RS */
     int                 enc_freeq_sz;   /* encode free requests queue depth */
+    int                 rec_freeq_sz;   /* recovery free requests queue depth */
     int                 enc_bdelay;     /* encode inter-batch delay, in usec, default 0 */
 
 			/* pool devlist lookup helper arrays that have index in devlist */
