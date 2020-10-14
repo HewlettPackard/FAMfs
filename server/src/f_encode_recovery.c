@@ -39,6 +39,8 @@ static F_EDR_OPQ_t  *free_s;
 static F_EDR_OPQ_t  *free_m;
 static F_EDR_OPQ_t  *free_l;
 
+static F_EDR_BLQ_t  backlog;
+
 static F_RNTFY_t    *rntfy;
 pthread_mutex_t     ntfy_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -363,18 +365,51 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
                     lo->info.name, lp->part_num, s0, rq->ss->count - rq->nerr, rq->nerr);
             }
 
-            // return request to free queue
-            rq->state = F_EDR_FREE;
             rq->err = 0;
             rq->nerr = 0;
             rq->status = 0;
+            rq->state = F_EDR_FREE;
 
+            // check for backlog
+            pthread_spin_lock(&backlog.qlock);
+            F_EDR_BLRQ_t *bl_rq = list_first_entry_or_null(&backlog.qhead, F_EDR_BLRQ_t, list);
+            if (bl_rq) {
+                list_del_init(&bl_rq->list);
+                backlog.size--;
+                pthread_spin_unlock(&backlog.qlock);
+                rq->op = EDR_OP_ENC;       // only encode request can go to backlog
+                rq->ss = bl_rq->ss;
+                rq->lo = bl_rq->lo;
+                rq->completion = bl_rq->done_cb;
+                rq->ctx = bl_rq->ctx;
+                rq->fvec = 0;
+                rq->scnt = rq->smax = 1;   // always one stripe at a time
+                rq->scur = 0;
+
+                atomic_inc(&enc_ops[rq->lo->info.conf_id]);
+                free(bl_rq);
+
+                // add former backlog request to work queue 
+                pthread_spin_lock(&edr_wq.qlock);
+                list_add_tail(&rq->list, &edr_wq.qhead);
+                edr_wq.size++;
+                pthread_spin_unlock(&edr_wq.qlock);
+                pthread_cond_signal(&edr_wq.wake);
+                LOG(LOG_DBG2, "%s got rq off backlog, ss[0]=%lu cnt=%d", 
+                    f_get_pool()->mynode.hostname, rq->ss->stripes[0], rq->ss->count);
+
+                return 0;
+            }
+            pthread_spin_unlock(&backlog.qlock);
+
+
+            // return request to free queue
             pthread_spin_lock(&rq->myq->qlock);
             list_add_tail(&rq->list, &rq->myq->qhead);
             rq->myq->size++;
             pthread_spin_unlock(&rq->myq->qlock);
 
-            // wake up any client(s) that could be waiting for ree RQ
+            // wake up any client(s) that could be waiting for free RQ
             pthread_cond_broadcast(&rq->myq->wake);
             //pthread_cond_signal(&free_s[l].wake);
             LOG(LOG_DBG2, "%s[%d]: retiring rq to '%s' queue",
@@ -393,7 +428,7 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
         }
     } while (rc);
 
-    return 0;
+    return rc;
 }
 
 //
@@ -734,19 +769,24 @@ int f_edr_init() {
         if (!p)
             continue;   // no parity - no recovery
 
+        // Create free requests queues (small (for encode), medium and large (for recovery))
         int qs = pool->info.enc_freeq_sz;
         ON_ERROR_RC(init_edr_q(&free_s[i], lo, qs, EDR_SQ_SC), "free S");
         LOG(LOG_INFO, "EDR 'S' free queue depth is set to %d, batch delay %dus", qs, pool->info.enc_bdelay);
-        qs = max(min(qs/8, EDR_MQ_SZ), 2);
-        ON_ERROR_RC(init_edr_q(&free_m[i], lo, qs, EDR_MQ_SC), "free M");
-        LOG(LOG_INFO, "EDR 'M' free queue depth is set to %d", qs);
-        qs = max(min(qs/8, EDR_LQ_SZ), 1);
+        
+        qs = pool->info.rec_freeq_sz;
         ON_ERROR_RC(init_edr_q(&free_l[i], lo, qs, EDR_LQ_SC), "free L");
         LOG(LOG_INFO, "EDR 'L' free queue depth is set to %d", qs);
+        
+        qs = max(min(pool->info.enc_freeq_sz/2, pool->info.rec_freeq_sz*2), 2);
+        ON_ERROR_RC(init_edr_q(&free_m[i], lo, qs, EDR_MQ_SC), "free M");
+        LOG(LOG_INFO, "EDR 'M' free queue depth is set to %d", qs);
+
         free_s[i].idy = EDR_SQ;
         free_m[i].idy = EDR_MQ;
         free_l[i].idy = EDR_LQ;
         atomic_set(&enc_ops[i], 0);
+
 
         rntfy[i].size = 64;
         rntfy[i].cnt = 0;
@@ -757,6 +797,11 @@ int f_edr_init() {
             return -EINVAL;
         }
     }
+
+    // Create backlog encode requests queue
+    INIT_LIST_HEAD(&backlog.qhead);
+    backlog.size = 0;
+    ON_ERROR_RC(pthread_spin_init(&backlog.qlock, PTHREAD_PROCESS_PRIVATE), "spin");
 
     ON_ERROR_RC(pthread_create(&edr_wq.tid, &attr, edr_wq_thread, &edr_wq), "wq thread create");
     ON_ERROR_RC(pthread_create(&edr_cq.tid, &attr, edr_cq_thread, &edr_cq), "cq thread create");
@@ -1196,11 +1241,14 @@ int f_submit_encode_stripes(F_LAYOUT_t *lo, struct f_stripe_set *ss)
 //  *this_q - if not NULL, always use this q, returns the appropriate q otherwise
 //  qix     - layout (and hence queue) index
 //  cnt     - stripe count (size) of the request 
-//  wait    - 1: will block and wait forevr for free RQ to become available
-//            0: will return NULL/EAGAIN if nothing available
-//           -1: will block and wait once, return NULL/ETIMEDOUT on first timeout 
+//  wait    - wait for free rq mode, see .h
 //
-static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
+//  returns NULL if unable to get request, errno is set to:
+//  EBUSY   - no free requests
+//  EAGAIN  - no free, but put request into backlog
+//  other   - something else went wrong
+//
+static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, F_EDR_WM_t wait) {
     F_EDR_OPQ_t *q = NULL;
     F_EDR_t *rq = NULL;
     struct timespec ts;
@@ -1242,6 +1290,7 @@ static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
     }
     LOG(LOG_DBG2, "getting EDR rq(size=%d) from '%s' q[%d]\n", cnt, EDR_PR_Q(q), qix);
 
+    int go = 1;
     do {
         // get a free request
         pthread_spin_lock(&q->qlock);
@@ -1249,7 +1298,7 @@ static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
             break;
         } else {
             pthread_spin_unlock(&q->qlock);
-            if (wait) {
+            if (wait == F_EDR_4EVER || wait == F_EDR_ONCE) {
                 // no free requestes, wait for one becoming available
                 pthread_mutex_lock(&q->wlock);
                 set_tmo(&ts, 10*TMO_1S);
@@ -1258,21 +1307,27 @@ static F_EDR_t *get_free_rq(F_EDR_OPQ_t **this_q, int qix, int cnt, int wait) {
                 if (rc) {
                     if (rc == ETIMEDOUT) {
                         LOG(LOG_ERR, "free q '%s' wait TMO, lo %d", EDR_PR_Q(q), qix);
-                        if (wait < 0) wait = 0;
-                        continue;
+                        if (wait == F_EDR_ONCE) {
+                            errno = EBUSY;
+                            return NULL;
+                        }
                     } else {
                         LOG(LOG_ERR, "free q '%s' wait err, lo %d:%d", EDR_PR_Q(q), qix, rc);
                         errno = rc;
                         return NULL;
                     }
                 }
+            } else if (wait == F_EDR_BACKLOG) {
+                // no free requests, put this stripe set into backlog queue
+                errno = EAGAIN;
+                return NULL;
             } else {
                 // no waiting
-                errno = EAGAIN;
+                errno = EBUSY;
                 return NULL;
             }
         }
-    } while (1);
+    } while (go);
 
     // get first ra in free q
     rq = list_first_entry(&q->qhead, F_EDR_t, list);
@@ -1318,13 +1373,26 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
     if (!fvec) {
         // ENCODE
 
-        // since we can encode only one stripe at a time (due to rotating parity)
-        // we will set scnt to 1, never mind the ss size
-        if (!(rq = get_free_rq(&q, l, 1, 1))) 
-            return -errno;
+        if (!(rq = get_free_rq(&q, l, 1, F_EDR_BACKLOG))) {
+            if (errno == EAGAIN) {
+                // couldn't find any free requests, add to backog queue
+                F_EDR_BLRQ_t *bl_rq = malloc(sizeof(F_EDR_BLRQ_t));
+                ASSERT(bl_rq);
+                bl_rq->lo = lo;
+                bl_rq->ss = ss;
+                bl_rq->done_cb = done_cb;
+                bl_rq->ctx = ctx;
+                pthread_spin_lock(&backlog.qlock);
+                list_add_tail(&bl_rq->list, &backlog.qhead);
+                pthread_spin_unlock(&backlog.qlock);
+                LOG(LOG_DBG2, "%s putting rq in backlog, ss[0]=%lu cnt=%d", 
+                    f_get_pool()->mynode.hostname, bl_rq->ss->stripes[0], bl_rq->ss->count);
+                return 0;
+            } else return -errno;
+        }
 
         rq->fvec = 0;
-        rq->scnt = rq->smax = 1;   // one stripe at a time
+        rq->scnt = rq->smax = 1;   // always one stripe at a time
         rq->op = EDR_OP_ENC;
         atomic_inc(&enc_ops[l]);
 
@@ -1339,7 +1407,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
         // RECOVER
 
         // try to get as large request as we can, recover can do multiple stripes at a time
-        if (!(rq = get_free_rq(&q, l, ss->count, -1)))
+        if (!(rq = get_free_rq(&q, l, ss->count, F_EDR_4EVER)))
             return -errno;
         rq->fvec = *fvec;
         rq->scnt = min(rq->sall, ss->count);

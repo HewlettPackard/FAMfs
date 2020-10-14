@@ -65,6 +65,14 @@ typedef enum {
     F_EDR_DONE      // completed
 } F_EDR_STATE_t;
 
+// Wait Modes for free Q
+typedef enum {
+    F_EDR_NOWAIT,   // No wait, return -EGAIN on empty free Q
+    F_EDR_BACKLOG,  // Move request to backlog Q and return
+    F_EDR_4EVER,    // Block and wait forever until free Q is available
+    F_EDR_ONCE      // Wait up to a specified TMO for free Q to become available
+} F_EDR_WM_t;
+
 struct f_edr_;
 typedef int (*F_EDR_CB_t)(struct f_edr_ *rq, void *ctx);
 
@@ -83,6 +91,20 @@ typedef struct f_edr_opq_ {
     int                 quit;           // quit flag
     int                 idy;            // queue identity
 } F_EDR_OPQ_t;
+
+typedef struct f_edr_backlog_q_ {
+    pthread_spinlock_t  qlock;
+    struct list_head    qhead;
+    int                 size;
+} F_EDR_BLQ_t;
+
+typedef struct f_edr_backlog_rq_ {
+    struct list_head    list;
+    F_LAYOUT_t          *lo;
+    struct f_stripe_set *ss;
+    F_EDR_CB_t          done_cb;
+    void                *ctx;
+} F_EDR_BLRQ_t;
 
 //
 // Encode-Decode Request

@@ -92,7 +92,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 
                 do {
                     rc = f_edr_submit(lo, ss, bmap, recovery_batch_done_cb, rec);
-                    if (rc && rc != -EAGAIN) {
+                    if (rc && rc != -EBUSY) {
                         LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for recovery, rc=%d", 
                             lo->info.name, lp->part_num, rc);
                         ss_free(ss);
@@ -104,7 +104,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
                     LOG(LOG_WARN, "%s[%d]: all EDR queues are exhausted, sleeping 100ms",
                         lo->info.name, lp->part_num);
                     usleep(100000);
-                } while (rc == -EAGAIN);
+                } while (rc == -EBUSY);
                 if (rc) break;
 
 		/* Allocate the next stripe set */
@@ -116,7 +116,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 	if (n) {
             do {
                 rc = f_edr_submit(lo, ss, bmap, recovery_batch_done_cb, rec);
-		if (rc && rc != -EAGAIN) {
+		if (rc && rc != -EBUSY) {
                     LOG(LOG_ERR, "%s[%d]: failed to submit stripe set for recovery, rc=%d", 
                         lo->info.name, lp->part_num, rc);
                     ss_free(ss);
@@ -128,7 +128,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
                 LOG(LOG_WARN, "%s[%d]: all EDR queues are exhausted, sleeping 100ms",
                     lo->info.name, lp->part_num);
                 usleep(100000);
-            } while (rc == -EAGAIN);
+            } while (rc == -EBUSY);
 	}
 
 	/* Wait for the slab recovery completon */
