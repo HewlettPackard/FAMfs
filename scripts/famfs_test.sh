@@ -101,7 +101,7 @@ function parseTwoPasses() {
       prop=${pref#*=}
       [ -z "$prop" ] && { echo "Syntax error in two_passes option @$p, missing '=*' in prefix >${pref}<"; exit 1; }
       # CN down?
-      if [[ "$pref" =~ ^"CN-="[0-9]+$ ]]; then
+      if [[ "$pref" =~ ^CN-=[0-9]+ ]]; then
         eval $"$2"[p]=$prop
         eval $"$3"[p]=""
       elif [[ "$pref" =~ ^CONF ]]; then
@@ -118,9 +118,9 @@ function parseTwoPasses() {
       [rR] | RND) eval $"$4"[p]=0 ;;
       *) echo "Syntax error in two_passes option @$p, bad value >${val}<"; exit 1 ;;
     esac
-    if ((tVERBOSE)); then
-      eval echo "two_passes: pass $((p+1)) - "'CN-=${'${2}'[p]} CONF=${'${3}'[p]} SEQ=${'${4}'[p]}'
-    fi
+    #if ((tVERBOSE)); then
+    #  eval echo "two_passes: pass $((p+1)) - "'CN-=${'${2}'[p]} CONF=${'${3}'[p]} SEQ=${'${4}'[p]}'
+    #fi
     ((p++))
   done <<< "$1,"
 }
@@ -503,7 +503,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
 
                         tCNdelta=${aCNdelta[iPattern]}
                         ((tCln-=tCNdelta))
-                        ((tCln<1)) && { echo "Error: Can't run test with ${tCln}-${tCNdelta} compute nodes!"; exit 1; }
+                        ((tCln<1)) && { echo "Error: Can't run test with ${iCln}-${tCNdelta} compute nodes!"; exit 1; }
                         Clients=`make_list "$cc" "$tCln" "$oNodeSuffix"`
                         ((tCNdelta))&& echo "=== on $tCln client nodes(-${tCNdelta}): $Clients ===" >> $TEST_LOG
 
@@ -621,6 +621,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         export SRV_OPT="$srv_opt"
                         export iPattern
                         export nPatterns
+                        export tStartServer=$((iPattern==0 && k==0))
                         export tStopServer=$((iPattern==nPatterns-1 && k==vCycles-1))
 
                         ((tIOR)) \
@@ -644,9 +645,9 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         fi
 
                         # hack: amend ioPatternRW for read w/verify pass just after write
-                        if ((tVFY && nPatterns>1 && iPattern==0))&& [[ ioPatternRW == W ]]; then
+                        if ((tVFY && nPatterns>1 && iPattern==0))&& [[ $ioPatternRW == W ]]; then
                             ioPatternRW=R
-                            echo "=== verify data after write ===" >> $TEST_LOG
+                            echo "### verify data after write" >> $TEST_LOG
                         fi
                     done
                 done

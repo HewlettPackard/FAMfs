@@ -75,7 +75,7 @@ if ((iPattern==-1)); then
 fi
 
 # start Server
-if ((iPattern==0)); then
+if ((tStartServer)); then
   $mpirun $mpi_hosts ${all_n} $mpi_ppn 1 $oMPIchEnv /bin/bash -c "${SCRIPT_DIR}/cleanup.sh"
   start_server
 fi
