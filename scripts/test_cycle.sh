@@ -44,6 +44,7 @@ function stop_server() {
     sleep 6
     kill -INT $pid 2>/dev/null 1>/dev/null
   done
+  pdsh -w "$AllNodes" rm -f '/tmp/unifycrd.running.*'
 }
 
 function run_test() {
