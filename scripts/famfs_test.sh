@@ -369,7 +369,6 @@ esac
 ITR=""
 if [[ "$oAPP" =~ ior ]]; then
   ((tIOR=1))
-  ((oVFY && oSEQ==0))&& { echo "Can't combine verify & random"; exit 1; }
   cycles=1
 else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
@@ -506,7 +505,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         ((tCln-=tCNdelta))
                         ((tCln<1)) && { echo "Error: Can't run test with ${tCln}-${tCNdelta} compute nodes!"; exit 1; }
                         Clients=`make_list "$cc" "$tCln" "$oNodeSuffix"`
-                        echo "=== on $tCln client nodes(-${tCNdelta}): $Clients ===" >> $TEST_LOG
+                        ((tCNdelta))&& echo "=== on $tCln client nodes(-${tCNdelta}): $Clients ===" >> $TEST_LOG
 
                         FP_FAMFS_CONF=${aRECONF[iPattern]}
                         [ -z "$FP_FAMFS_CONF" ]&& FP_FAMFS_CONF=$FP_FAMFS_CONF_DEF
@@ -564,6 +563,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     fi
 
                     if ((tIOR)); then
+                        ((oVFY && vSEQ==0))&& { echo "Can't combine verify & random"; exit 1; }
                         ((nPatterns>1))&& ITR="-i 1" || ITR="-i $oCycles"
                     fi
 
@@ -576,7 +576,13 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
 
                         # set i/o pattern
                         case $ioPatternRW in
-                        RW ) ((tIOR))&& reads="-w -r" || reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}" ;;
+                        RW) if ((tIOR)); then
+                                reads="-w -r"
+                                ((tVFY))&& vfy="-R -G 1234567890"
+                            else
+                                reads="-w ${TXSZ[$j]} -r ${RDSZ[$j]}"
+                            fi
+                            ;;
                         W ) transfersz=${TXSZ[$j]}
                             if ((tIOR)); then
                                 reads="-w"
