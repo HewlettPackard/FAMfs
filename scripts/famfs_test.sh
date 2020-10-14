@@ -366,13 +366,10 @@ case "${oFStype^^}" in
   UNI* | 1)    fstype=1 ;;
   *)           fstype=0 ;;
 esac
-ITR=""
 if [[ "$oAPP" =~ ior ]]; then
   ((tIOR=1))
-  cycles=1
 else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
-  ((cycles = oCycles))
 fi
 clMPImap=
 if ((ompi)); then
@@ -543,7 +540,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         fi
                     fi
                     # test pattern
-                    vCycles=$cycles
+                    vCycles=$oCycles
                     ioPatternRW=
                     if ((nPatterns==1)); then
                         ioPatternRW=RW
@@ -562,9 +559,15 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         dsc="$dsc RANDOM"
                     fi
 
+                    ITR=""
                     if ((tIOR)); then
-                        ((oVFY && vSEQ==0))&& { echo "Can't combine verify & random"; exit 1; }
-                        ((nPatterns>1))&& ITR="-i 1" || ITR="-i $oCycles"
+                        if ((oVFY)); then
+                            ((vSEQ==0))&& { echo "Can't combine verify & random"; exit 1; }
+                            ITR="-i 1"
+                        else
+                            ITR="-i $oCycles"
+                            vCycles=1
+                        fi
                     fi
 
                     ((tVFY && tIOR==0))&& vfy="-V" || vfy=""
