@@ -162,7 +162,24 @@ cd ${WRK_DIR}
 #
 # Command line
 #
-OPTS=`getopt -o aA:D:I:i:S:C:R:b:s:nNw:r:W:c:vqQ:VE:u:F:M:m:tx:X:O:U -l adaptive,app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,numactl,writes:,reads:,warmup:,cycles:,verbose,sequential,two_passes:,verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "$@"`
+
+# set default to command line options requires an argument, so make it optional
+optline=()
+i=1
+for t in "$@"; do
+    optline+=( "$t" )
+    ((i++))
+    [[ ! "${!i}" =~ ^[-] ]]&& ((i<=$#))&& continue;
+    # insert arguments that should not start with '-'
+    case "$t" in
+    --) break ;;
+    # list of options which have optional arguments
+    -W | --warmup) optline+=( "1" ) ;; # warmup default: 1
+    esac
+done
+
+# parse the options in $optline with getopt
+OPTS=`getopt -o aA:D:I:i:S:C:R:b:s:nNw:r:W:c:vqQ:VE:u:F:M:m:tx:X:O:U -l adaptive,app:,data:,iter-srv:,iter-cln:,servers:,clients:,ranks:,block:,segment:,n2n,numactl,writes:,reads:,warmup:,cycles:,verbose,sequential,two_passes:,verify,extent:,chunk:,fs_type:,mpi:,md:,tcp,suffix:,extra:,srv_extra:,multi_ep -n 'parse-options' -- "${optline[@]}"`
 if [ $? != 0 ] ; then echo "Failed parsing options." >&2 ; exit 1 ; fi
 #echo "$OPTS"
 eval set -- "$OPTS"
@@ -484,8 +501,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                     dsc="$dsc <no warmup>"
                 else
                     if ((tIOR)); then
-                        echo "Error: ior has no support for warm-up!"
-                        exit 1
+                        ((nPatterns==1))&& { echo "Error: ior has no support for warm-up!"; exit 1; }
                     else
                         wu="-W $wup"
                         dsc="$dsc WARMUP=$wup"
@@ -567,7 +583,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             ((vSEQ==0))&& { echo "Can't combine verify & random"; exit 1; }
                             ITR="-i 1"
                         else
-                            ITR="-i $oCycles"
+                            cycles=$oCycles
+                            if [[ $ioPatternRW == W ]]; then
+                                cycles=$((oWARMUP?2:1))
+                            fi
+                            ITR="-i $cycles"
                             vCycles=1
                         fi
                     fi
