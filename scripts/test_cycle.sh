@@ -3,12 +3,16 @@ TESTCYCLE_PID_FN="/tmp/testcycle.pid"
 sts=1
 
 function start_server() {
+  # always remove files that server creates
+  pdsh -w "$AllNodes" rm -f '/tmp/unifycrd.running.*'
+  pdsh -w "$Servers" find /tmp -type f -regex '/tmp/EDR.[0-9]+-[0-9]+.[0-9]+' -exec 'rm -f {} \;'
+  # start Server
   ((tVERBOSE)) && echo "$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c \"ulimit -s 1024; $SRV_BIN ${SRV_OPT}\" 2>>$MPI_LOG 1>>$SRV_LOG"
   echo "Starting unifycrd..."
   $mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c "ulimit -s 1024; $SRV_BIN ${SRV_OPT}" 2>>$MPI_LOG 1>>$SRV_LOG &
   pid=$!
   echo $pid > $TESTCYCLE_PID_FN
-
+  # wait for running servers
   ((_dt=2)) # Check every 2 sec
   echo -n "Waiting for the servers to come up"
   for hst in ${AllNodes//,/$IFS}; do
@@ -44,7 +48,6 @@ function stop_server() {
     sleep 6
     kill -INT $pid 2>/dev/null 1>/dev/null
   done
-  pdsh -w "$AllNodes" rm -f '/tmp/unifycrd.running.*'
 }
 
 function run_test() {

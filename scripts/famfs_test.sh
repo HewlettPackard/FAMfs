@@ -129,14 +129,13 @@ function parseTwoPasses() {
 function wait_for_edrs() {
   local n=0
   echo "Wait for EDR files"
-  while ! pdsh -w "$Servers" -N -S "r=\$(find /tmp -maxdepth 1 -type f -name 'EDR-0-*.*'|wc -l); exit \$((r!=1))" 2>/dev/null; do
-    ((n%10==0))&& echo -n .
+  while ! pdsh -w "$Servers" -N -S "r=\$(find /tmp -maxdepth 1 -type f -name 'EDR.0-*.*'|wc -l); exit \$((r!=1))" 2>/dev/null; do
+    ((n++%10==0))&& echo -n .
     sleep 1
   done
-  echo
 }
 
-# wait for /tmp/EDR-0-*.* files to appear exactly one per IO node
+# wait for /tmp/EDR.0-*.* files to appear exactly one per IO node
 #and set edr_avg edr_min and edr_max vars
 function collect_edr_time() {
   local n i=0 sum=0 min=0 max=0 avg=0
@@ -146,7 +145,7 @@ function collect_edr_time() {
     ((min=(min==0?n:(n<min?n:min))))
     ((max=(n>max?n:max)))
     ((i++))
-  done < <(pdsh -w "$Servers" -N "echo \$(< /tmp/EDR-0-*.* )")
+  done < <(pdsh -w "$Servers" -N "echo \$(< /tmp/EDR.0-*.* )")
   ((i>0))&& ((avg=sum/i))
   eval $"$1"_avg=$avg
   eval $"$1"_min=$min
@@ -510,10 +509,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         [ -z "$FP_FAMFS_CONF" ]&& FP_FAMFS_CONF=$FP_FAMFS_CONF_DEF
                         # reconfigure server?
                         if [[ "$FP_FAMFS_CONF" != "$UNIFYCR_CONFIGFILE" ]]; then
+                            # sleep 30
                             dsc="$dsc RECONF"
                             export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF
                             iPattern=-1 ${SCRIPT_DIR}/test_cycle.sh || { echo "Failed to reconfigure Server!"; exit 1; }
-                            # wait for /tmp/EDR-0-*.* files to appear exactly one per IO node
+                            # wait for /tmp/EDR.0-*.* files to appear exactly one per IO node
                             # and set edr_avg edr_min and edr_max vars
                             if ((iPattern==1)); then
                                 collect_edr_time edr
@@ -620,6 +620,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         export Clients
                         export AllNodes
                         export all_n
+                        export Servers
                         export oMPIchEnv
                         export cMPImap
                         export cNUMAshell
