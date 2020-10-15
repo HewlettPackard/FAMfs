@@ -651,7 +651,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         export tStopServer=$((iPattern==nPatterns-1 && k==vCycles-1))
 
                         ((tIOR)) \
-                          && opts="-o ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $ITR -O unifycr=$fstype -a POSIX -g $oExtraOpt" \
+                          && opts="-o ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $ITR --famfs.fstype $fstype -a famfs -g $oExtraOpt" \
                           || opts="-f ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
                         opts=( $(echo $opts) )
                         TEST_OPTS=${opts[*]} # jam whitespaces
