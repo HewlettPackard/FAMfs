@@ -1211,15 +1211,31 @@ static int pdi_matrix_gen_devlist_across_AGs(F_PDI_MATRIX_t *mx, F_POOLDEV_INDEX
 	memset(col0_list, 0, sizeof(F_POOLDEV_INDEX_t)*mx->rows);
 
 	/* Generate a PDI list from the matrix 0 column */
-	for (i = 0, n = 0, pdi0 = col0_list; i < mx->rows && i < *size; i++) {
-		F_POOL_DEV_t *pdev;
-		pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[i];
-		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
-		if (!pdev || DevFailed(pdev->sha) || DevMissing(pdev->sha) || DevDisabled(pdev->sha))
-			continue;
-		memcpy(pdi0, pdi, sizeof(F_POOLDEV_INDEX_t));
-		pdi0++;
-		n++;
+	if (mx->lp->part_num & 1) { // odd partition, start from the bottom
+		for (i = mx->rows-1, n = 0, pdi0 = col0_list; 
+			i >= 0 && (mx->rows - i) <= *size; i--) {
+			F_POOL_DEV_t *pdev;
+			pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[i];
+			pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
+			if (!pdev || DevFailed(pdev->sha) || DevMissing(pdev->sha) 
+				|| DevDisabled(pdev->sha))
+				continue;
+			memcpy(pdi0, pdi, sizeof(F_POOLDEV_INDEX_t));
+			pdi0++;
+			n++;
+		}
+	} else { // Even partition, start from the top of the device list		
+		for (i = 0, n = 0, pdi0 = col0_list; i < mx->rows && i < *size; i++) {
+			F_POOL_DEV_t *pdev;
+			pdi = ((F_POOLDEV_INDEX_t (*)[mx->cols]) mx->addr)[i];
+			pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
+			if (!pdev || DevFailed(pdev->sha) || DevMissing(pdev->sha) 
+				|| DevDisabled(pdev->sha))
+				continue;
+			memcpy(pdi0, pdi, sizeof(F_POOLDEV_INDEX_t));
+			pdi0++;
+			n++;
+		}
 	}
 
 	*size = n;
@@ -2330,14 +2346,15 @@ static int __get_stripe(F_LO_PART_t *lp, f_stripe_t match_stripe, f_stripe_t *st
 	}
 
 	/* randomize responses for initial requests */
-	if (bitmap_empty(match_map, bmap_size)) {
+	/* if (bitmap_empty(match_map, bmap_size)) */ 
+	{
 		int n = stripe_buckets_used(lp);
 		int b = 0;
 
 		ASSERT(n);
 		
 		for (i = 0; i < n; i++) {
-			b = (atomic_read(lo->stats + FL_STRIPE_GET) + (i * 2)) % n;
+			b = (atomic_read(lo->stats + FL_STRIPE_GET_W0) + (i * 2)) % n;
 			sb = nth_bucket(lp, b);
 
 			ASSERT(sb);
@@ -2361,38 +2378,40 @@ static int __get_stripe(F_LO_PART_t *lp, f_stripe_t match_stripe, f_stripe_t *st
 
 	/* find the best matching stripe bucket */
 	i = 0;
-	list_for_each_entry_safe(sb, nsb, &lp->alloc_buckets, list) {
+	if (!best_se) {
+		list_for_each_entry_safe(sb, nsb, &lp->alloc_buckets, list) {
 
-		/* skip empty lists */
-		if (list_empty(&sb->head))
-			continue;
+			/* skip empty lists */
+			if (list_empty(&sb->head))
+				continue;
 
-		/* any good stripes on that list? */
-		se = find_sync_stripe(lp, sb);
-		if (!se)
-			continue;
+			/* any good stripes on that list? */
+			se = find_sync_stripe(lp, sb);
+			if (!se)
+				continue;
 
-		/* match them against the stretch bitmap */
-		bitmap_and(stripe_map, sb->devmap, match_map, bmap_size);
+			/* match them against the stretch bitmap */
+			bitmap_and(stripe_map, sb->devmap, match_map, bmap_size);
 
-		/* count how many shared devices */
-		w = bitmap_weight(stripe_map, bmap_size);
+			/* count how many shared devices */
+			w = bitmap_weight(stripe_map, bmap_size);
 
-		/* zero weight means none, ideal case */
-		if (!w) {
-			best_w = w;
-			best_sb = sb;
-			best_se = se;
-			break;
+			/* zero weight means none, ideal case */
+			if (!w) {
+				best_w = w;
+				best_sb = sb;
+				best_se = se;
+				break;
+			}
+
+			/* Choose stripe with the least # of shared drives */
+			if (w < best_w) {
+				best_w = w;
+				best_sb = sb;
+				best_se = se;
+			}
+			i++;
 		}
-
-		/* Choose stripe with the least # of shared drives */
-		if (w < best_w) {
-			best_w = w;
-			best_sb = sb;
-			best_se = se;
-		}
-		i++;
 	}
 
 	/* Should this be an assert? */

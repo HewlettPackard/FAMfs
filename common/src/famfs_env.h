@@ -239,7 +239,7 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define MAX_META_PER_SEND 524288
 #define ULFS_MAX_FILENAME 128
 #define MAX_PATH_LEN 100
-#define MAX_NUM_CLIENTS 64 /*number of application processes each server node takes charge of*/
+#define MAX_NUM_CLIENTS 72 /*number of application processes each server node takes charge of*/
 #define RECV_BUF_CNT 1
 #define RECV_BUF_LEN 1048576+131072
 #define REQ_BUF_LEN 8*16*1048576+4096+131072
