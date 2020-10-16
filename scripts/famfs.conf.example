@@ -21,6 +21,7 @@ debug = on
 server_ratio = 1
 range_size = 1048576
 # db_path = /dev/shm
+# release_committed = off ; default: on
 
 [spillover]
 size = 2G

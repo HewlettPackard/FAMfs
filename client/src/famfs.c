@@ -331,11 +331,14 @@ static void cache_write_indexes(unifycr_filemeta_t* meta)
     md_index_t* indexes = unifycr_indices.index_entry;
     long i, num_entries = *unifycr_indices.ptr_num_entries;
 
-    /* Add each stripe to array of committed stripes */
-    if (meta->committed_stripes == NULL)
-        meta->committed_stripes = f_new_ja(64);
-    for (i = 0; i < num_entries; i++) {
-        f_ja_add(meta->committed_stripes, indexes[i].sid);
+    if (PoolReleaseCS(pool)) {
+	/* Add each stripe to array of committed stripes */
+	if (meta->committed_stripes == NULL)
+	    meta->committed_stripes = f_new_ja(64);
+
+	for (i = 0; i < num_entries; i++) {
+	    f_ja_add(meta->committed_stripes, indexes[i].sid);
+	}
     }
 
     if (PoolWCache(pool)) {
@@ -931,26 +934,29 @@ static int famfs_fid_shrink(int fid, off_t length)
     /* if truncated to zero, free all stripes and drop write cache */
     /* FIXME: truncate to the arbitrary size */
     if (num_chunks == 0) {
-	int ret;
-	uint64_t s;
-	F_JA_NODE_t *n;
+	if (PoolReleaseCS(pool)) {
+	    int ret;
+	    uint64_t s;
+	    F_JA_NODE_t *n;
 
-	ja_for_each_entry(meta->committed_stripes, n, s) {
+	    ja_for_each_entry(meta->committed_stripes, n, s) {
 
-	    DEBUG_LVL(6, "fid:%d lid:%d release stripe %lu",
-		      fid, meta->loid, s);
+		DEBUG_LVL(6, "fid:%d lid:%d release stripe %lu",
+			  fid, meta->loid, s);
 
-	    if ((ret = f_ah_release_stripe(lo, s)))
-		ERROR("fid:%d in layout %s - error %d releasing stripe %lu",
-		      fid, lo->info.name, ret, s);
-	    meta->ttl_stripes--;
+		if ((ret = f_ah_release_stripe(lo, s)))
+		    ERROR("fid:%d in layout %s - error %d releasing stripe %lu",
+			  fid, lo->info.name, ret, s);
+
+		meta->ttl_stripes--;
+	    }
+
+	    if ((ret = f_ja_destroy(meta->committed_stripes))) {
+		ERROR("fid:%d in layout %s - error %d releasing stripes",
+		      fid, lo->info.name, ret);
+	    }
+	    meta->committed_stripes = NULL;
 	}
-
-	if ((ret = f_ja_destroy(meta->committed_stripes))) {
-	    ERROR("fid:%d in layout %s - error %d releasing stripes",
-		  fid, lo->info.name, ret);
-	}
-	meta->committed_stripes = NULL;
 
 	if (PoolWCache(pool))
 	    seg_tree_clear(&meta->extents);

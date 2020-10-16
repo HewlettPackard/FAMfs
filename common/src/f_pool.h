@@ -243,6 +243,7 @@ enum f_pool_flags {
     _POOL_CACHE_WR,	/* write cache enabled */
     _POOL_CACHE_RD,	/* read cache enabled */
     _POOL_ENC_WOCL,	/* wait for encode on close enabled */
+    _POOL_RELEASE_CS,	/* release committed stripes on unlink, truncate */
 };
 BITOPS(Pool, BGActive,	f_pool_, _POOL_BG_ACTIVE)
 BITOPS(Pool, FAMEmul,	f_pool_, _POOL_FAM_EMUL)
@@ -251,6 +252,7 @@ BITOPS(Pool, UNIFYCR,	f_pool_, _POOL_FSTYPE_OLD)
 BITOPS(Pool, WCache,	f_pool_, _POOL_CACHE_WR)
 BITOPS(Pool, RCache,	f_pool_, _POOL_CACHE_RD)
 BITOPS(Pool, EncWaitOnClose,	f_pool_, _POOL_ENC_WOCL)
+BITOPS(Pool, ReleaseCS,	f_pool_, _POOL_RELEASE_CS)
 
 
 //F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx);

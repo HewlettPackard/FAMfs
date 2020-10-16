@@ -561,6 +561,11 @@ static int cfg_load_pool(unifycr_cfg_t *c)
     if (b)
 	SetPoolRCache(p);
 
+    /* metadata section */
+    if (configurator_bool_val(c->meta_release_committed, &b)) goto _noarg;
+    if (b)
+	SetPoolReleaseCS(p);
+
     /* encode section */
     if (configurator_bool_val(c->encode_wait_on_close, &b)) goto _noarg;
     if (b)
