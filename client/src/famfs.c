@@ -82,6 +82,7 @@
 #include "f_helper.h"
 #include "famfs_rbq.h"
 #include "seg_tree.h"
+#include "f_ja.h"
 
 
 /*
@@ -136,7 +137,7 @@ static int famfs_stripe_alloc(F_LAYOUT_t *lo, unifycr_filemeta_t *meta, int id)
         return UNIFYCR_FAILURE;
     }
     meta->ttl_stripes++;
-    DEBUG_LVL(6, "layout %s (%d) get stripe %lu",
+    DEBUG_LVL(6, "layout %s lid:%d get stripe %lu",
                  lo->info.name, meta->loid, s);
 
     /* got one from spill over */
@@ -159,7 +160,8 @@ static int famfs_stripe_free(int fid, unifycr_filemeta_t *meta, int id,
 
     /* get physical id of chunk */
     f_stripe_t s = stripe->id;
-    DEBUG_LVL(7, "free logical id %d stripe %lu fl:%x", id, s, stripe->flags);
+
+    DEBUG_LVL(7, "free logical id %d stripe %lu", id, s);
 
     /* release stripe; check uncommited stripe */
 
@@ -170,15 +172,16 @@ static int famfs_stripe_free(int fid, unifycr_filemeta_t *meta, int id,
     }
 
     if (!stripe->f.committed) {
+
+	DEBUG_LVL(6, "fid:%d lid:%d release stripe %lu",
+		  fid, meta->loid, s);
+
         if ((rc = f_ah_release_stripe(lo, s))) {
             ERROR("failed to release stripe %lu in layout %s, error:%d",
                   s, lo->info.name, rc);
             return UNIFYCR_FAILURE;
         }
         meta->ttl_stripes--;
-
-        DEBUG_LVL(6, "fid:%d lid:%d - stripe %lu released",
-                  fid, meta->loid, s);
     }
     stripe->flags = 0;
     stripe->data_w = 0;
@@ -320,26 +323,37 @@ off_t famfs_rewrite_index_from_seg_tree(unifycr_filemeta_t* meta)
 }
 #endif
 
-void add_index_to_seg_tree(unifycr_filemeta_t* meta)
+/* add metadata (write indexes) to meta->extents tree;
+ * keep record of committed stripes */
+static void cache_write_indexes(unifycr_filemeta_t* meta)
 {
     /* get pointer to index buffer */
     md_index_t* indexes = unifycr_indices.index_entry;
-    long idx = *unifycr_indices.ptr_num_entries;
+    long i, num_entries = *unifycr_indices.ptr_num_entries;
 
-    seg_tree_wrlock(&meta->extents);
-
-    /* Add each write metadata to seg_tree ... */
-    while (--idx >= 0) {
-        off_t file_pos = indexes[idx].file_pos;
-
-        /* add metadata for a single write to meta->extents tree */
-        seg_tree_add(&meta->extents,
-                     file_pos,
-                     file_pos + indexes[idx].length - 1,
-                     indexes[idx].mem_pos,
-                     indexes[idx].sid);
+    /* Add each stripe to array of committed stripes */
+    if (meta->committed_stripes == NULL)
+        meta->committed_stripes = f_new_ja(64);
+    for (i = 0; i < num_entries; i++) {
+        f_ja_add(meta->committed_stripes, indexes[i].sid);
     }
-    seg_tree_unlock(&meta->extents);
+
+    if (PoolWCache(pool)) {
+        seg_tree_wrlock(&meta->extents);
+
+        /* Add each write metadata to seg_tree ... */
+        for (i = 0; i < num_entries; i++) {
+            off_t file_pos = indexes[i].file_pos;
+
+            /* add metadata for a single write to meta->extents tree */
+            seg_tree_add(&meta->extents,
+                         file_pos,
+                         file_pos + indexes[i].length - 1,
+                         indexes[i].mem_pos,
+                         indexes[i].sid);
+        }
+        seg_tree_unlock(&meta->extents);
+    }
 }
 
 static int client_sync_md(unifycr_filemeta_t *meta, int fsync_tmo) {
@@ -365,9 +379,8 @@ static int client_sync_md(unifycr_filemeta_t *meta, int fsync_tmo) {
         return rc;
     }
 
-    /* add metadata for a single write to meta->extents tree */
-    if (PoolWCache(pool))
-        add_index_to_seg_tree(meta);
+    /* cache write indexes: populate meta->extents tree and committed_stripes */
+    cache_write_indexes(meta);
 
     /* wait for RS acknowledgement */
     if ((rc = f_rbq_pop(rplyq, &r, fsync_tmo*RBQ_TMO_1S))) {
@@ -893,7 +906,7 @@ static int famfs_fid_shrink(int fid, off_t length)
     ASSERT( meta->storage == FILE_STORAGE_LOGIO );
     F_LAYOUT_t *lo = f_get_layout(meta->loid);
     if (lo == NULL) {
-        DEBUG("fid:%d error: layout id:%d not found!",
+        ERROR("fid:%d error: layout id:%d not found!",
               fid, meta->loid);
         return UNIFYCR_ERR_IO;
     }
@@ -908,7 +921,42 @@ static int famfs_fid_shrink(int fid, off_t length)
         num_chunks = DIV_CEIL(length, stripe_sz);
     }
 
-    return trim_stripe_cache(fid, lo, meta, num_chunks);
+    int rc = trim_stripe_cache(fid, lo, meta, num_chunks);
+    if (rc != UNIFYCR_SUCCESS) {
+        ERROR("fid:%d error shrinking layout id:%d to %ld",
+              fid, meta->loid, length);
+        return UNIFYCR_ERR_IO;
+    }
+
+    /* if truncated to zero, free all stripes and drop write cache */
+    /* FIXME: truncate to the arbitrary size */
+    if (num_chunks == 0) {
+	int ret;
+	uint64_t s;
+	F_JA_NODE_t *n;
+
+	ja_for_each_entry(meta->committed_stripes, n, s) {
+
+	    DEBUG_LVL(6, "fid:%d lid:%d release stripe %lu",
+		      fid, meta->loid, s);
+
+	    if ((ret = f_ah_release_stripe(lo, s)))
+		ERROR("fid:%d in layout %s - error %d releasing stripe %lu",
+		      fid, lo->info.name, ret, s);
+	    meta->ttl_stripes--;
+	}
+
+	if ((ret = f_ja_destroy(meta->committed_stripes))) {
+	    ERROR("fid:%d in layout %s - error %d releasing stripes",
+		  fid, lo->info.name, ret);
+	}
+	meta->committed_stripes = NULL;
+
+	if (PoolWCache(pool))
+	    seg_tree_clear(&meta->extents);
+    }
+
+    return rc; 
 }
 
 /* truncate file id to given length, frees resources if length is
@@ -921,6 +969,9 @@ static int famfs_fid_truncate(int fid, off_t length)
 
     /* get current size of file */
     off_t size = meta->real_size; /* famfs_fid_size */
+
+    DEBUG_LVL(5, "fid %d lid %d truncate %jd -> %jd",
+              fid, meta->loid, size, length);
 
     /* drop data if length is less than current size,
      * allocate new space and zero fill it if bigger */

@@ -45,6 +45,7 @@
 
 #include "unifycr-internal.h"
 #include "seg_tree.h"
+#include "f_ja.h"
 
 
 enum flock_enum {
@@ -88,6 +89,7 @@ typedef struct unifycr_filemeta_t_ {
     int needs_sync;                 /* have unsynced writes */
     struct seg_tree extents;        /* Segment tree of all local data extents (write cache) */
     //struct seg_tree extents_sync;   /* segment tree of written extents to sync */
+    F_JUDY_t *committed_stripes;    /* stripes committed on write */
 } unifycr_filemeta_t;
 
 /* if length is greater than reserved space,
