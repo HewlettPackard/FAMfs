@@ -31,9 +31,10 @@ size = 2G
 # max_files = 128 ; default:128
 
 [encode]
-# wait_on_close = on ; dealy close() until EDR is doen, default:off
+# wait_on_close = on ; dealy close() until EDR is done, default:off
 # enc_bdelay = 10    ; encoded batch delay, default 0
 # enc_freeq_sz = 32  ; encode free queue size, default 64
+# rec_freeq_sz = 2   ; recovery free queue size, default 4
 
 [ionode]
 # id = 0 ; this is a default

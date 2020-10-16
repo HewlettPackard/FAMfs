@@ -111,8 +111,9 @@ static int edr_io_submit(F_EDR_t *rq, int wr) {
     ALLOCA_CHUNK_PR_BUF(pr_buf);
 
     if (!rq->sattr) {
-        //printf("!!! %s:sattr is 0 for %crq %p, s[0]=%lu/%u, s[%d]=%lu\n",
-        //f_get_pool()->mynode.hostname, wr?'w':'r', rq, rq->ss->stripes[0], rq->ss->count, rq->scur,  rq->ss->stripes[rq->scur]);
+        LOG(LOG_WARN, "%s:sattr is 0 for %crq %p, s[0]=%lu/%u, s[cur=%d]=%lu\n",
+            f_get_pool()->mynode.hostname, wr?'w':'r', rq, rq->ss->stripes[0], 
+            rq->ss->count, rq->scur,  rq->ss->stripes[rq->scur]);
 
         // map to physical stripe
         if ((rc = f_map_fam_stripe(rq->lo, &rq->sattr, rq->ss->stripes[rq->scur], 0))) {
@@ -369,6 +370,8 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
             rq->nerr = 0;
             rq->status = 0;
             rq->state = F_EDR_FREE;
+            free_fam_stripe(rq->sattr);
+            rq->sattr = 0;
 
             // check for backlog
             pthread_spin_lock(&backlog.qlock);
@@ -414,9 +417,6 @@ static int edr_write_done(F_EDR_t *rq, void *ctx) {
             //pthread_cond_signal(&free_s[l].wake);
             LOG(LOG_DBG2, "%s[%d]: retiring rq to '%s' queue",
                 lo->info.name, lp->part_num, EDR_PR_Q(rq->myq));
-
-            if (rq->sattr) free_fam_stripe(rq->sattr);
-            rq->sattr = 0;
 
         } else {
             // repeat the whole process for the next stripe(s) in set
@@ -1407,6 +1407,7 @@ int f_edr_submit(F_LAYOUT_t *lo, struct f_stripe_set *ss, uint64_t *fvec, F_EDR_
         // RECOVER
 
         // try to get as large request as we can, recover can do multiple stripes at a time
+        //q = &free_l[l];
         if (!(rq = get_free_rq(&q, l, ss->count, F_EDR_4EVER)))
             return -errno;
         rq->fvec = *fvec;

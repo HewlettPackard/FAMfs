@@ -729,7 +729,7 @@ static inline int apply_counters_to_devices(F_LO_PART_t *lp, struct cb_data *cbd
 			p_sha->extents_used, pdi->prt_extents_used, p_sha->failed_extents, p_sha->extent_bmap[0]);
 
 		if (p_sha->extent_bmap) {
-			for (n = 0; n < BITS_TO_LONGS(bmap_size); n++) {
+			for (n = 0; n < bmap_size/sizeof(long); n++) {
 				off = sha_off + offsetof(F_PDEV_SHA_t, extent_bmap) + n*sizeof(long);
 				rc = f_lfa_gborfl(pool->pds_lfa->global_abd, off, *(p_sha->extent_bmap + n));
 				if (rc) {
@@ -767,6 +767,7 @@ static inline int apply_counters_to_devices(F_LO_PART_t *lp, struct cb_data *cbd
 			}
 		}
 	}
+
 	return r;
 }
 
@@ -2852,6 +2853,11 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 	for (i = 0; i < lo->devlist_sz; i++) {
 		pdi = &lo->devlist[i];
 		pdev = f_find_pdev_by_media_id(pool, pdi->pool_index);
+		if (pdev) LOG(LOG_DBG2, "%s: dev#%d media id:%d AG:%d %s%s%s",  
+				lo->info.name, i, pdev->pool_index, pdev->idx_ag,
+				DevFailed(pdev->sha) ? "F" : "",
+				DevMissing(pdev->sha) ? "M" : "",
+				DevDisabled(pdev->sha) ? "D" : "");
 		if (pdev && DevFailed(pdev->sha)) {
 			rc = f_fail_pdev(lo, pdi->pool_index);
 			if (!rc) rc = f_replace(lo, pdi->pool_index, F_PDI_NONE);
@@ -3200,9 +3206,6 @@ static void *f_allocator_thread(void *ctx)
 
 	if (!rc) rc = create_lp_dev_matrix(lp);
 
-	/* Check if all layout devices are present and healthy */
-	check_layout_devices(lo);
-
 	if (rc) goto _ret;
 
 	if (ion_cnt != lo->part_count) {
@@ -3241,6 +3244,9 @@ static void *f_allocator_thread(void *ctx)
 
 	/* All is well, signal the parent thread */
 	if (!rc) {
+		/* Check if all layout devices are present and healthy iand start FRR if not */
+		check_layout_devices(lo);
+
 		pthread_mutex_lock(&lp->lock_ready);
 		lp->ready = 1;
 		SetLayoutActive(lo);

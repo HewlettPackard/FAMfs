@@ -1076,11 +1076,12 @@ int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
     if (trg_ix >= abd->nsrv)
         return -EINVAL;
 
-
     LOCK_LFA(abd);
+
     rc = fi_read(
-            abd->lfa->ep, abd->in_buf, size, abd->in_mr_dsc,
+            abd->lfa->ep, abd->in_buf + trg_ix*size, size, abd->in_mr_dsc,
             abd->tadr[trg_ix], off, abd->srv_key, NULL);
+
     if (rc) {
         UNLOCK_LFA(abd);
         LOG_FIERR(rc, "rma write");
@@ -1095,6 +1096,7 @@ int f_lfa_get(F_LFA_ABD_t *abd, int trg_ix, off_t off, size_t size) {
 int f_lfa_gget(F_LFA_ABD_t *abd, off_t goff, size_t size) {
     int ix, rc = 0;
     ssize_t tx_sz, off = get_local_off(abd, goff, &ix);
+
     if (off < 0 || !abd->in_buf)
         return -EINVAL;
     for (; ix < abd->nsrv; ix++) {
@@ -1106,7 +1108,44 @@ int f_lfa_gget(F_LFA_ABD_t *abd, off_t goff, size_t size) {
         off = 0;
         
     }
+
     return rc;
 }
+
+
+void f_lfa_gprint(F_LFA_ABD_t *abd, off_t off, size_t size, char *ttl) {
+    int ix = 0, rc = 0;
+    int l = 0;
+
+    char *s = malloc(8196);
+    char *h = ttl ? ttl : "n/a";
+
+    l = sprintf(s, "<<< LFA %s %p@%lx:%lu dump, %d srv\n", h, abd, off, size, abd->nsrv);
+    for (ix = 0; ix < abd->nsrv; ix++) {
+        rc = fi_read(abd->lfa->ep, &abd->ops.in64[0], size, abd->ops_mr_dsc,
+                abd->tadr[ix], off, abd->srv_key, NULL);
+        if (rc) {
+            l += sprintf(&s[l],"  Node %d:fi_read error %d\n", ix, rc);
+            continue;
+        }
+        rc = _wait_cq(abd->lfa);
+        if (rc) {
+            l += sprintf(&s[l], "  Node %d:cq error %d\n", ix, rc);
+            continue;
+        }
+        l += sprintf(&s[l], "* Node[%d] %s:\n  ", ix, abd->slist[ix].name);
+        for (int j = 0; j < (int)min(size/sizeof(uint64_t), 16); j++) {
+            if (j%4 == 0 && j > 0) l += sprintf(&s[l], "\n  ");
+            l += sprintf(&s[l], "%16.16lx ", abd->ops.in64[j]);
+        }
+        l += sprintf(&s[l], "\n");
+    }
+    printf("%s\n>>>\n", s); 
+
+    free(s);
+    return;
+}
+
+
 
 
