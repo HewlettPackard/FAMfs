@@ -14,6 +14,8 @@
 #include "famfs_global.h"
 #include "famfs_maps.h"
 #include "list.h"
+#include "f_ja.h" /* F_JUDY_t sparse array */
+
 
 #include <urcu-qsbr.h>
 //#include <urcu-call-rcu.h>
@@ -140,9 +142,6 @@ typedef void (*F_MAP_SET_SE_fn)(void *arg, const F_PU_VAL_t *entry);
  * Note: By default iterator allocates sizeof(long) bytes for *arg,
  * if more data is needed, please re-alloc iterator.vf_arg
  */
-
-/* Judy sparse array */
-typedef struct cds_ja F_JUDY_t;
 
 typedef struct {
     unsigned int		entry_sz;	/* map entry size, bits or bytes */

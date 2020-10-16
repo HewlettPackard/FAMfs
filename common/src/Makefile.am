@@ -36,7 +36,7 @@ libfamfs_common_la_CFLAGS = $(AM_CFLAGS)
 libfamfs_common_la_LDFLAGS = $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
 libfamfs_common_la_LIBADD = -lm -lnuma -lrt -lpthread -luuid
 
-libfamfs_meta_la_SOURCES = f_map.h f_map.c
+libfamfs_meta_la_SOURCES = f_map.h f_map.c f_ja.h f_ja.c
 libfamfs_meta_la_CPPFLAGS = -D_GNU_SOURCE=1 $(AM_CPPFLAGS) \
 			-I$(top_srcdir)/userspace-rcu/include \
 			-I$(top_srcdir)/userspace-rcu/src

@@ -257,6 +257,8 @@ static int map_insert_and_get_bosl(F_MAP_t *m, uint64_t entry,
 		node = cds_ja_lookup(m->bosses, entry / m->bosl_entries);
 		if (node) {
 			*bosl_p = container_of(node, F_BOSL_t, node);
+			rcu_read_unlock();
+
 			return -EEXIST;
 		}
 		rcu_read_unlock();
