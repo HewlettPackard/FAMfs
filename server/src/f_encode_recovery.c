@@ -911,14 +911,14 @@ int f_recover_stripes(F_WTYPE_t cmd, void *arg, int thread_id) {
     ASSERT(cmd == F_WT_DECODE);
     if (!rq->err) {
         int sz = lo->info.chunk_sz*rq->scnt;
-        int nerr = bitmap_weight(&rq->fvec, sizeof(u64));
+        int nerr = bitmap_weight(&rq->fvec, sizeof(u64)*BITS_PER_BYTE);
         int nd = lo->info.chunks - nerr;
         u8 *dvec[nd], *evec[nerr];
 
+        LOG(LOG_DBG2, "%s[%d]-w%d: decoding %d stripes s0=%lu (%d of %d), fvec=0x%lx, nerr=%d",
+            lo->info.name, lp->part_num, thread_id, rq->scnt, s, rq->scur + 1, rq->ss->count, rq->fvec, nerr);
         ASSERT(nerr);
 
-        LOG(LOG_DBG2, "%s[%d]-w%d: decoding %d stripes s0=%lu (%d of %d), fvec=0x%lx",
-            lo->info.name, lp->part_num, thread_id, rq->scnt, s, rq->scur + 1, rq->ss->count, rq->fvec);
         for (int i = 0; i < nd; i++) {
             dvec[i] = rq->iobuf + rq->dchnk[i]*sz;
             LOG(LOG_DBG2, "D[%d] @ C%d", i, rq->dchnk[i]);
