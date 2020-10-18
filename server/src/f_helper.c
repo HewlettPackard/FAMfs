@@ -42,7 +42,7 @@
 #include "f_helper.h"
 
 extern volatile int exit_flag;
-extern pthread_mutex_t cntfy_lock;
+extern pthread_spinlock_t cntfy_lock;
 extern f_close_ntfy_t cntfy[MAX_NUM_CLIENTS];
 
 static volatile int quit = 0;
@@ -789,6 +789,7 @@ _abort:
  * on ION, he'll know what to do with them
  *
  */
+#if 0
 static void *drainer(void *arg) {
     int rc = 0;
     char qname[MAX_RBQ_NAME];
@@ -913,9 +914,9 @@ static void *drainer(void *arg) {
             }
 
             if (lo[lid]->info.chunks - lo[lid]->info.data_chunks) {
-                pthread_mutex_lock(&cntfy_lock);
+                pthread_spin_lock(&cntfy_lock);
                 set_bit(lid, &cntfy[scme.rank].edr_bm);
-                pthread_mutex_unlock(&cntfy_lock);
+                pthread_spin_unlock(&cntfy_lock);
             }
 
             F_AH_MSG_APPEND(crq[lid], scme.str, sss[lid], ssa[lid]);
@@ -970,6 +971,244 @@ _abort:
     f_rbq_destroy(scmq);
     return NULL;
 }
+#endif
+
+//
+// Send helper (client) request batch to helper (server) on allocator node
+//
+static int send_helper_rq(f_ah_ipc_t *rq, int dst, u8 *flying, MPI_Request *mpi_rq, int sync) {
+    F_POOL_t *pool = f_get_pool();
+    int rc;
+
+    if (NodeForceHelper(&pool->mynode)) {
+        struct f_stripe_set ss;
+
+        ss.count = rq->cnt;
+        ss.stripes = alloca(sizeof(f_stripe_t)*rq->cnt);
+        memcpy(ss.stripes, &rq->str[0], sizeof(f_stripe_t)*rq->cnt);
+
+        if (rq->cmd == F_AH_COMS)
+            rc = f_commit_stripe(f_get_layout(rq->lid), &ss);
+        else
+            rc = f_put_stripe(f_get_layout(rq->lid), &ss);
+
+        if (rc) LOG(LOG_ERR, "f_%s_stripe returnd error %d", rq->cmd == F_AH_COMS ? "commit" : "put", rc);
+        return rc;
+    }
+
+    if (*flying) MPI_Wait(mpi_rq, MPI_STATUS_IGNORE);
+    
+    *flying  = 0;
+    if (sync) 
+        rc = MPI_Send(rq, F_AH_MSG_SZ(rq->cnt), MPI_BYTE, dst, 
+                      F_TAG_BASE + pool->info.layouts_count, 
+                      pool->helper_comm);
+    else 
+        rc = MPI_Isend(rq, F_AH_MSG_SZ(rq->cnt), MPI_BYTE, dst, 
+                       F_TAG_BASE + pool->info.layouts_count, 
+                       pool->helper_comm, mpi_rq);
+
+    if (rc != MPI_SUCCESS) {
+        LOG(LOG_ERR, "MPI_Isend returnd error %d", rc);
+        return rc;
+    }
+
+    if (!sync) *flying = 1;
+    return 0;
+}
+
+static void *drainer(void *arg) {
+    int rc = 0;
+    char qname[MAX_RBQ_NAME];
+
+    F_POOL_t    *pool = (F_POOL_t *)arg;
+    f_rbq_t     *scmq;
+    f_ah_scme_t scme;
+    int hwm = pool->info.cq_hwm;
+    int N = pool->info.layouts_count;
+    F_LAYOUT_t  *lo[N];
+    int dst = 0;
+    int qdepth = 0;
+    uint64_t tmo = pool->info.cq_hwm_tmo*RBQ_TMO_1S;
+
+    if (!tmo) tmo = RBQ_TMO_1S/10;  // min tmo 100ms 
+
+    for (int i = 0; i < N; i++) {
+        if ((lo[i] = f_get_layout(i)) == NULL) {
+            LOG(LOG_ERR, "get layout [%d] info\n", i);
+            continue;
+        } else {
+            qdepth += lo[i]->info.sq_depth;
+        }
+    }
+
+    // create rbq
+    sprintf(qname, "%s-all", F_SCMQ_NAME);
+    if ((rc = f_rbq_create(qname, sizeof(f_ah_scme_t), qdepth, &scmq, 1))) {
+        LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
+        exit(rc);
+    }
+
+    cmq = scmq;
+
+    // set high water mark
+    f_rbq_sethwm(scmq, qdepth*hwm/100);
+
+    f_ah_ipc_t *crq[N], *rrq[N];
+    u8 c_act[N], r_act[N];
+    MPI_Request c_mrq[N], r_mrq[N];
+
+
+    bzero(c_act, sizeof(c_act));
+    bzero(r_act, sizeof(r_act));
+
+    for (int i = 0; i < N; i++) {
+        crq[i] = malloc(F_AH_MSG_SZ(F_MAX_IPC_ME));
+        rrq[i] = malloc(F_AH_MSG_SZ(F_MAX_IPC_ME));
+        if (crq[i] == NULL || rrq[i] == NULL) {
+            LOG(LOG_FATAL, "helper ran out of memory");
+            goto _abort;
+        }
+        crq[i]->cmd = F_AH_COMS;
+        crq[i]->lid = i;
+        crq[i]->flag = 0;
+
+        rrq[i]->cmd = F_AH_PUTS;
+        rrq[i]->lid = i;
+        rrq[i]->flag = 1;
+
+    }
+
+    if (!NodeForceHelper(&pool->mynode))
+        dst = pool->mynode.my_ion;
+
+    LOG(LOG_DBG, "%s helper commit thread %s is up", pool->mynode.hostname, qname);
+
+    while (!quit) {
+        // wait until queue is sufficiently full 
+        if ((rc = f_rbq_waithwm(scmq, tmo)) == -ETIMEDOUT) {
+            LOG(LOG_DBG3, "rbq %s: HW TMO\n", qname);
+        } else if (rc == -ECANCELED) {
+            if (!f_rbq_isempty(scmq))
+                LOG(LOG_INFO, "rbq %s: wake-up signal received", qname);
+        } else if (rc) {
+            LOG(LOG_ERR, "rbq %s wait hwm: %s", qname, strerror(-rc));
+        }
+        if (quit) break;
+
+        // read commit queue untill empty and send stripes home
+        while (!f_rbq_isempty(scmq)) {
+            if ((rc = f_rbq_pop(scmq, &scme, 0) == -EAGAIN)) {
+                // input queue is empty, done
+                break;
+            } else if (rc < 0) {
+                LOG(LOG_ERR, "rbq %s pop error: %s", qname, strerror(rc = errno));
+                break;
+            }
+            int lid = scme.lid;
+            if (lid >= N) {
+                LOG(LOG_ERR, "bad layout id %d popped of queue %s", scme.lid, qname);
+                continue;
+            }
+//printf(">>> %s got stripe %lu to %s from %d\n", pool->mynode.hostname, scme.str, scme.flag ? "release" : "commit", scme.rank);
+
+            if (scme.flag) {
+                // release request, see if we have any commits accumulated for this layout
+                if (crq[lid]->cnt) {
+//printf("--- send %d commits, s0=%lu\n", crq[lid]->cnt, crq[lid]->str[0]);
+                    if (send_helper_rq(crq[lid], dst, &c_act[lid], &c_mrq[lid], 1)) {
+                        LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to commit to %d", 
+                            pool->mynode.hostname, crq[lid]->cnt, crq[lid]->str[0], dst);
+                    }
+                    crq[lid]->cnt = 0;
+                }
+
+                // keep adding to release batch, but first make sure we can use the buffer
+                if (r_act[lid]) {
+                    MPI_Wait(&r_mrq[lid], MPI_STATUS_IGNORE);
+                    r_act[lid] = 0;
+                    rrq[lid]->cnt = 0;
+                }
+                rrq[lid]->str[rrq[lid]->cnt++] = scme.str;
+
+                if (rrq[lid]->cnt == F_MAX_IPC_ME) {
+//printf("--- send %d releases, s0=%lu\n", rrq[lid]->cnt, rrq[lid]->str[0]);
+                    // reached max batch
+                    if (send_helper_rq(rrq[lid], dst, &r_act[lid], &r_mrq[lid], 0)) {
+                        LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to release to %d", 
+                            pool->mynode.hostname, rrq[lid]->cnt, rrq[lid]->str[0], dst);
+                        rrq[lid]->cnt = 0;
+                    }
+                }
+            } else {
+                // commit request, see if we have any releases accumulated for this layout
+                if (rrq[lid]->cnt) {
+//printf("+++ send %d releases, s0=%lu\n", rrq[lid]->cnt, rrq[lid]->str[0]);
+                    if (send_helper_rq(rrq[lid], dst, &r_act[lid], &r_mrq[lid], 1)) {
+                        LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to release to %d", 
+                            pool->mynode.hostname, rrq[lid]->cnt, rrq[lid]->str[0], dst);
+                    }
+                    rrq[lid]->cnt = 0;
+                }
+
+                // keep adding to commit batch
+                if (c_act[lid]) {
+                    MPI_Wait(&c_mrq[lid], MPI_STATUS_IGNORE);
+                    c_act[lid] = 0;
+                    crq[lid]->cnt = 0;
+                }
+                crq[lid]->str[crq[lid]->cnt++] = scme.str;
+
+                // if layout has parity, mark this client in EDR bitmap for close() delay
+                if (lo[lid]->info.chunks - lo[lid]->info.data_chunks) {
+                    pthread_spin_lock(&cntfy_lock);
+                    set_bit(lid, &cntfy[scme.rank].edr_bm);
+                    pthread_spin_unlock(&cntfy_lock);
+                }
+
+                if (crq[lid]->cnt == F_MAX_IPC_ME) {
+//printf("+++ send %d commits, s0=%lu\n", crq[lid]->cnt, crq[lid]->str[0]);
+                    if (send_helper_rq(crq[lid], dst, &c_act[lid], &c_mrq[lid], 0)) {
+                        LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to commit to %d",
+                            pool->mynode.hostname, crq[lid]->cnt, crq[lid]->str[0], dst);
+                        crq[lid]->cnt = 0;
+                    }
+                }
+            }
+        }
+
+        // push all accumulated commits and releases out
+        for (int i = 0; i < N; i++) {
+            if (crq[i]->cnt && !c_act[i]) {
+//printf("=== send %d commits: ", crq[i]->cnt);
+                if (send_helper_rq(crq[i], dst, &c_act[i], &c_mrq[i], 0)) {
+                    LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to commit to %d",
+                        pool->mynode.hostname, crq[i]->cnt, crq[i]->str[0], dst);
+                    crq[i]->cnt = 0;
+                }
+            }
+            if (rrq[i]->cnt && !r_act[i]) {
+//printf("=== send %d releases, s0=%lu\n", rrq[i]->cnt, rrq[i]->str[0]);
+                if (send_helper_rq(rrq[i], dst, &r_act[i], &r_mrq[i], 0)) {
+                    LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to release to %d", 
+                        pool->mynode.hostname, rrq[i]->cnt, rrq[i]->str[0], dst);
+                    rrq[i]->cnt = 0;
+                }
+            }
+        }
+    }
+
+_abort:
+
+    for (int i = 0; i < pool->info.layouts_count; i++) {
+        free(crq[i]);
+        free(rrq[i]);
+    }
+
+    f_rbq_destroy(scmq);
+    return NULL;
+}
+
 
 //
 // -------------------- tear here -------------------

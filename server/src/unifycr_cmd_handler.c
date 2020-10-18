@@ -53,7 +53,7 @@ extern f_rbq_t *cmdq[F_CMDQ_MAX];
 extern f_rbq_t *admq;
 extern volatile int exit_flag;
 
-pthread_mutex_t cntfy_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_spinlock_t cntfy_lock;
 f_close_ntfy_t cntfy[MAX_NUM_CLIENTS];
 
 /**
@@ -292,10 +292,10 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
                 ASSERT(lo);
                 if (lo->info.chunks - lo->info.data_chunks) {
                     // mark this client as having written stuff to this layout
-                    pthread_mutex_lock(&cntfy_lock);
+                    pthread_spin_lock(&cntfy_lock);
                     set_bit(pcmd->lid, &cntfy[pcmd->cid].sync_bm);
                     set_bit(pcmd->lid, &cntfy[pcmd->cid].edr_bm);
-                    pthread_mutex_unlock(&cntfy_lock);
+                    pthread_spin_unlock(&cntfy_lock);
                 }
             }
 
@@ -331,7 +331,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             MPI_Comm_rank(pool->helper_comm, &me);
             if (lo->info.chunks - lo->info.data_chunks) {
                 // see if EDR is done for this client/layout
-                pthread_mutex_lock(&cntfy_lock);
+                pthread_spin_lock(&cntfy_lock);
                 if (test_bit(pcmd->lid, &cntfy[pcmd->cid].sync_bm)) {
                     // if we saw fsync, see if EDR is also done
                     wait = test_bit(pcmd->lid, &cntfy[pcmd->cid].edr_bm);
@@ -341,7 +341,7 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
                         clear_bit(pcmd->lid, &cntfy[pcmd->cid].edr_bm);
                     }
                 }
-                pthread_mutex_unlock(&cntfy_lock);
+                pthread_spin_unlock(&cntfy_lock);
             }
             if (wait) {
                 return 0; // EDR still in progress, do not reply
@@ -408,7 +408,7 @@ void *f_notify_thrd(void *arg) {
         LOG(LOG_DBG, "Got EDR DONE on lid %d", msg.lid);
 
         for (int i = 0; i < MAX_NUM_CLIENTS; i++) {
-            pthread_mutex_lock(&cntfy_lock);
+            pthread_spin_lock(&cntfy_lock);
             if (test_bit(msg.lid, &cntfy[i].wait_bm)) {
                 // client is waiting on close for EDR to finish
                 clients[cnt++] = i;
@@ -416,7 +416,7 @@ void *f_notify_thrd(void *arg) {
             }
             // always clear edr bm 'cause edr is done regardless of wait list
             clear_bit(msg.lid, &cntfy[i].edr_bm);
-            pthread_mutex_unlock(&cntfy_lock);
+            pthread_spin_unlock(&cntfy_lock);
         }
 
         for (int i = 0; i < cnt; i++) {

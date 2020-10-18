@@ -84,6 +84,8 @@ extern char *mds_vec;
 extern int  num_mds;
 extern struct mdhim_t *md;
 
+extern pthread_spinlock_t cntfy_lock;
+
 f_rbq_t *rplyq[MAX_NUM_CLIENTS];
 f_rbq_t *cmdq[F_CMDQ_MAX];
 f_rbq_t *admq;
@@ -253,6 +255,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Create command queues and start layout threads only on compute nodes */
+        pthread_spin_init(&cntfy_lock, PTHREAD_PROCESS_PRIVATE);
 	bzero(rplyq, sizeof(rplyq));
 	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
 
