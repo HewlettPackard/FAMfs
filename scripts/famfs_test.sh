@@ -5,6 +5,7 @@ SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
 WRK_DIR=${SCRIPT_DIR}/t
 export SCRIPT_DIR
 FAMFS_CONF="famfs.conf"
+EDR_COLLECTED_FN="EDR.collected"
 
 function count() {
     IFS=","
@@ -150,6 +151,11 @@ function collect_edr_time() {
   eval $"$1"_avg=$avg
   eval $"$1"_min=$min
   eval $"$1"_max=$max
+  # Append collected datea to EDR.collected file in current dir
+  echo "### $dsc" >> $EDR_COLLECTED_FN
+  echo "=== avg=$avg min=$min max=$max" >> $EDR_COLLECTED_FN
+  pdsh -w "$Servers" "echo \$(< /tmp/EDR.0-*.* )" >> $EDR_COLLECTED_FN
+  echo "===" >> $EDR_COLLECTED_FN
 }
 
 
@@ -332,6 +338,7 @@ if ((oVERBOSE)); then
 fi
 
 nPatterns=1
+tRECONF=0
 if [ ! -z "$oTwoPasses" ]; then
   nPatterns=2
   aCNdelta=()
@@ -339,6 +346,17 @@ if [ ! -z "$oTwoPasses" ]; then
   aSEQ=()
   # parse option into arrays: CNdelta, RECONF filename, SEQ/RND bit
   parseTwoPasses "$oTwoPasses" aCNdelta aRECONF aSEQ
+  # validate configuration file
+  for ((i=0;i<nPatterns;i++)); do
+    _f=${aRECONF[$i]}
+    if [ ! -z "$_f" ]; then
+        tRECONF=1
+        [ ! -f "$_f" ] && { echo "Configuration file $_f not found!"; exit 1; }
+    fi
+  done
+  if ((tRECONF)); then
+    touch "$EDR_COLLECTED_FN" 2>&- || { echo "Bad faile name or path=$EDR_COLLECTED_FN"; exit 1; }
+  fi
 fi
 
 blksz=$(getval $oBLOCK)
@@ -528,7 +546,10 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             # sleep 30
                             dsc="$dsc RECONF"
                             export UNIFYCR_CONFIGFILE=$FP_FAMFS_CONF
-                            iPattern=-1 ${SCRIPT_DIR}/test_cycle.sh || { echo "Failed to reconfigure Server!"; exit 1; }
+                            if ! iPattern=-1 tStartServer=0 tStopServer=0 ${SCRIPT_DIR}/test_cycle.sh; then
+                                echo "Failed to reconfigure Server!"
+                                exit 1
+                            fi
                             # wait for /tmp/EDR.0-*.* files to appear exactly one per IO node
                             # and set edr_avg edr_min and edr_max vars
                             if ((iPattern==1)); then

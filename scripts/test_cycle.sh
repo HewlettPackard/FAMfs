@@ -72,6 +72,7 @@ function run_test() {
 
 # restart Server
 if ((iPattern==-1)); then
+  echo "Restarting Server with CONF=$UNIFYCR_CONFIGFILE ..."
   stop_server
   start_server
   sts=0
