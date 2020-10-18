@@ -41,7 +41,6 @@ int f_ja_remove(F_JUDY_t *ja, F_JA_NODE_t *n);
 F_JA_NODE_t *f_ja_next(F_JUDY_t *ja, uint64_t entry); /* iterator (node->entry) */
 
 #define ja_for_each_entry(ja, n, e) \
-        /*for (e = 0; n = f_ja_next(ja, e), n && (e = n->entry); e++) */\
-        for (e = 0; (n = f_ja_next(ja, e)) && (e = n->entry), (n); e++)
+        for (e = 0; (void)((n = f_ja_next(ja, e)) && (e = n->entry)), (n); e++)
 
 #endif /* F_JA_H_ */
