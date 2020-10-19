@@ -975,8 +975,9 @@ _abort:
 
 //
 // Send helper (client) request batch to helper (server) on allocator node
+// If request is already in flight, just wait for it's completion, do not resend
 //
-static int send_helper_rq(f_ah_ipc_t *rq, int dst, u8 *flying, MPI_Request *mpi_rq, int sync) {
+static int send_or_wait_helper_rq(f_ah_ipc_t *rq, int dst, u8 *flying, MPI_Request *mpi_rq, int sync, char *h) {
     F_POOL_t *pool = f_get_pool();
     int rc;
 
@@ -996,24 +997,37 @@ static int send_helper_rq(f_ah_ipc_t *rq, int dst, u8 *flying, MPI_Request *mpi_
         return rc;
     }
 
-    if (*flying) MPI_Wait(mpi_rq, MPI_STATUS_IGNORE);
-    
-    *flying  = 0;
-    if (sync) 
-        rc = MPI_Send(rq, F_AH_MSG_SZ(rq->cnt), MPI_BYTE, dst, 
-                      F_TAG_BASE + pool->info.layouts_count, 
-                      pool->helper_comm);
-    else 
-        rc = MPI_Isend(rq, F_AH_MSG_SZ(rq->cnt), MPI_BYTE, dst, 
-                       F_TAG_BASE + pool->info.layouts_count, 
-                       pool->helper_comm, mpi_rq);
+    if (*flying) {
+        // MPI_Isend in progress
+//printf("%s: wait for %d %s to complete, s0=%lu\n", h, rq->cnt, rq->cmd == F_AH_COMS ? "commits" : "releases", rq->str[0]);
+        MPI_Wait(mpi_rq, MPI_STATUS_IGNORE);
+        rq->cnt = 0;
+        *flying  = 0;
+        return 0;
+    } else {
+        // No MPI_Isend issued 
+        if (sync) {
+//printf("%s: sync send %d stripes to %s, s0=%lu\n", h, rq->cnt, rq->cmd == F_AH_COMS ? "commit" : "release", rq->str[0]);
+            rc = MPI_Send(rq, F_AH_MSG_SZ(rq->cnt), MPI_BYTE, dst,
+                          F_TAG_BASE + pool->info.layouts_count,
+                          pool->helper_comm);
+            rq->cnt = 0;
+        } else {
+//printf("%s: send %d stripes to %s, s0=%lu\n", h, rq->cnt, rq->cmd == F_AH_COMS ? "commit" : "release", rq->str[0]);
+            *flying = 1;
+            rc = MPI_Isend(rq, F_AH_MSG_SZ(rq->cnt), MPI_BYTE, dst,
+                           F_TAG_BASE + pool->info.layouts_count,
+                           pool->helper_comm, mpi_rq);
+        }
 
-    if (rc != MPI_SUCCESS) {
-        LOG(LOG_ERR, "MPI_Isend returnd error %d", rc);
-        return rc;
+        if (rc != MPI_SUCCESS) {
+            LOG(LOG_ERR, "%s MPI_(I)send returnd error %d", h, rc);
+            rq->cnt = 0;
+            *flying  = 0;
+            return rc;
+        }
     }
 
-    if (!sync) *flying = 1;
     return 0;
 }
 
@@ -1082,6 +1096,8 @@ static void *drainer(void *arg) {
     if (!NodeForceHelper(&pool->mynode))
         dst = pool->mynode.my_ion;
 
+    char *h = pool->mynode.hostname;
+
     LOG(LOG_DBG, "%s helper commit thread %s is up", pool->mynode.hostname, qname);
 
     while (!quit) {
@@ -1110,17 +1126,15 @@ static void *drainer(void *arg) {
                 LOG(LOG_ERR, "bad layout id %d popped of queue %s", scme.lid, qname);
                 continue;
             }
-//printf(">>> %s got stripe %lu to %s from %d\n", pool->mynode.hostname, scme.str, scme.flag ? "release" : "commit", scme.rank);
+//printf(">>> %s: got rq from %d to %s stripe %lu\n", h, scme.rank, scme.flag ? "release" : "commit", scme.str);
 
             if (scme.flag) {
                 // release request, see if we have any commits accumulated for this layout
                 if (crq[lid]->cnt) {
-//printf("--- send %d commits, s0=%lu\n", crq[lid]->cnt, crq[lid]->str[0]);
-                    if (send_helper_rq(crq[lid], dst, &c_act[lid], &c_mrq[lid], 1)) {
+                    if (send_or_wait_helper_rq(crq[lid], dst, &c_act[lid], &c_mrq[lid], 1, h)) {
                         LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to commit to %d", 
                             pool->mynode.hostname, crq[lid]->cnt, crq[lid]->str[0], dst);
                     }
-                    crq[lid]->cnt = 0;
                 }
 
                 // keep adding to release batch, but first make sure we can use the buffer
@@ -1132,23 +1146,19 @@ static void *drainer(void *arg) {
                 rrq[lid]->str[rrq[lid]->cnt++] = scme.str;
 
                 if (rrq[lid]->cnt == F_MAX_IPC_ME) {
-//printf("--- send %d releases, s0=%lu\n", rrq[lid]->cnt, rrq[lid]->str[0]);
                     // reached max batch
-                    if (send_helper_rq(rrq[lid], dst, &r_act[lid], &r_mrq[lid], 0)) {
+                    if (send_or_wait_helper_rq(rrq[lid], dst, &r_act[lid], &r_mrq[lid], 0, h)) {
                         LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to release to %d", 
                             pool->mynode.hostname, rrq[lid]->cnt, rrq[lid]->str[0], dst);
-                        rrq[lid]->cnt = 0;
                     }
                 }
             } else {
                 // commit request, see if we have any releases accumulated for this layout
                 if (rrq[lid]->cnt) {
-//printf("+++ send %d releases, s0=%lu\n", rrq[lid]->cnt, rrq[lid]->str[0]);
-                    if (send_helper_rq(rrq[lid], dst, &r_act[lid], &r_mrq[lid], 1)) {
+                    if (send_or_wait_helper_rq(rrq[lid], dst, &r_act[lid], &r_mrq[lid], 1, h)) {
                         LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to release to %d", 
                             pool->mynode.hostname, rrq[lid]->cnt, rrq[lid]->str[0], dst);
                     }
-                    rrq[lid]->cnt = 0;
                 }
 
                 // keep adding to commit batch
@@ -1167,11 +1177,9 @@ static void *drainer(void *arg) {
                 }
 
                 if (crq[lid]->cnt == F_MAX_IPC_ME) {
-//printf("+++ send %d commits, s0=%lu\n", crq[lid]->cnt, crq[lid]->str[0]);
-                    if (send_helper_rq(crq[lid], dst, &c_act[lid], &c_mrq[lid], 0)) {
+                    if (send_or_wait_helper_rq(crq[lid], dst, &c_act[lid], &c_mrq[lid], 0, h)) {
                         LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to commit to %d",
                             pool->mynode.hostname, crq[lid]->cnt, crq[lid]->str[0], dst);
-                        crq[lid]->cnt = 0;
                     }
                 }
             }
@@ -1180,19 +1188,15 @@ static void *drainer(void *arg) {
         // push all accumulated commits and releases out
         for (int i = 0; i < N; i++) {
             if (crq[i]->cnt && !c_act[i]) {
-//printf("=== send %d commits: ", crq[i]->cnt);
-                if (send_helper_rq(crq[i], dst, &c_act[i], &c_mrq[i], 0)) {
+                if (send_or_wait_helper_rq(crq[i], dst, &c_act[i], &c_mrq[i], 0, h)) {
                     LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to commit to %d",
                         pool->mynode.hostname, crq[i]->cnt, crq[i]->str[0], dst);
-                    crq[i]->cnt = 0;
                 }
             }
             if (rrq[i]->cnt && !r_act[i]) {
-//printf("=== send %d releases, s0=%lu\n", rrq[i]->cnt, rrq[i]->str[0]);
-                if (send_helper_rq(rrq[i], dst, &r_act[i], &r_mrq[i], 0)) {
+                if (send_or_wait_helper_rq(rrq[i], dst, &r_act[i], &r_mrq[i], 0, h)) {
                     LOG(LOG_ERR, "%s: failed to send %d/%lu stripes to release to %d", 
                         pool->mynode.hostname, rrq[i]->cnt, rrq[i]->str[0], dst);
-                    rrq[i]->cnt = 0;
                 }
             }
         }
