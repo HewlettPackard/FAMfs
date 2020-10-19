@@ -36,6 +36,7 @@ int f_ja_add(F_JUDY_t *ja, uint64_t entry); /* if no entry, create it */
 int f_ja_rem(F_JUDY_t *ja, uint64_t entry); /* remove entry */
 int f_ja_destroy(F_JUDY_t *ja); /* remove all entries */
 uint64_t f_ja_max(F_JUDY_t *ja); /* max entry */
+void f_ja_node_free(F_JA_NODE_t *n);
 F_JA_NODE_t *f_ja_get(F_JUDY_t *ja, uint64_t entry); /* returns NULL if no entry */
 int f_ja_remove(F_JUDY_t *ja, F_JA_NODE_t *n);
 F_JA_NODE_t *f_ja_next(F_JUDY_t *ja, uint64_t entry); /* iterator (node->entry) */

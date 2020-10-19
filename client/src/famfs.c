@@ -332,13 +332,10 @@ static void cache_write_indexes(unifycr_filemeta_t* meta)
     long i, num_entries = *unifycr_indices.ptr_num_entries;
 
     if (PoolReleaseCS(pool)) {
-	/* Add each stripe to array of committed stripes */
-	if (meta->committed_stripes == NULL)
-	    meta->committed_stripes = f_new_ja(64);
-
 	for (i = 0; i < num_entries; i++) {
 	    f_ja_add(meta->committed_stripes, indexes[i].sid);
 	}
+	rcu_quiescent_state();
     }
 
     if (PoolWCache(pool)) {
@@ -813,6 +810,12 @@ static int fid_store_alloc(int fid) {
             if (rc != 0)
                 return rc;
         }
+
+        if (PoolReleaseCS(pool))
+	    meta->committed_stripes = f_new_ja(64);
+        else
+            meta->committed_stripes = NULL;
+
         return UNIFYCR_SUCCESS;
     }
     return UNIFYCR_FAILURE;
@@ -831,6 +834,14 @@ static int fid_store_free(int fid) {
         if (famfs_local_extents)
             seg_tree_destroy(&meta->extents);
 
+        if (PoolReleaseCS(pool)) {
+            int ret;
+            if ((ret = f_ja_destroy(meta->committed_stripes))) {
+                ERROR("fid:%d - error %d", fid, ret);
+                return UNIFYCR_FAILURE;
+            }
+	    meta->committed_stripes = NULL;
+        }
         return UNIFYCR_SUCCESS;
     }
     return UNIFYCR_FAILURE;
@@ -935,27 +946,41 @@ static int famfs_fid_shrink(int fid, off_t length)
     /* FIXME: truncate to the arbitrary size */
     if (num_chunks == 0) {
 	if (PoolReleaseCS(pool)) {
+	    F_JUDY_t *ja_cs = meta->committed_stripes;
 	    int ret;
 	    uint64_t s;
-	    F_JA_NODE_t *n;
+	    struct cds_ja_node *node;
 
-	    ja_for_each_entry(meta->committed_stripes, n, s) {
+	    //ja_for_each_entry(meta->committed_stripes, n, s) {
+	    rcu_read_lock();
+	    cds_ja_for_each_key_rcu(ja_cs, s, node) {
+		F_JA_NODE_t *n;
+
+		ret = cds_ja_del(ja_cs, s, node);
+		if (ret) {
+		    rcu_read_unlock();
+		    ERROR("fid:%d in layout %s - error %d releasing stripe %lu",
+			  fid, lo->info.name, ret, s);
+		    return UNIFYCR_ERR_IO;
+		}
+		n = container_of(node, F_JA_NODE_t, node);
+		s = n->entry;
+		f_ja_node_free(n);
+		rcu_read_unlock();
 
 		DEBUG_LVL(6, "fid:%d lid:%d release stripe %lu",
 			  fid, meta->loid, s);
 
-		if ((ret = f_ah_release_stripe(lo, s)))
+		if ((ret = f_ah_release_stripe(lo, s))) {
 		    ERROR("fid:%d in layout %s - error %d releasing stripe %lu",
 			  fid, lo->info.name, ret, s);
-
+		    return UNIFYCR_ERR_IO;
+		}
 		meta->ttl_stripes--;
+		rcu_read_lock();
 	    }
-
-	    if ((ret = f_ja_destroy(meta->committed_stripes))) {
-		ERROR("fid:%d in layout %s - error %d releasing stripes",
-		      fid, lo->info.name, ret);
-	    }
-	    meta->committed_stripes = NULL;
+	    rcu_read_unlock();
+	    rcu_quiescent_state();
 	}
 
 	if (PoolWCache(pool))

@@ -41,7 +41,7 @@ static int ja_insert(F_JUDY_t *ja, uint64_t entry, F_JA_NODE_t **n_p)
 	rcu_read_lock();
 	node = cds_ja_add_unique(ja, entry, &n->node);
 	if (unlikely(node != &n->node)) {
-		rcu_node_free(n);
+		call_rcu(&n->head, node_free_cb);
 		n = container_of(node, F_JA_NODE_t, node);
 		rcu_read_unlock();
 
@@ -65,7 +65,7 @@ static void node_free_cb(struct rcu_head *head)
 	free(n);
 }
 
-static void rcu_node_free(F_JA_NODE_t *n) {
+void f_ja_node_free(F_JA_NODE_t *n) {
 	call_rcu(&n->head, node_free_cb);
 }
 
@@ -88,7 +88,7 @@ int f_ja_destroy(F_JUDY_t *ja)
 
 		/* Alone using the array */
 		n = container_of(node, F_JA_NODE_t, node);
-		rcu_node_free(n);
+		call_rcu(&n->head, node_free_cb);
 	}
 _err:
 	rcu_read_unlock();
@@ -124,9 +124,11 @@ int f_ja_add(F_JUDY_t *ja, uint64_t entry)
 
 	rcu_read_lock();
 	node = cds_ja_lookup(ja, entry);
-	rcu_read_unlock();
-	if (node)
+	if (node) {
+		rcu_read_unlock();
 		return -EEXIST;
+	}
+	rcu_read_unlock();
 
 	n = (F_JA_NODE_t *) calloc(1, sizeof(F_JA_NODE_t));
 	if (!n)
@@ -136,8 +138,7 @@ int f_ja_add(F_JUDY_t *ja, uint64_t entry)
 	rcu_read_lock();
 	node = cds_ja_add_unique(ja, entry, &n->node);
 	if (unlikely(node != &n->node)) {
-		rcu_node_free(n);
-		n = container_of(node, F_JA_NODE_t, node);
+		call_rcu(&n->head, node_free_cb);
 		rcu_read_unlock();
 
 		return -EEXIST;
@@ -159,7 +160,7 @@ int f_ja_remove(F_JUDY_t *ja, F_JA_NODE_t *n)
 		rcu_read_unlock();
 		return ret;
 	}
-	rcu_node_free(n);
+	call_rcu(&n->head, node_free_cb);
 	rcu_read_unlock();
 
 	//rcu_quiescent_state();
@@ -185,7 +186,7 @@ int f_ja_rem(F_JUDY_t *ja, uint64_t entry)
 		rcu_read_unlock();
 		return ret;
 	}
-	rcu_node_free(n);
+	call_rcu(&n->head, node_free_cb);
 	rcu_read_unlock();
 
 	rcu_quiescent_state();
