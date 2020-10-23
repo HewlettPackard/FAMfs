@@ -2663,7 +2663,7 @@ static int sbosl_add_pages(F_MAP_t *m)
     F_SHMAP_DATA_t *sdata;
     F_MAP_t *sm = priv_sb->super_map;
     F_MAP_SBOSS_t *sboss = NULL;
-    char sb_name[F_SHMAP_NAME_LEN+1] = { 0 };
+    char sb_name[F_SHMAP_NAME_LEN] = { 0 };
     size_t l, size;
     uint64_t entry, id;
     int count, rc = 0;
@@ -2711,9 +2711,9 @@ static int sbosl_add_pages(F_MAP_t *m)
 
 	/* memory region name */
 	assert( id > 0 );
-	l = snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%c_%1.1lu",
+	l = snprintf(sb_name, F_SHMAP_NAME_LEN, "%s%c_%1.1lu",
 		     F_SHMAP_DATA_NAME, (char)priv_sb->id, id);
-	strncpy(sb_name+l, sb->name+l, F_SHMAP_NAME_LEN-l);
+	strncpy(sb_name+l, sb->name+l, F_SHMAP_NAME_LEN-l-1);
 
 	size = F_SHMAP_DATA_SZ(m->bosl_sz);
 	if (f_shmap_owner(m)) {
@@ -2723,7 +2723,7 @@ static int sbosl_add_pages(F_MAP_t *m)
 	    rc = shmem_create((void**)&sdata, sb_name, size, &sboss->shm_id);
 	    if (rc)
 		goto _err;
-	    strncpy(sdata->name, sb_name, F_SHMAP_NAME_LEN);
+	    strcpy(sdata->name, sb_name);
 	    sboss->data = sdata;
 	    sboss->size = size;
 
@@ -2931,7 +2931,7 @@ int f_map_shm_attach(F_MAP_t *m, F_MAPMEM_t rw)
     F_SHMAP_SB_t *sb = NULL;
     F_MAP_t *sm = NULL;
     pthread_rwlockattr_t attr;
-    char sb_name[F_SHMAP_NAME_LEN+1] = { 0 };
+    char sb_name[F_SHMAP_NAME_LEN] = { 0 };
     size_t size;
     signed char reg_id;
     unsigned int tmo, slp;
@@ -2949,7 +2949,7 @@ int f_map_shm_attach(F_MAP_t *m, F_MAPMEM_t rw)
     reg_id = (signed char)m->reg_id;
     priv_sb->id = (reg_id + 0x30) & 0xff; /* IPC shared memory region signature */
 
-    snprintf(sb_name, F_SHMAP_NAME_LEN+1, "%s%c_0",
+    snprintf(sb_name, F_SHMAP_NAME_LEN, "%s%c_0",
 	     F_SHMAP_NAME_PREFIX, (char)priv_sb->id);
     priv_sb->name = strdup(sb_name);
     priv_sb->shm = rw;
@@ -2960,7 +2960,7 @@ int f_map_shm_attach(F_MAP_t *m, F_MAPMEM_t rw)
 	/* create new SB object if existing */
 	if ((rc = shmem_create((void**)&sb, sb_name, size, &priv_sb->shm_id)))
 	    goto _err;
-	strncpy(sb->name, sb_name, F_SHMAP_NAME_LEN);
+	strcpy(sb->name, sb_name);
 	priv_sb->shmap_sb = sb;
 
 	pthread_rwlockattr_init(&attr);
