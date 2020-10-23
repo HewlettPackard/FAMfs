@@ -584,7 +584,7 @@ static void vmlog(int flags, const char *fmt, va_list ap)
                     "%04d/%02d/%02d-%02d:%02d:%02d.%03ld %s %s ",
                     tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
                     tm->tm_hour, tm->tm_min, tm->tm_sec,
-                    (long int)tv.tv_usec / 10000, mst.uts.nodename,
+                    (long int)tv.tv_usec / 1000, mst.uts.nodename,
                     mlog_xst.tag);
     hlen_pt1 = hlen;    /* save part 1 length */
     if (hlen < sizeof(b)) {

@@ -70,7 +70,7 @@ extern int log_print_level;
                             "%Y-%m-%dT%H:%M:", ttime); \
                     fprintf(dbg_stream,"logtime:%lf rank [%d] [%s%02lu.%03lu] [%ld] [%s:%d] [%s] ", \
                                 mlogtm/1000000, glb_rank, timestamp, \
-                                (uint64_t)logstart.tv_sec%60, (uint64_t)logstart.tv_nsec/10000000, \
+                                (uint64_t)logstart.tv_sec%60, (uint64_t)logstart.tv_nsec/1000000, \
                                 gettid(), __FILE__, __LINE__, __FUNCTION__); \
                     fprintf(dbg_stream, __VA_ARGS__); \
                     fprintf(dbg_stream, "\n"); \
