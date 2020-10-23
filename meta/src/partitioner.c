@@ -424,10 +424,10 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 				index->mdhim_max_recs_per_slice;
 */
 		slice_num = highval * (multiply/max_recs_per_slice) + surplus/max_recs_per_slice;
-
+/*
 		mlog(MDHIM_CLIENT_DBG0, "meta_pair: (%d %d, %ld) recs_per_slice:%lu slice:%d",
 		     loid, fid, meta_pair[1], max_recs_per_slice, slice_num);
-
+*/
 		free(meta_pair);
 	} else {
 		/* Convert the key to a slice number  */

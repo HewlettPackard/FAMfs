@@ -650,7 +650,7 @@ static void *stoker(void *arg) {
                     continue;
                 }
                 MPI_Get_count(&sts, MPI_BYTE, &msg_sz);
-                LOG(LOG_DBG, "LO:%d cln AT rsp from %d: msg[%d].op=%d asked %d stripes",
+                LOG(LOG_DBG2, "LO:%d cln AT rsp from %d: msg[%d].op=%d asked %d stripes",
                     arq->lid, sts.MPI_SOURCE, msg_sz, arq->cmd, arq->cnt);
                 if (arq->cmd == F_AH_QUIT) {
                     LOG(LOG_INFO, "cln AT: received QUIT command");

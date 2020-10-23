@@ -572,7 +572,7 @@ int f_do_fsync(f_svcrq_t *pcmd) {
         (md_index_t *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset + page_sz);
 
-    LOG(LOG_DBG3, "srv fsync from qid %d rank [%d] k/v num=%lu meta_offset=%ld",
+    LOG(LOG_DBG, "srv fsync from qid %d rank [%d] k/v num=%lu meta_offset=%ld",
         qid, client_side_id, num_entries, app_config->meta_offset);
 
     for (i = 0; i < num_entries; i++) {

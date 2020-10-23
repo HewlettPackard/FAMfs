@@ -1390,14 +1390,21 @@ void *worker_thread(void *data) {
 						  item->source);
 				gettimeofday(&worker_put_end, NULL);
 				worker_put_time += 1000000*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec;
+#ifdef DEBUG_WRK_THREAD
+				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_PUT time:%ld",
+				worker_id,
+				1000000L*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec);
+#endif
 				break;
 			case MDHIM_BULK_GET:
 				gettimeofday(&worker_get_start, NULL);
 				op = ((struct mdhim_bgetm_t *) item->message)->op;
 				num_records = ((struct mdhim_bgetm_t *) item->message)->num_recs;
 				num_keys = ((struct mdhim_bgetm_t *) item->message)->num_keys;
- mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_GET op:%d num_records:%d num_keys:%d",
- worker_id, op, num_records, num_keys);
+#ifdef DEBUG_WRK_THREAD
+				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_GET op:%d num_records:%d num_keys:%d",
+				     worker_id, op, num_records, num_keys);
+#endif
 				//The client is sending one key, but requesting the retrieval of more than one
 				if (num_records > 1 && num_keys == 1) {
 					range_server_bget_op(md,
