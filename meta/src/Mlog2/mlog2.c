@@ -581,7 +581,7 @@ static void vmlog(int flags, const char *fmt, va_list ap)
      * ok, first, put the header into b[]
      */
     hlen = snprintf(b, sizeof(b),
-                    "%04d/%02d/%02d-%02d:%02d:%02d.%02ld %s %s ",
+                    "%04d/%02d/%02d-%02d:%02d:%02d.%03ld %s %s ",
                     tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
                     tm->tm_hour, tm->tm_min, tm->tm_sec,
                     (long int)tv.tv_usec / 10000, mst.uts.nodename,

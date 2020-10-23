@@ -35,6 +35,8 @@
 #include <sys/syscall.h>
 #include <sys/time.h>
 
+#include "famfs_ktypes.h" // time_get_ts, timespec_sub macros
+
 extern FILE *dbg_stream;
 extern int glb_rank;
 
@@ -53,27 +55,30 @@ time_t ltime;
 
 // add and change all
 struct tm *ttime;
-struct timeval logstart, logend;
+struct timespec logstart, logend;
+
 double mlogtm;
 
 extern int log_print_level;
 #define gettid() syscall(__NR_gettid)
 #define LOG(level, ...) \
                 if(level <= log_print_level) { \
-                    gettimeofday(&logstart, NULL); \
+                    time_get_ts(&logstart); \
                     ltime = time(NULL); \
                     ttime = localtime(&ltime); \
                     strftime(timestamp, sizeof(timestamp), \
-                            "%Y-%m-%dT%H:%M:%S", ttime); \
-                    fprintf(dbg_stream,"logtime:%lf rank [%d] [%s] [%ld] [%s:%d] [%s] ", \
-                                mlogtm/1000000, glb_rank, timestamp, gettid(), \
-                                        __FILE__, __LINE__, __FUNCTION__); \
+                            "%Y-%m-%dT%H:%M:", ttime); \
+                    fprintf(dbg_stream,"logtime:%lf rank [%d] [%s%02lu.%03lu] [%ld] [%s:%d] [%s] ", \
+                                mlogtm/1000000, glb_rank, timestamp, \
+                                (uint64_t)logstart.tv_sec%60, (uint64_t)logstart.tv_nsec/10000000, \
+                                gettid(), __FILE__, __LINE__, __FUNCTION__); \
                     fprintf(dbg_stream, __VA_ARGS__); \
                     fprintf(dbg_stream, "\n"); \
                     fflush(dbg_stream); \
-                    gettimeofday(&logend, NULL); \
-                    mlogtm += 1000000*(logend.tv_sec-logstart.tv_sec)+logend.tv_usec-logstart.tv_usec; \
-                        }
+                    time_get_ts(&logend); \
+                    timespec_sub(&logend, &logstart); \
+                    mlogtm += (uint64_t)logend.tv_sec * 1000000UL + (uint64_t)logend.tv_nsec / 1000; \
+                }
 #define IF_LOG(level)	if (level <= log_print_level)
 
 #endif /* LOG_H */

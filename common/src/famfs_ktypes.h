@@ -376,6 +376,20 @@ typedef struct { int32_t counter; } atomic_t;
 #define cmm_mb()    __asm__ __volatile__ ("mfence":::"memory")
 #endif
 
+//struct timespec
+#define time_get_ts(p_timespec) (clock_gettime(CLOCK_MONOTONIC_RAW, p_timespec))
+#ifndef timespec_sub
+#define	timespec_sub(vvp, uvp)						\
+	do {								\
+		(vvp)->tv_sec -= (uvp)->tv_sec;				\
+		(vvp)->tv_nsec -= (uvp)->tv_nsec;			\
+		if ((vvp)->tv_nsec < 0) {				\
+			(vvp)->tv_sec--;				\
+			(vvp)->tv_nsec += 1000000000;			\
+		}							\
+	} while (0)
+#endif
+
 #if 0  //-------------------------------------------
 
 #define atomic_cmpset(a,b,c) rte_atomic32_cmpset(a,b,c)
@@ -402,8 +416,6 @@ typedef struct { int32_t counter; } atomic_t;
 
 #define __always_inline __inline __attribute__ ((__always_inline__))
 #define __packed __attribute__((packed))
-
-#define time_get_ts(p_timespec) (clock_gettime(CLOCK_MONOTONIC_RAW, p_timespec))
 
 #define msecs_to_jiffies(msec) ((msec * HZ) / MSEC_PER_SEC)
 #define jiffies_to_msec(jifi) ((jifi*MSEC_PER_SEC) / HZ)
