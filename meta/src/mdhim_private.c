@@ -237,6 +237,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		     md->mdhim_rank);
 		return NULL;
 	}
+ int n_loc=0, n_rem=0;
 
 	//The message to be sent to ourselves if necessary
 	lbpm = NULL;
@@ -280,9 +281,11 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		while (rl) {
 			gettimeofday(&localbpmstart, NULL);
 			if ((int)rl->ri->rank != md->mdhim_rank) {
+ n_rem++;
 				//Set the message in the list for this range server
 				bpm = bpm_list[rl->ri->rangesrv_num - 1];
 			} else {
+ n_loc++;
 				//Set the local message
 				bpm = lbpm;
 			}
@@ -361,6 +364,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 
 	free(bpm_list);
 
+ mlog(MDHIM_CLIENT_INFO, "BPUT  index:%d msg_id:%d n_loc:%d n_rem:%d num_keys:%d", index->id, msg_id, n_loc, n_rem, num_keys);
 	//Return the head of the list
 	return brm_head;
 }

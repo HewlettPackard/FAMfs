@@ -377,8 +377,10 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 				 md->mdhim_comm);
 	mtype = bm->mtype;
 	msg_size = bm->size;
- mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - from rank:%d (%d tag %d) message id:%d type:%d for index:%d",
-  msg_source, status.MPI_SOURCE, status.MPI_TAG, bm->msg_id, bm->mtype, bm->index);
+
+	mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - from rank:%d tag:%d message id:%d type:%d for index:%d",
+	    status.MPI_SOURCE, status.MPI_TAG, bm->msg_id, bm->mtype, bm->index);
+
 	free(bm);
         
         // Checks for valid message, if error inform and ignore message
@@ -394,6 +396,7 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 		break;
 	case MDHIM_BULK_PUT:
 		return_code = unpack_bput_message(md, recvbuf, msg_size, message);
+		mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - unpack_bput_message done");
 		break;
 	case MDHIM_BULK_GET:
 		return_code = unpack_bget_message(md, recvbuf, msg_size, message);
