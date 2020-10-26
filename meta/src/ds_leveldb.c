@@ -286,7 +286,8 @@ int mdhim_leveldb_open(void **dbh, void **dbs, char *path,
 	//Create the options for the main database
 	mdhimdb->options = leveldb_options_create();
 	leveldb_options_set_create_if_missing(mdhimdb->options, 1);
-	//leveldb_options_set_compression(options, 0);
+	//leveldb_options_set_compression(mdhimdb->options, 0);
+	//leveldb_options_set_block_size(mdhimdb->options, 65536);
 	mdhimdb->filter = leveldb_filterpolicy_create_bloom(256);
 	mdhimdb->cache = leveldb_cache_create_lru(8388608);
 	mdhimdb->env = leveldb_create_default_env();
@@ -296,8 +297,8 @@ int mdhim_leveldb_open(void **dbh, void **dbs, char *path,
 	leveldb_options_set_cache(mdhimdb->options, mdhimdb->cache);
 	leveldb_options_set_filter_policy(mdhimdb->options, mdhimdb->filter);
 	//leveldb_options_set_max_open_files(mdhimdb->options, 10000);
-	leveldb_options_set_max_open_files(mdhimdb->options, 10000);
-	leveldb_options_set_write_buffer_size(mdhimdb->options, 1048576);
+	//leveldb_options_set_write_buffer_size(mdhimdb->options, 1048576);
+	leveldb_options_set_write_buffer_size(mdhimdb->options, 4*1048576);
 	leveldb_options_set_env(mdhimdb->options, mdhimdb->env);
 	//Create the options for the stat database
 	statsdb->options = leveldb_options_create();
