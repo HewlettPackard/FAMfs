@@ -6,6 +6,7 @@ WRK_DIR=${SCRIPT_DIR}/t
 export SCRIPT_DIR
 FAMFS_CONF="famfs.conf"
 EDR_COLLECTED_FN="EDR.collected"
+# export FAMFS_DO_STATS=1 # Enable if you want stats
 
 function count() {
     IFS=","

@@ -52,6 +52,7 @@ function stop_server() {
 
 function run_test() {
   echo "### $DSC" >>$TEST_LOG
+  ((FAMFS_DO_STATS))&& oMPIchEnv="$oMPIchEnv -x FAMFS_DO_STATS"
   TEST_BASH_ARG="$cNUMAshell $TEST_BIN $TEST_OPTS"
   ((tVERBOSE)) && echo "$mpirun $cMPImap $mpi_hosts $Clients $oMPIchEnv /bin/bash -c \"$TEST_BASH_ARG\" 2>>$MPI_LOG 1>>$TEST_LOG"
   echo "Starting test..."
