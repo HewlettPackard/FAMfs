@@ -1944,7 +1944,8 @@ static int unifycr_init(void)
 
         /* UNIFYCR_SPILLOVER_DATA_DIR */
         if (client_cfg.spillover_data_dir) {
-            strncpy(external_data_dir, client_cfg.spillover_data_dir, sizeof(external_data_dir));
+            strncpy(external_data_dir, client_cfg.spillover_data_dir, sizeof(external_data_dir)-1);
+            external_data_dir[sizeof(external_data_dir)-1] = '\0';
         } else {
             DEBUG("UNIFYCR_SPILLOVER_DATA_DIR not set to an existing writable"
                   " path (i.e UNIFYCR_SPILLOVER_DATA_DIR=/mnt/ssd):\n");
@@ -1969,7 +1970,8 @@ static int unifycr_init(void)
 
         /* UNIFYCR_SPILLOVER_META_DIR */
         if (client_cfg.spillover_meta_dir) {
-            strncpy(external_meta_dir, client_cfg.spillover_meta_dir, sizeof(external_meta_dir));
+            strncpy(external_meta_dir, client_cfg.spillover_meta_dir, sizeof(external_meta_dir)-1);
+            external_meta_dir[sizeof(external_meta_dir)-1] = '\0';
         } else {
             DEBUG("UNIFYCR_SPILLOVER_META_DIR not set to an existing writable"
                   " path (i.e UNIFYCR_SPILLOVER_META_DIR=/mnt/ssd):\n");
