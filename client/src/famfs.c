@@ -485,6 +485,7 @@ static int famfs_sync(int target_fid)
                 /* something went wrong when trying to flush extents */
                 ERROR("failed to flush write index to server for gfid=%d",
                        meta->gfid);
+                goto io_err;
             }
             meta->needs_sync = 0;
 
