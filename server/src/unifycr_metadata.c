@@ -50,7 +50,7 @@ struct mdhim_brm_t *brm, *brmp;
 struct mdhim_bgetrm_t *bgrm, *bgrmp;
 struct mdhim_t *md;
 
-int fsmd_ley_lens[MAX_META_PER_SEND] = {0};
+int fsmd_key_lens[MAX_META_PER_SEND] = {0};
 int unifycr_val_lens[MAX_META_PER_SEND] = {0};
 
 int fattr_key_lens[MAX_FILE_CNT_PER_NODE] = {0};
@@ -439,7 +439,7 @@ int meta_process_fsync(int qid)
         memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
                &client_side_id, sizeof(int));
 
-        fsmd_ley_lens[i] = sizeof(fsmd_key_t);
+        fsmd_key_lens[i] = sizeof(fsmd_key_t);
         unifycr_val_lens[i] = sizeof(fsmd_val_t);
     }
 
@@ -461,7 +461,7 @@ int meta_process_fsync(int qid)
 
     } else {
         brm = mdhimBPut(md, unifycr_indexes[0],
-                        (void **)(&fsmd_keys[0]), fsmd_ley_lens,
+                        (void **)(&fsmd_keys[0]), fsmd_key_lens,
                         (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries,
                         NULL, NULL);
         brmp = brm;
@@ -549,9 +549,12 @@ _process_fattr:
 }
 
 int f_do_fsync(f_svcrq_t *pcmd) {
+    struct index_t *index = unifycr_indexes[0];
+    struct mdhim_bput2m_t *bput2m;
+    mdhim_basem_t *bm;
     int i, ret = 0;
-    int qid = pcmd->cid;
 
+    int qid = pcmd->cid;
     int app_id = invert_qids[qid];
     app_config_t *app_config = (app_config_t *)arraylist_get(app_config_list, app_id);
 
@@ -575,70 +578,67 @@ int f_do_fsync(f_svcrq_t *pcmd) {
     LOG(LOG_DBG, "srv fsync from qid %d rank [%d] k/v num=%lu meta_offset=%ld",
         qid, client_side_id, num_entries, app_config->meta_offset);
 
-    for (i = 0; i < num_entries; i++) {
-        fsmd_keys[i]->pk.fid = meta_payload[i].fid;
-        fsmd_keys[i]->pk.loid = meta_payload[i].loid;
-        fsmd_keys[i]->offset = meta_payload[i].file_pos;
-        fsmd_vals[i]->addr = meta_payload[i].mem_pos;
-        fsmd_vals[i]->len = meta_payload[i].length;
-        fsmd_vals[i]->stripe  = meta_payload[i].sid;
+    /* Create BULK_PUT2 message */
+    bput2m = (struct mdhim_bput2m_t *) malloc(mdhim_bput2m_alloc_sz(num_entries));
+    if (!bput2m) {
+	ret = -errno;
+	goto _exit;
+    }
+    bm = &bput2m->basem;
+    bm->mtype = MDHIM_BULK_PUT2;
+    bm->size = mdhim_bput2m_alloc_sz(num_entries);
+    bm->server_rank = -1; /* to be set at bput2_records() */
+    bm->index = index->id;
+    bm->index_type = index->type;
+    bm->seg_count = 1;
 
-        LOG(LOG_DBG3, "  k/v[%d] loid=%d fid=%d off/len=%ld/%ld addr=%ld s=%lu",
-            i, fsmd_keys[i]->pk.loid, fsmd_keys[i]->pk.fid, fsmd_keys[i]->offset,
-            fsmd_vals[i]->len, fsmd_vals[i]->addr, fsmd_vals[i]->stripe);
+    /* message payload */
+    fsmd_kv_t *kvs = &bput2m->seg.kvs[0];
+    bput2m->seg.seg_id = 0;
+    bput2m->seg.num_keys = num_entries;
+    bput2m->seg.key_len = sizeof(fsmd_key_t);
+    bput2m->seg.kv_length = sizeof(fsmd_kv_t);
+    memcpy(kvs, meta_payload, num_entries*sizeof(fsmd_kv_t)); 
 
-        fsmd_ley_lens[i] = sizeof(fsmd_key_t);
-        unifycr_val_lens[i] = sizeof(fsmd_val_t);
+    IF_LOG(LOG_DBG3) {
+	fsmd_kv_t *kv = kvs;
+	for (i = 0; i < num_entries; i++, kv++) {
+
+	    LOG(LOG_DBG3, "  k/v[%d] loid=%d fid=%d off/len=%ld/%ld addr=%ld s=%lu",
+		i, kv->k.pk.loid, kv->k.pk.fid, kv->k.offset,
+		kv->v.len, kv->v.addr, kv->v.stripe);
+	}
     }
 
-    //print_fsync_indices(fsmd_keys, fsmd_vals, num_entries);
+    brm = bput2_records(md, index, bput2m);
+    free(bput2m);
 
-    if (num_entries == 1) {
-        brm = mdhimPut(md, unifycr_indexes[0],
-                       fsmd_keys[0], sizeof(fsmd_key_t),
-                       fsmd_vals[0], sizeof(fsmd_val_t),
-                       NULL, NULL);
-        if (!brm || brm->error) {
-            ret = ULFS_ERROR_MDHIM;
-            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
-                md->mdhim_rank);
-        } else {
-            ret = ULFS_SUCCESS;
-        }
-        mdhim_full_release_msg(brm);
+    brmp = brm;
+    if (!brmp) {
+	ret = ULFS_ERROR_MDHIM;
+	LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+	    md->mdhim_rank);
+    }
 
-    } else {
+    while (brmp) {
+	if (brmp->error) {
+	    ret = ULFS_ERROR_MDHIM;
+	    LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM - %d\n",
+		md->mdhim_rank, brmp->error);
+	    break;
+	}
 
-        brm = mdhimBPut(md, unifycr_indexes[0],
-                        (void **)(&fsmd_keys[0]), fsmd_ley_lens,
-                        (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries,
-                        NULL, NULL);
-        brmp = brm;
-        if (!brmp || brmp->error) {
-            ret = ULFS_ERROR_MDHIM;
-            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
-                md->mdhim_rank);
-        }
-
-        while (brmp) {
-            if (brmp->error < 0) {
-                ret = ULFS_ERROR_MDHIM;
-                break;
-            }
-
-            brm = brmp;
-            brmp = brmp->next;
-            mdhim_full_release_msg(brm);
-        }
+	brm = brmp;
+	brmp = brmp->next;
+	mdhim_full_release_msg(brm);
     }
 
 _process_fattr:
     num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->fmeta_offset));
-    //printf("sync to process %d attrs\n", num_entries);
     if (num_entries == 0) {
-        LOG(LOG_DBG, "no entries to sync");
+        LOG(LOG_DBG, "no file attribute entries to sync");
         return 0;
     }
 
@@ -697,6 +697,7 @@ _process_fattr:
         }
     }
 
+_exit:
     LOG(LOG_DBG, "fsync sts=%d", ret);
     return ret;
 }
@@ -730,14 +731,14 @@ int meta_batch_get(int app_id, int client_id,
         fsmd_keys[2 * i]->offset = tmp_cli_req[i].offset;
         fsmd_keys[2 * i + 1]->offset =
             tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
-        fsmd_ley_lens[2 * i] = \
-        fsmd_ley_lens[2 * i + 1] = sizeof(fsmd_key_t);
+        fsmd_key_lens[2 * i] = \
+        fsmd_key_lens[2 * i + 1] = sizeof(fsmd_key_t);
 
     }
 
     bgrm = mdhimBGet(md, unifycr_indexes[0],
                      (void **)fsmd_keys,
-                     fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
+                     fsmd_key_lens, 2 * num, MDHIM_RANGE_BGET);
 
     int tot_num = 0;
     int dest_client, dest_app;
@@ -817,8 +818,8 @@ int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
 
         fsmd_keys[2*i]->offset      = tmp_cli_req[i].offset;
         fsmd_keys[2*i + 1]->offset  = tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
-        fsmd_ley_lens[2*i]          = sizeof(fsmd_key_t);
-        fsmd_ley_lens[2*i + 1]      = sizeof(fsmd_key_t);
+        fsmd_key_lens[2*i]          = sizeof(fsmd_key_t);
+        fsmd_key_lens[2*i + 1]      = sizeof(fsmd_key_t);
     }
 
     IF_LOG(LOG_DBG3) {
@@ -827,13 +828,13 @@ int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
 	    LOG(LOG_DBG3, "  [%d] lo %d fid=%d off=%jd/%jd len=%d",
 		i, fsmd_keys[2*i]->pk.loid, fsmd_keys[2*i]->pk.fid,
 		fsmd_keys[2*i]->offset,
-		fsmd_keys[2*i + 1]->offset, fsmd_ley_lens[2*i]);
+		fsmd_keys[2*i + 1]->offset, fsmd_key_lens[2*i]);
 	}
     }
 
     bgrm = mdhimBGet(md, unifycr_indexes[0],
                      (void **)fsmd_keys,
-                     fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
+                     fsmd_key_lens, 2 * num, MDHIM_RANGE_BGET);
 
     bgrmp = bgrm;
     while (bgrmp) {
@@ -962,6 +963,7 @@ void print_bget_indices(int app_id, int cli_id,
 
 }
 
+#if 0
 void print_fsync_indices(fsmd_key_t **fsmd_keys,
                          fsmd_val_t **fsmd_vals, long num_entries)
 {
@@ -974,6 +976,7 @@ void print_fsync_indices(fsmd_key_t **fsmd_keys,
 
     }
 }
+#endif
 
 int meta_free_indices()
 {

@@ -286,7 +286,7 @@ int mdhim_leveldb_open(void **dbh, void **dbs, char *path,
 	//Create the options for the main database
 	mdhimdb->options = leveldb_options_create();
 	leveldb_options_set_create_if_missing(mdhimdb->options, 1);
-	//leveldb_options_set_compression(mdhimdb->options, 0);
+	leveldb_options_set_compression(mdhimdb->options, 0);
 	//leveldb_options_set_block_size(mdhimdb->options, 65536);
 	mdhimdb->filter = leveldb_filterpolicy_create_bloom(256);
 	mdhimdb->cache = leveldb_cache_create_lru(8388608);
@@ -467,6 +467,54 @@ int mdhim_leveldb_batch_put(void *dbh, void **keys, int32_t *key_lens,
 	mlog(MDHIM_SERVER_DBG, "Took: %d seconds to put %d records", 
 	     (int) (end.tv_sec - start.tv_sec), num_records);
 	
+	return MDHIM_SUCCESS;
+}
+
+/* kvs-> array of KV of 'num_records' size, 'len' length and 'key_len' key length; Value comes immediately after Key */
+int mdhim_leveldb_batch_put2(void *dbh, void *kvs, int len, int key_len, int num_records) {
+	leveldb_writeoptions_t *options;
+	char *err = NULL;
+	const char *key, *val;
+	struct mdhim_leveldb_t *mdhimdb = (struct mdhim_leveldb_t *) dbh;
+	leveldb_writebatch_t* write_batch;
+	size_t klen = key_len, vlen = len - key_len;
+	int i;
+
+	struct timespec start, end;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+
+	write_batch = leveldb_writebatch_create();
+	options = mdhimdb->write_options;
+	key = (const char *)kvs;
+	val = key + key_len;
+	for (i = 0; i < num_records; i++) {
+		/*
+		mlog(MDHIM_SERVER_DBG, "put2 rec %d/%d k.off=%lu v.len=%lu",
+		     i, num_records, ((fsmd_key_t*)key)->offset, ((fsmd_val_t*)val)->len);
+		*/
+		leveldb_writebatch_put(write_batch, key, klen, val, vlen);
+		key += len;
+		val += len;
+	}
+
+	leveldb_write(mdhimdb->db, options, write_batch, &err);
+	leveldb_writebatch_destroy(write_batch);
+	if (err != NULL) {
+		mlog(MDHIM_SERVER_CRIT, "Error in batch put in leveldb");
+		return MDHIM_DB_ERROR;
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	time_t secs = end.tv_sec - start.tv_sec;
+	long usec = (end.tv_nsec - start.tv_nsec)/1000;
+	if (secs > 0 && usec < 0) {
+	    secs--;
+	    usec += 1000000L;
+	}
+	dbbputtime+=1000000*secs + usec;
+	mlog(MDHIM_SERVER_DBG, "took %d.%03ld to bulk put %d records", 
+	     (int)secs, usec/1000, num_records);
+
 	return MDHIM_SUCCESS;
 }
 

@@ -52,6 +52,7 @@
 #include "uthash.h"
 
 #include "list.h"
+#include "famfs_error.h"
 
 
 int recv_counter = 0;
@@ -81,13 +82,15 @@ double stat_time=0;
 struct timeval odbgetstart, odbgetend;
 double odbgettime=0;
 
-struct timeval bputstart, bputend;
-double bputtime=0;
-
 struct timeval statstart, statend;
 double starttime=0;
 
 int putflag = 1;
+
+struct mdhim_bput2m_t *bput2m = NULL;
+size_t bput2m_sz = 0;
+
+
 int unifycr_compare(const char* a, const char* b) {
 	int ret;
 
@@ -180,7 +183,7 @@ struct index_t *find_index(struct mdhim_t *md, struct mdhim_basem_t *msg) {
 
 }
 
-
+#if 0
 /* 
  * ===  FUNCTION  ======================================================================
  *         Name:  find_index_by_name
@@ -197,6 +200,7 @@ struct index_t * find_index_by_name(struct mdhim_t *md, struct mdhim_basem_t *ms
 
     return ret;
 }
+#endif
 
 /**
  * range_server_add_work
@@ -287,7 +291,11 @@ int range_server_stop(struct mdhim_t *md) {
 	       md->mdhim_rank);
 	}
 	free(md->mdhim_rs->work_ready_cv);
-		
+
+	//Free RS input buffer (BPUT2)
+	free(bput2m);
+	bput2m = NULL;
+
 	//Destroy the work queue mutex
 	if ((ret = pthread_mutex_destroy(md->mdhim_rs->work_queue_mutex)) != 0) {
 	  mlog(MDHIM_SERVER_DBG, "Rank: %d - Error destroying work queue mutex", 
@@ -465,6 +473,53 @@ done:
 	return MDHIM_SUCCESS;
 }
 
+static int range_server_bput2(struct mdhim_t *md, struct index_t *index,
+    struct mdhim_bput2m_t *bim, int source)
+{
+	struct mdhim_rm_t *brm;
+	int ret;
+	int error = MDHIM_SUCCESS;
+	int sizebuf;
+	void *sendbuf;
+
+	ASSERT( index->id == 0 ); /* suppost for I/O ranges Table only */
+	ASSERT( bim->basem.seg_count == 1 ); /* support for one message segment only */
+	ASSERT( bim->seg.seg_id == 0 );
+
+	//Put the record in the database
+	if ((ret = mdhim_leveldb_batch_put2(index->mdhim_store->db_handle,
+					    bim->seg.kvs, bim->seg.kv_length, bim->seg.key_len,
+					    bim->seg.num_keys)) != MDHIM_SUCCESS) {
+		mlog(MDHIM_SERVER_CRIT, "Rank: %d - Error batch putting records",
+		     md->mdhim_rank);
+		error = ret;
+	}
+
+	//Create the response message
+	brm = malloc(sizeof(struct mdhim_rm_t));
+	//Set the type
+	brm->basem.mtype = MDHIM_RECV;
+	//Set the operation return code as the error
+	brm->error = error;
+	//Set the server's rank
+	brm->basem.server_rank = md->mdhim_rank;
+	//Set index id
+	brm->basem.index = index->id;
+	//Set msg id
+	brm->basem.msg_id = bim->seg.seg_msg_id;
+
+	gettimeofday(&resp_put_comm_start, NULL);
+
+	//Send response remotely (send_locally_or_remote)
+	ASSERT( source != md->mdhim_rank ); /* message isn't coming from myself */
+	ret = send_client_response(md, source, brm, &sizebuf, &sendbuf);
+	free(sendbuf);
+
+	mdhim_full_release_msg(brm);
+	//mdhim_full_release_msg(bim); /* attempt to reuse RS input message buffer */
+
+	return ret;
+}
 
 /**
  * range_server_bput
@@ -475,7 +530,7 @@ done:
  * @param source    source of the message
  * @return    MDHIM_SUCCESS or MDHIM_ERROR on error
  */
-int range_server_bput(struct mdhim_t *md, struct mdhim_bputm_t *bim, int source) {
+int range_server_bput(struct mdhim_t *md, void *message, int source) {
 	putflag = 1;
 	int i;
 	int ret;
@@ -493,26 +548,31 @@ int range_server_bput(struct mdhim_t *md, struct mdhim_bputm_t *bim, int source)
 	struct timeval start, end;
 	int num_put = 0;
 	struct index_t *index;
+	struct mdhim_basem_t *basem = (struct mdhim_basem_t *) message;
 
 	gettimeofday(&start, NULL);
-	gettimeofday(&bputstart, NULL);
+
+	//Get the index referenced the message
+	index = find_index(md, basem);
+	if (!index) {
+		mlog(MDHIM_SERVER_CRIT, "Rank: %d - Error retrieving index for id: %d", 
+		     md->mdhim_rank, basem->index);
+		error = MDHIM_ERROR;
+		goto done;
+	}
+
+	// I/O ranges Table?
+	if (index->id == 0) {
+		return range_server_bput2(md, index, (struct mdhim_bput2m_t *)message, source);
+	}
+
+	struct mdhim_bputm_t *bim = (struct mdhim_bputm_t *) message;
+
 	exists = malloc(bim->num_keys * sizeof(int));
 	new_values = malloc(bim->num_keys * sizeof(void *));
 	new_value_lens = malloc(bim->num_keys * sizeof(int));
 	value = malloc(sizeof(void *));
 	value_len = malloc(sizeof(int32_t));
-
-	//Get the index referenced the message
-	index = find_index(md, (struct mdhim_basem_t *) bim);
-	if (!index) {
-		mlog(MDHIM_SERVER_CRIT, "Rank: %d - Error retrieving index for id: %d", 
-		     md->mdhim_rank, bim->basem.index);
-		error = MDHIM_ERROR;
-		goto done;
-	}
-	gettimeofday(&bputend, NULL);
-	bputtime+=1000000 * (bputend.tv_sec - bputstart.tv_sec)\
-			+ bputend.tv_usec - bputstart.tv_usec;
 
 	for (i = 0; i < bim->num_keys && i < MAX_BULK_OPS; i++) {	
 		*value = NULL;
@@ -596,6 +656,13 @@ int range_server_bput(struct mdhim_t *md, struct mdhim_bputm_t *bim, int source)
 	free(new_value_lens);
 	free(value);
 	free(value_len);
+
+	//Release the internals of the bput message
+	free(bim->keys);
+	free(bim->key_lens);
+	free(bim->values);
+	free(bim->value_lens);
+
 	gettimeofday(&end, NULL);
 	add_timing(start, end, num_put, md, MDHIM_BULK_PUT);
 
@@ -611,18 +678,12 @@ int range_server_bput(struct mdhim_t *md, struct mdhim_bputm_t *bim, int source)
 	//Set index id
 	brm->basem.index = index->id;
 	//Set msg id
-	brm->basem.msg_id = bim->basem.msg_id;
-
-	//Release the internals of the bput message
-	free(bim->keys);
-	free(bim->key_lens);
-	free(bim->values);
-	free(bim->value_lens);
+	brm->basem.msg_id = basem->msg_id;
 
 	//Send response
 	gettimeofday(&resp_put_comm_start, NULL);
-	ret = send_locally_or_remote(md, source, brm, bim);
-	free(bim);
+	ret = send_locally_or_remote(md, source, brm, message);
+	free(message);
 
 	return MDHIM_SUCCESS;
 }
@@ -1363,7 +1424,7 @@ void *worker_thread(void *data) {
 			mlog(MDHIM_SERVER_INFO, ". RS worker[%d] - msg id:%d from rank:%d of type:%d (%s), current time:%ld",
 			     worker_id, ((struct mdhim_basem_t *) item->message)->msg_id, item->source, mtype,
 			     (mtype==MDHIM_PUT)?"PUT":(mtype==MDHIM_BULK_GET)?"BGET":
-				(mtype==MDHIM_BULK_PUT)?"BPUT":"?",
+				(mtype==MDHIM_BULK_PUT)?"BPUT":(mtype==MDHIM_BULK_PUT2)?"BPUT2":"?",
 			     1000000L*(worker_start.tv_sec-worker_zero.tv_sec)+worker_start.tv_usec-worker_zero.tv_usec);
 #endif
 
@@ -1383,6 +1444,7 @@ void *worker_thread(void *data) {
 #endif
 				break;
 			case MDHIM_BULK_PUT:
+			case MDHIM_BULK_PUT2:
 				//Pack the bulk put message and pass to range_server_put
 				gettimeofday(&worker_put_start, NULL);
 				range_server_bput(md,
@@ -1391,8 +1453,8 @@ void *worker_thread(void *data) {
 				gettimeofday(&worker_put_end, NULL);
 				worker_put_time += 1000000*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec;
 #ifdef DEBUG_WRK_THREAD
-				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_PUT time:%ld",
-				worker_id,
+				mlog(MDHIM_SERVER_INFO, ".  [%d] MDHIM_BULK_PUT%c time:%ld",
+				worker_id, (mtype==MDHIM_BULK_PUT2)?'2':' ',
 				1000000L*(worker_put_end.tv_sec-worker_put_start.tv_sec)+worker_put_end.tv_usec-worker_put_start.tv_usec);
 #endif
 				break;

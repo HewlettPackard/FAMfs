@@ -59,7 +59,7 @@ int meta_process_fsync(int qid);
 int meta_batch_get(int app_id, int client_id,
                    int thrd_id, int dbg_rank, char *shm_reqbuf, int num,
                    msg_meta_t *del_req_set);
-void print_fsync_indices(fsmd_key_t **keys, fsmd_val_t **vals, long num_entries);
+//void print_fsync_indices(fsmd_key_t **keys, fsmd_val_t **vals, long num_entries);
 int meta_process_attr_set(char *ptr_cmd, int qid);
 int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val);
 

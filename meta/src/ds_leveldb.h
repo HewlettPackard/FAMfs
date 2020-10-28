@@ -90,6 +90,7 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 		char ***out_key, int **out_key_len,\
 			char ***out_val, int **out_val_len,\
 				int tot_records, int *out_records_cnt);
+int mdhim_leveldb_batch_put2(void *dbh, void *kvs, int len, int key_len, int num_records);
 int leveldb_process_range(leveldb_iterator_t *iter,\
 		char *start_key, char *end_key, \
 			int key_len, char ***out_key, int **out_key_len, \

@@ -35,13 +35,16 @@
  */
 
 #include <stdlib.h>
+#include <stdio.h>
+#include <sys/time.h>
+
 #include "mdhim.h"
 #include "client.h"
 #include "local_client.h"
 #include "partitioner.h"
 #include "indexes.h"
-#include <stdio.h>
-#include <sys/time.h>
+#include "famfs_error.h"
+
 
 struct timeval localgetstart, localgetend;
 double localgettime=0;
@@ -338,7 +341,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		localcpyend.tv_usec - localcpystart.tv_usec;
 
 	//Make a list out of the received messages to return
-	brm_head = client_bput(md, put_index, bpm_list);
+	brm_head = client_bput(md, put_index, (struct mdhim_basem_t **)bpm_list);
 	if (lbpm) {
 		rm = local_client_bput(md, lbpm);
                 if (rm) {
@@ -365,6 +368,99 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 	free(bpm_list);
 
  mlog(MDHIM_CLIENT_INFO, "BPUT  index:%d msg_id:%d n_loc:%d n_rem:%d num_keys:%d", index->id, msg_id, n_loc, n_rem, num_keys);
+	//Return the head of the list
+	return brm_head;
+}
+
+struct mdhim_brm_t *bput2_records(struct mdhim_t *md, struct index_t *index,
+				  struct mdhim_bput2m_t *message)
+{
+	struct mdhim_bput2m_t *bpm, **bpm_list;
+	fsmd_kv_t *kv;
+	struct mdhim_brm_t *brm_head;
+	uint32_t *rs_num, rangesrv_num, *kv_num;
+	int num_keys, key_len, num_rangesrvs, i;
+
+	ASSERT( index->type != LOCAL_INDEX );
+	int msg_id = next_index_msg_id(md, index);
+	message->seg.seg_msg_id = msg_id;
+
+	//Check to see that we were given a sane amount of records
+	num_keys = message->seg.num_keys;
+	if (num_keys > MAX_BULK_OPS) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
+		     "To many bulk operations requested in mdhimBGetOp", 
+		     md->mdhim_rank);
+		return NULL;
+	}
+
+	key_len = message->seg.key_len;
+	num_rangesrvs = index->num_rangesrvs;
+
+	//array of number of KVs per RS
+	kv_num = (uint32_t *) calloc(num_rangesrvs, sizeof(uint32_t));
+	//array of range server numbers per KV
+	rs_num = (uint32_t *) malloc(num_keys*sizeof(uint32_t));
+
+	//Create an array of bulk put messages that holds one bulk message per range server
+	bpm_list = calloc(num_rangesrvs, sizeof(struct mdhim_bput2m_t *));
+
+	/* Go through each of the records to find the range server(s) the record belongs to.
+	   If there is not a bulk message in the array for the range server the key belongs to, 
+	   then it is created.  Otherwise, the data is added to the existing message in the array.*/
+	kv = &message->seg.kvs[0];
+	for (i = 0; i < num_keys && i < MAX_BULK_OPS; i++, kv++) {
+		//Get the range server this key will be sent to
+		if ((rangesrv_num = get_range_server(md, index, &kv->k, key_len)) == 0) {
+			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
+			     "Error while determining range server in bput_records", md->mdhim_rank);
+			continue;
+		}
+		rs_num[i] = --rangesrv_num;
+		kv_num[rangesrv_num]++;
+	}
+
+	kv = &message->seg.kvs[0];
+	for (i = 0; i < num_keys && i < MAX_BULK_OPS; i++, kv++) {
+		rangesrv_info *ri;
+
+		rangesrv_num = rs_num[i];
+		int nkeys = kv_num[rangesrv_num];
+		if (nkeys == 0)
+			continue;
+
+		//Create the message in the list for this range server
+		bpm = bpm_list[rangesrv_num];
+		if (!bpm) {
+			bpm = malloc(mdhim_bput2m_alloc_sz(nkeys));
+			if (bpm == NULL) {
+				free(rs_num);
+				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - OOM", md->mdhim_rank);
+				return NULL;
+			}
+			bpm_list[rangesrv_num] = bpm;
+			memcpy(bpm, message, mdhim_bput2m_alloc_sz(0));
+			bpm->seg.num_keys = 0;
+
+			rangesrv_num++;
+			HASH_FIND_INT(index->rangesrvs_by_num, &rangesrv_num, ri);
+			int server_rank = ri->rank;
+			ASSERT( server_rank != md->mdhim_rank );
+			bpm->basem.server_rank = server_rank;
+		}
+
+		//Add KV to the message for this range server
+		bpm->seg.kvs[bpm->seg.num_keys++] = *kv;
+	}
+	free(rs_num);
+	free(kv_num);
+
+	//Make a list out of the received messages to return and free up messages sent
+	brm_head = client_bput(md, index, (struct mdhim_basem_t **)bpm_list);
+	free(bpm_list);
+
+	mlog(MDHIM_CLIENT_INFO, "BPUT2 msg_id:%d num_keys:%d", msg_id, num_keys);
+
 	//Return the head of the list
 	return brm_head;
 }

@@ -104,7 +104,8 @@ struct mdhim_rm_t *client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
  * @return return_message structure with ->error = MDHIM_SUCCESS or MDHIM_ERROR
  */
 struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index, 
-				struct mdhim_bputm_t **bpm_list) {
+				struct mdhim_basem_t **bpm_list)
+{
 	int return_code;
 	int msg_id = 0, first = 1;
 	struct mdhim_brm_t *brm_head, *brm_tail, *brm;
@@ -120,16 +121,13 @@ struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index,
 		}
 
 		if (first) {
-			msg_id = bpm_list[i]->basem.msg_id;
 			first = 0;
-		} else if (msg_id != bpm_list[i]->basem.msg_id) {
-			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error IN msg_id %d/%d index_id %d type:%d",
-			     md->mdhim_rank, bpm_list[i]->basem.msg_id, msg_id, bpm_list[i]->basem.index,
-			     bpm_list[i]->basem.mtype);
-			num_srvs = 0;
-			break;
+			if (bpm_list[i]->mtype == MDHIM_BULK_PUT2)
+				msg_id = ((struct mdhim_bput2m_t *)bpm_list[i])->seg.seg_msg_id;
+			else
+				msg_id = bpm_list[i]->msg_id;
 		}
-		srvs[num_srvs] = bpm_list[i]->basem.server_rank;
+		srvs[num_srvs] = bpm_list[i]->server_rank;
 		num_srvs++;
 	}
 

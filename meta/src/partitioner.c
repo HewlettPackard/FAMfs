@@ -418,11 +418,9 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 				return MDHIM_ERROR;
 			}
 			max_recs_per_slice = index->key_slice_size_per_lo[loid];
-		} else
+		} else {
 			max_recs_per_slice = index->mdhim_max_recs_per_slice;
-/*		slice_num = (surplus + highval * multiply%index->mdhim_max_recs_per_slice) % \
-				index->mdhim_max_recs_per_slice;
-*/
+		}
 		slice_num = highval * (multiply/max_recs_per_slice) + surplus/max_recs_per_slice;
 /*
 		mlog(MDHIM_CLIENT_DBG0, "meta_pair: (%d %d, %ld) recs_per_slice:%lu slice:%d",
@@ -495,6 +493,20 @@ rangesrv_list *get_range_servers(struct mdhim_t *md, struct index_t *index,
 
 	//Return the range server list
 	return rl;
+}
+
+/* get range server number */
+int get_range_server(struct mdhim_t *md, struct index_t *index,
+		     void *key, int key_len)
+{
+	//The number that maps a key to range server (dependent on key type)
+	int slice_num;
+
+	if ((slice_num = get_slice_num(md, index, key, key_len)) == MDHIM_ERROR) {
+		return 0;
+	}
+	int rangesrv_num = slice_num % index->num_rangesrvs;
+	return ++rangesrv_num;
 }
 
 static struct mdhim_stat *get_next_slice_stat(struct index_t *index, int slice_num)

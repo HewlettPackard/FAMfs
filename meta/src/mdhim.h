@@ -149,6 +149,8 @@ struct mdhim_brm_t *mdhimBPut(struct mdhim_t *md, struct index_t *index,
 			      int num_records,
 			      struct secondary_bulk_info *secondary_global_info,
 			      struct secondary_bulk_info *secondary_local_info);
+struct mdhim_brm_t *bput2_records(struct mdhim_t *md, struct index_t *index,
+                                  struct mdhim_bput2m_t *message);
 struct mdhim_bgetrm_t *mdhimGet(struct mdhim_t *md, struct index_t *index,
 			       void *key, int key_len,
 			       int op);

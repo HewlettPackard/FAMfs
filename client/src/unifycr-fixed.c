@@ -307,7 +307,7 @@ static int unifycr_chunk_read(
  * @param slice_range: the slice size of the key-value store
  * @return index_set: the set of split indices
  * */
-int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
+static int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
                         long slice_range)
 {
 

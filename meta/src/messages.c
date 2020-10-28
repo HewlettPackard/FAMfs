@@ -57,6 +57,9 @@ double packretgettime = 0;
 struct timeval packretputstart, packretputend;
 double packretputtime = 0;
 
+extern struct mdhim_bput2m_t *bput2m;
+extern size_t bput2m_sz;
+
 
 /**
  * send_rangesrv_work
@@ -190,6 +193,7 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs) {
 			continue;
 		}
 
+		int msg_id = ((struct mdhim_basem_t *) mesg)->msg_id;
 		mtype = ((struct mdhim_basem_t *) mesg)->mtype;
 		dest = ((struct mdhim_basem_t *) mesg)->server_rank;
 		dsts[num_msgs] = dest;
@@ -202,6 +206,13 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs) {
 			gettimeofday(&packputend, NULL);
 			packputtime += 1000000 * (packputend.tv_sec - packputstart.tv_sec)+\
 				packputend.tv_usec - packputstart.tv_usec;
+			break;
+		case MDHIM_BULK_PUT2:
+			sendbuf = mesg;
+			struct mdhim_bput2m_t *bput2m = (struct mdhim_bput2m_t *)mesg;
+			msg_id = bput2m->seg.seg_msg_id;
+			sendsize = mdhim_bput2m_alloc_sz(bput2m->seg.num_keys);
+			return_code = MDHIM_SUCCESS;
 			break;
 		case MDHIM_BULK_GET:
 			gettimeofday(&packgetstart, NULL);
@@ -239,7 +250,7 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs) {
 			ret = MDHIM_ERROR;
 		} 
  mlog(MDHIM_CLIENT_INFO, "send_all_rangesrv_work - rank:%d index %d msg id %d size %d sending to RS %d, %d of %d ret=%d",
-      md->mdhim_rank, ((struct mdhim_basem_t *) mesg)->index, ((struct mdhim_basem_t *) mesg)->msg_id,
+      md->mdhim_rank, ((struct mdhim_basem_t *) mesg)->index, msg_id,
       sizes[num_msgs], dest, num_msgs, num_srvs, ret);
 
 		num_msgs++;
@@ -327,7 +338,6 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 	int recvsize;
 	int mtype;
 	struct mdhim_basem_t *bm;
-	int mesg_idx = 0;
 	int ret = MDHIM_SUCCESS;
 
   mlog(MDHIM_SERVER_INFO, "at receive_rangesrv_work"); 
@@ -357,7 +367,14 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
  mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work from rank:%d size %d tag %d\n",
       msg_source, recvsize, status.MPI_TAG);
 
-	recvbuf = (void *) calloc(1, recvsize);
+	/* TODO: Add support for multiple-threaded RS */
+	if (bput2m == NULL || bput2m_sz < (unsigned)recvsize) {
+		recvbuf = realloc(bput2m, recvsize);
+		bput2m_sz = recvsize;
+	} else {
+		recvbuf = bput2m;
+	}
+
 	return_code = MPI_Recv(recvbuf, recvsize, MPI_PACKED, msg_source,
 			       RANGESRV_WORK_MSG, md->mdhim_comm, &status);
 	if ( return_code != MPI_SUCCESS ) {
@@ -370,21 +387,16 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 
 	*src = msg_source;
 	*message = NULL;
-	//Unpack buffer to get the message type
-	bm = malloc(sizeof(struct mdhim_basem_t));
-	return_code = MPI_Unpack(recvbuf, recvsize, &mesg_idx, bm, 
-				 sizeof(struct mdhim_basem_t), MPI_CHAR, 
-				 md->mdhim_comm);
+
+	bm = (mdhim_basem_t *)recvbuf;
 	mtype = bm->mtype;
 	msg_size = bm->size;
 
-	mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - from rank:%d tag:%d message id:%d type:%d for index:%d",
-	    status.MPI_SOURCE, status.MPI_TAG, bm->msg_id, bm->mtype, bm->index);
-
-	free(bm);
+	mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - from rank:%d tag:%d type:%d for index:%d",
+	    status.MPI_SOURCE, status.MPI_TAG, bm->mtype, bm->index);
         
         // Checks for valid message, if error inform and ignore message
-        if (msg_size==0 || mtype<MDHIM_PUT || mtype>MDHIM_COMMIT) {
+        if (msg_size==0 || mtype<MDHIM_PUT || mtype>MDHIM_MSG_T_LAST) {
             mlog(MDHIM_SERVER_CRIT, "Rank: %d - Got empty/invalid message in receive_rangesrv_work.", 
 		     md->mdhim_rank);
             free(recvbuf);
@@ -396,10 +408,20 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 		break;
 	case MDHIM_BULK_PUT:
 		return_code = unpack_bput_message(md, recvbuf, msg_size, message);
-		mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - unpack_bput_message done");
 		break;
 	case MDHIM_BULK_GET:
 		return_code = unpack_bget_message(md, recvbuf, msg_size, message);
+		break;
+	case MDHIM_BULK_PUT2:
+		bput2m = (struct mdhim_bput2m_t *)recvbuf;
+		mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - MDHIM_BULK_PUT2 message id:%d",
+		     bput2m->seg.seg_msg_id);
+		if (bput2m->basem.seg_count == 1 && bput2m->seg.seg_id == 0) {
+			*message = bput2m;
+			return_code = MPI_SUCCESS;
+		} else {
+			return_code = -1;
+		}
 		break;
 	case MDHIM_DEL:
 		return_code = unpack_del_message(md, recvbuf, msg_size, message);
@@ -416,15 +438,13 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 	default:
 		break;
 	}
+
 	if (return_code != MPI_SUCCESS) {
 		mlog(MPI_CRIT, "Rank: %d - " 
-		     "Error unpacking message in receive_rangesrv_work", 
-		     md->mdhim_rank);
+		     "Error:%d unpacking message in receive_rangesrv_work", 
+		     md->mdhim_rank, return_code);
 		ret = MDHIM_ERROR;
 	}
-
-	free(recvbuf);
-
 	return ret;
 }
 
@@ -2039,6 +2059,9 @@ void mdhim_full_release_msg(void *msg) {
 		}
 
 		free((struct mdhim_bputm_t *) msg);
+		break;
+	case MDHIM_BULK_PUT2:
+		free(msg);
 		break;
 	default:
 		break;
