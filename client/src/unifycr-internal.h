@@ -561,8 +561,6 @@ int unifycr_fid_write(int fid, off_t pos, const void *buf, size_t count);
 int unifycr_fid_write_zero(int fid, off_t pos, off_t count);
 
 /*functions used in UnifyCR*/
-int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
-                        long slice_range);
 int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
                                read_req_set_t *tmp_read_req_set, long unifycr_key_slice_range,
                                read_req_set_t *read_req_set);

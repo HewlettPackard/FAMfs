@@ -53,16 +53,17 @@ typedef enum {
 #define F_RPLYQ_NAME   "f_rplyq"
 
 
+/*metadata format in the shared memory*/
 typedef struct {
+    int     fid;        /* global fid */
+    int     loid;       /* layout id */
     off_t   file_pos;   /* file offset */
     off_t   mem_pos;    /* offset in stripe */
     size_t  length;
-    int     fid;        /* global fid */
-    int     loid;       /* layout id */
     uint64_t sid;       /* global stripe number */
 } md_index_t;
 
-/*metadata format in the shared memory*/
+/*metadata request format in the shared memory*/
 typedef struct shm_meta_t_ {
     int src_fid;
     int loid; /* layout id */
@@ -88,8 +89,8 @@ typedef struct {
     unsigned long len;
     union {
         struct {
-            unsigned long delegator_id;
-            unsigned long app_rank_id; /*include both app and rank id*/
+            unsigned int delegator_id;
+            unsigned int app_rank_id; /*include both app and rank id*/
         };
 	unsigned long stripe;
     };
@@ -99,6 +100,9 @@ typedef struct {
     fsmd_key_t   k;
     fsmd_val_t   v;
 } fsmd_kv_t;
+_Static_assert( sizeof(fsmd_key_t)+sizeof(fsmd_val_t) == sizeof(fsmd_kv_t), "KV packed check");
+_Static_assert( sizeof(fsmd_kv_t) == sizeof(md_index_t), "MDHIM KV size check");
+_Static_assert( TYPE_ALINGMENT(fsmd_kv_t) == TYPE_ALINGMENT(md_index_t), "MDHIM KV alignment check");
 
 typedef struct {
     char            *buf;
