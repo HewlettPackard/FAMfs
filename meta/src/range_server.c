@@ -87,9 +87,6 @@ double starttime=0;
 
 int putflag = 1;
 
-struct mdhim_bput2m_t *bput2m = NULL;
-size_t bput2m_sz = 0;
-
 
 int unifycr_compare(const char* a, const char* b) {
 	int ret;
@@ -291,10 +288,6 @@ int range_server_stop(struct mdhim_t *md) {
 	       md->mdhim_rank);
 	}
 	free(md->mdhim_rs->work_ready_cv);
-
-	//Free RS input buffer (BPUT2)
-	free(bput2m);
-	bput2m = NULL;
 
 	//Destroy the work queue mutex
 	if ((ret = pthread_mutex_destroy(md->mdhim_rs->work_queue_mutex)) != 0) {
@@ -516,7 +509,7 @@ static int range_server_bput2(struct mdhim_t *md, struct index_t *index,
 	free(sendbuf);
 
 	mdhim_full_release_msg(brm);
-	//mdhim_full_release_msg(bim); /* attempt to reuse RS input message buffer */
+	mdhim_full_release_msg(bim);
 
 	return ret;
 }

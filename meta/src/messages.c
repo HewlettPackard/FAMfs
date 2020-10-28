@@ -57,9 +57,6 @@ double packretgettime = 0;
 struct timeval packretputstart, packretputend;
 double packretputtime = 0;
 
-extern struct mdhim_bput2m_t *bput2m;
-extern size_t bput2m_sz;
-
 
 /**
  * send_rangesrv_work
@@ -338,6 +335,7 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 	int recvsize;
 	int mtype;
 	struct mdhim_basem_t *bm;
+	struct mdhim_bput2m_t *bput2m;
 	int ret = MDHIM_SUCCESS;
 
   mlog(MDHIM_SERVER_INFO, "at receive_rangesrv_work"); 
@@ -367,13 +365,7 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
  mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work from rank:%d size %d tag %d\n",
       msg_source, recvsize, status.MPI_TAG);
 
-	/* TODO: Add support for multiple-threaded RS */
-	if (bput2m == NULL || bput2m_sz < (unsigned)recvsize) {
-		recvbuf = realloc(bput2m, recvsize);
-		bput2m_sz = recvsize;
-	} else {
-		recvbuf = bput2m;
-	}
+	recvbuf = malloc(recvsize);
 
 	return_code = MPI_Recv(recvbuf, recvsize, MPI_PACKED, msg_source,
 			       RANGESRV_WORK_MSG, md->mdhim_comm, &status);
@@ -414,6 +406,7 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 		break;
 	case MDHIM_BULK_PUT2:
 		bput2m = (struct mdhim_bput2m_t *)recvbuf;
+		recvbuf = NULL;
 		mlog(MDHIM_SERVER_INFO, "receive_rangesrv_work - MDHIM_BULK_PUT2 message id:%d",
 		     bput2m->seg.seg_msg_id);
 		if (bput2m->basem.seg_count == 1 && bput2m->seg.seg_id == 0) {
@@ -438,6 +431,7 @@ int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message) {
 	default:
 		break;
 	}
+	free(recvbuf);
 
 	if (return_code != MPI_SUCCESS) {
 		mlog(MPI_CRIT, "Rank: %d - " 
