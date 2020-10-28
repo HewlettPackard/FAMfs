@@ -191,7 +191,6 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
     int cmd = pcmd->opcode;
     f_svcrply_t rply;
     char qname[MAX_RBQ_NAME];
-    F_POOL_t *pool = f_get_pool();
 
     LOG(LOG_DBG, "svc command %x, masked %x\n", cmd, cmd & ~CMD_OPT_MASK);
     bzero(&rply, sizeof(rply));
@@ -286,8 +285,8 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
              *metadata to the key-value store*/
 
             if (!(rply.rc = f_do_fsync(pcmd))) {
-                int me;
-                MPI_Comm_rank(pool->helper_comm, &me);
+                //int me;
+                //MPI_Comm_rank(pool->helper_comm, &me);
                 F_LAYOUT_t *lo = f_get_layout(pcmd->fm_lid);
                 ASSERT(lo);
                 if (lo->info.chunks - lo->info.data_chunks) {
@@ -327,8 +326,8 @@ int f_srv_process_cmd(f_svcrq_t *pcmd, char *qn, int admin) {
             ASSERT(lo);
 
             int wait = 0;
-            int me;
-            MPI_Comm_rank(pool->helper_comm, &me);
+            //int me;
+            //MPI_Comm_rank(pool->helper_comm, &me);
             if (lo->info.chunks - lo->info.data_chunks) {
                 // see if EDR is done for this client/layout
                 pthread_spin_lock(&cntfy_lock);
@@ -390,8 +389,8 @@ void *f_notify_thrd(void *arg) {
     F_POOL_t *pool = f_get_pool();
     MPI_Status sts;
     f_svcrply_t rply = {.rc = 0, .more = 0, .ackcode = CMD_FCLOSE};
-    int me;
-    MPI_Comm_rank(pool->helper_comm, &me);
+    //int me;
+    //MPI_Comm_rank(pool->helper_comm, &me);
 
     ASSERT(pool);
 
