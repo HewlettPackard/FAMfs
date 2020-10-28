@@ -477,7 +477,7 @@ static int famfs_sync(int target_fid)
             }
 
             UPDATE_STATS(fd_syn_stat, *unifycr_indices.ptr_num_entries,
-                         *unifycr_indices.ptr_num_entries*sizeof(md_index_t), start);
+                         *unifycr_indices.ptr_num_entries, start);
 
             /* tell the server to grab our new extents */
             ret = client_sync_md(meta, fsync_tmo);
@@ -1786,96 +1786,6 @@ int f_srv_connect()
     return 0;
 }
 
-#if 0
-/*
- * given an index, split it into multiple indices whose range is equal or smaller
- * than slice_range size
- * @param cur_idx: the index to split
- * @param slice_range: the slice size of the key-value store
- * @return index_set: the set of split indices
- * */
-int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
-                        long slice_range)
-{
-
-    long cur_idx_start = cur_idx->file_pos;
-    long cur_idx_end = cur_idx->file_pos + cur_idx->length - 1;
-
-    long cur_slice_start = cur_idx->file_pos / slice_range * slice_range;
-    long cur_slice_end = cur_slice_start + slice_range - 1;
-
-
-    index_set->count = 0;
-
-//    long cur_mem_pos = cur_idx->mem_pos;
-    if (cur_idx_end <= cur_slice_end) {
-        /*
-        cur_slice_start                                  cur_slice_end
-                         cur_idx_start      cur_idx_end
-
-        */
-        index_set->idxes[index_set->count] = *cur_idx;
-        index_set->count++;
-
-    } else {
-        /*
-        cur_slice_start                     cur_slice_endnext_slice_start                   next_slice_end
-                         cur_idx_start                                      cur_idx_end
-
-        */
-        index_set->idxes[index_set->count] = *cur_idx;
-        index_set->idxes[index_set->count].length =
-            cur_slice_end - cur_idx_start + 1;
-
-//        cur_mem_pos += index_set->idxes[index_set->count].length;
-
-        cur_slice_start = cur_slice_end + 1;
-        cur_slice_end = cur_slice_start + slice_range - 1;
-        index_set->count++;
-
-        while (1) {
-            if (cur_idx_end <= cur_slice_end) {
-                break;
-            }
-
-            index_set->idxes[index_set->count].fid = cur_idx->fid;
-            index_set->idxes[index_set->count].file_pos = cur_slice_start;
-            index_set->idxes[index_set->count].length = slice_range;
-//            index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
-            if (fs_type == FAMFS) {
-		/*
-                index_set->idxes[index_set->count].nid = cur_idx->nid;
-                index_set->idxes[index_set->count].cid = cur_idx->cid;
-		*/
-                index_set->idxes[index_set->count].sid = cur_idx->sid;
-            }
-//            cur_mem_pos += index_set->idxes[index_set->count].length;
-
-            cur_slice_start = cur_slice_end + 1;
-            cur_slice_end = cur_slice_start + slice_range - 1;
-            index_set->count++;
-
-        }
-
-        index_set->idxes[index_set->count].fid = cur_idx->fid;
-        index_set->idxes[index_set->count].file_pos = cur_slice_start;
-        index_set->idxes[index_set->count].length = cur_idx_end - cur_slice_start + 1;
-//        index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
-        if (fs_type == FAMFS) {
-	    /*
-            index_set->idxes[index_set->count].nid = cur_idx->nid;
-            index_set->idxes[index_set->count].cid = cur_idx->cid;
-	    */
-            index_set->idxes[index_set->count].sid = cur_idx->sid;
-        }
-
-        index_set->count++;
-    }
-
-    return 0;
-}
-#endif
-
 famfs_mr_list_t known_mrs = {0, NULL};
 
 #define FAMFS_MR_AU 8
@@ -2250,6 +2160,19 @@ static int f_stripe_write(
            ERROR("Possible data loss! Please increase index_buf_size=%lu (max %lu entries)",
                  unifycr_max_index_entries*sizeof(md_index_t), unifycr_max_index_entries);
     }
+
+        /* find the corresponding file attr entry and update attr*/
+        f_fattr_t tmp_meta_entry;
+        tmp_meta_entry.fid = fid;
+        f_fattr_t *ptr_meta_entry
+            = (f_fattr_t *)bsearch(&tmp_meta_entry,
+                                         unifycr_fattrs.meta_entry,
+                                         *unifycr_fattrs.ptr_num_entries,
+                                         sizeof(f_fattr_t), compare_fattr);
+        if (ptr_meta_entry !=  NULL) {
+            ptr_meta_entry->file_attr.st_size = pos + count;
+        }
+
     meta->needs_sync = 1;
 
     UPDATE_STATS(wr_upd_stat, 1, 1, start);
@@ -2282,71 +2205,6 @@ static int compare_read_req(const void *a, const void *b)
 
     return 0;
 }
-
-#if 0
-static int cmp_md(const void *ap, const void *bp) {
-    md_index_t *mda = (md_index_t *)ap, *mdb = (md_index_t *)bp;
-
-    if (mda->loid > mdb->loid)
-        return 1;
-    else if (mda->loid < mdb->loid)
-        return -1;
-    if (mda->fid > mdb->fid)
-        return 1;
-    else if (mda->fid < mdb->fid)
-        return -1;
-    if (mda->sid > mdb->sid)
-        return 1;
-    else if (mda->sid < mdb->sid)
-        return -1;
-    if (mda->file_pos > mdb->file_pos)
-        return 1;
-    else if (mda->file_pos < mdb->file_pos)
-        return -1;
-    return 0;
-}
-
-static inline int same_stripe(md_index_t *a,  md_index_t *b) {
-    return (a->loid == b->loid && a->fid == b->fid && a->sid == b->sid);
-}
-
-void famfs_merge_md() {
-    md_index_t *mdp = unifycr_indices.index_entry;
-    off_t     *nrp = unifycr_indices.ptr_num_entries;
-
-    if (*nrp <= 1)
-        return;
-
-    // first, or MD by file id and offset in it
-    off_t i, j = 0, n = *nrp;
-    qsort(mdp, n, sizeof(md_index_t), cmp_md);
-
-    // merge sequential requests within same stripe
-    for (i = 1; i < n; i++) {
-        md_index_t *a = &mdp[j], *b =  &mdp[i];
-        if (same_stripe(a, b) &&
-            b->file_pos == a->file_pos + (ssize_t)a->length)
-        {
-            a->length += b->length;
-            b->length = 0;
-        } else {
-            j++;
-        }
-    }
-
-    // now compress MD to get rid of 0 length records
-    for (i = 0, j = 0; i < n; i++) {
-        if (mdp[j].length == 0) {
-            if (mdp[i].length == 0)
-                continue;
-            mdp[j] = mdp[i];
-        }
-        j++;
-    }
-    if (j < i)
-        *nrp = j;
-}
-#endif
 
 /*
  * given an read request, split it into multiple indices whose range is equal or smaller
