@@ -249,7 +249,7 @@ static int do_recovery(F_LO_PART_t *lp)
 		}
                 if (rc > 1) {
                     // number of error > 1, can't use simple XOR recovery
-                    ASSERT(edr_rs_matrices[lid]);
+                    BUGON(edr_rs_matrices[lid] == NULL, "rs[%d]=%p\n", lid, edr_rs_matrices[lid]);
                     if (rec->decode_table)
                         free(rec->decode_table);
                     rec->decode_table = make_decode_matrix(lo->info.data_chunks, 
@@ -285,8 +285,10 @@ static int do_recovery(F_LO_PART_t *lp)
 	LOG(LOG_INFO, "%s[%d]: recovered: %lu of %lu, errors: %lu, skipped: %lu", 
 		lo->info.name, lp->part_num, rec->done_slabs, rec->slabs2recover,
 		rec->error_slabs, rec->skipped_slabs);
-        if (rec->decode_table)
+        if (rec->decode_table) {
             free(rec->decode_table);
+            rec->decode_table = NULL;
+        }
 	return rc;
 }
 

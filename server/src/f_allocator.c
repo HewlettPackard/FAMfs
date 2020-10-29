@@ -268,6 +268,12 @@ int f_start_allocator_threads(void)
 	    LOG(LOG_ERR, "error %d in prepare_layouts_maps", rc);
 	    return rc;
 	}
+        
+        rc = f_edr_init();
+        if (rc) {
+            LOG(LOG_ERR, "error %d:%s starting EDR threads", rc, strerror(-rc));
+        }
+
 
 	list_for_each_entry(lo, &pool->layouts, list) {
 		rc = start_allocator_thread(lo);
@@ -282,12 +288,6 @@ int f_start_allocator_threads(void)
 	while (pool->event)
 		pthread_cond_wait(&pool->event_cond, &pool->event_lock);
 	pthread_mutex_unlock(&pool->event_lock);
-
-        rc = f_edr_init();
-        if (rc) {
-            LOG(LOG_ERR, "%s[%d]: error %s starting EDR threads",
-                lo->info.name, lo->lp->part_num, strerror(-rc));
-        }
 
 
 //	test_get_stripe();

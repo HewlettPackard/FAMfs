@@ -75,6 +75,17 @@ do {                                             \
         }                                        \
     } while (0);
 
+#define    BUGON(x, fmt, ...)                    \
+    do {                                         \
+        if ((x))    {                           \
+            fprintf(stderr, "BUGON %s:%s(%d) " #x ":" fmt "\n", \
+              __FILE__, __FUNCTION__, __LINE__, ##  __VA_ARGS__); \
+            *(long *)0 = 0;                      \
+        }                                        \
+    } while (0);
+
+
+
 #define err(str, ...) fprintf(stderr, str "\n", ## __VA_ARGS__)
 #define ioerr(str, ...) fprintf(stderr, "%s: " str " - %m\n", __FUNCTION__, ## __VA_ARGS__)
 
