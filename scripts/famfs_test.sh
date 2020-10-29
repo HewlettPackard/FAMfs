@@ -182,6 +182,7 @@ for t in "$@"; do
     --) break ;;
     # list of options which have optional arguments
     -W | --warmup) optline+=( "1" ) ;; # warmup default: 1
+    -r | --reads) optline+=( "W" ) ;; # read transfer size default: same as writes
     esac
 done
 
@@ -310,7 +311,7 @@ while true; do
   esac
 done
 
-if [ -z "$oREADS" ]; then oREADS=$oWRITES; fi
+if [[ "$oREADS" == W ]]; then oREADS=$oWRITES; fi
 if [ -z "$all_h" ]; then all_h="$oSERVERS"; fi
 if [ -z "$all_c" ]; then all_c="$oCLIENTS"; fi
 
@@ -570,20 +571,11 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         cMPImap="-np $tnc"
                     fi
 
-                    if [ -z "${RDSZ[$j]}" ]; then
-                        reads=""
-                    else
-                        if ((RDSZ[$j] < 0)); then
-                            reads=""
-                        else
-                            reads="${RDSZ[$j]}"
-                        fi
-                    fi
                     # test pattern
                     vCycles=$oCycles
                     ioPatternRW=
                     if ((nPatterns==1)); then
-                        ioPatternRW=RW
+                        ((RDSZ[$j]>0)) && ioPatternRW=RW || ioPatternRW=W
                     elif ((iPattern==0)); then
                         vCycles=$((tVFY?2:1))
                         ioPatternRW=W
@@ -606,7 +598,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                             ITR="-i 1"
                         else
                             cycles=$oCycles
-                            if [[ $ioPatternRW == W ]]; then
+                            if ((nPatterns>1)) && [[ $ioPatternRW == W ]]; then
                                 cycles=$((oWARMUP?2:1))
                             fi
                             ITR="-i $cycles"
