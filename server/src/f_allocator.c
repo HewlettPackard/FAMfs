@@ -2859,12 +2859,11 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 				DevMissing(pdev->sha) ? "M" : "",
 				DevDisabled(pdev->sha) ? "D" : "");
 		if (pdev && DevFailed(pdev->sha)) {
-			rc = f_fail_pdev(lo, pdi->pool_index);
-			if (!rc) rc = f_replace(lo, pdi->pool_index, F_PDI_NONE);
-//			f_replace(lo, F_PDI_NONE, F_PDI_NONE);
-//			f_replace(lo, pdi->pool_index, 2);
+			rc += f_fail_pdev(lo, pdi->pool_index);
+//			if (!rc) rc = f_replace(lo, pdi->pool_index, F_PDI_NONE); // replace extents from the failed device
 		}
 	}
+	if (!rc) rc = f_replace(lo, F_PDI_NONE, F_PDI_NONE); // replace all failed extents
 	if (!rc && atomic_read(&lp->degraded_slabs)) { 
 		/* Check and release degraded and not used slabs prior to recovery */
 		rc = process_degraded_slabs(lp);

@@ -587,7 +587,7 @@ static int replace_slab_extent(F_LAYOUT_t *lo, f_slab_t slab, int tgt_idx, int s
 
 	/* Find a failed extent */
 	for (n = 0; n < lo->info.chunks; n++) {
-		if (sme->extent_rec[n].media_id == tgt_idx || sme->extent_rec[n].failed) {
+		if (sme->extent_rec[n].media_id == tgt_idx || (tgt_idx == F_PDI_NONE && sme->extent_rec[n].failed)) {
 			rc = do_replace_extent(lo, slab, sme, n, src_idx);
 			if (!rc) replaced++;
 		}
