@@ -688,8 +688,9 @@ int f_replace(F_LAYOUT_t *lo, int tgt_idx, int src_idx)
 	F_LO_PART_t *lp = lo->lp;
 	int rc;
 
-	LOG(LOG_DBG2, "%s[%d]: replacing slab extents from dev %d by extents from dev %d", 
-		lo->info.name, lp->part_num, tgt_idx, src_idx);
+	LOG(LOG_DBG2, "%s[%d]: replacing slab extents from dev %d%s by extents from dev %d%s", 
+		lo->info.name, lp->part_num, tgt_idx, tgt_idx == F_PDI_NONE ? "(all failed)" : "", 
+		src_idx, tgt_idx == F_PDI_NONE ? "(all in pool)" : "");
 
 	/* Validate parmeters */
 	if (tgt_idx != F_PDI_NONE) {

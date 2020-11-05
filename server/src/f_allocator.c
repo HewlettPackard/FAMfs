@@ -2863,12 +2863,18 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 //			if (!rc) rc = f_replace(lo, pdi->pool_index, F_PDI_NONE); // replace extents from the failed device
 		}
 	}
-	if (!rc) rc = f_replace(lo, F_PDI_NONE, F_PDI_NONE); // replace all failed extents
 	if (!rc && atomic_read(&lp->degraded_slabs)) { 
+		/*  Replace all failed extents */
+		rc = f_replace(lo, F_PDI_NONE, F_PDI_NONE); 
+		if (rc) LOG(LOG_WARN, "%s[%d]: error %s replacing failed extents", 
+				lo->info.name, lp->part_num, strerror(rc));
+
 		/* Check and release degraded and not used slabs prior to recovery */
 		rc = process_degraded_slabs(lp);
 		if (rc) LOG(LOG_WARN, "%s[%d]: error %s processing degraded slabs", 
 				lo->info.name, lp->part_num, strerror(rc));
+
+		/* Kick off data recovery */
 		f_start_recovery_thread(lo);
 	}
 }
