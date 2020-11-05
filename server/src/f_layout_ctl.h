@@ -184,6 +184,11 @@ static inline f_stripe_t slab_to_stripe0(F_LAYOUT_t *lo, f_slab_t slab)
 	return (slab * lo->info.slab_stripes);
 }
 
+static inline f_stripe_t stripe_to_stripe0(F_LAYOUT_t *lo, f_stripe_t stripe)
+{
+	return ((stripe / lo->info.slab_stripes) * lo->info.slab_stripes);
+}
+
 static inline void inc_slab_used(F_LO_PART_t *lp, f_stripe_t stripe)
 {
 	f_slab_t slab = stripe_to_slab(lp->layout, stripe);
