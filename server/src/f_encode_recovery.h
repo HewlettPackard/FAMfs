@@ -125,6 +125,8 @@ typedef struct f_edr_ {
     uint64_t                fvec;       // Bitmap of failed chunks
     u8                      dchnk[64];  // Data chunks indecies
     u8                      pchnk[64];  // Parity chunks indecies
+    u8                      fd_h[64];
+    u8                      fd_f[64];
     F_EDR_STATE_t           state;      // Request state
     F_EDR_CB_t              next_call;  // Operation end callback
     F_EDR_CB_t              completion; // Request completion callback

@@ -76,7 +76,7 @@ static int recover_slab(F_LO_PART_t *lp, f_slab_t slab, unsigned long *bmap)
 		void *p = f_map_get_p(lp->claimvec, s);
 
 		if (!test_bbit(BBIT_NR_IN_LONG(s), CVE_LAMINATED, (unsigned long *)p)) {
-			LOG(LOG_DBG, "%s[%d]: stripe %lu not laminated, skipping", lo->info.name, lp->part_num, s);
+			LOG(LOG_DBG3, "%s[%d]: stripe %lu not laminated, skipping", lo->info.name, lp->part_num, s);
 			continue;
 		}
 
@@ -218,11 +218,10 @@ static int get_chunks_to_recover(F_LO_PART_t *lp, f_slab_t slab, unsigned long *
 static int do_recovery(F_LO_PART_t *lp)
 {
 	F_LAYOUT_t *lo = lp->layout;
-        int lid = lo->info.conf_id;
 	F_RECOVERY_t *rec = (F_RECOVERY_t *)lp->rctx;
 	F_ITER_t *sm_it;
 	int rc = 0;
-        u8 err_vec[sizeof(u64)];
+        u8 err_vec[MMAX];
         struct timespec ts = now();
 
         rec->decode_table = NULL;
@@ -240,20 +239,22 @@ static int do_recovery(F_LO_PART_t *lp)
 			rec->skipped_slabs++;
 			continue;
 		}
-                
+
+                bzero(err_vec, sizeof(err_vec)); 
 		rc = get_chunks_to_recover(lp, slab, rec->failed_bmap, err_vec);
 		if (rc == -ESRCH) continue; 
 		if (rc < 0) {
 			LOG(LOG_ERR, "%s[%d]: slab %u lookup error %d", lo->info.name, lp->part_num, slab, rc);
 			break;
 		}
+                /*
                 if (rc > 1) {
                     // number of error > 1, can't use simple XOR recovery
                     BUGON(edr_rs_matrices[lid] == NULL, "rs[%d]=%p\n", lid, edr_rs_matrices[lid]);
                     if (rec->decode_table)
                         free(rec->decode_table);
                     rec->decode_table = make_decode_matrix(lo->info.data_chunks, 
-                                            rc, err_vec, edr_rs_matrices[lid]);
+                                            rc, err_vec, edr_rs_matrices[lid], "f_rec");
                     if (!rec->decode_table) {
                         LOG(LOG_ERR, "%s[%d]: slab %u recovry: can't make decode table", 
                             lo->info.name, lp->part_num, slab);
@@ -261,6 +262,7 @@ static int do_recovery(F_LO_PART_t *lp)
                         break;
                     }
                 }
+                */
 
 		rc = recover_slab(lp, slab, rec->failed_bmap);
 		if (rc) {
