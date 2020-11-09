@@ -1,4 +1,4 @@
-bin_PROGRAMS = unifycrd
+bin_PROGRAMS = famfsd
 
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
               -I$(top_srcdir)/meta/src/uthash \
@@ -11,7 +11,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
 
 AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS) -mcx16
 
-unifycrd_SOURCES = arraylist.c \
+famfsd_SOURCES   = arraylist.c \
                    arraylist.h \
                    unifycr_cmd_handler.c \
                    unifycr_cmd_handler.h \
@@ -48,13 +48,13 @@ unifycrd_SOURCES = arraylist.c \
                    f_ec.c
 
 # Preprocessor options for inlined code from common/src/famfs_bbitops.h
-unifycrd_CPPFLAGS = -mbmi2 -fms-extensions \
+famfsd_CPPFLAGS = -mbmi2 -fms-extensions \
 		    -funroll-loops --param max-completely-peel-times=64 $(AM_CPPFLAGS)
 
-unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
+famfsd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
                    -L$(top_builddir)/node/isa-l/.libs
 
-unifycrd_LDADD = $(top_builddir)/userspace-rcu/src/liburcu.la \
+famfsd_LDADD = $(top_builddir)/userspace-rcu/src/liburcu.la \
                  $(top_builddir)/meta/src/libmdhim.la \
                  $(top_builddir)/common/src/libfamfs_common.la \
 		 $(top_builddir)/common/src/libfamfs_meta.la \

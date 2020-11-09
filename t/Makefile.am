@@ -7,14 +7,14 @@ TESTS = \
 	0001-setup.t \
 	0100-sys-open.t \
 	9005-unifycr-unmount.t \
-	9010-stop-unifycrd.t \
+	9010-stop-famfsd.t \
 	9020-mountpoint-empty.t
 
 check_SCRIPTS = \
 	0001-setup.t \
 	0100-sys-open.t \
 	9005-unifycr-unmount.t \
-	9010-stop-unifycrd.t \
+	9010-stop-famfsd.t \
 	9020-mountpoint-empty.t
 
 EXTRA_DIST = \

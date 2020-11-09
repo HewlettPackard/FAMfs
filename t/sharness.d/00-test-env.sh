@@ -39,6 +39,6 @@ export JOB_RUN_COMMAND
 #
 # Set paths to executables
 #
-export UNIFYCRD=$UNIFYCR_BUILD_DIR/server/src/unifycrd
+export UNIFYCRD=$UNIFYCR_BUILD_DIR/server/src/famfsd
 export TEST_WRITE_GOTCHA=$UNIFYCR_BUILD_DIR/client/tests/test_write_gotcha
 export TEST_READ_GOTCHA=$UNIFYCR_BUILD_DIR/client/tests/test_read_gotcha

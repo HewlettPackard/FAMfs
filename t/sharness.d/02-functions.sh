@@ -20,7 +20,7 @@ run_timeout()
 # Returns 0 if the named process is found, otherwise returns 1.
 process_is_running()
 {
-    local proc=${1:-"unifycrd"}
+    local proc=${1:-"famfsd"}
     local secs_to_wait=${2:-15}
     local max_loops=$(($secs_to_wait * 2))
     local i=0
@@ -45,7 +45,7 @@ process_is_running()
 # Returns 0 if the named process is not found, otherwise returns 1.
 process_is_not_running()
 {
-    local proc=${1:-"unifycrd"}
+    local proc=${1:-"famfsd"}
     local secs_to_wait=${2:-15}
     local max_loops=$(($secs_to_wait * 2))
     local i=0
@@ -62,7 +62,7 @@ process_is_not_running()
 }
 
 # Create metadata directory if needed and start daemon.
-unifycrd_start_daemon()
+famfsd_start_daemon()
 {
     if test -z "$UNIFYCR_META_DB_PATH"; then
         return 1
@@ -73,17 +73,17 @@ unifycrd_start_daemon()
             return 1
     fi
 #    ( $UNIFYCRD < /dev/null > /dev/null 2>&1 & )
-    ( $UNIFYCRD -d -v 7 < /dev/null > ${UNIFYCR_META_DB_PATH}/unifycrd.t.log 2>&1 & )
+    ( $UNIFYCRD -d -v 7 < /dev/null > ${UNIFYCR_META_DB_PATH}/famfsd.t.log 2>&1 & )
 }
 
 # Kill UnifyCR daemon.
-unifycrd_stop_daemon()
+famfsd_stop_daemon()
 {
-    while killall -q -s TERM unifycrd 2>/dev/null; do :; done
+    while killall -q -s TERM famfsd 2>/dev/null; do :; done
 }
 
 # Remove the metadata directory.
-unifycrd_cleanup()
+famfsd_cleanup()
 {
     rm -rf $UNIFYCR_META_DB_PATH
 }

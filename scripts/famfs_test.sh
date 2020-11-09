@@ -1,9 +1,10 @@
 #!/bin/bash
 [ -z "$TEST_DIR" ]&& { echo "Error: TEST_DIR is not set!"; exit 1; }
+F_DAEMON_NM="famfsd"
 SRC_DIR="${TEST_DIR}/src"
 SCRIPT_DIR=${SRC_DIR}/FAMfs/scripts
 WRK_DIR=${SCRIPT_DIR}/t
-export SCRIPT_DIR
+export SCRIPT_DIR F_DAEMON_NM
 FAMFS_CONF="famfs.conf"
 EDR_COLLECTED_FN="EDR.collected"
 # export FAMFS_DO_STATS=1 # Enable if you want stats
@@ -384,6 +385,7 @@ if ((!${#ClnIter[*]})); then ClnIter[0]=$nc; fi
 unset IFS
 
 ((err=0))
+# Server and Client executives
 TEST_BIN="${TEST_DIR}/libexec/${oAPP}"
 if [ ! -x ${TEST_BIN} ]; then
   TEST_BIN="${TEST_DIR}/bin/${oAPP}"
@@ -392,7 +394,7 @@ if [ ! -x ${TEST_BIN} ]; then
     exit 1
   fi
 fi
-SRV_BIN="${TEST_DIR}/bin/unifycrd"
+SRV_BIN="${TEST_DIR}/bin/${F_DAEMON_NM}"
 export TEST_BIN SRV_BIN
 # Adaptive routing on/off
 if ((oAdaptiveRouting)); then
@@ -412,7 +414,7 @@ fi
 clMPImap=
 if ((ompi)); then
   oMPIchEnv="${oMPIchEnv} --bind-to none -x FI_MR_CACHE_MONITOR -x LD_LIBRARY_PATH -x PATH -x MPIROOT"
-  oMPIchEnv+=" -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS -x UNIFYCR_CONFIGFILE"
+  oMPIchEnv+=" -x TEST_BIN -x SRV_OPT -x ZHPEQ_HOSTS -x UNIFYCR_CONFIGFILE -x F_DAEMON_NM"
   if ((oTCP)); then
     oMPIchEnv+=" --mca btl ^ofi,openib,vader --mca mtl ^ofi,psm,psm2,portals4 --mca pml ^ucx --mca btl_ofi_disable_sep true --mca mtl_ofi_enable_sep 0"
   else

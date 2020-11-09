@@ -4,11 +4,11 @@ sts=1
 
 function start_server() {
   # always remove files that server creates
-  pdsh -w "$AllNodes" rm -f '/tmp/unifycrd.running.*'
+  pdsh -w "$AllNodes" rm -f "/tmp/${F_DAEMON_NM}.running.*"
   pdsh -w "$Servers" find /tmp -type f -regex '/tmp/EDR.[0-9]+-[0-9]+.[0-9]+' -exec 'rm -f {} \;'
   # start Server
   ((tVERBOSE)) && echo "$mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c \"ulimit -s 1024; $SRV_BIN ${SRV_OPT}\" 2>>$MPI_LOG 1>>$SRV_LOG"
-  echo "Starting unifycrd..."
+  echo "Starting FAMFS ..."
   $mpirun $mpi_hosts $AllNodes $mpi_ppn 1 $oMPIchEnv /bin/bash -c "ulimit -s 1024; $SRV_BIN ${SRV_OPT}" 2>>$MPI_LOG 1>>$SRV_LOG &
   pid=$!
   echo $pid > $TESTCYCLE_PID_FN
@@ -27,7 +27,7 @@ function start_server() {
       ((waiting > 0))&& sleep $_dt
       ((waiting += _dt))
       ssh -q "${hst}" exit || { echo "Cannot ssh to ${hst}"; exit 1; }
-      let _nf=$(ssh -q "${hst}" find /tmp -maxdepth 1 -type f -name 'unifycrd.running.*' 2>/dev/null | wc -l)
+      let _nf=$(ssh -q "${hst}" find /tmp -maxdepth 1 -type f -name "${F_DAEMON_NM}.running.*" 2>/dev/null | wc -l)
       ((_nf>1))&& { echo "Please clean ${hst}:/tmp/"; exit 1; }
       ((_nf==0))
     do
@@ -44,7 +44,7 @@ function stop_server() {
   echo "Stopping servers ($pid)"
   kill -INT $pid
   while ps -p $pid 2>/dev/null 1>/dev/null; do
-    echo "Waiting for unifycrd to exit"
+    echo "Waiting for FAMFS servers to exit"
     sleep 6
     kill -INT $pid 2>/dev/null 1>/dev/null
   done

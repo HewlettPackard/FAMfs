@@ -66,7 +66,7 @@ Copy FAMFS configuration file (scripts/famfs.conf.example) to /etc or the curren
 Edit ionodes, devices, device sections in the configuration file upon your needs.
 Run FAMS server daemon:
 ```
-   mpirun -hosts 127.0.0.1 -np 1 /bin/bash -c 'unifycrd'
+   mpirun -hosts 127.0.0.1 -np 1 /bin/bash -c 'famfsd'
 ```
 
 ## Documentation

@@ -289,6 +289,8 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 
 #define MR_MODEL_BASIC_SYM    /* Don't set FI_MR_BASIC but (FI_MR_ALLOCATED, FI_MR_PROV_KEY, FI_MR_VIRT_ADDR) */
 
+#define F_DAEMON_NM	"famfsd"
+
 /*
  * Defaults and constants
  * IONODE

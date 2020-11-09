@@ -24,12 +24,12 @@ configuration.
         export UNIFYCR_META_DB_NAME=unifycr_db
         export UNIFYCR_CHUNK_MEM=0
         export UNIFYCR_META_DB_PATH=/mnt/ssd
-        export UNIFYCR_LOG_FILE=/tmp/unifycrd_debug.$$
+        export UNIFYCR_LOG_FILE=/tmp/famfsd_debug.$$
 
         NODES=1
         PROCS=1
 
-        mpirun -nodes ${NODES} -np ${PROCS} ./unifycrd &
+        mpirun -nodes ${NODES} -np ${PROCS} ./famfsd &
 
 The example above will start the UnifyCR daemon on the number of nodes specified
 in the NODES variable.

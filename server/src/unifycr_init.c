@@ -424,7 +424,7 @@ int main(int argc, char *argv[])
     /* Create file for automated testing */
     char fname[256];
     mode_t old_umask = umask(S_IRWXG);
-    sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
+    sprintf(fname, "/tmp/" F_DAEMON_NM ".running.%d", getpid());
     umask(0111);
     int flag = open(fname, O_RDWR | O_CREAT, 0666);
     close(flag);

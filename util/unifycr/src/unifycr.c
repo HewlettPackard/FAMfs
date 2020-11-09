@@ -93,7 +93,7 @@ static char* usage_str =
     "\n"
     "Command options for \"start\":\n"
     "  -C, --consistency=<model> consistency model (NONE | LAMINATED | POSIX)\n"
-    "  -e, --exe=<path>          <path> where unifycrd is installed\n"
+    "  -e, --exe=<path>          <path> where famfsd is installed\n"
     "  -m, --mount=<path>        mount UnifyCR at <path>\n"
     "  -s, --script=<path>       <path> to custom launch script\n"
     "  -c, --cleanup             (NOT YET SUPPORTED) clean up the UnifyCR storage upon server exit\n"
