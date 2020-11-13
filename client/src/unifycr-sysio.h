@@ -112,8 +112,9 @@ int unifycr_fd_read(int fd, off_t pos, void *buf, size_t count,
  * allocates new bytes and updates file size as necessary,
  * fills any gaps with zeros */
 int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count);
+
+/* called via F_FD_IFACE_t interface */
 int unifycr_fd_logreadlist(read_req_t *read_req, int count);
-int compare_read_req(const void *a, const void *b);
-int compare_index_entry(const void *a, const void *b);
+int unifycr_fsync(int fd);
 
 #endif /* UNIFYCR_SYSIO_H */

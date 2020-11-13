@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
 	static const char * opts = "b:s:t:f:p:u:";
 
 	char tmpfname[GEN_STR_LEN+12], fname[GEN_STR_LEN];
-	long blk_sz = 0, seg_num, tran_sz = 1024*1024;
+	long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024;
 	int pat = 0, c, rank_num, rank, fd, to_unmount = 0;
 
 	MPI_Init(&argc, &argv);
@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
 	}
 	if (blk_sz == 0)
 		blk_sz = tran_sz;
-	if (pat != 0 || pat != 1) {
+	if (pat != 0 && pat != 1) {
 		printf("Option 'p' must be one of 0: N-1 segment/strided, 1: N-N\n");
 		exit(1);
 	}

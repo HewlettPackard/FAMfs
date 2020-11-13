@@ -12,8 +12,10 @@
 #include <inttypes.h>
 
 #include "famfs_env.h"
+#include "famfs_error.h"
+#include "famfs_ktypes.h"
 #include "famfs_bbitmap.h"
-#include "famfs_configurator.h"
+#include "f_dict.h"
 
 
 /*
@@ -66,7 +68,7 @@ typedef struct f_slab_entry_ {
                     unsigned int    degraded     :  1; /* slab is degraded (dev failed) */
                     unsigned int    _reserved    :  9; /* reserved */
                     unsigned int    _reserved2   : 16; /* reserved for extents' CRC16 */
-		    unsigned int    checksum     :  4; /* slab entry checksum */
+		    unsigned int    checksum     :  4; /* slab entry CRC-4 checksum */
 		} /* PROP */;
 		struct {
 		    uint64_t        _pv;       /* 64-bit value for cmpxchg */
@@ -91,7 +93,7 @@ typedef struct f_slab_entry_ {
  * is declared as failed.
  *
  * If the slab layout supports recovery then it may be possible to recover failed extent
- * stripe by stripe, starting from the beginning of the sheet.
+ * stripe by stripe, starting from the beginning of the slab.
  * When all slab's stripes have recovered, the failed status is reset.
  */
 typedef struct f_extent_entry_ {
@@ -108,6 +110,35 @@ typedef struct f_extent_entry_ {
 	uint64_t    _v64;			/* 64-bit value for cmpxchg */
     };
 } __attribute__((packed)) F_EXTENT_ENTRY_t;
+
+/*
+ * FAM or pool device extent map
+ *
+ * Extent map size is compile time constant. Nevertheless the map includes the map
+ * size intended to be kept persistent with the device label.
+ * Each bit stands for the used extent which is mapped to a layout slab map.
+ * Actual extent_bmap size in bits is extent_count defined in pool device structure.
+ */
+typedef struct f_extent_bitmap_ {
+    unsigned char __attribute__ ((aligned(8))) \
+			bm_size;	/* extent_bmap size, bytes, multiple of 8 */
+    unsigned char	_reserved[7];
+    unsigned long	extent_bmap[];
+} __attribute__((packed)) F_EXTENT_BITMAP_t;
+
+/*
+ *  Slab Map entry:
+ * [F_SLAB_ENTRY_t 0][F_EXTENT_ENTRY_t 0][F_EXTENT_ENTRY_t 1]...[F_EXTENT_ENTRY_t N]
+ */
+typedef struct f_slabmap_entry_ {
+    F_SLAB_ENTRY_t	slab_rec;
+    F_EXTENT_ENTRY_t	extent_rec[0];
+} F_SLABMAP_ENTRY_t;
+/* Pad to the next even chunk */
+#define F_SLABMAP_ENTRY_SZ(chunks)	(sizeof(F_SLAB_ENTRY_t) + \
+		     ROUND_UP(chunks, 2)*sizeof(F_EXTENT_ENTRY_t))
+/* Slab map must have this data page (BoS) size if shared in memory */
+#define F_SLABMAP_BOSL_SZ		(4*KIB)
 
 
 /*
@@ -140,7 +171,7 @@ typedef struct f_claim_packed__ {
 	unsigned short		_hhv[4];	/* for 16-bit cmpxchg */
 	unsigned char		_hhhv[8];	/* for 8-bit cmpxchg */
     };
-} __attribute__((packed)) F_CLAIM_PACKED_t;
+} __attribute__((packed, aligned(8))) F_CLAIM_PACKED_t;
 
 #define F_CV_BYTE_N	BBITS_PER_BYTE	/* number of CV entries per byte */
 
@@ -157,7 +188,6 @@ typedef BBIT_VALUE_t F_CVE_VALUE_t;
 #define CV_ALLOCATED_P	BB_PAT10	/* allocated stripe */
 #define CV_LAMINATED_P	BB_PAT11	/* laminated stripe */
 
-
 /*
  * Map entries are persistent as key-value (KV) pair's values in DB.
  * Key (uint64_t) is a stripe number for CV and slab number for SM.
@@ -172,9 +202,68 @@ typedef struct f_pu_val_ {
 	};
 	F_CLAIM_PACKED_t	cv_packed;
     };
-} __attribute__((packed)) F_PU_VAL_t;
+} __attribute__((packed, aligned(8))) F_PU_VAL_t;
 
+/* The Dictionary structure for pool device header; it could be mapped
+ * to both F_POOL_LABEL_t and F_DICT_t where pdict_ref is the device uuid and
+ * dict_ref is pool uuid and the pool label KVs kept in F_POOL_LABEL_t order.
+ */
+#define F_HDR_KVPAIRS	18		/* KV array size; only 5 are used so far */
+typedef struct f_hdr_dict_ {
+    uint32_t __attribute__ ((aligned(8))) \
+			psize;		/* zero */
+    uint32_t		count;		/* key-value pair count, 4..F_HDR_KVPAIRS */
+    uint32_t		kv_size;	/* key-value pair array size, F_HDR_KVPAIRS */
+    uint32_t		revision;	/* FAMfs software version - FAMFS_VERSION */
+    long long		_reserved;	/* zero */
+    FVAR_KVPAIR_t	uuid;		/* device UUID, F_KEY_UUID */
+    FVAR_KVPAIR_t	pool_uuid;	/* pool UUID, F_KEY_UUID */
+    FVAR_KVPAIR_t	kv_pairs[F_HDR_KVPAIRS];
+} F_HDR_DICT_t;
 
+/* Pool device label */
+/* magic strings */
+#define F_LABEL_MAGIC		"FAMFSDEV"
+#define F_LABEL_MAGIC_LEN	8
+typedef struct f_pool_label_ {
+    unsigned char	magic[F_LABEL_MAGIC_LEN];	/* pool device label magic */
+    union {
+	F_HDR_DICT_t	header;		/* 504 bytes: mandatory pool attributes dictionary */
+	struct {			/* shortcuts for mandatory pool attributes */
+	FVAR_KVPAIR_t	_reserved1;
+	FVAR_KVPAIR_t	uuid;		/* this device UUID, F_KEY_PDEV_UUID */
+	FVAR_KVPAIR_t	pool_uuid;	/* pool UUID, F_KEY_UUID */
+	FVAR_KVPAIR_t	pool_name;	/* pool name, F_KEY_NAME */
+	FVAR_KVPAIR_t	ext_size;	/* first data extent, FP_KEY_EXT_START */
+	FVAR_KVPAIR_t	_reserved2;
+	FVAR_KVPAIR_t	ext_count;	/* full number of data extents, FP_KEY_EXT_COUNT */
+	};
+    } __attribute__ ((packed));
+} F_POOL_LABEL_t;
+
+/* Map info */
+typedef struct f_map_info_ {
+	union {
+	    uint64_t		info;
+	    struct {
+		int		map_id;		/* map id */
+		unsigned int	ro:1;		/* read-only map */
+		unsigned int	_r:31;
+	    } __attribute__((packed));
+	};
+} F_MAP_INFO_t;
+#define LO_TO_SM_ID(layout_id)	((layout_id) *2 )	/* Layout ID to Slab map ID */
+#define LO_TO_CV_ID(layout_id)	((layout_id) *2 + 1)	/* Layout ID to Claim vector */
+#define LO_MAP_TO_ID(map_id)	(map_id/2)		/* Map ID to layout ID */
+
+/* Calculate the slab map entry CRC-4 checksum */
+static inline unsigned char f_crc4_sm_fast(F_SLAB_ENTRY_t *se)
+{
+    /* Look in transposed table */
+    return crc4_table_tp[ f_crc4_sm_chk(se) ];
+}
+
+#if 0
 /* List of stripes */
 typedef struct f_stripe_head_ {
     struct f_stripe_head_	*next;
@@ -228,52 +317,28 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 		free(s);
 	}
 }
+#endif
 
-/* Map info */
-typedef struct f_map_info_ {
-	union {
-	    uint64_t		info;
-	    struct {
-		int		map_id;		/* map id */
-		unsigned int	ro:1;		/* read-only map */
-		unsigned int	_r:31;
-	    } __attribute__((packed));
-	};
-} F_MAP_INFO_t;
+/* FAMFS configutation access; defined in famfs_maps.c */
+struct f_pool_;
+struct f_layout_;
+struct f_layout_info_;
+struct unifycr_cfg_t_;
+struct f_pooldev_index_;
 
-/* Pool info */
-typedef struct f_pool_info_ {
-	uint64_t	extent_sz;	/* pool extent size in bytes */
-	uint64_t	extent0_start;	/* data starts at this offset on pool devices */
-	uint32_t	layouts_count;	/* number of layouts in pool */
-	uint32_t	dev_count;	/* number of active pool devices */
-} F_POOL_INFO_t;
-
-/* Layout info structure: the minimalictic data about the layout and the pool
- * that is read from the configuration file.
- */
-typedef struct f_layout_info_ {
-	/* About pool */
-	F_POOL_INFO_t	*pool_info;
-	/* About this layout */
-	char		*name;		/* layout moniker */
-	uint32_t	conf_id;	/* Layout ID in configuration file */
-	uint32_t	chunk_sz;	/* chunk size in bytes */
-	uint32_t	devnum;		/* total number of devices */
-	uint32_t	slab_stripes;	/* number of stripes in one slab */
-	uint16_t	chunks;		/* number of chunks constituting a stripe */
-	uint16_t	data_chunks;	/* number of data chunks in stripe */
-} F_LAYOUT_INFO_t;
-
-#define LO_TO_SM_ID(layout_id)	((layout_id) *2 )	/* Layout ID to Slab map ID */
-#define LO_TO_CV_ID(layout_id)	((layout_id) *2 + 1)	/* Layout ID to Claim vector */
-#define LO_MAP_TO_ID(map_id)	(map_id/2)		/* Map ID to layout ID */
-
-/* Layout configutation functions; defined in famfs_maps.c */
 int f_layout_parse_name(struct f_layout_info_ *info); /* moniker parser */
-int f_set_layout_info(unifycr_cfg_t *cfg);
-F_LAYOUT_INFO_t *f_get_layout_info(int layout_id);
-void f_free_layout_info(void);
+int f_set_layouts_info(struct unifycr_cfg_t_ *cfg);
+int f_free_layouts_info(void);
+struct f_pool_dev_ *f_find_pdev(unsigned int index);
+struct f_pool_dev_ *f_pdi_to_pdev(struct f_pool_ *p, struct f_pooldev_index_ *pdi);
+struct f_pool_ *f_get_pool(void);
+struct f_layout_ *f_get_layout(int layout_id);
+struct f_layout_ *f_get_layout_by_name(const char *moniker);
+struct f_layout_info_ *f_get_layout_info(int layout_id);
+//int f_host_is_ionode(const char *hostname);
+//int f_host_is_mds(const char *hostname);
+void f_print_layouts(void);
+int f_get_lo_stripe_sizes(struct f_pool_ *p, size_t **stripe_sz_per_lo);
 
 /*
  * DB-independent persistent KV store interface
@@ -282,7 +347,7 @@ void f_free_layout_info(void);
 typedef int (*F_CREATE_PERSISTENT_MAP_fn)(F_MAP_INFO_t *i, int intl, char *name);
 /* ps_bget() function type: BGET_NEXT */
 typedef ssize_t (*F_PS_BGET_fn)(unsigned long *buf, int map_id, size_t size,
-    uint64_t *keys);
+    uint64_t *keys, int op);
 /* ps_bput() function type: */
 typedef int (*F_PS_BPUT_fn)(unsigned long *buf, int map_id, size_t size,
     void **keys, size_t value_len);
@@ -295,15 +360,29 @@ typedef struct f_meta_iface_ {
 	F_PS_BPUT_fn			bput_fn;
 	F_PS_BDEL_fn			bdel_fn;
 } F_META_IFACE_t;
+#define F_PS_GET_EQ	0	/* BGET Op: GET_EQ */
+#define F_PS_GET_NEXT	1	/* BGET Op: GET_NEXT */
 
 /* Map API: persistent KV store interface */
 void f_set_meta_iface(F_META_IFACE_t *iface);
 int f_create_persistent_sm(int layout_id, int intl, F_MAP_INFO_t *info_p);
 int f_create_persistent_cv(int layout_id, int intl, F_MAP_INFO_t *info_p);
 ssize_t f_db_bget(unsigned long *buf, int map_id, uint64_t *keys, size_t size,
-    uint64_t *off_p);
+    uint64_t *off_p, int op);
 int f_db_bput(unsigned long *buf, int map_id, void **keys, size_t size,
     size_t value_len);
 int f_db_bdel(int map_id, void **keys, size_t size);
+
+/* TODO: Move me to debug.h */
+/* If not defined yet, use verbosity level from pool struct */
+#ifndef DEBUG_LVL
+#define DEBUG_LVL(lvl, fmt, ...) DEBUG_LVL_(f_get_pool()->verbose, lvl, fmt, ## __VA_ARGS__)
+#endif
+
+
+/* Validate structure's size and/or alignment */
+    _Static_assert( sizeof(F_SLAB_ENTRY_t) == 16,	"F_SLAB_ENTRY_t");
+    _Static_assert( sizeof(F_EXTENT_ENTRY_t) == 8,	"F_EXTENT_ENTRY_t");
+    _Static_assert( sizeof(FVAR_KVPAIR_t) == 24,	"FVAR_KVPAIR_t");
 
 #endif /* FAMFS_MAPS_H_ */

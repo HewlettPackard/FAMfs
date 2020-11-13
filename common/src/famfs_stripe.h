@@ -13,6 +13,7 @@
 
 #include "famfs_error.h"
 
+struct f_pool_dev_;
 
 /* Chunk attributes */
 typedef struct n_chunk_ {
@@ -21,9 +22,17 @@ typedef struct n_chunk_ {
 	uint64_t	w_event;	/* write transfer complete counter */
 	int		parity;		/* parity chunk number (0...) or -1 */
 	int		data;		/* data chunk number or -1 */
-	int		node;		/* libfabric node index in nodelist */
+	int		node;		/* libfabric node index in nodelist;
+					FAMFS: pool device media_id */
 
-	int		lf_client_idx;	/* libfabric client index, see to_lf_client_id() */
+	int		lf_client_idx;	/* libfabric client index, see to_lf_client_id();
+					FAMFS: pool device index in info.pdev_indexes[] */
+			/* only FAMFS: pdev, extent, length, offset */
+	unsigned int	extent;		/* extent number (from Slab map) */
+	struct f_pool_dev_ *pdev;	/* reference to pool device in devlist */
+			/* stripe I/O mapping to a chunk */
+	uint32_t	length;		/* length, bytes */
+	uint32_t	offset;		/* offset in chunk, bytes */
 
 	/* TODO: Remove me! */
 	off_t		p_stripe0_off;	/* libfabric offset of the first stripe in partition */
@@ -33,17 +42,18 @@ typedef struct n_chunk_ {
 typedef struct n_stripe_ {
 	unsigned int	extent;		/* I/O node FAM extent */
 	/* calculated from 'extent' for convenience */
-	unsigned int	stripe_in_part;	/* stripe in the partition */
-	int 		partition;	/* libfabric target partition */
+	unsigned int	stripe_in_part;	/* stripe in the partition;
+					FAMFS: stripe in slab */
+//	int 		partition;	/* libfabric target partition */
+	uint64_t	stripe_0;	/* only FAMFS: this stripe's Slab entry key */
 	/* constants */
 	int		d;		/* number of data chunks */
 	int 		p;		/* number of parity chunks */
 	int		node_id;	/* client node index in clientlist */
-	int		part_mreg;	/* 1: LF dest address starts with 0 at a partition; 1: single buffer per node */
 	unsigned int	node_size;	/* client node count */
 	unsigned int	extent_stipes;	/* extent size, in stripes */
 	unsigned int	srv_extents;	/* partition size, in extents */
-	unsigned int	part_count;	/* number of partitions on ION */
+	uint32_t	chunk_sz;	/* layout chunk size in bytes */
 	struct n_chunk_	*chunks;	/* array (d+p) of chunks */
 } N_STRIPE_t;
 
@@ -100,5 +110,8 @@ static inline char* pr_chunk(char *buf, int d, int p) {
 	return buf;
 }
 
+static inline int n_stripe_in_slab(uint64_t s, N_STRIPE_t *stripe) {
+	return (s/stripe->extent_stipes == stripe->extent);
+}
 
 #endif /* FAMFS_STRIPE_H */

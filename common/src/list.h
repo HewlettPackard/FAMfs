@@ -4,8 +4,8 @@
  *  Created on: Jun 24, 2015
  *      Author: leeopop
  */
-#ifndef _LINUX_LIST_H
-#define _LINUX_LIST_H
+#ifndef _LIST_H
+#define _LIST_H
 
 #include <stddef.h>
 
@@ -118,7 +118,6 @@ static inline void __list_del(struct list_head * prev, struct list_head * next)
  * Note: list_empty() on entry does not return true after this, the entry is
  * in an undefined state.
  */
-#ifndef CONFIG_DEBUG_LIST
 static inline void __list_del_entry(struct list_head *entry)
 {
 	__list_del(entry->prev, entry->next);
@@ -130,10 +129,6 @@ static inline void list_del(struct list_head *entry)
 	entry->next = LIST_POISON1;
 	entry->prev = LIST_POISON2;
 }
-#else
-extern void __list_del_entry(struct list_head *entry);
-extern void list_del(struct list_head *entry);
-#endif
 
 /**
  * list_replace - replace old entry by new one
@@ -615,6 +610,8 @@ struct hlist_node {
 	struct hlist_node *next, **pprev;
 };
 
+#if 0
+
 /**
  * struct callback_head - callback structure for use with RCU and task_work
  * @next: next update requests in a list
@@ -625,6 +622,8 @@ struct callback_head {
 	void (*func)(struct callback_head *head);
 };
 #define rcu_head callback_head
+
+#endif
 
 #define HLIST_HEAD_INIT { .first = NULL }
 #define INIT_HLIST_HEAD(ptr) ((ptr)->first = NULL)

@@ -16,7 +16,9 @@
 #define BITS_PER_BYTE		8
 #define BITS_PER_INT		(BITS_PER_BYTE*sizeof(int))
 // BITS_PER_LONG - See famfs_ktypes.h
+#define BITS_TO_BYTES(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE)
 #define BITS_TO_LONGS(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
+#define BITMAP_LAST_WORD_MASK(nbits) (~0UL >> (-(nbits) & (BITS_PER_LONG - 1)))
 
 
 static __always_inline unsigned long __ffs(unsigned long word) {
@@ -84,6 +86,10 @@ static __always_inline int fls(int x)
 	return r;
 }
 
+static __always_inline unsigned long __fls(unsigned long word) {
+	return BITS_PER_LONG - 1 - __builtin_clzl(word);
+}
+#if 0
 static __always_inline unsigned long __fls(unsigned long word)
 {
 	int num = BITS_PER_LONG - 1;
@@ -114,7 +120,7 @@ static __always_inline unsigned long __fls(unsigned long word)
 		num -= 1;
 	return num;
 }
-
+#endif
 
 #if BITS_PER_LONG == 32
 static __always_inline int fls64(u64 x)
@@ -460,6 +466,31 @@ found:
 	return result + ffz(tmp);
 }
 
+/*
+ * Find the last set bit in a memory region.
+ * Returns the bit number of the last set bit, or size.
+ *
+ * This implementation of find_last_bit was stolen from
+ * Linus' lib/find_bit.c
+ */
+static inline unsigned long find_last_bit(const unsigned long *addr, unsigned long size)
+{
+	if (size) {
+		unsigned long val = BITMAP_LAST_WORD_MASK(size);
+		unsigned long idx = (size-1) / BITS_PER_LONG;
+
+		do {
+			val &= addr[idx];
+			if (val)
+				return idx * BITS_PER_LONG + __fls(val);
+
+			val = ~0ul;
+		} while (idx--);
+	}
+	return size;
+}
+
+
 /**
  * test_bit - Determine whether a bit is set
  * @nr: bit number to test
@@ -652,6 +683,20 @@ static __always_inline int atomic_test_and_clear_bit(int nr, volatile unsigned l
 
 	return (int)((dst & mask) >> (nr % BITS_PER_LONG));
 }
+
+
+/* Macros to define access the flags access inline functions. */
+#define BITOPS(name, what, var, flag) \
+static inline int TestClear ## name ## what(struct var *v) \
+{ return test_and_clear_bit(flag, &v->io.flags); } \
+static inline int TestSet ## name ## what(struct var *v) \
+{ return test_and_set_bit(flag, &v->io.flags); } \
+static inline void Clear ## name ## what(struct var *v) \
+{ clear_bit(flag, &v->io.flags); } \
+static inline void Set ## name ## what(struct var *v) \
+{ set_bit(flag, &v->io.flags); } \
+static inline int name ## what(struct var *v) \
+{ return test_bit(flag, &v->io.flags); }
 
 
 #endif /* FAMFS_BITOPS_H_ */

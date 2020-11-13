@@ -36,7 +36,6 @@
 #include "famfs_configurator.h"
 #include "arraylist.h"
 
-#if 0
 typedef enum {
     COMM_MOUNT, /*the list of addrs: appid, size of buffer, offset of data section, metadata section*/
     COMM_META,
@@ -46,7 +45,6 @@ typedef enum {
     COMM_SYNC_DEL,
     COMM_MDGET,
 } cmd_lst_t;
-#endif
 
 typedef enum {
     XFER_COMM_DATA,
@@ -72,8 +70,9 @@ typedef struct {
     int src_thrd;
     int src_dbg_rank;
     int arrival_time;
-    int fam_cid;
-    int fam_nid;
+//    int fam_cid;
+//    int fam_nid;
+    uint64_t fam_sid;
 } send_msg_t;
 
 typedef struct {
@@ -150,26 +149,24 @@ typedef struct {
 
 typedef struct {
     int app_id;
-    int sock_id;
+    union {
+        int sock_id;
+        int qid;
+    };
 } cli_signature_t;
 
 typedef int fattr_key_t;
 
 typedef struct {
-    char fname[ULFS_MAX_FILENAME];
+    char        fname[ULFS_MAX_FILENAME];
+    int         loid;
     struct stat file_attr;
 } fattr_val_t;
-
-typedef struct {
-    int fid;
-    int gfid;
-    char filename[ULFS_MAX_FILENAME];
-    struct stat file_attr;
-} unifycr_file_attr_t;
 
 extern arraylist_t *app_config_list;
 extern arraylist_t *thrd_list;
 int invert_sock_ids[MAX_NUM_CLIENTS];
+int invert_qids[MAX_NUM_CLIENTS];
 extern pthread_t data_thrd;
 extern int glb_rank, glb_size;
 extern int local_rank_idx;

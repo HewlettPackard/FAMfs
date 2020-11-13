@@ -49,7 +49,7 @@ For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PA
 ## Configure FAMfs
 Configure and build the package:
 ```
-   make distclean; ./autogen.sh && ./configure --prefix=$TEST_DIR --disable-debug --with-gotcha=$TEST_DIR --enable-shared=famfs,libisal && echo Ok
+   make distclean; ./autogen.sh && ./configure --prefix=$TEST_DIR --disable-debug --with-gotcha=$TEST_DIR && echo Ok
    make clean; make -j install && echo Ok
 ```
 
@@ -62,7 +62,12 @@ Run the regression and unit tests:
 ```
 
 ## Run Server
-mpirun -hosts 127.0.0.1 -np 1 -env LFS_COMMAND "x -H 172.24.186.96 -P0 --memreg scalable --provider sockets ENCODE" /bin/bash -c 'unifycrd'
+Copy FAMFS configuration file (scripts/famfs.conf.example) to /etc or the current directory: famfs.conf
+Edit ionodes, devices, device sections in the configuration file upon your needs.
+Run FAMS server daemon:
+```
+   mpirun -hosts 127.0.0.1 -np 1 /bin/bash -c 'famfsd'
+```
 
 ## Documentation
 Full UnifyCR documentation is contained [here](http://unifycr.readthedocs.io).

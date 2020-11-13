@@ -43,6 +43,8 @@ extern "C"
 {
 #endif
 #include "range_server.h"
+#include "list.h"
+#include "famfs_global.h"
 
 /* Message Types */
 
@@ -66,6 +68,9 @@ extern "C"
 #define MDHIM_RECV_BULK_GET 9
 //Commit message
 #define MDHIM_COMMIT 10
+//Bulk put from array of KVs
+#define MDHIM_BULK_PUT2 11
+#define MDHIM_MSG_T_LAST MDHIM_BULK_PUT2
 
 /* Operations for getting a key/value */
 //Get the value for the specified key
@@ -87,9 +92,14 @@ extern "C"
 //Message Types
 #define RANGESRV_WORK_MSG         1
 #define RANGESRV_WORK_SIZE_MSG    2
-#define RANGESRV_INFO             3
+//#define RANGESRV_INFO             3
 #define CLIENT_RESPONSE_MSG       4
 #define CLIENT_RESPONSE_SIZE_MSG  5
+
+#define CLIENT_RSP_TAG_INDEX_SHIFT 4 /* CLIENT_RESPONSE tag: 4..11 - index_id; 0..3 - message type */
+#define CLIENT_RSP_TAG_INDEX_MAX   255
+#define CLIENT_RSP_TAG(index, msg_type) (((int)index & CLIENT_RSP_TAG_INDEX_MAX) << CLIENT_RSP_TAG_INDEX_SHIFT \
+                                         | (unsigned char)msg_type)
 
 //#define MAX_BULK_OPS 1000000
 #define MAX_BULK_OPS 20000000
@@ -101,12 +111,19 @@ struct mdhim_t;
 /* Base message */
 struct mdhim_basem_t {
 	//Message type
-	int mtype; 
+	int mtype;
 	int server_rank;
 	int size;
 	int index;
 	int index_type;
-	char *index_name;
+	union {
+	    int msg_id; /* multithreaded client <-> RS message ID */
+	    int seg_count; /* only for struct mdhim_bput2m_t */
+	};
+	//char *index_name;
+	//RS response queue
+	void *rcv_msg_tag;
+	struct list_head rcv_msg_item;
 };
 typedef struct mdhim_basem_t mdhim_basem_t;
 
@@ -128,6 +145,24 @@ struct mdhim_bputm_t {
 	int *value_lens;
 	int num_keys;
 };
+
+typedef struct bput2m_seg_t_ {
+	int		seg_id;
+	int		seg_msg_id;
+	int		num_keys;
+	int		key_len;
+	size_t		kv_length;
+	fsmd_kv_t	kvs[];
+} BPUT2M_SEG_t;
+
+/* Bulk put message for fsync (MDHIM_BULK_PUT2) */
+struct mdhim_bput2m_t {
+	mdhim_basem_t basem;
+	BPUT2M_SEG_t  seg;
+};
+/* mdhim_bput2m_t single-segment allocation size */
+#define mdhim_bput2m_alloc_sz(num_keys) \
+    (sizeof(mdhim_basem_t)+sizeof(BPUT2M_SEG_t)+(num_keys)*sizeof(fsmd_kv_t))
 
 /* Get record message */
 struct mdhim_getm_t {
@@ -208,9 +243,9 @@ int send_all_rangesrv_work(struct mdhim_t *md, void **messages, int num_srvs);
 int receive_rangesrv_work(struct mdhim_t *md, int *src, void **message);
 int send_client_response(struct mdhim_t *md, int dest, void *message, int *sizebuf,
 			 void **sendbuf);
-int receive_client_response(struct mdhim_t *md, int src, void **message);
+int receive_client_response(struct mdhim_t *md, int src, int index_id, void **message);
 int receive_all_client_responses(struct mdhim_t *md, int *srcs, int nsrcs, 
-				 void ***messages);
+				 int index_id, void ***messages);
 int pack_put_message(struct mdhim_t *md, struct mdhim_putm_t *pm, void **sendbuf, int *sendsize);
 int pack_bput_message(struct mdhim_t *md, struct mdhim_bputm_t *bpm, void **sendbuf, int *sendsize);
 int unpack_put_message(struct mdhim_t *md, void *message, int mesg_size, void **pm);

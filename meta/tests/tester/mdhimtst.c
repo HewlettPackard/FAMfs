@@ -886,7 +886,7 @@ static void execBput(char *command, struct mdhim_t *md, int charIdx)
     }
 
   //Insert the keys into MDHIM
-  brm = mdhimBPut(md, keys, key_lens, (void **) values, value_lens, nkeys, NULL, NULL);
+  brm = mdhimBPut(md, md->primary_index, keys, key_lens, (void **) values, value_lens, nkeys, NULL, NULL);
   brmp = brm;
   ret = 0;
   if (!brm || brm->error)
@@ -1645,7 +1645,7 @@ static void execNput(char *command, struct mdhim_t *md, int charIdx)
       memcpy(value, buffer2,VAL_BUFLEN);
       if (verbose) tst_say(0, "# mdhimPut( %s, %s ) [string|byte]\n", 
 			   key_string, value );
-      brm = mdhimPut(md, (void *)key_string, BYTE_BUFLEN, 
+      brm = mdhimPut(md, md->primary_index, (void *)key_string, BYTE_BUFLEN, 
 		     value, BYTE_BUFLEN, NULL, NULL);
       //			break;
       // 

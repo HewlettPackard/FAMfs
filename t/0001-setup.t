@@ -2,7 +2,7 @@
 #
 # Perform some initial setup for the test suite. This is not
 # implemented as a sharness test because leaving a process running
-# behind (i.e. unifycrd) causes tap-driver.sh to hang waiting for
+# behind (i.e. famfsd) causes tap-driver.sh to hang waiting for
 # the process to exit.
 #
 
@@ -34,27 +34,27 @@ EOF
 # Start the UnifyCR daemon after killing and cleanup up after any previously
 # running instance.
 #
-unifycrd_stop_daemon
-unifycrd_cleanup
-unifycrd_start_daemon
+famfsd_stop_daemon
+famfsd_cleanup
+famfsd_start_daemon
 
 #
-# Make sure unifycrd starts whithin 15 seconds
+# Make sure famfsd starts whithin 15 seconds
 #
-if ! process_is_running unifycrd 15; then
+if ! process_is_running famfsd 15; then
    echo not ok 1 - daemon is not started
    exit 1
 fi
 
 #
-# Make sure unifycrd stays running for 5 seconds to catch cases where
+# Make sure famfsd stays running for 5 seconds to catch cases where
 # it dies during initialization.
 #
-if process_is_not_running unifycrd 5; then
-    echo not ok 1 - unifycrd is not running
+if process_is_not_running famfsd 5; then
+    echo not ok 1 - famfsd is not running
     exit 1
 else
-    echo ok 1 - unifycrd running
+    echo ok 1 - famfsd running
 fi
 
 exit 0

@@ -45,6 +45,8 @@
 
 #define MANIFEST_FILE_NAME "/mdhim_manifest_"
 //#define GEN_STR_LEN 1024
+#include "famfs_global.h"
+
 
 struct timeval putstart, putend;
 struct timeval calstart, calend;
@@ -190,7 +192,8 @@ int main(int argc, char **argv) {
 	long total_keys = 0, round = 0;
 	while (total_keys < segnum) {
 		//Insert the keys into MDHIM
-		brm = mdhimBPut(md, (void **)(&key_lst[total_keys]), key_lens,
+		brm = mdhimBPut(md, md->primary_index,
+				(void **)(&key_lst[total_keys]), key_lens,
 				(void **) (&val_lst[total_keys]), val_lens, bulknum,
 				NULL, NULL);
 		//Iterate through the return messages to see if there is an error and to free it

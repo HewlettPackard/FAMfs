@@ -34,6 +34,10 @@
 #include "unifycr_metadata.h"
 #include "arraylist.h"
 #include "unifycr_const.h"
+#include "famfs_global.h"
+#include "f_pool.h"
+#include "f_layout.h"
+#include "f_layout_ctl.h"
 
 
 fsmd_key_t **fsmd_keys;
@@ -46,7 +50,7 @@ struct mdhim_brm_t *brm, *brmp;
 struct mdhim_bgetrm_t *bgrm, *bgrmp;
 struct mdhim_t *md;
 
-int fsmd_ley_lens[MAX_META_PER_SEND] = {0};
+int fsmd_key_lens[MAX_META_PER_SEND] = {0};
 int unifycr_val_lens[MAX_META_PER_SEND] = {0};
 
 int fattr_key_lens[MAX_FILE_CNT_PER_NODE] = {0};
@@ -62,7 +66,7 @@ extern char *mds_vec;
 extern int  num_mds;
 
 static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name);
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys, int op);
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
     size_t value_len);
 static int ps_bdel(int map_id, size_t size, void **keys);
@@ -88,7 +92,6 @@ int meta_init_store(mdhim_options_t *db_opts)
 {
     int i, rc;
 
-    db_opts->debug_level = MLOG_CRIT;
     db_opts->db_key_type = MDHIM_UNIFYCR_KEY;
     if (mds_vec)
 	db_opts->rserver_factor = 1;
@@ -97,6 +100,7 @@ int meta_init_store(mdhim_options_t *db_opts)
 
     /*this index is created for storing index metadata*/
     unifycr_indexes[0] = md->primary_index;
+
 
     /*this index is created for storing file attribute metadata*/
     unifycr_indexes[1] = create_global_index(md, md->db_opts->rserver_factor, 1,
@@ -129,6 +133,8 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
 	if (unifycr_indexes[id] == NULL)
 		return -1;
+	/* don't use stats */
+	unifycr_indexes[id]->has_stats = 0;
     }
 
     /* If no range server running, set RO flag to protect persistent map */
@@ -203,16 +209,16 @@ int meta_init_indices()
 /**
 * store the file attribute to the key-value store
 * @param buf: file attribute received from the client
-* @param sock_id: the connection id in poll_set of
+* @param qid: the connection id in poll_set of
 * the delegator
 * @return success/error code
 */
-int meta_process_attr_set(char *buf, int sock_id)
+int meta_process_attr_set(char *buf, int qid)
 {
     int rc = ULFS_SUCCESS;
 
-    unifycr_file_attr_t *ptr_fattr =
-        (unifycr_file_attr_t *)(buf + 2 * sizeof(int));
+    f_fattr_t *ptr_fattr =
+        (f_fattr_t *)(buf + 2 * sizeof(int));
 
     *fattr_keys[0] = ptr_fattr->gfid;
     fattr_vals[0]->file_attr = ptr_fattr->file_attr;
@@ -220,11 +226,12 @@ int meta_process_attr_set(char *buf, int sock_id)
 
     /*  LOG(LOG_DBG, "rank:%d, setting fattr key:%d, value:%s\n",
                 glb_rank, *fattr_keys[0], fattr_vals[0]->fname); */
-    md->primary_index = unifycr_indexes[1];
-    brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+    brm = mdhimPut(md, unifycr_indexes[1],
+                   fattr_keys[0], sizeof(fattr_key_t),
                    fattr_vals[0], sizeof(fattr_val_t),
                    NULL, NULL);
     if (!brm || brm->error) {
+        LOG(LOG_ERR, "client %d, no such gfid:%d", qid, *fattr_keys[0]);
         rc = ULFS_ERROR_MDHIM;
     } else {
         rc = ULFS_SUCCESS;
@@ -235,26 +242,53 @@ int meta_process_attr_set(char *buf, int sock_id)
     return rc;
 }
 
+int f_do_fattr_set(f_svcrq_t *pcmd, f_fattr_t *pval) {
+    int rc = ULFS_SUCCESS;
+
+    *fattr_keys[0] = pval->gfid;
+    fattr_vals[0]->file_attr = pval->file_attr;
+    strcpy(fattr_vals[0]->fname, pval->filename);
+    fattr_vals[0]->loid = pval->loid;
+
+    brm = mdhimPut(md, unifycr_indexes[1],
+                   fattr_keys[0], sizeof(fattr_key_t),
+                   fattr_vals[0], sizeof(fattr_val_t),
+                   NULL, NULL);
+    if (!brm || brm->error) {
+        LOG(LOG_ERR, "client %d, setting attributes for gfid %d error:%d",
+            pcmd->cid, *fattr_keys[0], brm?brm->error:0);
+        rc = ULFS_ERROR_MDHIM;
+    } else {
+        LOG(LOG_DBG, "client %d, setting fattr gfid %d in lo %d",
+            pcmd->cid, *fattr_keys[0], fattr_vals[0]->loid);
+        rc = ULFS_SUCCESS;
+    }
+
+    mdhim_full_release_msg(brm);
+
+    return rc;
+}
+
+
 
 /* get the file attribute from the key-value store
 * @param buf: a buffer that stores the gid
-* @param sock_id: the connection id in poll_set of the delegator
+* @param qid: the connection id in poll_set of the delegator
 * @return success/error code
 */
-
-int meta_process_attr_get(char *buf, int sock_id,
-                          unifycr_file_attr_t *ptr_attr_val)
+int meta_process_attr_get(char *buf, int qid, f_fattr_t *ptr_attr_val)
 {
     *fattr_keys[0] = *((int *)(buf + 2 * sizeof(int)));
     fattr_val_t *tmp_ptr_attr;
 
     int rc;
 
-    md->primary_index = unifycr_indexes[1];
-    bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
+    bgrm = mdhimGet(md, unifycr_indexes[1],
+                    fattr_keys[0],
                     sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
+        LOG(LOG_ERR, "client %d, no such file id:%d", qid, *fattr_keys[0]);
         rc = ULFS_ERROR_MDHIM;
     } else {
         tmp_ptr_attr = (fattr_val_t *)bgrm->values[0];
@@ -272,13 +306,41 @@ int meta_process_attr_get(char *buf, int sock_id,
     return rc;
 }
 
+int f_do_fattr_get(f_svcrq_t *pcmd, f_fattr_t *pval) {
+    *fattr_keys[0] = pcmd->fm_gfid;
+    fattr_val_t *tmp_ptr_attr;
+
+    int rc;
+
+    bgrm = mdhimGet(md, unifycr_indexes[1], fattr_keys[0],
+                    sizeof(fattr_key_t), MDHIM_GET_EQ);
+
+    if (!bgrm || bgrm->error) {
+        LOG(LOG_ERR, "client %d, gfid %d - error %d getting file attributes",
+	    pcmd->cid, *fattr_keys[0], bgrm?bgrm->error:0);
+        rc = ULFS_ERROR_MDHIM;
+    } else {
+        pval->gfid = *fattr_keys[0];
+        tmp_ptr_attr = (fattr_val_t *)bgrm->values[0];
+        pval->file_attr = tmp_ptr_attr->file_attr;
+        pval->loid = tmp_ptr_attr->loid;
+        strcpy(pval->filename, tmp_ptr_attr->fname);
+
+        LOG(LOG_DBG, "client %d, got fattr for layout %d gfid %d",
+            pcmd->cid, tmp_ptr_attr->loid, pval->gfid);
+
+        rc = ULFS_SUCCESS;
+    }
+
+    mdhim_full_release_msg(bgrm);
+    return rc;
+}
+
 int meta_famattr_put(int fam_id, fam_attr_val_t *val)
 {
     size_t val_sz;
     uint32_t key;
     int rc;
-
-    md->primary_index = unifycr_indexes[2];
 
     if (fam_id < 0)
         key = MDHIM_MAX_SLICES;
@@ -289,12 +351,14 @@ int meta_famattr_put(int fam_id, fam_attr_val_t *val)
     LOG(LOG_DBG, "key:%u size:%zu cnt:%u prov_key:%lu virt_addr:%016lx",
         key, val_sz, val->part_cnt, val->part_attr[0].prov_key,
         val->part_attr[0].virt_addr);
-    brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+    brm = mdhimPut(md, unifycr_indexes[2],
+                   fattr_keys[0], sizeof(fattr_key_t),
 		   val, val_sz, NULL, NULL);
 
-    if (!brm || brm->error)
+    if (!brm || brm->error) {
+        LOG(LOG_ERR, "error storing FAM %d attributes:%d", fam_id, brm?brm->error:0);
 	rc = ULFS_ERROR_MDHIM;
-    else
+    } else
 	rc = ULFS_SUCCESS;
 
     mdhim_full_release_msg(brm);
@@ -302,18 +366,18 @@ int meta_famattr_put(int fam_id, fam_attr_val_t *val)
     return rc;
 }
 
-int meta_famattr_get(char *buf, fam_attr_val_t **val_p)
+int meta_famattr_get(int fam_id, fam_attr_val_t **val_p)
 {
-    *fattr_keys[0] = *((int *)(buf + 2 * sizeof(int)));
+    *fattr_keys[0] = fam_id;
     fam_attr_val_t *tmp_ptr_attr;
 
     int rc;
 
-    md->primary_index = unifycr_indexes[2];
-    bgrm = mdhimGet(md, md->primary_index, fattr_keys[0],
+    bgrm = mdhimGet(md, unifycr_indexes[2], fattr_keys[0],
 		    sizeof(fattr_key_t), MDHIM_GET_EQ);
 
     if (!bgrm || bgrm->error) {
+        LOG(LOG_ERR, "error getting FAM %d attributes:%d", fam_id, brm?brm->error:0);
 	*val_p = NULL;
 	rc = ULFS_ERROR_MDHIM;
     } else {
@@ -321,7 +385,6 @@ int meta_famattr_get(char *buf, fam_attr_val_t **val_p)
 
 	tmp_ptr_attr = (fam_attr_val_t *)bgrm->values[0];
 	*val_p = (fam_attr_val_t *)malloc(fam_attr_val_sz(tmp_ptr_attr->part_cnt));
-	//fam_id = *fattr_keys[0];
 	(*val_p)->part_cnt = tmp_ptr_attr->part_cnt;
 	size = tmp_ptr_attr->part_cnt*sizeof(LFS_EXCG_t);
 	memcpy((*val_p)->part_attr, tmp_ptr_attr->part_attr, size);
@@ -339,19 +402,18 @@ int meta_famattr_get(char *buf, fam_attr_val_t **val_p)
 
 /*synchronize all the indices and file attributes
 * to the key-value store
-* @param sock_id: the connection id in poll_set of the delegator
+* @param qid: the connection id in poll_set of the delegator
 * @return success/error code
 */
-
-int meta_process_fsync(int sock_id)
+int meta_process_fsync(int qid)
 {
     int i, ret = 0;
 
-    int app_id = invert_sock_ids[sock_id];
+    int app_id = invert_qids[qid];
     app_config_t *app_config = (app_config_t *)arraylist_get(app_config_list,
                                app_id);
 
-    int client_side_id = app_config->client_ranks[sock_id];
+    int client_side_id = app_config->client_ranks[qid];
 
     unsigned long num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
@@ -365,37 +427,27 @@ int meta_process_fsync(int sock_id)
         (md_index_t *)(app_config->shm_superblocks[client_side_id]
                             + app_config->meta_offset + page_sz);
 
-    md->primary_index = unifycr_indexes[0];
-
     for (i = 0; i < num_entries; i++) {
-        fsmd_keys[i]->fid = meta_payload[i].fid;
+        fsmd_keys[i]->pk.fid = meta_payload[i].fid;
+        fsmd_keys[i]->pk.loid = 0;
         fsmd_keys[i]->offset = meta_payload[i].file_pos;
         fsmd_vals[i]->addr = meta_payload[i].mem_pos;
         fsmd_vals[i]->len = meta_payload[i].length;
-        if (fam_fs) {
-            fsmd_vals[i]->node  = meta_payload[i].nid;
-            fsmd_vals[i]->chunk = meta_payload[i].cid;
-/*
-        printf("srv: fsync k/v[%d] fid=%ld off=%ld/len=%ld addr=%lu node=%ld chunk=%ld\n", i,
-        fsmd_keys[i]->fid, fsmd_keys[i]->offset, 
-        fsmd_vals[i]->len, fsmd_vals[i]->addr, fsmd_vals[i]->node, fsmd_vals[i]->chunk);
-*/
 
-        } else {
-            fsmd_vals[i]->delegator_id = glb_rank;
-            memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
-            memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
-                   &client_side_id, sizeof(int));
-        }
+        fsmd_vals[i]->delegator_id = glb_rank;
+        memcpy((char *) & (fsmd_vals[i]->app_rank_id), &app_id, sizeof(int));
+        memcpy((char *) & (fsmd_vals[i]->app_rank_id) + sizeof(int),
+               &client_side_id, sizeof(int));
 
-        fsmd_ley_lens[i] = sizeof(fsmd_key_t);
+        fsmd_key_lens[i] = sizeof(fsmd_key_t);
         unifycr_val_lens[i] = sizeof(fsmd_val_t);
     }
 
     //print_fsync_indices(fsmd_keys, fsmd_vals, num_entries);
 
     if (num_entries == 1) {
-        brm = mdhimPut(md, fsmd_keys[0], sizeof(fsmd_key_t),
+        brm = mdhimPut(md, unifycr_indexes[0],
+                       fsmd_keys[0], sizeof(fsmd_key_t),
                        fsmd_vals[0], sizeof(fsmd_val_t),
                        NULL, NULL);
         if (!brm || brm->error) {
@@ -406,9 +458,10 @@ int meta_process_fsync(int sock_id)
             ret = ULFS_SUCCESS;
         }
         mdhim_full_release_msg(brm);
-    } else {
 
-        brm = mdhimBPut(md, (void **)(&fsmd_keys[0]), fsmd_ley_lens,
+    } else {
+        brm = mdhimBPut(md, unifycr_indexes[0],
+                        (void **)(&fsmd_keys[0]), fsmd_key_lens,
                         (void **)(&fsmd_vals[0]), unifycr_val_lens, num_entries,
                         NULL, NULL);
         brmp = brm;
@@ -416,25 +469,21 @@ int meta_process_fsync(int sock_id)
             ret = ULFS_ERROR_MDHIM;
             LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
                 md->mdhim_rank);
-    }
-
-    while (brmp) {
-        if (brmp->error < 0) {
-            ret = ULFS_ERROR_MDHIM;
-            break;
         }
 
-        brm = brmp;
-        brmp = brmp->next;
-        mdhim_full_release_msg(brm);
+        while (brmp) {
+            if (brmp->error < 0) {
+                ret = ULFS_ERROR_MDHIM;
+                break;
+            }
 
-    }
-
+            brm = brmp;
+            brmp = brmp->next;
+            mdhim_full_release_msg(brm);
+        }
     }
 
 _process_fattr:
-    md->primary_index = unifycr_indexes[1];
-
     num_entries =
         *((unsigned long *)(app_config->shm_superblocks[client_side_id]
                             + app_config->fmeta_offset));
@@ -444,9 +493,9 @@ _process_fattr:
 
     /* file attributes are stored in the superblock shared memory
      * created by the client*/
-    unifycr_file_attr_t *attr_payload =
-        (unifycr_file_attr_t *)(app_config->shm_superblocks[client_side_id]
-                                + app_config->fmeta_offset + page_sz);
+    f_fattr_t *attr_payload =
+        (f_fattr_t *)(app_config->shm_superblocks[client_side_id]
+                + app_config->fmeta_offset + page_sz);
 
 
     for (i = 0; i < num_entries; i++) {
@@ -459,7 +508,8 @@ _process_fattr:
     }
 
     if (num_entries == 1) {
-        brm = mdhimPut(md, fattr_keys[0], sizeof(fattr_key_t),
+        brm = mdhimPut(md, unifycr_indexes[1],
+                       fattr_keys[0], sizeof(fattr_key_t),
                        fattr_vals[0], sizeof(fattr_val_t),
                        NULL, NULL);
         if (!brm || brm->error) {
@@ -470,35 +520,187 @@ _process_fattr:
             ret = ULFS_SUCCESS;
         }
         mdhim_full_release_msg(brm);
+
     } else {
-
-    brm = mdhimBPut(md, (void **)(&fattr_keys[0]), fattr_key_lens,
-                    (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
-                    NULL, NULL);
-    brmp = brm;
-    if (!brmp || brmp->error) {
-        ret = ULFS_ERROR_MDHIM;
-        LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
-            md->mdhim_rank);
-    }
-
-    while (brmp) {
-        if (brmp->error < 0) {
+        brm = mdhimBPut(md, unifycr_indexes[1],
+                        (void **)(&fattr_keys[0]), fattr_key_lens,
+                        (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
+                        NULL, NULL);
+        brmp = brm;
+        if (!brmp || brmp->error) {
             ret = ULFS_ERROR_MDHIM;
-            break;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
         }
 
-        brm = brmp;
-        brmp = brmp->next;
-        mdhim_full_release_msg(brm);
+        while (brmp) {
+            if (brmp->error < 0) {
+                ret = ULFS_ERROR_MDHIM;
+                break;
+            }
 
-    }
-
+            brm = brmp;
+            brmp = brmp->next;
+            mdhim_full_release_msg(brm);
+        }
     }
 
     return ret;
 }
 
+int f_do_fsync(f_svcrq_t *pcmd) {
+    struct index_t *index = unifycr_indexes[0];
+    struct mdhim_bput2m_t *bput2m;
+    mdhim_basem_t *bm;
+    int i, ret = 0;
+
+    int qid = pcmd->cid;
+    int app_id = invert_qids[qid];
+    app_config_t *app_config = (app_config_t *)arraylist_get(app_config_list, app_id);
+
+    int client_side_id = app_config->client_ranks[qid];
+
+    unsigned long num_entries =
+        *((unsigned long *)(app_config->shm_superblocks[client_side_id] + 
+        app_config->meta_offset));
+
+    if (num_entries == 0) {
+        LOG(LOG_DBG, "nothing to fsync");
+        goto _process_fattr;
+    }
+
+    /* indices are stored in the superblock shared memory
+     *  created by the client*/
+    md_index_t *meta_payload =
+        (md_index_t *)(app_config->shm_superblocks[client_side_id]
+                            + app_config->meta_offset + page_sz);
+
+    LOG(LOG_DBG, "srv fsync from qid %d rank [%d] k/v num=%lu meta_offset=%ld",
+        qid, client_side_id, num_entries, app_config->meta_offset);
+
+    /* Create BULK_PUT2 message */
+    bput2m = (struct mdhim_bput2m_t *) malloc(mdhim_bput2m_alloc_sz(num_entries));
+    if (!bput2m) {
+	ret = -errno;
+	goto _exit;
+    }
+    bm = &bput2m->basem;
+    bm->mtype = MDHIM_BULK_PUT2;
+    bm->size = mdhim_bput2m_alloc_sz(num_entries);
+    bm->server_rank = -1; /* to be set at bput2_records() */
+    bm->index = index->id;
+    bm->index_type = index->type;
+    bm->seg_count = 1;
+
+    /* message payload */
+    fsmd_kv_t *kvs = &bput2m->seg.kvs[0];
+    bput2m->seg.seg_id = 0;
+    bput2m->seg.num_keys = num_entries;
+    bput2m->seg.key_len = sizeof(fsmd_key_t);
+    bput2m->seg.kv_length = sizeof(fsmd_kv_t);
+    memcpy(kvs, meta_payload, num_entries*sizeof(fsmd_kv_t)); 
+
+    IF_LOG(LOG_DBG3) {
+	fsmd_kv_t *kv = kvs;
+	for (i = 0; i < num_entries; i++, kv++) {
+
+	    LOG(LOG_DBG3, "  k/v[%d] loid=%d fid=%d off/len=%ld/%ld addr=%ld s=%lu",
+		i, kv->k.pk.loid, kv->k.pk.fid, kv->k.offset,
+		kv->v.len, kv->v.addr, kv->v.stripe);
+	}
+    }
+
+    brm = bput2_records(md, index, bput2m);
+    free(bput2m);
+
+    brmp = brm;
+    if (!brmp) {
+	ret = ULFS_ERROR_MDHIM;
+	LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+	    md->mdhim_rank);
+    }
+
+    while (brmp) {
+	if (brmp->error) {
+	    ret = ULFS_ERROR_MDHIM;
+	    LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM - %d\n",
+		md->mdhim_rank, brmp->error);
+	    break;
+	}
+
+	brm = brmp;
+	brmp = brmp->next;
+	mdhim_full_release_msg(brm);
+    }
+
+_process_fattr:
+    num_entries =
+        *((unsigned long *)(app_config->shm_superblocks[client_side_id]
+                            + app_config->fmeta_offset));
+    if (num_entries == 0) {
+        LOG(LOG_DBG, "no file attribute entries to sync");
+        return 0;
+    }
+
+    /* file attributes are stored in the superblock shared memory
+     * created by the client*/
+    f_fattr_t *attr_payload =
+        (f_fattr_t *)(app_config->shm_superblocks[client_side_id]
+                + app_config->fmeta_offset + page_sz);
+
+
+    for (i = 0; i < num_entries; i++) {
+        *fattr_keys[i] = attr_payload[i].gfid;
+        fattr_vals[i]->loid = attr_payload[i].loid;
+        fattr_vals[i]->file_attr = attr_payload[i].file_attr;
+        strcpy(fattr_vals[i]->fname, attr_payload[i].filename);
+
+        fattr_key_lens[i] = sizeof(fattr_key_t);
+        fattr_val_lens[i] = sizeof(fattr_val_t);
+    }
+
+    if (num_entries == 1) {
+        brm = mdhimPut(md, unifycr_indexes[1],
+                       fattr_keys[0], sizeof(fattr_key_t),
+                       fattr_vals[0], sizeof(fattr_val_t),
+                       NULL, NULL);
+        if (!brm || brm->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, "Rank - %d: Error inserting keys/values into MDHIM\n",
+                md->mdhim_rank);
+        } else {
+            ret = ULFS_SUCCESS;
+        }
+        mdhim_full_release_msg(brm);
+
+    } else {
+        brm = mdhimBPut(md, unifycr_indexes[1],
+                        (void **)(&fattr_keys[0]), fattr_key_lens,
+                        (void **)(&fattr_vals[0]), fattr_val_lens, num_entries,
+                        NULL, NULL);
+        brmp = brm;
+        if (!brmp || brmp->error) {
+            ret = ULFS_ERROR_MDHIM;
+            LOG(LOG_DBG, 
+                "Rank - %d: Error inserting keys/values into MDHIM\n", md->mdhim_rank);
+        }
+
+        while (brmp) {
+            if (brmp->error < 0) {
+                ret = ULFS_ERROR_MDHIM;
+                break;
+            }
+
+            brm = brmp;
+            brmp = brmp->next;
+            mdhim_full_release_msg(brm);
+        }
+    }
+
+_exit:
+    LOG(LOG_DBG, "fsync sts=%d", ret);
+    return ret;
+}
 
 /* get the locations of all the requested file segments from
  * the key-value store.
@@ -520,23 +722,23 @@ int meta_batch_get(int app_id, int client_id,
                    int thrd_id, int dbg_rank, char *shm_reqbuf, int num,
                    msg_meta_t *del_req_set)
 {
-    cli_req_t *tmp_cli_req = (cli_req_t *) shm_reqbuf;
+    shm_meta_t *tmp_cli_req = (shm_meta_t *) shm_reqbuf;
 
     int i, rc = 0;
     for (i = 0; i < num; i++) {
-        fsmd_keys[2 * i]->fid = tmp_cli_req[i].fid;
+        fsmd_keys[2 * i]->fid = \
+        fsmd_keys[2 * i + 1]->fid = tmp_cli_req[i].src_fid;
         fsmd_keys[2 * i]->offset = tmp_cli_req[i].offset;
-        fsmd_ley_lens[2 * i] = sizeof(fsmd_key_t);
-        fsmd_keys[2 * i + 1]->fid = tmp_cli_req[i].fid;
         fsmd_keys[2 * i + 1]->offset =
             tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
-        fsmd_ley_lens[2 * i + 1] = sizeof(fsmd_key_t);
+        fsmd_key_lens[2 * i] = \
+        fsmd_key_lens[2 * i + 1] = sizeof(fsmd_key_t);
 
     }
 
-    md->primary_index = unifycr_indexes[0];
-    bgrm = mdhimBGet(md, md->primary_index, (void **)fsmd_keys,
-                     fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
+    bgrm = mdhimBGet(md, unifycr_indexes[0],
+                     (void **)fsmd_keys,
+                     fsmd_key_lens, 2 * num, MDHIM_RANGE_BGET);
 
     int tot_num = 0;
     int dest_client, dest_app;
@@ -553,19 +755,11 @@ int meta_batch_get(int app_id, int client_id,
             tmp_key = (fsmd_key_t *)bgrm->keys[i];
             tmp_val = (fsmd_val_t *)bgrm->values[i];
 
-            if (fam_fs) {
-                /* TODO: Add support for app, client ids in FAMfs */
-                dest_app = 0;
-                dest_client = 0;
-                del_req_set->msg_meta[tot_num].fam_cid = tmp_val->chunk;
-                del_req_set->msg_meta[tot_num].fam_nid = tmp_val->node;
-            } else {
-                memcpy(&dest_app, (char *) & (tmp_val->app_rank_id), sizeof(int));
-                memcpy(&dest_client, (char *) & (tmp_val->app_rank_id)
-                       + sizeof(int), sizeof(int));
-                /* rank of the remote delegator*/
-                del_req_set->msg_meta[tot_num].dest_delegator_rank = tmp_val->delegator_id;
-            }
+            memcpy(&dest_app, (char *) & (tmp_val->app_rank_id), sizeof(int));
+            memcpy(&dest_client, (char *) & (tmp_val->app_rank_id)
+                   + sizeof(int), sizeof(int));
+            /* rank of the remote delegator*/
+            del_req_set->msg_meta[tot_num].dest_delegator_rank = tmp_val->delegator_id;
 
             /* physical offset of the requested file segment on the log file*/
             del_req_set->msg_meta[tot_num].dest_offset = tmp_val->addr;
@@ -599,24 +793,48 @@ int meta_batch_get(int app_id, int client_id,
     return rc;
 }
 
-int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
+int meta_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
 
     int tot_num = 0;
-    cli_req_t *tmp_cli_req = (cli_req_t *)shm_reqbuf;
+    shm_meta_t *tmp_cli_req = (shm_meta_t *)shm_reqbuf;
+    int legacy = (fam_fs == 0);
+    F_POOL_t *pool = f_get_pool();
+    F_SLABMAP_ENTRY_t *sme;
+    F_MAP_KEYSET_u *keysets = NULL;
 
-    int i, rc = 0;
+    int i, j, rc = 0;
     for (i = 0; i < num; i++) {
-        fsmd_keys[2*i]->fid        = tmp_cli_req[i].fid;
-        fsmd_keys[2*i + 1]->fid    = tmp_cli_req[i].fid;
-        fsmd_keys[2*i]->offset     = tmp_cli_req[i].offset;
-        fsmd_keys[2*i + 1]->offset = tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
-        fsmd_ley_lens[2*i]         = sizeof(fsmd_key_t);
-        fsmd_ley_lens[2*i + 1]     = sizeof(fsmd_key_t);
+        /* legacy delegator shall not set layout id */
+        if (legacy && tmp_cli_req[i].loid) {
+            LOG(LOG_FATAL, " srv: md req %d of %d: loid=%d? fid=%d",
+                i+1, num, tmp_cli_req[i].loid, tmp_cli_req[i].src_fid);
+            return ULFS_ERROR_MDHIM;
+        }
+        /* pack loid, fid into MD key 'fid' */
+        fsmd_keys[2*i]->pk.loid     = \
+        fsmd_keys[2*i + 1]->pk.loid = tmp_cli_req[i].loid;
+        fsmd_keys[2*i]->pk.fid      = \
+        fsmd_keys[2*i + 1]->pk.fid  = tmp_cli_req[i].src_fid;
+
+        fsmd_keys[2*i]->offset      = tmp_cli_req[i].offset;
+        fsmd_keys[2*i + 1]->offset  = tmp_cli_req[i].offset + tmp_cli_req[i].length - 1;
+        fsmd_key_lens[2*i]          = sizeof(fsmd_key_t);
+        fsmd_key_lens[2*i + 1]      = sizeof(fsmd_key_t);
     }
 
-    md->primary_index = unifycr_indexes[0];
-    bgrm = mdhimBGet(md, md->primary_index, (void **)fsmd_keys,
-                     fsmd_ley_lens, 2 * num, MDHIM_RANGE_BGET);
+    IF_LOG(LOG_DBG3) {
+	LOG(LOG_DBG3, "srv: md req %d keys:", num);
+	for (i = 0; i < num; i++) {
+	    LOG(LOG_DBG3, "  [%d] lo %d fid=%d off=%jd/%jd len=%d",
+		i, fsmd_keys[2*i]->pk.loid, fsmd_keys[2*i]->pk.fid,
+		fsmd_keys[2*i]->offset,
+		fsmd_keys[2*i + 1]->offset, fsmd_key_lens[2*i]);
+	}
+    }
+
+    bgrm = mdhimBGet(md, unifycr_indexes[0],
+                     (void **)fsmd_keys,
+                     fsmd_key_lens, 2 * num, MDHIM_RANGE_BGET);
 
     bgrmp = bgrm;
     while (bgrmp) {
@@ -634,18 +852,70 @@ int famfs_md_get(char *shm_reqbuf, int num, fsmd_kv_t *res_kv, int *total_kv) {
         bgrm = bgrmp;
     }
 
+    /*
+     *  Check the slab map for every stripe received and update it 
+     *  if that slab is missing 
+     */
+    keysets = calloc(pool->info.layouts_count, sizeof(F_MAP_KEYSET_u));
+    if (keysets) {
+	for (i = 0; i < tot_num; i++) {
+	    F_LAYOUT_t *lo = f_get_layout(res_kv[i].k.pk.loid);
+	    f_stripe_t stripe = res_kv[i].v.stripe;
+	    f_slab_t slab;
+	    F_MAP_KEYSET_u *keyset;
+	    ASSERT(lo);
+
+	    keyset = &keysets[res_kv[i].k.pk.loid];
+	    if (!keyset->slabs)
+    	    	keyset->slabs = calloc(tot_num, sizeof(f_slab_t));
+	    slab = stripe_to_slab(lo, stripe);
+	    for (j = 0; j < keyset->count; j++) {
+		if (keyset->slabs[j] == slab) break;
+	    }
+
+	    if (j == keyset->count) {
+		sme = (F_SLABMAP_ENTRY_t *)f_map_get_p(lo->slabmap, slab);
+		if (!sme || !sme->slab_rec.mapped) {
+		    keyset->slabs[keyset->count] = slab;
+		    keyset->count++;
+		    printf("added slab %u (s %lu) to update count %d\n",
+			slab, stripe, keyset->count);
+		}
+	    }
+	}
+
+	for (i = 0; i < pool->info.layouts_count; i++) {
+	    F_LAYOUT_t *lo = f_get_layout(i);
+	    F_MAP_KEYSET_u *keyset = &keysets[i];
+	    if (keyset->count > 0) {
+		LOG(LOG_DBG2, "%s: updating %d slabs", lo->info.name, keyset->count);
+	    	if ((rc = f_slabmap_update(lo->slabmap, keyset)))
+		    LOG(LOG_ERR, "%s: error %d updating global slabmap", 
+			lo->info.name, rc);
+	    	if (log_print_level > 0)
+		    f_print_sm(dbg_stream, lo->slabmap, lo->info.chunks, 
+			lo->info.slab_stripes);
+	    }
+	    free(keyset->slabs);
+	}
+	free(keysets);
+    }
+
     if (total_kv)
         *total_kv = tot_num;
-    /*
-    for (i = 0; i < *total_kv; i++)
-        printf("srv: got md k/v[%d] fid=%ld off=%jd/len=%jd addr=%jd node=%jd chunk=%jd\n", i, 
-        res_kv[i].k.fid, res_kv[i].k.offset, 
-        res_kv[i].v.len, res_kv[i].v.addr, res_kv[i].v.node, res_kv[i].v.chunk);
-    */
+
+    IF_LOG(LOG_DBG3) {
+	LOG(LOG_DBG3, "srv: got %d k/v pairs:", tot_num);
+	for (i = 0; i < tot_num; i++) {
+	    LOG(LOG_DBG3, "  k/v[%d] lo %d fid=%d off/len=%jd/%jd addr=%ld s=%lu",
+		i, res_kv[i].k.pk.loid, res_kv[i].k.pk.fid,
+		res_kv[i].k.offset, res_kv[i].v.len,
+		res_kv[i].v.addr, res_kv[i].v.stripe);
+	}
+    }
 
     return rc;
 }
-
 
 void print_bget_indices(int app_id, int cli_id,
                         send_msg_t *index_set, int tot_num)
@@ -693,6 +963,7 @@ void print_bget_indices(int app_id, int cli_id,
 
 }
 
+#if 0
 void print_fsync_indices(fsmd_key_t **fsmd_keys,
                          fsmd_val_t **fsmd_vals, long num_entries)
 {
@@ -705,6 +976,7 @@ void print_fsync_indices(fsmd_key_t **fsmd_keys,
 
     }
 }
+#endif
 
 int meta_free_indices()
 {
@@ -731,11 +1003,11 @@ int meta_free_indices()
     return 0;
 }
 
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys, int op)
 {
 	struct index_t *primary_index = unifycr_indexes[F_MD_IDX_MAPS_START + map_id];
 
-	return mdhim_ps_bget(md, primary_index, buf, size, keys);
+	return mdhim_ps_bget(md, primary_index, buf, size, keys, op);
 }
 
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,

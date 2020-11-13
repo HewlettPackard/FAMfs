@@ -3,13 +3,57 @@ chunk_bits = 20
 chunk_mem = 0
 index_buf_size = 20M
 fattr_buf_size = 1M
+debug = on
+# lfa_port = 30000 ; port for lf_atomics
+# cq_hwm = 75 ; high water mark for committed stripes queue
+# cq_hwm_tmo = 30 ; time to wait (in sec) for commit que to read HWM, flush
+# fs_type = famfs | unifycr | both ; default: famfs
+# cache_wr = on ; turn on write cache, default: off
+# cache_rd = on ; turn on metadata cache on read, default: off
+# fsync_tmo = 600 ; seconds client can wait for syncing metadata with RS, default: 300
+
+[log]
+# verbosity = 7 ; the highest level:7
+# dir = /dev/shm
+# file = log
 
 [meta]
 server_ratio = 1
 range_size = 1048576
+# db_path = /dev/shm
+# release_committed = off ; default: on
 
 [spillover]
 size = 2G
+# data_dir = /dev/shm
+# meta_dir = /dev/shm
+
+[client]
+# max_files = 128 ; default:128
+
+[encode]
+# wait_on_close = on ; dealy close() until EDR is done, default:off
+# enc_bdelay = 10    ; encoded batch delay, default 0
+# enc_freeq_sz = 32  ; encode free queue size, default 64
+# rec_freeq_sz = 2   ; recovery free queue size, default 4
+
+[ionode]
+# id = 0 ; this is a default
+# uuid
+# host = "node01" ; node's hostname or IP
+# mds = 1 ; run one MD server on this ionode
+z_node = io1
+topo = "1.1.5"
+geo = "R2.Ch1.FS1.N1"
+
+[ionode]
+id = 1
+# uuid
+# host = "node01" ; node's hostname or IP
+# mds = 1 ; run one MD server on this ionode
+z_node = io2
+topo = "2.1.5"
+geo = "R2.Ch1.FS5.N1"
 
 [mddevice]
 pk = 1
@@ -22,9 +66,23 @@ emulated = true ; force FAM module emulation
 pk = 0 ; default
 size = 16G ; default device size
 offset = 0 ; default
+### libfabric ###
+# fabric =
+# domain =
+# port =
+# provider = zhpe ; default:sockets
+memreg = "basic,local" ; basic|local|basic,local|scalable, default:basic
+progress = manual ; auto|manual|default, default:auto
+use_cq = true ; use completion queue instead of counters
+# timeout =
+# single_ep = off ; use single EP per domain, default:on
 
 [device] # FAM module or emulated FAM
-id = 1 ; device id for layout/ag reference
+id = 1 ; Unique device id
+uuid = {bcc3b223-75d5-47e7-8788-a7afdbd95e63} ; version 4 UUID
+z_node = memory11
+topo = "1.1.5.1"
+geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
 failed = false ; default
 url = "zhpe:///ion1" ; default
 pk = 0 ; libfabric persistent key
@@ -32,28 +90,53 @@ size = 130064M ; overrides the default
 
 [device] # FAM module or emulated FAM
 id = 2
+z_node = memory11
+topo = "1.1.5.1"
+geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
 url = "zhpe:///ion" ; default
 
 [device]
-id = 3
+# id = 3 ; Next device ID default
+z_node = memory12
+topo = "1.1.5.2"
+geo = "R2.Ch1.FS2.Node-2.C5" ; MFW model
 url = "zhpe:///ion"
 
 [device]
-failed = true
 id = 4
+z_node = memory21
+topo = "2.1.5.1"
+geo = "R2.Ch1.FS6.Node-1.C5" ; MFW model
 url = "zhpe:///ion"
 
+[device]
+# id = 5 ; Next device ID default
+z_node = memory21
+topo = "2.1.5.1"
+geo = "R2.Ch1.FS6.Node-1.C5" ; MFW model
+url = "zhpe:///ion"
+
+[device]
+id = 6
+failed = true
+z_node = memory22
+topo = "2.1.5.2"
+geo = "R2.Ch1.FS6.Node-2.C5" ; MFW model
+# url = "zhpe:///ion"
+
 [ag] # Allocation group
-devices = [1,2] ; List of famid
-geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
+devices = [1,3,2] ; List of famid
 
 [ag]
-devices = [3,4]
+devices = [5,4,6]
 
 [layout]
-id = 1 ; optional: layout ids starts with one
+# Default layout
+id = 0 ; optional: layout ids starts with zero
 name = "1D:1M"
 devices = [1,2,3,4] ; optional list of device IDs
+# sq_depth = 4096 ; preallocated stripes queue size per layout and compute node
+# sq_lwm = 25 ; low water mark for preallocated queue
 
 [layout]
 name = "2D:1M"

@@ -13,11 +13,14 @@
 
 #include "famfs_bitmap.h"
 #include "f_map.h"
+#include "f_pool.h"
+#include "f_layout.h"
 #include "mdhim.h"
 
 
 /* TEST options */
 #define TEST_MDHIM_DBG	0	/* 1: MDHIM debug enabled */
+#define TEST_DO_RELOAD	1	/* 1: Close MDHIM after FLUSH and re-load map */
 #define RND_REPS	1000	/* number of passes for random test */
 #define SQ_REPS		1000	/* number of passes for sequential test */
 #define BOS_PAGE_MAX	4	/* max BoS page size, in kernel pages */
@@ -63,7 +66,8 @@ static int my_node;
 static int node_size = 0;
 
 static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name);
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys);
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys,
+    int op);
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
     size_t value_len);
 static int ps_bdel(int map_id, size_t size, void **keys);
@@ -184,6 +188,7 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
 					intl, LEVELDB, MDHIM_LONG_INT_KEY, name);
 	if (unifycr_indexes[id] == NULL)
 		return -1;
+	unifycr_indexes[id]->has_stats = 0;
 
 	printf("%d: create_persistent_map:%d %s index[%u] interleave:%d\n",
 	       md->mdhim_rank, info->map_id, name, id, intl);
@@ -192,11 +197,12 @@ static int create_persistent_map(F_MAP_INFO_t *info, int intl, char *name)
     return 0;
 }
 
-static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys)
+static ssize_t ps_bget(unsigned long *buf, int map_id, size_t size, uint64_t *keys,
+    int op)
 {
         struct index_t *primary_index = unifycr_indexes[map_id + 1];
 
-        return mdhim_ps_bget(md, primary_index, buf, size, keys);
+        return mdhim_ps_bget(md, primary_index, buf, size, keys, op);
 }
 
 static int ps_bput(unsigned long *buf, int map_id, size_t size, void **keys,
@@ -245,9 +251,10 @@ static F_COND_t cv_laminated = {
 /* The [simple] bitmap condition: a bit is set */
 static F_COND_t laminated = F_BIT_CONDITION;
 
-/* These conditions shall match any non-zero value */
-/* PSET_NON_ZERO - any non-zero value in [b]bitmap */
-#define PSET_NON_ZERO	((F_COND_t)(BB_PAT01|BB_PAT10|BB_PAT11))
+/* These conditions shall match any non-zero value in bitmaps */
+#define PSET_B_NON_ZERO		F_BIT_CONDITION
+#define PSET_BB_NON_ZERO	((F_COND_t)(BB_PAT01|BB_PAT10|BB_PAT11))
+
 /* Return the number of 1-bits in 'entry' */
 static int sm_se_or_ee_not_zero(void *arg, const F_PU_VAL_t *entry)
 {
@@ -271,6 +278,35 @@ static F_COND_t se_or_ee_not_zero = {
     .vf_get = &sm_se_or_ee_not_zero,
 };
 
+/* Map load callback function data */
+struct cb_data {
+    unsigned int	n_ext;		/* arg: extent 3 */
+    unsigned int	pu_entries;	/* arg: number of map entries per PU */
+    unsigned int	entry_sz;	/* arg: map entry size */
+    int			ext_failed;	/* result */
+};
+
+/* Map load callback function - for structured maps */
+static void map_load_cb(uint64_t e __attribute__((unused)),
+	void *arg, const F_PU_VAL_t *pu)
+{
+    struct cb_data *data = (struct cb_data *) arg;
+    const F_SLAB_ENTRY_t *se;
+    const F_EXTENT_ENTRY_t *ee;
+    unsigned int i;
+
+    /* Scan PU entries */
+    for (i = 0; i < data->pu_entries; i++) {
+	se = &pu->se;
+	if (se->mapped) {
+	    ee = &pu->ee + data->n_ext;
+	    if (ee->failed)
+		data->ext_failed++;
+	}
+	pu = (F_PU_VAL_t *) ((char*)pu + data->entry_sz);
+    }
+}
+
 
 /* unittest: f_map */
 int main (int argc, char *argv[]) {
@@ -281,6 +317,7 @@ int main (int argc, char *argv[]) {
     F_SLAB_ENTRY_t *se;
     F_EXTENT_ENTRY_t *ee;
     mdhim_options_t *db_opts = NULL;
+    struct cb_data cbdata;
     size_t page, page_sz, pu_sz;
     uint64_t e, ul;
     unsigned long *p;
@@ -297,7 +334,7 @@ int main (int argc, char *argv[]) {
     pass = rc = v = 0;
     e = ul = 0;
     ui = ext = 0;
-    p = NULL; it = NULL;
+    p = NULL; it = NULL; bosl = NULL;
 
 
     /*
@@ -315,17 +352,17 @@ int main (int argc, char *argv[]) {
     if (!md_cfg.layout_name || !db_opts) goto err;
 
     t = 2; /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     if ((lo_info = f_get_layout_info(layout_id)) == NULL) goto err;
+    if (my_node == 0) {
+	printf("\n"); f_print_layouts(); printf("\n");
+    }
 
     t = 3; /* Bring up DB thread */
     meta_init_store(db_opts);
     if (md == NULL || unifycr_indexes[0] == NULL) goto err;
     if (node_size <= 0) goto err;
-
-    if (my_node == 0)
-	unifycr_config_print(&md_cfg, NULL);
 
     printf("%d: Layout %d %s (%uD+%uP) chunk:%u slab_stripes:%u devnum:%u\n",
 	my_node,
@@ -360,7 +397,7 @@ int main (int argc, char *argv[]) {
     t = 8; /* Remove old DB files for Layout0 */
     rc = meta_sanitize(); db_opts = NULL;
     if (rc) goto err;
-    f_free_layout_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
 
@@ -368,14 +405,14 @@ int main (int argc, char *argv[]) {
      * Test group two: Bitmaps with KV store backend, random keys
      */
     tg = 2;
-    printf("Running group %d tests: bitmaps with KV store backend, random keys\n", tg);
+    printf("Running group %d tests: bitmaps, random keys\n", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -389,6 +426,10 @@ int main (int argc, char *argv[]) {
 
 	/* One and two-bits bitmaps */
 	for (e_sz = 1; e_sz <= 2; e_sz++) {
+	    /* cond_1: 1 if bitmap, 11 if bbitmap */
+	    F_COND_t cond_1 = (e_sz==1)?laminated:cv_laminated;
+	    /* cond_non_zero: 1 if bitmap, 01, 10 or 11 if bbitmap */
+	    F_COND_t cond_non_zero = (e_sz==1)?PSET_B_NON_ZERO:PSET_BB_NON_ZERO;
 	    pass = rc = v = 0;
 	    e = 0;
 	    p = NULL; it = NULL;
@@ -434,7 +475,7 @@ int main (int argc, char *argv[]) {
 			max_globals += (node_size - 1)*RND_REPS;
 
 		    t = 6; /* Count entries in loaded map */
-		    it = bitmap_new_iter(m,(e_sz==1)?laminated:cv_laminated);
+		    it = bitmap_new_iter(m,cond_1);
 		    it = f_map_seek_iter(it, 0); /* create BoS zero */
 		    if (!it) goto err2;
 		    actual = v = (int)f_map_weight(it, F_MAP_WHOLE);
@@ -518,7 +559,7 @@ int main (int argc, char *argv[]) {
 		t = 14; /* Check my entries in loaded map */
 		e = 0;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    if (global && !f_map_prt_my_global(map, e))
@@ -537,7 +578,10 @@ int main (int argc, char *argv[]) {
 		    ul++;
 		}
 		t = 15; /* Check number of entries in my partition */
-		if (ul != RND_REPS) goto err3;
+		if (ul != RND_REPS) goto err2;
+		it = f_map_seek_iter(it, 0);
+		rc = (int)f_map_weight(it, F_MAP_WHOLE);
+		if (rc != RND_REPS) goto err3;
 		f_map_free_iter(it); it = NULL;
 
 		t = 16; /* Check all log entries are in loaded map */
@@ -565,10 +609,7 @@ int main (int argc, char *argv[]) {
 
 		t = 18; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(map);
-		/* Note: For bitmap (e_sz:1) the condition evaluated
-		  as a boolean, cv_laminated is 'true' so that is the same
-		  as F_BIT_CONDITION, i.e. iterate over set bits */
-		it = f_map_get_iter(map, cv_laminated, 0);
+		it = f_map_get_iter(map, cond_1, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    if (global && !f_map_prt_my_global(map, e))
@@ -627,7 +668,7 @@ int main (int argc, char *argv[]) {
 		rc = f_map_load(map);
 		if (rc != 0) goto err1;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    ul++;
@@ -677,7 +718,7 @@ int main (int argc, char *argv[]) {
     t = 26;
     rc = meta_sanitize();
     if (rc) goto err;
-    f_free_layout_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
 
@@ -685,7 +726,7 @@ int main (int argc, char *argv[]) {
      * Test group three: Bitmaps with KV store backend, sequential keys
      */
     tg = 3;
-    printf("Running group %d tests: bitmaps with KV store backend, sequential keys\n", tg);
+    printf("Running group %d tests: bitmaps, sequential keys\n", tg);
     global = 0;
 
     t = 0;
@@ -693,7 +734,7 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -707,7 +748,12 @@ int main (int argc, char *argv[]) {
 
 	/* One and two-bits bitmaps */
 	for (e_sz = 1; e_sz <= 2; e_sz++) {
+	    /* cond_1: 1 if bitmap, 11 if bbitmap */
+	    F_COND_t cond_1 = (e_sz==1)?laminated:cv_laminated;
+	    /* cond_non_zero: 1 if bitmap, 01, 10 or 11 if bbitmap */
+	    F_COND_t cond_non_zero = (e_sz==1)?PSET_B_NON_ZERO:PSET_BB_NON_ZERO;
 	    pass = rc = v = 0;
+	    e = 0;
 	    p = NULL; it = NULL;
 
 	    t = 1; /* Create one-bit (e_sz:1) or bifold (e_sz:2) map */
@@ -747,7 +793,7 @@ int main (int argc, char *argv[]) {
 		    if (rc != 0) goto err1;
 
 		    t = 6; /* Count entries in loaded map */
-		    it = bitmap_new_iter(m,(e_sz==1)?laminated:cv_laminated);
+		    it = bitmap_new_iter(m,cond_1);
 		    it = f_map_seek_iter(it, 0); /* create BoS zero */
 		    if (!it) goto err2;
 		    v = (int)f_map_weight(it, F_MAP_WHOLE);
@@ -806,7 +852,7 @@ int main (int argc, char *argv[]) {
 		t = 14; /* Check my entries in loaded map */
 		e = 0;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    /* present in log? */
@@ -851,10 +897,7 @@ int main (int argc, char *argv[]) {
 
 		t = 18; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(map);
-		/* Note: For bitmap (e_sz:1) the condition evaluated
-		  as a boolean, cv_laminated is 'true' so that is the same
-		  as F_BIT_CONDITION, i.e. iterate over set bits */
-		it = f_map_get_iter(map, cv_laminated, 0);
+		it = f_map_get_iter(map, cond_1, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    /* clear PU of 'it->entry' in map */
@@ -906,7 +949,7 @@ int main (int argc, char *argv[]) {
 		rc = f_map_load(map);
 		if (rc != 0) goto err1;
 		ul = 0;
-		it = f_map_get_iter(map, PSET_NON_ZERO, 0);
+		it = f_map_get_iter(map, cond_non_zero, 0);
 		for_each_iter(it) {
 		    e = it->entry;
 		    ul++;
@@ -956,7 +999,7 @@ int main (int argc, char *argv[]) {
     t = 26;
     rc = meta_sanitize();
     if (rc) goto err;
-    f_free_layout_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
 
@@ -964,14 +1007,14 @@ int main (int argc, char *argv[]) {
      * Test group four: Structured map with KV store backend, random keys
      */
     tg = 4;
-    printf("Running group %d tests: structured map with KV store backend, random keys\n", tg);
+    printf("Running group %d tests: structured map, random keys\n", tg);
 
     t = 0;
     /* Read default metadata (db_opts, layouts) config */
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -998,6 +1041,9 @@ int main (int argc, char *argv[]) {
 	    if (!map) goto err0;
 	    dirty_sz = map->geometry.bosl_pu_count;
 	    pu_factor = map->geometry.pu_factor;
+	    cbdata.pu_entries = 1U<<pu_factor;
+	    cbdata.entry_sz = e_sz;
+	    cbdata.n_ext = iext;
 
 	    t = 2; /* Create local bitmap for tracking writes to KV store */
 	    assert(!mlog);
@@ -1026,7 +1072,8 @@ int main (int argc, char *argv[]) {
 		    int actual, max_globals;
 
 		    t = 5; /* Load empty map */
-		    rc = f_map_load(m);
+		    cbdata.ext_failed = 0;
+		    rc = f_map_load_cb(m, map_load_cb, (void*)&cbdata);
 		    if (rc != 0) goto err1;
 		    /* maximal numbers of entries in map */
 		    max_globals = pass;
@@ -1039,6 +1086,8 @@ int main (int argc, char *argv[]) {
 		    if (!it) goto err2;
 		    actual = v = (int)f_map_weight(it, F_MAP_WHOLE);
 		    if (!IN_RANGE(v, pass, max_globals)) goto err3;
+		    /* check weight vs. load fn callback result */
+		    if (v != (rc = cbdata.ext_failed)) goto err3;
 
 		    t = 7; /* Add an unique random entry */
 		    for (i = 0; i <= actual; i++) {
@@ -1190,6 +1239,13 @@ int main (int argc, char *argv[]) {
 		    f_map_mark_dirty(map, it->entry);
 		}
 		f_map_free_iter(it); it = NULL;
+
+		/* We need the barrier to ensure the count in map load cb fn
+		returns the exact global entries number; otherwise some got deleted
+		in DB by a peer and the callback function count would have less */
+		if (global)
+		    MPI_BARRIER;
+
 		/* delete empty PU in DB */
 		rc = f_map_flush(map);
 		if (rc != 0) goto err2;
@@ -1289,7 +1345,7 @@ int main (int argc, char *argv[]) {
     t = 26;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layout_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
 
@@ -1297,7 +1353,7 @@ int main (int argc, char *argv[]) {
      * Test group five: Structured map with KV store backend, sequential keys
      */
     tg = 5;
-    printf("Running group %d tests: structured map with KV store backend, sequential keys\n", tg);
+    printf("Running group %d tests: structured map with KV, sequential keys\n", tg);
     global = 0;
 
     t = 0;
@@ -1305,7 +1361,7 @@ int main (int argc, char *argv[]) {
     rc = meta_init_conf(&md_cfg, &db_opts, argc, argv);
     if (rc != 0) goto err;
     /* Load and parse layout configuration */
-    rc = f_set_layout_info(&md_cfg);
+    rc = f_set_layouts_info(&md_cfg);
     if (rc != 0) goto err;
     /* Bring up DB thread */
     meta_init_store(db_opts);
@@ -1458,7 +1514,33 @@ int main (int argc, char *argv[]) {
 		if (ul != SQ_REPS) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 16; /* Check all log entries are in loaded map */
+#if TEST_DO_RELOAD > 1
+		t = 16; /* Re-load map from MDHIM */
+		f_map_exit(map); m = map = NULL;
+		rcu_unregister_thread();
+
+		db_opts=md->db_opts;
+		mdhimClose(md); md = NULL;
+		//mdhim_options_destroy(db_opts);
+		//rc = mdhim_options_cfg(&md_cfg, &db_opts);
+		//assert( rc == 0 );
+		meta_init_store(db_opts);
+		if (md == NULL) goto err0;
+
+		rcu_register_thread();
+		map = f_map_init(F_MAPTYPE_STRUCTURED, e_sz, (pages==1)?0:page_sz,
+				 F_MAPLOCKING_DEFAULT);
+		assert( mlog && map );
+		rc = f_map_init_prt(map, node_size, my_node, 0, global);
+		assert( rc == 0 );
+		rc = f_map_register(map, layout_id);
+		if (rc) { printf("MAP register error:%d\n", rc); goto err0; }
+		rc = f_map_load(map);
+		if (rc) { printf("MAP re-load error:%d\n", rc); goto err0; }
+		//MPI_BARRIER;
+#endif
+
+		t = 17; /* Check all log entries are in loaded map */
 		ul = 0;
 		it = f_map_get_iter(mlog, F_BIT_CONDITION, 0);
 		for_each_iter(it) {
@@ -1472,11 +1554,11 @@ int main (int argc, char *argv[]) {
 		    if (v != 2) goto err3;
 		    ul++;
 		}
-		t = 17; /* Check number of entries in log */
+		t = 18; /* Check number of entries in log */
 		if (ul != SQ_REPS) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 18; /* Clear all PUs in DB */
+		t = 19; /* Clear all PUs in DB */
 		pu_sz = f_map_pu_size(map);
 		it = f_map_get_iter(map, sm_extent_failed, iext);
 		for_each_iter(it) {
@@ -1494,7 +1576,7 @@ int main (int argc, char *argv[]) {
 		rc = f_map_flush(map);
 		if (rc != 0) goto err2;
 
-		t = 19; /* Delete all BoS entries */
+		t = 20; /* Delete all BoS entries */
 		it = f_map_get_iter(map, F_NO_CONDITION, 0);
 		ui = map->nr_bosl;
 		if (ui > SQ_REPS) goto err1; /* +1 for BoS #0 */
@@ -1517,7 +1599,7 @@ int main (int argc, char *argv[]) {
 		    it->bosl = NULL; /* make for_each_iter() go next BoS */
 		    ul++;
 		}
-		t = 20; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 21; /* Extra check: map BoS accounting (nr_bosl) */
 		if (ul != ui) goto err1;
 		v = f_map_max_bosl(map);
 		if (map->nr_bosl) {
@@ -1531,7 +1613,7 @@ int main (int argc, char *argv[]) {
 
 		MPI_BARRIER;
 
-		t = 21; /* Count foreign entries in loaded map */
+		t = 22; /* Count foreign entries in loaded map */
 		/* load all map partitions */
 		rc = f_map_init_prt(map, node_size, my_node, 0, 1);
 		if (rc != 0) goto err1;
@@ -1547,7 +1629,7 @@ int main (int argc, char *argv[]) {
 		if (ul) goto err3;
 		f_map_free_iter(it); it = NULL;
 
-		t = 22; /* Delete all map BoSses */
+		t = 23; /* Delete all map BoSses */
 		it = f_map_new_iter(map, F_NO_CONDITION, 0);
 		it = f_map_next_bosl(it);
 		for_each_bosl(it)
@@ -1555,7 +1637,7 @@ int main (int argc, char *argv[]) {
 		if (map->nr_bosl) goto err1;
 		f_map_free_iter(it); it = NULL;
 
-		t = 23; /* Delete all log entries */
+		t = 24; /* Delete all log entries */
 		m = mlog; /* for error print */
 		ul = mlog->nr_bosl;
 		it = f_map_new_iter(mlog, F_BIT_CONDITION, 0);
@@ -1566,7 +1648,7 @@ int main (int argc, char *argv[]) {
 		    if (v != 2) goto err3;
 		    if ((rc = f_map_delete_bosl(mlog, bosl))) goto err3;
 		}
-		t = 24; /* Extra check: map BoS accounting (nr_bosl) */
+		t = 25; /* Extra check: map BoS accounting (nr_bosl) */
 		if ((ul = mlog->nr_bosl)) goto err1;
 		if ((v = f_map_max_bosl(mlog))) goto err2;
 		f_map_free_iter(it); it = NULL;
@@ -1577,7 +1659,7 @@ int main (int argc, char *argv[]) {
 
 		MPI_BARRIER;
 	    }
-	    t = 25; /* map exit: must survive */
+	    t = 26; /* map exit: must survive */
 	    f_map_exit(map);
 	    f_map_exit(mlog);
 	    m = mlog = map = NULL;
@@ -1585,10 +1667,10 @@ int main (int argc, char *argv[]) {
     }
     rcu_unregister_thread();
 
-    t = 26;
+    t = 27;
     rc = meta_sanitize();
     if (rc) goto err1;
-    f_free_layout_info();
+    if ((rc = f_free_layouts_info())) goto err;
     unifycr_config_free(&md_cfg);
 
     MPI_BARRIER;

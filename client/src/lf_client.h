@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2018, HPE
+ * Copyright (c) 2017-2020, HPE
  *
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
@@ -12,16 +12,16 @@
 #include "famfs_lf_connect.h"
 #include "famfs_stripe.h"
 #include "famfs_stats.h"
+#include "f_pool.h"
 
 
 typedef struct lfs_ctx_ {
-	N_PARAMS_t	*lfs_params;	/* LF clients */
-	N_STRIPE_t	*fam_stripe;	/* FAM stripe attributes */
+	F_POOL_t	*pool;		/* famfs pool structure, reference */
+//	N_STRIPE_t	*fam_stripe;	/* FAM stripe attributes */
 	struct famsim_stats *famsim_stats_fi_wr; /* Carbion stats: fi_write */
 } LFS_CTX_t;
 
-
-int lfs_connect(char *cmd, int rank, size_t rank_size, LFS_CTX_t **lfs_ctx_p);
+int lfs_connect(LFS_CTX_t **lfs_ctx_pp);
 void free_lfc_ctx(LFS_CTX_t **lfs_ctx_p);
 
 #endif /* LF_CLIENT_H */

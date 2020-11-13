@@ -342,7 +342,7 @@ static size_t construct_server_argv(unifycr_args_t* args,
         if (args->server_path != NULL) {
             server_argv[0] = strdup(args->server_path);
         } else {
-            server_argv[0] = strdup(BINDIR "/unifycrd");
+            server_argv[0] = strdup(BINDIR "/famfsd");
         }
         server_argv[1] = strdup("-Don");
     }
@@ -449,7 +449,7 @@ static int jsrun_launch(unifycr_resource_t* resource,
     construct_server_argv(args, argv + jsrun_argc);
 
     execvp(argv[0], argv);
-    perror("failed to execvp() jsrun to launch unifycrd");
+    perror("failed to execvp() jsrun to launch famfsd");
     return -errno;
 }
 
@@ -468,7 +468,7 @@ static int jsrun_terminate(unifycr_resource_t* resource,
     char** argv = NULL;
     char n_nodes[16];
 
-    // full command: jsrun <jsrun args> pkill unifycrd
+    // full command: jsrun <jsrun args> pkill famfsd
     jsrun_argc = 11;
     snprintf(n_nodes, sizeof(n_nodes), "%zu", resource->n_nodes);
 
@@ -485,10 +485,10 @@ static int jsrun_terminate(unifycr_resource_t* resource,
     argv[7] = strdup("-c1");
     argv[8] = strdup("-a1");
     argv[9] = strdup("pkill");
-    argv[10] = strdup("unifycrd");
+    argv[10] = strdup("famfsd");
 
     execvp(argv[0], argv);
-    perror("failed to execvp() jsrun to pkill unifycrd");
+    perror("failed to execvp() jsrun to pkill famfsd");
     return -errno;
 }
 
@@ -525,7 +525,7 @@ static int mpirun_launch(unifycr_resource_t* resource,
     construct_server_argv(args, argv + mpirun_argc);
 
     execvp(argv[0], argv);
-    perror("failed to execvp() mpirun to launch unifycrd");
+    perror("failed to execvp() mpirun to launch famfsd");
     return -errno;
 }
 
@@ -544,7 +544,7 @@ static int mpirun_terminate(unifycr_resource_t* resource,
     char** argv = NULL;
     char n_nodes[16];
 
-    // full command: mpirun <mpirun args> pkill unifycrd
+    // full command: mpirun <mpirun args> pkill famfsd
     mpirun_argc = 7;
     snprintf(n_nodes, sizeof(n_nodes), "%zu", resource->n_nodes);
 
@@ -557,10 +557,10 @@ static int mpirun_terminate(unifycr_resource_t* resource,
     argv[3] = strdup("--map-by");
     argv[4] = strdup("ppr:1:node");
     argv[5] = strdup("pkill");
-    argv[6] = strdup("unifycrd");
+    argv[6] = strdup("famfsd");
 
     execvp(argv[0], argv);
-    perror("failed to execvp() mpirun to pkill unifycrd");
+    perror("failed to execvp() mpirun to pkill famfsd");
     return -errno;
 }
 
@@ -599,7 +599,7 @@ static int srun_launch(unifycr_resource_t* resource,
     construct_server_argv(args, argv + srun_argc);
 
     execvp(argv[0], argv);
-    perror("failed to execvp() srun to launch unifycrd");
+    perror("failed to execvp() srun to launch famfsd");
     return -errno;
 }
 
@@ -618,7 +618,7 @@ static int srun_terminate(unifycr_resource_t* resource,
     char** argv = NULL;
     char n_nodes[16];
 
-    // full command: srun <srun args> pkill unifycrd
+    // full command: srun <srun args> pkill famfsd
     srun_argc = 7;
     snprintf(n_nodes, sizeof(n_nodes), "%zu", resource->n_nodes);
 
@@ -631,10 +631,10 @@ static int srun_terminate(unifycr_resource_t* resource,
     argv[3] = strdup("-n");
     argv[4] = strdup(n_nodes);
     argv[5] = strdup("pkill");
-    argv[6] = strdup("unifycrd");
+    argv[6] = strdup("famfsd");
 
     execvp(argv[0], argv);
-    perror("failed to execvp() srun to pkill unifycrd");
+    perror("failed to execvp() srun to pkill famfsd");
     return -errno;
 }
 
@@ -687,7 +687,7 @@ static int script_terminate(unifycr_resource_t* resource,
     char** argv = NULL;
     char n_nodes[16];
 
-    // full command: <script> <#nodes> pkill unifycrd
+    // full command: <script> <#nodes> pkill famfsd
     script_argc = 4;
     snprintf(n_nodes, sizeof(n_nodes), "%zu", resource->n_nodes);
 
@@ -697,7 +697,7 @@ static int script_terminate(unifycr_resource_t* resource,
     argv[0] = strdup(args->script);
     argv[1] = strdup(n_nodes);
     argv[2] = strdup("pkill");
-    argv[3] = strdup("unifycrd");
+    argv[3] = strdup("famfsd");
 
     execvp(argv[0], argv);
     perror("failed to execvp() custom terminate script");

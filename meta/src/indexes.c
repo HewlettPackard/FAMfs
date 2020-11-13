@@ -238,6 +238,9 @@ int update_stat(struct mdhim_t *md, struct index_t *index, void *key, uint32_t k
 	int float_type = 0;
 	struct mdhim_stat *os, *stat;
 
+	if (!index->has_stats)
+		return MDHIM_SUCCESS;
+
 	//Acquire the lock to update the stats
 	gettimeofday(&sleepstart, NULL);
 	while (pthread_rwlock_wrlock(index->mdhim_store->mdhim_store_stats_lock) == EBUSY) {
@@ -728,6 +731,7 @@ struct index_t *create_local_index(struct mdhim_t *md, int db_type, int key_type
 	li->myinfo.rank = md->mdhim_rank;
 	li->primary_id = md->primary_index->id;
 	li->stats = NULL;
+	li->has_stats = 1;
 
     if (index_name != NULL) {
         size_t name_len = strlen(index_name)+1;
@@ -875,6 +879,7 @@ struct index_t *create_global_index(struct mdhim_t *md, int server_factor,
 	gi->myinfo.rank = md->mdhim_rank;
 	gi->primary_id = gi->type == SECONDARY_INDEX ? md->primary_index->id : -1;
 	gi->stats = NULL;
+	gi->has_stats = 1;
 
     if (gi->id > 0) {
 
@@ -1304,11 +1309,24 @@ int indexes_release(struct mdhim_t *md) {
 			free(stat->max);
 			free(stat->min);
 			free(stat);
-		}			
-	
+		}
+
+		if (cur_indx->lo_count > 0)
+			free(cur_indx->key_slice_size_per_lo);
 		free(cur_indx);
 	}
+
 	return rc;
+}
+
+int next_index_msg_id(struct mdhim_t *md, struct index_t *index)
+{
+	int id;
+
+	pthread_mutex_lock(md->mdhim_comm_lock);
+	id = index->rq_msg_id++;
+	pthread_mutex_unlock(md->mdhim_comm_lock);
+	return id;
 }
 
 int pack_stats(struct index_t *index, void *buf, int size, 
@@ -1806,3 +1824,29 @@ int get_stat_flush(struct mdhim_t *md, struct index_t *index) {
 
 	return ret;
 }
+
+int mdhimSetSliceSizes(struct index_t *gi, size_t *sizes, int len) {
+	if (gi->key_type != MDHIM_UNIFYCR_KEY || len < 0) {
+		mlog(MDHIM_SERVER_CRIT, "Index:%d - Error setting SliceSizes key_type:%d not %d len=%d",
+		     gi->id, gi->key_type, MDHIM_UNIFYCR_KEY, len);
+		return -1;
+	}
+
+	free(gi->key_slice_size_per_lo);
+	if (len == 0)
+		return 0;
+
+	gi->key_slice_size_per_lo = malloc(len*sizeof(size_t));
+	if (!gi->key_slice_size_per_lo)
+		return -1;
+
+	for (int i = 0; i < len; i++) {
+		gi->key_slice_size_per_lo[i] = sizes[i];
+		mlog(MDHIM_SERVER_DBG, "index:%d - lid:%d set SliceSizes to %lu",
+		     gi->id, i, gi->key_slice_size_per_lo[i]);
+	}
+
+	gi->lo_count = len;
+	return 0;
+}
+

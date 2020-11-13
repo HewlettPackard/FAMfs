@@ -31,7 +31,9 @@
 #include <poll.h>
 #include <time.h>
 #include <string.h>
+
 #include "famfs_global.h"
+
 #include "log.h"
 #include "unifycr_request_manager.h"
 #include "unifycr_const.h"
@@ -45,24 +47,24 @@ struct timespec shm_wait_tm;
 /**
 * send the read requests to the
 * remote delegators
-* @param sock_id: which socket in the poll_set received
+* @param qid: which socket in the poll_set received
 * the application's requests
 * @param req_num: number of read requests
 * @return success/error code
 */
-int rm_read_remote_data(int sock_id, int req_num)
+int rm_read_remote_data(int qid, int req_num)
 {
 
     int rc;
 
-    int app_id = invert_sock_ids[sock_id];
+    int app_id = invert_qids[qid];
     app_config_t *app_config =
         (app_config_t *)arraylist_get(app_config_list, app_id);
 
-    int client_id = app_config->client_ranks[sock_id];
-    int dbg_rank = app_config->dbg_ranks[sock_id];
+    int client_id = app_config->client_ranks[qid];
+    int dbg_rank = app_config->dbg_ranks[qid];
 
-    int thrd_id = app_config->thrd_idxs[sock_id];
+    int thrd_id = app_config->thrd_idxs[qid];
     thrd_ctrl_t *thrd_ctrl = (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
 
     pthread_mutex_lock(&thrd_ctrl->thrd_lock);
@@ -124,29 +126,60 @@ int rm_read_remote_data(int sock_id, int req_num)
 
 }
 
-int rm_fetch_md(int sock_id, int req_num) {
+int rm_fetch_md(int qid, int req_num) {
 
     int rc;
 
-    int app_id = invert_sock_ids[sock_id];
+    int app_id = invert_qids[qid];
     app_config_t *app_config =
         (app_config_t *)arraylist_get(app_config_list, app_id);
 
-    int client_id = app_config->client_ranks[sock_id];
-    //int dbg_rank = app_config->dbg_ranks[sock_id];
+    int client_id = app_config->client_ranks[qid];
+    //int dbg_rank = app_config->dbg_ranks[qid];
 
-    int thrd_id = app_config->thrd_idxs[sock_id];
+    int thrd_id = app_config->thrd_idxs[qid];
     thrd_ctrl_t *thrd_ctrl = (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
 
     pthread_mutex_lock(&thrd_ctrl->thrd_lock);
-                            
+
     /* get the locations of all the read requests from the key-value store*/
     int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
-    fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1); 
-    //printf("srv: md fetch for client %d %p %p %p\n", client_id, app_config->shm_recv_bufs[client_id], pcnt, pmd);
-    rc = famfs_md_get(app_config->shm_req_bufs[client_id], req_num, pmd, pcnt);
+    fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1);
+
+    rc = meta_md_get(app_config->shm_req_bufs[client_id], req_num, pmd, pcnt);
 
     pthread_mutex_unlock(&thrd_ctrl->thrd_lock);
+
+    return rc;
+}
+
+int f_rm_fetch_md(int cid, int rcnt) {
+
+    int rc;
+
+    int app_id = invert_qids[cid];
+    app_config_t *app_config =
+        (app_config_t *)arraylist_get(app_config_list, app_id);
+
+    int client_id = app_config->client_ranks[cid];
+    //int dbg_rank = app_config->dbg_ranks[cid];
+
+    /*
+    int thrd_id = app_config->thrd_idxs[cid];
+    thrd_ctrl_t *thrd_ctrl = (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
+
+    pthread_mutex_lock(&thrd_ctrl->thrd_lock);
+    */
+    /* get the locations of all the read requests from the key-value store*/
+    /* FIXME: We are safe here unless the client does multiple I/O to different layouts! */
+    int *pcnt = (int *)app_config->shm_recv_bufs[client_id];
+    fsmd_kv_t *pmd = (fsmd_kv_t *)(pcnt + 1);
+
+    LOG(LOG_DBG, "[%d] fetch_md %d keys", client_id, rcnt);
+    rc = meta_md_get(app_config->shm_req_bufs[client_id], rcnt, pmd, pcnt);
+    LOG(LOG_DBG, "[%d] fetch_md rc=%d", client_id, rc);
+
+    //pthread_mutex_unlock(&thrd_ctrl->thrd_lock);
 
     return rc;
 }
@@ -243,11 +276,11 @@ void *rm_delegate_request_thread(void *arg)
 {
     cli_signature_t *my_sig = arg;
     int app_id = my_sig->app_id;
-    int sock_id = my_sig->sock_id;
+    int qid = my_sig->qid;
 
     app_config_t *app_config =
         (app_config_t *)arraylist_get(app_config_list, app_id);
-    int thrd_id = app_config->thrd_idxs[sock_id];
+    int thrd_id = app_config->thrd_idxs[qid];
     thrd_ctrl_t *thrd_ctrl =
         (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
 
@@ -275,7 +308,7 @@ void *rm_delegate_request_thread(void *arg)
             return NULL;
         }
 
-        rc = rm_receive_remote_message(app_id, sock_id, tot_sz);
+        rc = rm_receive_remote_message(app_id, qid, tot_sz);
         if (rc != 0) {
             pthread_mutex_unlock(&thrd_ctrl->thrd_lock);
             return NULL;
@@ -290,12 +323,12 @@ void *rm_delegate_request_thread(void *arg)
 * receive the requested data returned as a result of
 * the delegated read requests
 * @param app_id:
-* @param sock_id:
+* @param qid:
 * @param tot_sz: the total data size to receive
 * @return success/error code
 */
 int rm_receive_remote_message(int app_id,
-                              int sock_id, long tot_sz)
+                              int qid, long tot_sz)
 {
 
     int rc = ULFS_SUCCESS;
@@ -303,7 +336,7 @@ int rm_receive_remote_message(int app_id,
     long dbg_tot_recv = 0;
     app_config_t *app_config =
         (app_config_t *)arraylist_get(app_config_list, app_id);
-    int thrd_id = app_config->thrd_idxs[sock_id];
+    int thrd_id = app_config->thrd_idxs[qid];
     thrd_ctrl_t *thrd_ctrl =
         (thrd_ctrl_t *)arraylist_get(thrd_list, thrd_id);
 
@@ -343,7 +376,7 @@ int rm_receive_remote_message(int app_id,
                     if (irecv_flag[i] != 0) {
 
                         rc = rm_process_received_msg(app_id,
-                                                     sock_id, thrd_ctrl->del_recv_msg_buf[i],
+                                                     qid, thrd_ctrl->del_recv_msg_buf[i],
                                                      &tot_sz);
                         if (rc != ULFS_SUCCESS) {
                             return rc;
@@ -368,12 +401,12 @@ int rm_receive_remote_message(int app_id,
     }
 
     /*purify shared receive buffer*/
-    rc = sock_notify_cli(sock_id, COMM_DIGEST);
+    rc = sock_notify_cli(qid, CMD_DIGEST);
     if (rc != 0) {
         return rc;
     }
 
-    int client_id = app_config->client_ranks[sock_id];
+    int client_id = app_config->client_ranks[qid];
 
     int *ptr_size = (int *)app_config->shm_recv_bufs[client_id];
     while (*ptr_size != 0) {
@@ -388,21 +421,21 @@ int rm_receive_remote_message(int app_id,
 * parse the received message, and deliver to the
 * client
 * @param app_id: client's application id
-* @param sock_id: socket index in the poll_set
+* @param qid: socket index in the poll_set
 * for that client
 * @param recv_msg_buf: buffer for received message
 *  packed read requests
 * @param ptr_tot_sz: total data size to receive
 * @return success/error code
 */
-int rm_process_received_msg(int app_id, int sock_id,
+int rm_process_received_msg(int app_id, int qid,
                             char *recv_msg_buf, long *ptr_tot_sz)
 {
 
     int rc;
     app_config_t *app_config =
         (app_config_t *)arraylist_get(app_config_list, app_id);
-    int client_id = app_config->client_ranks[sock_id];
+    int client_id = app_config->client_ranks[qid];
 
     /*
      * format of recv_msg_buf: num,
@@ -438,7 +471,7 @@ int rm_process_received_msg(int app_id, int sock_id,
             /*client-side receive buffer is full,
              * wait until the client reads all the
              * data*/
-            rc = sock_notify_cli(sock_id, COMM_READ);
+            rc = sock_notify_cli(qid, CMD_READ);
 
             if (rc != 0) {
                 return rc;
@@ -453,13 +486,14 @@ int rm_process_received_msg(int app_id, int sock_id,
             (shm_meta_t *)(((char *)app_config->shm_recv_bufs[client_id]
                             + *ptr_size) + 2 * sizeof(int));
 
+        tmp_sh_msg->loid = 0; /* famfs compatibility: UNIFYCR read Rq has no 'loid' */
         tmp_sh_msg->src_fid = tmp_recv_msg->src_fid;
         tmp_sh_msg->offset = tmp_recv_msg->src_offset;
         tmp_sh_msg->length = tmp_recv_msg->length;
 
         app_config_t *app_config =
             (app_config_t *)arraylist_get(app_config_list, app_id);
-        int client_id = app_config->client_ranks[sock_id];
+        int client_id = app_config->client_ranks[qid];
 
         recv_cursor += sizeof(recv_msg_t);
         *ptr_size += sizeof(shm_meta_t);

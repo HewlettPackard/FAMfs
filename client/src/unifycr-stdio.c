@@ -61,9 +61,13 @@
 #include <limits.h>
 #define __USE_GNU
 #include <pthread.h>
-#include "famfs_global.h"
+
 #include "unifycr-stdio.h"
 #include "unifycr-internal.h"
+#include "unifycr-sysio.h"
+
+#include "famfs_global.h"
+
 
 static int unifycr_fpos_enabled = 1; /* whether we can use fgetpos/fsetpos */
 
@@ -166,6 +170,7 @@ int unifycr_unsupported_stream(
     return rc;
 }
 
+#if 0
 static int unifycr_stream_set_pointers(unifycr_stream_t *s)
 {
     /* get pointer to file descriptor structure */
@@ -205,6 +210,7 @@ static int unifycr_stream_set_pointers(unifycr_stream_t *s)
 
     return UNIFYCR_SUCCESS;
 }
+#endif
 
 /* TODO: support other modes as listed in
  * http://www.gnu.org/software/libc/manual/html_node/Opening-Streams.html#Opening-Streams */
@@ -318,20 +324,20 @@ static int unifycr_fopen(
          * returns UNIFYCR_ERR_NOENT if file does not exist w/o O_CREAT */
         if (plus) {
             /* r+ ==> open file for update (reading and writing) */
-            open_rc = unifycr_fid_open(path, O_RDWR, perms, &fid, &pos);
+            open_rc = fd_iface->fid_open(path, O_RDWR, perms, &fid, &pos);
         } else {
             /* r  ==> open file for reading */
-            open_rc = unifycr_fid_open(path, O_RDONLY, perms, &fid, &pos);
+            open_rc = fd_iface->fid_open(path, O_RDONLY, perms, &fid, &pos);
         }
     } else if (write) {
         if (plus) {
             /* w+ ==> truncate to zero length or create file for update
              * (read/write) */
-            open_rc = unifycr_fid_open(path, O_RDWR | O_CREAT | O_TRUNC, perms, &fid, &pos);
+            open_rc = fd_iface->fid_open(path, O_RDWR | O_CREAT | O_TRUNC, perms, &fid, &pos);
         } else {
             /* w  ==> truncate to zero length or create file for
              * writing */
-            open_rc = unifycr_fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, perms, &fid,
+            open_rc = fd_iface->fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, perms, &fid,
                                        &pos);
         }
     } else if (append) {
@@ -339,12 +345,12 @@ static int unifycr_fopen(
         if (plus) {
             /* a+ ==> append, open or create file for update, at end
              * of file */
-            open_rc = unifycr_fid_open(path, O_RDWR | O_CREAT | O_APPEND, perms, &fid,
+            open_rc = fd_iface->fid_open(path, O_RDWR | O_CREAT | O_APPEND, perms, &fid,
                                        &pos);
         } else {
             /* a  ==> append, open or create file for writing, at end
              * of file */
-            open_rc = unifycr_fid_open(path, O_WRONLY | O_CREAT | O_APPEND, perms, &fid,
+            open_rc = fd_iface->fid_open(path, O_WRONLY | O_CREAT | O_APPEND, perms, &fid,
                                        &pos);
         }
     }
@@ -391,6 +397,7 @@ static int unifycr_fopen(
 
     /* set file pointer and read/write mode in file descriptor */
     unifycr_fd_t *filedesc = unifycr_get_filedesc_from_fd(fd);
+    filedesc->fid   = fid;
     filedesc->pos   = pos;
     filedesc->read  = read  || plus;
     filedesc->write = write || plus;
@@ -689,7 +696,7 @@ static int unifycr_stream_write(
             errno = EBADF;
             return UNIFYCR_ERR_BADF;
         }
-        current = unifycr_fid_size(fid);
+        current = fd_iface->fid_size(fid);
 
         /* like a seek, we discard push back bytes */
         //s->ubuflen;
@@ -890,7 +897,7 @@ static int unifycr_fseek(FILE *stream, off_t offset, int whence)
         break;
     case SEEK_END:
         /* seek to EOF + offset */
-        filesize = unifycr_fid_size(fid);
+        filesize = fd_iface->fid_size(fid);
         if (unifycr_would_overflow_offt(filesize, offset)) {
             s->err = 1;
             errno  = EOVERFLOW;
@@ -1816,11 +1823,16 @@ int UNIFYCR_WRAP(fclose)(FILE *stream)
         }
 
         /* close the file */
-        int close_rc = unifycr_fid_close(fid);
+        int close_rc = fd_iface->fid_close(fid);
         if (close_rc != UNIFYCR_SUCCESS) {
             errno = unifycr_err_map_to_errno(close_rc);
             return EOF;
         }
+
+        /* reinitialize file descriptor to indicate that
+         * it is no longer associated with a file,
+         * not technically needed but may help catch bugs */
+        unifycr_fd_init(s->fd);
 
         /* set file descriptor to -1 to indicate stream is invalid */
         s->fd = -1;
@@ -2115,6 +2127,8 @@ wint_t UNIFYCR_WRAP(ungetwc)(wint_t c, FILE *stream)
  * SUCH DAMAGE.
  */
 
+#include <ctype.h>
+#if 0 /* Don't implemented yet -- Enable the wrapper when done in configure.ac */
 #include <sys/cdefs.h>
 #include <ctype.h>
 #include <inttypes.h>
@@ -3198,3 +3212,5 @@ parsedone:
     return (commit - buf);
 }
 #endif
+#endif /* Don't implemented yet */
+

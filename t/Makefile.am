@@ -7,14 +7,14 @@ TESTS = \
 	0001-setup.t \
 	0100-sys-open.t \
 	9005-unifycr-unmount.t \
-	9010-stop-unifycrd.t \
+	9010-stop-famfsd.t \
 	9020-mountpoint-empty.t
 
 check_SCRIPTS = \
 	0001-setup.t \
 	0100-sys-open.t \
 	9005-unifycr-unmount.t \
-	9010-stop-unifycrd.t \
+	9010-stop-famfsd.t \
 	9020-mountpoint-empty.t
 
 EXTRA_DIST = \
@@ -36,13 +36,15 @@ test_ldadd = \
 	$(top_builddir)/t/lib/libtap.la \
 	$(top_builddir)/t/lib/libtestutil.la \
 	$(top_builddir)/client/src/libfamfs_gotcha.la \
-	-lmpi
+	$(top_builddir)/common/src/libfamfs_meta.la \
+	-L$(top_builddir)/userspace-rcu/src/.libs \
+	-lurcu-qsbr -lurcu-cds -lmpi
 
 test_cppflags = \
 	-I$(top_srcdir) \
 	-I$(top_srcdir)/client/src \
 	-D_GNU_SOURCE \
-	$(AM_CPPFLAGS)
+	$(AM_CPPFLAGS) $(MPI_CFLAGS)
 
 sys_open_t_SOURCES = sys/open.c
 sys_open_t_CPPFLAGS = $(test_cppflags)

@@ -1,5 +1,0 @@
-#!/bin/bash
-export ZHPE_BACKEND_LIBFABRIC_PROV=verbs
-export LFS_COMMAND="x ${oFAMs} ${oData} -H ${Servers} -c ${Clients} --provider zhpe --memreg basic -P0 -R0 -M ${mem} -E ${extsz} -C 1M --lf_progress ${lfProgress} LOAD"
-export FAMFS_MDS_LIST="$mdServers"
-export hc=$AllNodes

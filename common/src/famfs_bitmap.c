@@ -838,36 +838,17 @@ int bitmap_allocate_region(unsigned long *bitmap, int pos, int order)
 }
 
 /**
- * kmalloc_array - allocate memory for an array.
- * @n: number of elements.
- * @size: element size.
- * @flags: the type of memory to allocate (see kmalloc).
+ * Allocate memory for an array.
+ * @nbits: array size.
  */
-static inline void *kmalloc_array(size_t n, size_t size, gfp_t flags)
-{
-/*
-	size_t bytes;
-
-	if (unlikely(check_mul_overflow(n, size, &bytes)))
-		return NULL;
-	if (__builtin_constant_p(n) && __builtin_constant_p(size))
-		return kmalloc(bytes, flags);
-*/
-	if (flags & __GFP_ZERO)
-		return calloc(n, size);
-	else
-		return malloc(n * size);
-}
-
 unsigned long *bitmap_alloc(size_t nbits)
 {
-	return kmalloc_array(BITS_TO_LONGS(nbits), sizeof(unsigned long), 0);
+	return malloc(BITS_TO_LONGS(nbits)*sizeof(unsigned long));
 }
 
 unsigned long *bitmap_zalloc(size_t nbits)
 {
-	return kmalloc_array(BITS_TO_LONGS(nbits), sizeof(unsigned long),
-			     __GFP_ZERO);
+	return calloc(BITS_TO_LONGS(nbits), sizeof(unsigned long));
 }
 
 void bitmap_free(unsigned long *bitmap)

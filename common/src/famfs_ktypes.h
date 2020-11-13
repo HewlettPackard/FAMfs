@@ -28,10 +28,16 @@ typedef int8_t s8;
 typedef int16_t s16;
 typedef int32_t s32;
 typedef int64_t s64;
-typedef uint64_t dma_addr_t;
 typedef unsigned uint128_t __attribute__ ((mode (TI)));
 
+#ifndef dev_t
+  typedef uint64_t dev_t;
+#endif
+_Static_assert( __builtin_types_compatible_p(typeof(dev_t), unsigned long), \
+		"dev_t");
+
 #if 0
+typedef uint64_t dma_addr_t;
 #define be16_to_cpup(X) __be16_to_cpup(X)
 #define be32_to_cpup(X) __be32_to_cpup(X)
 #define be64_to_cpup(X) __be64_to_cpup(X)
@@ -56,7 +62,6 @@ typedef unsigned uint128_t __attribute__ ((mode (TI)));
 #define swab32(X) __builtin_bswap32(X)
 #define swab64(X) __builtin_bswap64(X)
 
-typedef unsigned gfp_t;
 typedef unsigned fmode_t;
 typedef unsigned oom_flags_t;
 
@@ -141,7 +146,7 @@ static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return va
 #define udelay(X) rte_delay_us(X)
 #define msleep(X) rte_delay_ms(X)
 
-#endif //-------------------------------------------
+typedef unsigned gfp_t;
 
 /* Plain integer GFP bitmasks. Do not use this directly. */
 #define ___GFP_DMA              0x01u
@@ -256,10 +261,6 @@ static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return va
 
 ////#include "list.h"
 
-typedef struct { int32_t counter; } atomic_t;
-
-#if 0  //-------------------------------------------
-
 typedef rte_spinlock_t mutex_t;
 typedef rte_spinlock_t spinlock_t;
 typedef rte_spinlock_t rwlock_t;
@@ -353,6 +354,8 @@ typedef rte_spinlock_t rwlock_t;
 
 #endif //-------------------------------------------
 
+typedef struct { int32_t counter; } atomic_t;
+
 #define atomic_read(a) ((a)->counter)
 #define atomic_set(a,b) ((a)->counter = (b))
 #define atomic_test_and_set(a) (__atomic_test_and_set(&(a)->counter, __ATOMIC_SEQ_CST))
@@ -363,6 +366,29 @@ typedef rte_spinlock_t rwlock_t;
 #define atomic_dec(a) ((void)atomic_dec_return(a))
 #define atomic_inc_and_test(a) (atomic_inc_return(a) == 0)
 #define atomic_dec_and_test(a) (atomic_dec_return(a) == 0)
+
+/* Memory and compiler barriers */
+#ifndef cmm_barrier
+#define cmm_barrier()   __asm__ __volatile__ ("" : : : "memory")
+#endif
+
+#ifndef cmm_mb
+#define cmm_mb()    __asm__ __volatile__ ("mfence":::"memory")
+#endif
+
+//struct timespec
+#define time_get_ts(p_timespec) (clock_gettime(CLOCK_MONOTONIC_RAW, p_timespec))
+#ifndef timespec_sub
+#define	timespec_sub(vvp, uvp)						\
+	do {								\
+		(vvp)->tv_sec -= (uvp)->tv_sec;				\
+		(vvp)->tv_nsec -= (uvp)->tv_nsec;			\
+		if ((vvp)->tv_nsec < 0) {				\
+			(vvp)->tv_sec--;				\
+			(vvp)->tv_nsec += 1000000000;			\
+		}							\
+	} while (0)
+#endif
 
 #if 0  //-------------------------------------------
 
@@ -390,8 +416,6 @@ typedef rte_spinlock_t rwlock_t;
 
 #define __always_inline __inline __attribute__ ((__always_inline__))
 #define __packed __attribute__((packed))
-
-#define time_get_ts(p_timespec) (clock_gettime(CLOCK_MONOTONIC_RAW, p_timespec))
 
 #define msecs_to_jiffies(msec) ((msec * HZ) / MSEC_PER_SEC)
 #define jiffies_to_msec(jifi) ((jifi*MSEC_PER_SEC) / HZ)

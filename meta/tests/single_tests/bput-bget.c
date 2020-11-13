@@ -9,6 +9,7 @@
 //#define KEYS 100
 //#define TOTAL 100000000
 //#define GEN_STR_LEN 1024
+#include "famfs_global.h"
 
 extern double memgettime, ssdgettime;
 extern double imemgettime, maytime;
@@ -187,7 +188,7 @@ int main(int argc, char **argv) {
 //	fflush(stdout);
 	while (total != segnum) {
 		//Insert the keys into MDHIM
-		brm = mdhimBPut(md, (void **) (&key_lst[total]), key_lens,  
+		brm = mdhimBPut(md, md->primary_index, (void **) (&key_lst[total]), key_lens,  
 				(void **) (&val_lst[total]), val_lens, bulknum, 
 				NULL, NULL);
 		brmp = brm;

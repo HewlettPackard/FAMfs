@@ -48,6 +48,7 @@
 #include "unifycr_global.h"
 #include "arraylist.h"
 
+
 service_msgs_t service_msgs;
 task_set_t read_task_set;
 rank_ack_task_t rank_ack_task;
@@ -67,6 +68,7 @@ long dbg_sent_cnt = 0;
 
 char req_msg_buf[REQ_BUF_LEN];
 char *mem_buf;
+
 
 /**
 * Service the read requests received from the requesting delegators
@@ -1008,7 +1010,6 @@ int sm_exit()
     for (i = 0; i < rank_ack_task.num; i++) {
         arraylist_free(rank_ack_task.ack_metas[i].ack_list);
     }
-
     close(sm_sockfd);
     return rc;
 }

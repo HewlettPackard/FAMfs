@@ -70,8 +70,9 @@ int main(int argc, char **argv) {
 		secondary_info = mdhimCreateSecondaryInfo(secondary_index, (void **) secondary_keys, 
 							  secondary_key_lens, 1, 
 							  SECONDARY_GLOBAL_INFO);
-		brm = mdhimPut(md, &key, sizeof(key), 
-			       &value, sizeof(value), 
+		brm = mdhimPut(md, md->primary_index,
+			       &key, sizeof(key),
+			       &value, sizeof(value),
 			       secondary_info, NULL);
 		if (!brm || brm->error) {
 			printf("Error inserting key/value into MDHIM\n");

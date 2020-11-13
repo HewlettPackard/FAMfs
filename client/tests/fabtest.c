@@ -47,6 +47,7 @@ struct args {
     char                **nodes;
     char                **ports;
     int                 do_warm_up;
+    int			use_fam;
 };
 
 struct stuff {
@@ -66,6 +67,27 @@ static void stuff_free(struct stuff *stuff)
 
     if (stuff->allocated)
         free(stuff);
+}
+
+static inline struct timespec now(void) {
+    struct timespec tv_nsec;
+
+    clock_gettime(CLOCK_MONOTONIC, &tv_nsec);
+    return tv_nsec;
+}
+static inline uint64_t elapsed(struct timespec *ts) {
+    time_t sec;
+    long usec;
+    struct timespec tv = now();
+
+    sec =  tv.tv_sec - ts->tv_sec;
+    usec = (tv.tv_nsec - ts->tv_nsec)/1000;
+    if (sec > 0 && usec < 0) {
+        sec--;
+        usec += 1000000L;
+    }
+    if (sec < 0 || (sec == 0 && usec < 0)) return 0;
+    return (uint64_t)sec * 1000000UL + (uint64_t)usec;
 }
 
 static ssize_t do_progress(struct fid_cq *cq, size_t *cmp)
@@ -129,7 +151,7 @@ static int do_fam(const struct args *args, int rank, int cnt)
     v = (void *)fab_conn->mrmem.mem;
 
 
-    if (!args->nodes) {
+    if (!args->nodes || args->use_fam) {
         /* This is where it gets new. */
         ret = fi_open_ops(&fab_dom->fabric->fid, FI_ZHPE_OPS_V1, 0,
                           (void **)&ext_ops, NULL);
@@ -141,6 +163,18 @@ static int do_fam(const struct args *args, int rank, int cnt)
     for (i = 0; i < args->nfams; i++) {
         if (!args->nodes) {
             if (zhpeu_asprintf(&url, "zhpe:///fam%Lu", (ullong)i) == -1) {
+                ret = -FI_ENOMEM;
+                goto done;
+            }
+            ret = ext_ops->lookup(url, &fam_sa[i], &sa_len);
+            if (ret < 0) {
+                print_func_err(__func__, __LINE__, "ext_ops.lookup", url, ret);
+                goto done;
+            }
+            free(url);
+            url = NULL;
+	} else if (args->use_fam) {
+            if (zhpeu_asprintf(&url, "zhpe:///%s", args->nodes[i]) < 0) {
                 ret = -FI_ENOMEM;
                 goto done;
             }
@@ -191,7 +225,7 @@ static int do_fam(const struct args *args, int rank, int cnt)
             ret = -FI_EINVAL;
             goto done;
         }
-        fi_freeinfo(fi);
+//        fi_freeinfo(fi);
     }
 
     int wup = args->do_warm_up;
@@ -210,7 +244,7 @@ static int do_fam(const struct args *args, int rank, int cnt)
                     char *bufp = (char *)v + chunk_sz*i + off;
                     ret = fi_write(fab_conn->ep, bufp, args->step_size,
                                    fi_mr_desc(fab_conn->mrmem.mr), fam_addr[i],
-                                   rank*chunk_sz + off, i + 1 /* FI_ZHPE_FAM_RKEY */, NULL);
+                                   rank*chunk_sz + off, args->use_fam ? 0 : i + 1 /* FI_ZHPE_FAM_RKEY */, NULL);
                     if (ret >= 0)
                         break;
                     if (ret != -FI_EAGAIN) {
@@ -223,11 +257,13 @@ static int do_fam(const struct args *args, int rank, int cnt)
                     }
                 }
                 tx_op++;
+    		struct timespec start = now();
                 while (tx_cmp != tx_op) 
                     if ((rc = do_progress(fab_conn->tx_cq, &tx_cmp)) < 0) {
                         print_func_err(__func__, __LINE__, "do_progress(w)", "", rc);
                         goto done;
                     }
+    		printf("%d: I/O completed rc:%d time:%lu\n", rank, rc, elapsed(&start));
             }
         }
     } while (wup--);
@@ -257,7 +293,7 @@ static int do_fam(const struct args *args, int rank, int cnt)
                 char *bufp = (char *)v + chunk_sz*i + off;
                 ret = fi_read(fab_conn->ep, bufp, args->step_size,
                               fi_mr_desc(fab_conn->mrmem.mr), fam_addr[i],
-                              rank*chunk_sz + off, i + 1 /* FI_ZHPE_FAM_RKEY */, NULL);
+                              rank*chunk_sz + off, args->use_fam ? 0 : i + 1 /* FI_ZHPE_FAM_RKEY */, NULL);
                 if (ret >= 0)
                     break;
                 if (ret != -FI_EAGAIN) {
@@ -270,11 +306,13 @@ static int do_fam(const struct args *args, int rank, int cnt)
                 }
             }
             tx_op++;
+    	    struct timespec start = now();
             while (tx_cmp != tx_op)
                 if ((rc = do_progress(fab_conn->tx_cq, &tx_cmp)) < 0) {
                     print_func_err(__func__, __LINE__, "do_progress(r)", "", rc);
                     goto done;
                 }
+    	    printf("%d: I/O completed rc:%d time:%lu\n", rank, rc, elapsed(&start));
         }
     }
     gettimeofday(&ts_end, NULL);
@@ -378,10 +416,11 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    if (argv[1][0] == '@') {
+    if ((args.use_fam = (argv[1][0] == '*')) || argv[1][0] == '@') {
         args.nodes = calloc(64, sizeof(char *));
         args.ports = calloc(64, sizeof(char *));
         args.nfams = str2argv(&argv[1][1], args.nodes, args.ports, 64);
+printf("use_fam=%d, nfam=%ld, node[0]=%s\n", args.use_fam, args.nfams, args.nodes[0]);
     } else if (parse_kb_uint64_t(__func__, __LINE__, "nfams",
                 argv[1], &args.nfams, 0, 0, SIZE_MAX, 0) < 0)
         usage(false);
@@ -401,6 +440,7 @@ int main(int argc, char **argv)
                           argv[3], &args.step_size, 0, 1,
                           SIZE_MAX, PARSE_KB | PARSE_KIB) < 0)
         usage(false);
+printf("fam_size=%ld, step_size=%ld\n", args.fam_size, args.step_size);
 
     if (do_fam(&args, my_rank, rank_cnt) < 0)
         goto done;

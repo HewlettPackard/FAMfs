@@ -93,7 +93,7 @@ unsigned long * get_meta_pair(void *key,
 	memset(meta_pair, 0, 2*sizeof(unsigned long));
 	meta_pair[0] = *((unsigned long *)(((char *)key)));
 	meta_pair[1] = *((unsigned long *)(((char *)key)+sizeof(unsigned long)));
-	//	printf("meta_pair[1] is %ld\n", meta_pair[1]);
+	// printf("meta_pair is %ld %ld\n", meta_pair[0], meta_pair[1]);
 	return meta_pair;
 }
 
@@ -401,12 +401,31 @@ int get_slice_num(struct mdhim_t *md, struct index_t *index, void *key, int key_
 	if (key_type == MDHIM_UNIFYCR_KEY) {
 		unsigned long *meta_pair = get_meta_pair(key, key_len);
 		unsigned long surplus =	meta_pair[1];
-		unsigned long highval = (meta_pair[0] << 1);
-		unsigned long multiply = (unsigned long)1 << (sizeof(unsigned long)*8 - 1);
-/*		slice_num = (surplus + highval * multiply%index->mdhim_max_recs_per_slice) % \
-				index->mdhim_max_recs_per_slice;
+		//unsigned long highval = (meta_pair[0] << 1);
+		int fid = (int) (meta_pair[0] & 0x7fffffff); /* 31 bit */
+		int loid = (int) (meta_pair[0] >> 32);
+		unsigned long highval = ((unsigned long)fid  << 1);
+		unsigned long multiply = 1UL << (sizeof(unsigned long)*8 - 1);
+		unsigned long max_recs_per_slice;
+
+		/* Look up for recs_per_slice which is specific for given layout */
+		if (index->lo_count > 0) {
+			if (loid < 0 || loid >= index->lo_count) {
+				mlog(MDHIM_CLIENT_CRIT,
+				"meta_pair: (%d %d, %ld) lo_count:%d - wrong loid!",
+				loid, fid, meta_pair[1], index->lo_count);
+				free(meta_pair);
+				return MDHIM_ERROR;
+			}
+			max_recs_per_slice = index->key_slice_size_per_lo[loid];
+		} else {
+			max_recs_per_slice = index->mdhim_max_recs_per_slice;
+		}
+		slice_num = highval * (multiply/max_recs_per_slice) + surplus/max_recs_per_slice;
+/*
+		mlog(MDHIM_CLIENT_DBG0, "meta_pair: (%d %d, %ld) recs_per_slice:%lu slice:%d",
+		     loid, fid, meta_pair[1], max_recs_per_slice, slice_num);
 */
-		slice_num = highval * (multiply/index->mdhim_max_recs_per_slice) + surplus/index->mdhim_max_recs_per_slice;
 		free(meta_pair);
 	} else {
 		/* Convert the key to a slice number  */
@@ -474,6 +493,20 @@ rangesrv_list *get_range_servers(struct mdhim_t *md, struct index_t *index,
 
 	//Return the range server list
 	return rl;
+}
+
+/* get range server number */
+int get_range_server(struct mdhim_t *md, struct index_t *index,
+		     void *key, int key_len)
+{
+	//The number that maps a key to range server (dependent on key type)
+	int slice_num;
+
+	if ((slice_num = get_slice_num(md, index, key, key_len)) == MDHIM_ERROR) {
+		return 0;
+	}
+	int rangesrv_num = slice_num % index->num_rangesrvs;
+	return ++rangesrv_num;
 }
 
 static struct mdhim_stat *get_next_slice_stat(struct index_t *index, int slice_num)

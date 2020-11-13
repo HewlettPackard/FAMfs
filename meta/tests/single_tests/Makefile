@@ -1,7 +1,8 @@
 include ../../Makefile.cfg
 CLIBS += -L../../src/.libs
-CLIBS += -L../../../../../lib
+CLIBS += -L../../../../../lib -luuid
 CINC += -I../../src -I../../src/uthash
+CINC += -I../../../common/src -I../../../../../include -I../../../
 CC = mpicc
 
 all:	put-get bput-bget put-del bput-bdel put-getn \

@@ -58,7 +58,7 @@ struct _unifycr_args {
     int cleanup;               /* cleanup on termination? (0 or 1) */
     unifycr_cm_e consistency;  /* consistency model */
     char* mountpoint;          /* mountpoint */
-    char* server_path;         /* full path to installed unifycrd */
+    char* server_path;         /* full path to installed famfsd */
     char* stage_in;            /* data path to stage-in */
     char* stage_out;           /* data path to stage-out (drain) */
     char* script;              /* path to custom launch/terminate script */
@@ -87,7 +87,7 @@ typedef struct _unifycr_resource unifycr_resource_t;
 int unifycr_detect_resources(unifycr_resource_t* resource);
 
 /**
- * @brief Start the unifycrd server on all allocated nodes
+ * @brief Start the famfsd server on all allocated nodes
  *
  * @param resource  The job resource record
  * @param args      The command-line options
@@ -98,7 +98,7 @@ int unifycr_start_servers(unifycr_resource_t* resource,
                           unifycr_args_t* args);
 
 /**
- * @brief Stop the unifycrd server on all allocated nodes
+ * @brief Stop the famfsd server on all allocated nodes
  *
  * @param resource  The job resource record
  * @param args      The command-line options

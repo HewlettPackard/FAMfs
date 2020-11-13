@@ -44,6 +44,53 @@
 #define UNIFYCR_FIXED_H
 
 #include "unifycr-internal.h"
+#include "seg_tree.h"
+#include "f_ja.h"
+
+
+enum flock_enum {
+    UNLOCKED,
+    EX_LOCKED,
+    SH_LOCKED
+};
+
+typedef struct unifycr_chunkmeta_t_ {
+    union {
+        int         location;   /* unifycr: CHUNK_LOCATION specifies how chunk is stored */
+        int         flags;      /* stripe meta flags */
+        struct {
+            unsigned int in_use:1;      /* we have got it from helper */
+            unsigned int committed:1;   /* been committed */
+        } f;
+    };
+    unsigned int    data_w;     /* number of data bytes written */
+    off_t           id;         /* physical id of chunk in its respective storage */
+} __attribute__((aligned(8))) unifycr_chunkmeta_t;
+
+typedef struct unifycr_filemeta_t_ {
+    off_t size;                     /* current file size */
+    off_t real_size;                /* real size of the file for logio*/
+    int is_dir;                     /* is this file a directory */
+    pthread_spinlock_t fspinlock;   /* file lock variable */
+    enum flock_enum flock_status;   /* file lock status */
+
+    int storage;                    /* FILE_STORAGE specifies file data management */
+
+    off_t chunks;                   /* UNIFYCR: number of chunks allocated to file */
+    unsigned int stripes;           /* number of stripes allocated for write iops */
+    unsigned int stripe_idx;        /* current meta data index in chunk_meta array */
+    unsigned long ttl_stripes;      /* number of stripes allocated for file */
+    
+    unifycr_chunkmeta_t *chunk_meta; /* meta data for allocated stripes */
+    int loid;                       /* FAMFS layout id */
+
+    int fid;                        /* local file index in filemetas array */
+    int gfid;                       /* global file id for this file */
+    int needs_sync;                 /* have unsynced writes */
+    struct seg_tree extents;        /* Segment tree of all local data extents (write cache) */
+    //struct seg_tree extents_sync;   /* segment tree of written extents to sync */
+    F_JUDY_t *committed_stripes;    /* stripes committed on write */
+} unifycr_filemeta_t;
 
 /* if length is greater than reserved space,
  * reserve space up to length */
@@ -81,8 +128,6 @@ int unifycr_fid_store_fixed_write(
     size_t count             /* number of bytes to write */
 );
 
-int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off);
-int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid);
-void famfs_merge_md();
+extern bool famfs_local_extents;    /* track data extents in client to read local */
 
 #endif /* UNIFYCR_FIXED_H */

@@ -87,9 +87,15 @@ struct index_t {
         //Used to determine the number of range servers which is based in  
         //if myrank % RANGE_SERVER_FACTOR == 0, then myrank is a server
 	int range_server_factor;
-	
-        //Maximum size of a slice. A range server may serve several slices.
-	uint64_t mdhim_max_recs_per_slice; 
+
+	//Maximum size of a slice. A range server may serve several slices.
+	uint64_t mdhim_max_recs_per_slice;
+	//Size of slice - only for MDHIM_UNIFYCR_KEY. An array of layout stripe sizes, in bytes.
+	size_t *key_slice_size_per_lo;
+	//Size of key_slice_size_per_lo array; same as the number of layouts.
+	int lo_count;
+	//Request message ID
+	int rq_msg_id;
 
 	MPI_Comm md_comm; /* protected copy of md_comm for this index */
 	//This communicator is for range servers only to talk to each other
@@ -106,6 +112,7 @@ struct index_t {
 
 	//Statistics retrieved from the mdhimStatFlush operation
 	struct mdhim_stat *stats;
+	int has_stats;		/* true: index needs stats */
 
 	UT_hash_handle hh;         /* makes this structure hashable */
 	UT_hash_handle hh_name;    /* makes this structure hashable by name */
@@ -134,6 +141,7 @@ struct index_t *create_local_index(struct mdhim_t *md, int db_type, int key_type
 struct index_t *create_global_index(struct mdhim_t *md, int server_factor, 
 				    uint64_t max_recs_per_slice, int db_type, 
 				    int key_type, char *index_name);
+int mdhimSetSliceSizes(struct index_t *gi, size_t *sizes, int len);
 int get_rangesrvs(struct mdhim_t *md, struct index_t *index);
 int is_range_server(struct mdhim_t *md, int rank, struct index_t *index);
 int index_init_comm(struct mdhim_t *md, struct index_t *bi);
@@ -142,5 +150,6 @@ struct index_t *get_index(struct mdhim_t *md, int index_id);
 struct index_t *get_index_by_name(struct mdhim_t *md, char *index_name);
 int indexes_release(struct mdhim_t *md);
 int im_range_server(struct index_t *index);
+int next_index_msg_id(struct mdhim_t *md, struct index_t *index);
 
 #endif

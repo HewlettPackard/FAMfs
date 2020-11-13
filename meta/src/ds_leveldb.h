@@ -48,10 +48,13 @@
 #include "data_store.h"
 #include "famfs_global.h"
 
-#define UNIFYCR_FID(key)    *(long *)(&(((fsmd_key_t*)key)->fid))
-#define UNIFYCR_OFFSET(key) *(long *)(&(((fsmd_key_t*)key)->offset))
-#define UNIFYCR_ADDR(val)   *(long *)(&(((fsmd_val_t*)val)->addr)) 
-#define UNIFYCR_LEN(val)    *(long *)(&(((fsmd_val_t*)val)->len))
+#define UNIFYCR_FID(key)    (*(unsigned long *)(&(((fsmd_key_t*)(key))->fid)))
+#define UNIFYCR_OFFSET(key) (*(long *)(&(((fsmd_key_t*)(key))->offset)))
+#define UNIFYCR_ADDR(val)   (*(long *)(&(((fsmd_val_t*)(val))->addr)))
+#define UNIFYCR_LEN(val)    (*(long *)(&(((fsmd_val_t*)(val))->len)))
+#define FAMFS_STRIPE(val)   (*(unsigned long *)(&(((fsmd_val_t*)(val))->stripe)))
+#define FAMFS_PK_FID(key)   (*&((fsmd_key_t*)(key))->pk.fid)
+#define FAMFS_PK_LID(key)   (*&((fsmd_key_t*)(key))->pk.loid)
 
 /* Function pointer for comparator in C */
 typedef int (*mdhim_store_cmp_fn_t)(void* arg, const char* a, size_t alen,
@@ -87,6 +90,7 @@ int levedb_batch_ranges(void *dbh, char **key, int *key_len,\
 		char ***out_key, int **out_key_len,\
 			char ***out_val, int **out_val_len,\
 				int tot_records, int *out_records_cnt);
+int mdhim_leveldb_batch_put2(void *dbh, void *kvs, int len, int key_len, int num_records);
 int leveldb_process_range(leveldb_iterator_t *iter,\
 		char *start_key, char *end_key, \
 			int key_len, char ***out_key, int **out_key_len, \

@@ -65,14 +65,22 @@
 #include "unifycr-sysio.h"
 #include "unifycr-internal.h"
 #include "unifycr-fixed.h"
+#include "unifycr-sysio.h"
+#include "unifycr.h" /* fs_type_t */
+
+#include "famfs.h"
 #include "famfs_stats.h"
 #include "famfs_env.h"
+#include "famfs_error.h"
 #include "famfs_global.h"
+#include "famfs_rbq.h"
+//#include "f_layout.h"
+//#include "f_helper.h"
+
 //
 // === libfabric stuff =============
 //
 
-//#include "libfabric.h"
 #include "lf_client.h"
 
 //
@@ -85,6 +93,11 @@
 extern int unifycr_spilloverblock;
 extern int unifycr_use_spillover;
 extern int dbgrank;
+
+extern f_rbq_t *adminq;
+extern f_rbq_t *rplyq;
+extern f_rbq_t *lo_cq[F_CMDQ_MAX];
+
 
 /* ---------------------------------------
  * POSIX wrappers: paths
@@ -120,6 +133,7 @@ int UNIFYCR_WRAP(mkdir)(const char *path, mode_t mode)
      * mkdir simply puts an entry into the filelist for the
      * requested directory (assuming it does not exist)
      * It doesn't check to see if parent directory exists */
+    int fid;
 
     /* determine whether we should intercept this path */
     if (unifycr_intercept_path(path)) {
@@ -130,17 +144,19 @@ int UNIFYCR_WRAP(mkdir)(const char *path, mode_t mode)
         }
 
         /* add directory to file list */
-        int fid = unifycr_fid_create_directory(path);
-        return 0;
+        fid = unifycr_fid_create_directory(path);
     } else {
         MAP_OR_FAIL(mkdir);
-        int ret = UNIFYCR_REAL(mkdir)(path, mode);
-        return ret;
+        fid = UNIFYCR_REAL(mkdir)(path, mode);
     }
+    /* errno is set on error */
+    return (fid < 0)? -1:0;
 }
 
 int UNIFYCR_WRAP(rmdir)(const char *path)
 {
+    int ret;
+
     /* determine whether we should intercept this path */
     if (unifycr_intercept_path(path)) {
         /* check if the mount point itself is being deleted */
@@ -169,13 +185,12 @@ int UNIFYCR_WRAP(rmdir)(const char *path)
         }
 
         /* remove the directory from the file list */
-        int ret = unifycr_fid_unlink(fid);
-        return 0;
+        ret = fd_iface->fid_unlink(fid);
     } else {
         MAP_OR_FAIL(rmdir);
-        int ret = UNIFYCR_REAL(rmdir)(path);
-        return ret;
+        ret = UNIFYCR_REAL(rmdir)(path);
     }
+    return (ret < 0)? -1:0;
 }
 
 int UNIFYCR_WRAP(rename)(const char *oldpath, const char *newpath)
@@ -251,9 +266,9 @@ int UNIFYCR_WRAP(truncate)(const char *path, off_t length)
         }
 
         /* truncate the file */
-        int rc = unifycr_fid_truncate(fid, length);
+        int rc = fd_iface->fid_truncate(fid, length);
         if (rc != UNIFYCR_SUCCESS) {
-            DEBUG("unifycr_fid_truncate failed for %s in UNIFYCR\n", path);
+            DEBUG("fid_truncate failed for %s in UNIFYCR\n", path);
             errno = EIO;
             return -1;
         }
@@ -288,7 +303,7 @@ int UNIFYCR_WRAP(unlink)(const char *path)
         }
 
         /* delete the file */
-        unifycr_fid_unlink(fid);
+        fd_iface->fid_unlink(fid);
 
         return 0;
     } else {
@@ -322,7 +337,7 @@ int UNIFYCR_WRAP(remove)(const char *path)
 
         /* shall be equivalent to unlink(path) */
         /* delete the file */
-        unifycr_fid_unlink(fid);
+        fd_iface->fid_unlink(fid);
 
         return 0;
     } else {
@@ -518,7 +533,7 @@ int unifycr_fd_read(int fd, off_t pos, void *buf, size_t count,
 
     /* check that we don't try to read past the end of the file */
     off_t lastread = pos + (off_t) count;
-    off_t filesize = unifycr_fid_size(fid);
+    off_t filesize = fd_iface->fid_size(fid);
     if (filesize < lastread) {
         /* adjust count so we don't read past end of file */
         if (filesize > pos) {
@@ -548,6 +563,7 @@ int unifycr_fd_read(int fd, off_t pos, void *buf, size_t count,
  * fills any gaps with zeros */
 int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
 {
+    STATS_START(start);
 
     /* get the file id for this file descriptor */
     int fid = unifycr_get_fid_from_fd(fd);
@@ -578,14 +594,14 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
     /* TODO: check that file is open for writing */
 
     /* get current file size before extending the file */
-    off_t filesize = unifycr_fid_size(fid);
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
+    off_t filesize = fd_iface->fid_size(fid);
     off_t newpos;
 
     if (meta->storage == FILE_STORAGE_FIXED_CHUNK) {
         /* extend file size and allocate chunks if needed */
         newpos = pos + (off_t) count;
-        int extend_rc = unifycr_fid_extend(fid, newpos);
+        int extend_rc = fd_iface->fid_extend(fid, newpos);
         if (extend_rc != UNIFYCR_SUCCESS) {
             return extend_rc;
         }
@@ -602,7 +618,7 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
 
     else if (meta->storage == FILE_STORAGE_LOGIO) {
         newpos = filesize + (off_t)count;
-        int extend_rc = unifycr_fid_extend(fid, newpos);
+        int extend_rc = fd_iface->fid_extend(fid, newpos);
         if (extend_rc != UNIFYCR_SUCCESS) {
             return extend_rc;
         }
@@ -611,15 +627,19 @@ int unifycr_fd_write(int fd, off_t pos, const void *buf, size_t count)
     }
 
     /* finally write specified data to file */
-    int write_rc = unifycr_fid_write(fid, pos, buf, count);
+    int write_rc = fd_iface->fid_write(fid, pos, buf, count);
 
     if (meta->storage == FILE_STORAGE_LOGIO) {
         unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
         if (write_rc == 0) {
             meta->size = newpos;
-            meta->real_size = pos + count;
+            if (pos + count > (long unsigned int)meta->real_size)
+                meta->real_size = pos + count;
         }
     }
+
+    UPDATE_STATS(fd_wr_stat, 1, count, start);
+
     return write_rc;
 }
 
@@ -634,7 +654,7 @@ int UNIFYCR_WRAP(creat)(const char *path, mode_t mode)
         /* create the file */
         int fid;
         off_t pos;
-        int rc = unifycr_fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, mode, &fid, &pos);
+        int rc = fd_iface->fid_open(path, O_WRONLY | O_CREAT | O_TRUNC, mode, &fid, &pos);
         if (rc != UNIFYCR_SUCCESS) {
             return -1;
         }
@@ -642,6 +662,7 @@ int UNIFYCR_WRAP(creat)(const char *path, mode_t mode)
         /* TODO: allocate a free file descriptor and associate it with fid */
         /* set in_use flag and file pointer, flags include O_WRONLY */
         unifycr_fd_t *filedesc = &(unifycr_fds[fid]);
+        filedesc->fid   = fid;
         filedesc->pos   = pos;
         filedesc->read  = 0;
         filedesc->write = 1;
@@ -689,7 +710,7 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
         /* create the file */
         int fid;
         off_t pos;
-        int rc = unifycr_fid_open(path, flags, mode, &fid, &pos);
+        int rc = fd_iface->fid_open(path, flags, mode, &fid, &pos);
         if (rc != UNIFYCR_SUCCESS) {
             return -1;
         }
@@ -697,6 +718,7 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
         /* TODO: allocate a free file descriptor and associate it with fid */
         /* set in_use flag and file pointer */
         unifycr_fd_t *filedesc = &(unifycr_fds[fid]);
+        filedesc->fid   = fid;
         filedesc->pos   = pos;
         filedesc->read  = ((flags & O_RDONLY) == O_RDONLY)
                           || ((flags & O_RDWR) == O_RDWR);
@@ -706,10 +728,22 @@ int UNIFYCR_WRAP(open)(const char *path, int flags, ...)
 
         /* don't conflict with active system fds that range from 0 - (fd_limit) */
         ret = fid + unifycr_fd_limit;
+
         INIT_STATS(LF_RD_STATS_FN, lf_rd_stat);
         INIT_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        INIT_STATS(FD_SYN_STATS_FN, fd_syn_stat);
+        INIT_STATS(FD_EXT_STATS_FN, fd_ext_stat);
+        INIT_STATS(FD_WR_STATS_FN, fd_wr_stat);
+        INIT_STATS(WR_MAP_STATS_FN, wr_map_stat);
+        INIT_STATS(WR_UPD_STATS_FN, wr_upd_stat);
+        INIT_STATS(WR_CMT_STATS_FN, wr_cmt_stat);
+        INIT_STATS(MD_LG_STATS_FN, md_lg_stat);
         INIT_STATS(MD_FP_STATS_FN, md_fp_stat);
         INIT_STATS(MD_FG_STATS_FN, md_fg_stat);
+        INIT_STATS(MD_AP_STATS_FN, md_ap_stat);
+        INIT_STATS(MD_AG_STATS_FN, md_ag_stat);
+        INIT_STATS(TEST1_STATS_FN, test1_stat);
+
         return ret;
     } else {
         MAP_OR_FAIL(open);
@@ -793,7 +827,8 @@ off_t UNIFYCR_WRAP(lseek)(int fd, off_t offset, int whence)
             break;
         case SEEK_END:
             /* seek to EOF + offset */
-            current_pos = meta->size + offset;
+            //current_pos = meta->size + offset;
+            current_pos = fd_iface->fid_size(fid) + offset;
             break;
         default:
             errno = EINVAL;
@@ -888,27 +923,15 @@ ssize_t UNIFYCR_WRAP(read)(int fd, void *buf, size_t count)
         /* read data from file */
         size_t retcount;
 
-        if (fs_type == FAMFS) {
+        if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
             read_req_t tmp_req;
             tmp_req.buf = buf;
             tmp_req.fid = fd + unifycr_fd_limit;
             tmp_req.length = count;
             tmp_req.offset = filedesc->pos;
+            tmp_req.lid = unifycr_get_meta_from_fid(fd)->loid;
 
-            int ret = unifycr_fd_logreadlist(&tmp_req, 1);
-            if (!ret) {
-                retcount = count;
-            } else {
-                retcount = 0;
-            }
-        } else if (fs_type == UNIFYCR_LOG) {
-            read_req_t tmp_req;
-            tmp_req.buf = buf;
-            tmp_req.fid = fd + unifycr_fd_limit;
-            tmp_req.length = count;
-            tmp_req.offset = filedesc->pos;
-
-            int ret = unifycr_fd_logreadlist(&tmp_req, 1);
+            int ret = fd_iface->fd_logreadlist(&tmp_req, 1);
             if (!ret) {
                 retcount = count;
             } else {
@@ -948,21 +971,14 @@ ssize_t UNIFYCR_WRAP(write)(int fd, const void *buf, size_t count)
             return (ssize_t) (-1);
         }
 
-        if (fs_type == FAMFS || fs_type == UNIFYCR_LOG) {
-            fd += unifycr_fd_limit;
-            ret = pwrite(fd, buf, count, filedesc->pos);
-            /* pwrite() will set errno on error for us */
-            if (ret < 0)
-                return -1;
-        } else {
-            /* write data to file */
-            int write_rc = unifycr_fd_write(fd, filedesc->pos, buf, count);
-            if (write_rc != UNIFYCR_SUCCESS) {
-                errno = unifycr_err_map_to_errno(write_rc);
-                return (ssize_t) (-1);
-            }
-            ret = count;
+        /* write data to file */
+        int write_rc = unifycr_fd_write(fd, filedesc->pos, buf, count);
+        if (write_rc != UNIFYCR_SUCCESS) {
+            errno = unifycr_err_map_to_errno(write_rc);
+            return (ssize_t) (-1);
         }
+        ret = count;
+
         /* update file position */
         filedesc->pos += ret;
 
@@ -1004,8 +1020,10 @@ ssize_t UNIFYCR_WRAP(writev)(int fd, const struct iovec *iov, int iovcnt)
     }
 }
 
-int UNIFYCR_WRAP(lio_listio)(int mode, struct aiocb *const aiocb_list[],
-                             int nitems, struct sigevent *sevp)
+int UNIFYCR_WRAP(lio_listio)(int mode __attribute__((unused)),
+                             struct aiocb *const aiocb_list[],
+                             int nitems,
+                             struct sigevent *sevp __attribute__((unused)))
 {
 
     int ret = 0, i;
@@ -1016,39 +1034,20 @@ int UNIFYCR_WRAP(lio_listio)(int mode, struct aiocb *const aiocb_list[],
             //does not support write operation currently
             return -1;
         }
-        glb_read_reqs[i].fid = aiocb_list[i]->aio_fildes;
+        int fid = aiocb_list[i]->aio_fildes + unifycr_fd_limit;
+        glb_read_reqs[i].fid = fid;
         glb_read_reqs[i].buf = (char *)aiocb_list[i]->aio_buf;
         glb_read_reqs[i].length = aiocb_list[i]->aio_nbytes;
         glb_read_reqs[i].offset = aiocb_list[i]->aio_offset;
-
+        glb_read_reqs[i].lid = 0; /* TODO: check fd and get lid from meta */
     }
 
-    ret = unifycr_fd_logreadlist(glb_read_reqs, nitems);
+    ret = fd_iface->fd_logreadlist(glb_read_reqs, nitems);
     free(glb_read_reqs);
     return ret;
 }
 
-int compare_index_entry(const void *a, const void *b)
-{
-    const md_index_t *ptr_a = a;
-    const md_index_t *ptr_b = b;
-
-    if (ptr_a->fid - ptr_b->fid > 0)
-        return 1;
-
-    if (ptr_a->fid - ptr_b->fid < 0)
-        return -1;
-
-    if (ptr_a->file_pos - ptr_b->file_pos > 0)
-        return 1;
-
-    if (ptr_a->file_pos - ptr_b->file_pos < 0)
-        return -1;
-
-    return 0;
-}
-
-int compare_read_req(const void *a, const void *b)
+static int compare_read_req(const void *a, const void *b)
 {
     const read_req_t *ptr_a = a;
     const read_req_t *ptr_b = b;
@@ -1136,7 +1135,7 @@ int unifycr_locate_req(read_req_t *read_req, int count,
  * @param slice_range: the slice size of the key-value store
  * @return read_req_set: the set of split read requests
  * */
-int unifycr_split_read_requests(read_req_t *cur_read_req,
+static int unifycr_split_read_requests(read_req_t *cur_read_req,
                                 read_req_set_t *read_req_set,
                                 long slice_range)
 {
@@ -1171,9 +1170,10 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
         cur_slice_end = cur_slice_start + slice_range - 1;
 
         while (1) {
-            if (cur_read_end <= cur_slice_end) 
+            if (cur_read_end <= cur_slice_end)
                 break;
 
+            read_req_set->read_reqs[read_req_set->count].lid = cur_read_req->lid;
             read_req_set->read_reqs[read_req_set->count].fid = cur_read_req->fid;
             read_req_set->read_reqs[read_req_set->count].offset = cur_slice_start;
             read_req_set->read_reqs[read_req_set->count].length = slice_range;
@@ -1184,6 +1184,7 @@ int unifycr_split_read_requests(read_req_t *cur_read_req,
 
         }
 
+        read_req_set->read_reqs[read_req_set->count].lid = cur_read_req->lid;
         read_req_set->read_reqs[read_req_set->count].fid = cur_read_req->fid;
         read_req_set->read_reqs[read_req_set->count].offset = cur_slice_start;
         read_req_set->read_reqs[read_req_set->count].length = cur_read_end - cur_slice_start + 1;
@@ -1222,9 +1223,10 @@ int unifycr_coalesce_read_reqs(read_req_t *read_req, int count,
         unifycr_split_read_requests(&read_req[i], tmp_read_req_set,
                                     unifycr_key_slice_range);
         if (cursor != 0) {
-            if (read_req_set->read_reqs[cursor - 1].fid == tmp_read_req_set->read_reqs[0].fid) {
-                if (read_req_set->read_reqs[cursor - 1].offset + 
-                    read_req_set->read_reqs[cursor - 1].length 
+            if (read_req_set->read_reqs[cursor - 1].lid == tmp_read_req_set->read_reqs[0].lid &&
+                read_req_set->read_reqs[cursor - 1].fid == tmp_read_req_set->read_reqs[0].fid) {
+                if (read_req_set->read_reqs[cursor - 1].offset +
+                    read_req_set->read_reqs[cursor - 1].length
                     == tmp_read_req_set->read_reqs[0].offset) {
                     /*
                      * if not within the same slice, then don't coalesce
@@ -1375,11 +1377,9 @@ int unifycr_match_received_ack(read_req_t *read_req, int count,
  * */
 int unifycr_fd_logreadlist(read_req_t *read_req, int count)
 {
-    int i, j, tot_sz = 0, rc = UNIFYCR_SUCCESS,
-              bytes_read = 0, num = 0, bytes_write = 0;
+    int i, tot_sz = 0, num = 0;
     int *ptr_size = NULL, *ptr_num = NULL;
-    int tmp_counter = 0;
-    int delegator;
+    int rc = UNIFYCR_SUCCESS;
 
     /*
      * Todo: When the number of read requests exceed the
@@ -1388,15 +1388,16 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
      * */
 
     /*convert local fid to global fid*/
-    unifycr_fattr_t tmp_meta_entry;
-    unifycr_fattr_t *ptr_meta_entry;
+    f_fattr_t tmp_meta_entry;
+    f_fattr_t *ptr_meta_entry;
     for (i = 0; i < count; i++) {
+        read_req[i].lid = 0;
         read_req[i].fid -= unifycr_fd_limit;
         tmp_meta_entry.fid = read_req[i].fid;
 
-        ptr_meta_entry = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
+        ptr_meta_entry = (f_fattr_t *)bsearch(&tmp_meta_entry,
                          unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                         sizeof(unifycr_fattr_t), compare_fattr);
+                         sizeof(f_fattr_t), compare_fattr);
         if (ptr_meta_entry != NULL) {
             read_req[i].fid = ptr_meta_entry->gfid;
         }
@@ -1410,7 +1411,7 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
                                &read_req_set);
 
 
-    shm_meta_t *tmp_sh_meta;
+    shm_meta_t *tmp_sh_meta = (shm_meta_t *)shm_reqbuf;
 
     int cmd = COMM_READ;
     memcpy(cmd_buf, &cmd, sizeof(int));
@@ -1422,13 +1423,15 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
     for (i = 0; i < read_req_set.count; i++) {
         tot_sz += read_req_set.read_reqs[i].length;
 
-        tmp_sh_meta = (shm_meta_t *)(shm_reqbuf + i * sizeof(shm_meta_t));
+        memcpy(tmp_sh_meta++, &read_req_set.read_reqs[i], sizeof(shm_meta_t));
+        /*
         tmp_sh_meta->src_fid = read_req_set.read_reqs[i].fid;
         tmp_sh_meta->offset = read_req_set.read_reqs[i].offset;
         tmp_sh_meta->length = read_req_set.read_reqs[i].length;
 
         memcpy(shm_reqbuf + i * sizeof(shm_meta_t),
                tmp_sh_meta, sizeof(shm_meta_t));
+        */
     }
     __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
 
@@ -1455,7 +1458,10 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
             if (cmd_fd.revents != 0) {
                 if (cmd_fd.revents == POLLIN) {
                     int sh_cursor = 0;
-                    bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
+                    ssize_t bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
+                    if (bytes_read == -1)
+                        return -1;
+
                     ptr_size = (int *)shm_recvbuf;
                     num = *((int *)shm_recvbuf + 1); /*The first int spared out for size*/
                     ptr_num = (int *)((char *)shm_recvbuf + sizeof(int));
@@ -1468,6 +1474,7 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
                         sh_cursor += sizeof(shm_meta_t);
                         *ptr_size -= sizeof(shm_meta_t);
 
+                        tmp_read_req.lid = 0;
                         tmp_read_req.fid = tmp_req->src_fid;
                         tmp_read_req.offset = tmp_req->offset;
                         tmp_read_req.length = tmp_req->length;
@@ -1498,204 +1505,6 @@ int unifycr_fd_logreadlist(read_req_t *read_req, int count)
     return rc;
 }
 
-void static split_reads_by_slice(read_req_t *rq, int n, read_req_set_t *rset) {
-    printf("SPLIT!!!\n");
-    memcpy(rset->read_reqs, rq, sizeof(read_req_t)*n);
-    rset->count = n;
-    return;
-}
-
-static inline off_t chunk_num(off_t off) {
-    return off >> unifycr_chunk_bits;
-}
-
-static inline off_t choff_cur(off_t off) {
-    return chunk_num(off) << unifycr_chunk_bits;
-}
-
-static inline off_t choff_nxt(off_t off) {
-    return (chunk_num(off) + 1) << unifycr_chunk_bits;
-}
-
-static ssize_t match_rq_and_read(read_req_t *rq, int rq_cnt, fsmd_kv_t  *md, int md_cnt, size_t ttl ) {
-    int i, rc;
-    for (i = 0; i < rq_cnt; i++) {
-        off_t fam_off;
-        size_t fam_len;
-        off_t rq_b = rq[i].offset;
-        off_t rq_e = rq_b + rq[i].length;
-        char *bufp;
-        int j;
-
-        for (j = 0; j < md_cnt; j++) {
-            off_t md_b = md[j].k.offset;
-            off_t md_e = md[j].k.offset + md[j].v.len;
-
-            fam_off = fam_len = 0;
-            if (md[j].k.fid != rq[i].fid) 
-                continue;
-            if (rq_b >= md_b && rq_b < md_e) {
-                // [MD_b ... (rq_b ... MD_e] ... rq_e)
-                // [MD_b ... (rq_b ... rq_e) ... MD_e]  
-                fam_off = md[j].v.addr + (rq_b - md_b);
-                fam_len = min(md_e, rq_e) - rq_b;
-                bufp = rq[i].buf;
-            } else if (rq_e > md_b && rq_b <= md_b) {
-                // (rq_b ... [MD_b ... rq_e) ... MD_e]
-                // (rq_b ... [MD_b ... MD_e] ... rq_e)
-                fam_off = md[j].v.addr;
-                fam_len = min(rq_e, md_e) - md_b;
-                bufp = rq[i].buf + (md_b - rq_b);
-            } else {
-                // not our chunk
-                continue;
-            }
-
-            if (fam_len) {
-                DEBUG("rq read %lu[%lu]@%lu, nid=%jd, cid=%jd \n", fam_len, bufp - rq[i].buf, fam_off,
-                    md[j].v.node, md[j].v.chunk);
-                if ((rc = lf_fam_read(bufp, fam_len, fam_off, md[j].v.node, md[j].v.chunk))) {
-                    ioerr("lf_fam_read failed ret:%d", rc);
-                    return (ssize_t)rc;
-                }
-                ttl -= fam_len;
-            }
-        }
-    }
-    return ttl;
-}
-
-int famfs_read(read_req_t *read_req, int count)
-{
-    int i, j, rc = UNIFYCR_SUCCESS, bytes_read = 0, num = 0, bytes_write = 0;
-    long tot_sz = 0;
-    int delegator;
-    int sh_cursor = 0;
-    shm_meta_t *md_rq;
-    int rq_cnt;
-    read_req_t *rq_ptr;
-    int *rc_ptr = (int *)shm_recvbuf;
-    fsmd_kv_t  *md_ptr = (fsmd_kv_t *)(shm_recvbuf + sizeof(int));
-
-    unifycr_fattr_t tmp_meta_entry;
-    unifycr_fattr_t *ptr_meta_entry;
-
-    for (i = 0; i < count; i++) {
-        read_req[i].fid -= unifycr_fd_limit;
-        tmp_meta_entry.fid = read_req[i].fid;
-
-        ptr_meta_entry = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
-                         unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                         sizeof(unifycr_fattr_t), compare_fattr);
-        if (ptr_meta_entry != NULL) {
-            read_req[i].fid = ptr_meta_entry->gfid;
-        } else {
-            DEBUG("file %d has no gfid %d record in DB\n", read_req[i].fid, ptr_meta_entry->gfid);
-            return -EBADF;
-        }
-    }
-
-    qsort(read_req, count, sizeof(read_req_t), compare_read_req);
-    if (unifycr_key_slice_range % unifycr_chunk_size) {
-        // If some brain-dead individual created a FS with key range slice not multiples of
-        // chunk size, split reads that cross slice boundary
-        // *** NOTE: this is REALLY stupid and should be discouraged in SOP
-        split_reads_by_slice(read_req, count, &read_req_set);
-        rq_cnt = read_req_set.count;
-        rq_ptr = read_req_set.read_reqs;
-    } else {
-        rq_cnt = count;
-        rq_ptr = read_req_set.read_reqs;
-        memcpy(rq_ptr, read_req, sizeof(read_req_t)*count);
-    }
-
-    md_rq = (shm_meta_t *)(shm_reqbuf);
-    for (i = 0, j = 0; i < rq_cnt; i++) {
-        tot_sz += rq_ptr[i].length;
-
-        while ((rq_ptr[i].offset + rq_ptr[i].length) > choff_nxt(rq_ptr[i].offset)) {
-            md_rq[j].length = choff_nxt(rq_ptr[i].offset) - rq_ptr[i].offset;
-            md_rq[j].src_fid = rq_ptr[i].fid;
-            md_rq[j].offset  = rq_ptr[i].offset;
-            rq_ptr[i].length -= md_rq[j].length;
-            rq_ptr[i].offset += md_rq[j].length;
-            j++;
-        }
-        md_rq[j].length  = rq_ptr[i].length;
-        md_rq[j].src_fid = rq_ptr[i].fid;
-        md_rq[j].offset  = rq_ptr[i].offset;
-        j++;
-    }
-    rq_cnt += j - i;
-
-    if (*rc_ptr) {
-        // Have prev MD in cache, see if anything matches
-        tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
-        if (tot_sz < 0) {
-            printf("lf_read error\n");
-            return (int)tot_sz;
-        }
-        if (!tot_sz)
-            return 0;
-    }
-
-    *(int *)cmd_buf = COMM_MDGET;
-    *((int *)cmd_buf + 1) = rq_cnt;
-    *rc_ptr = 0;
-
-    STATS_START(start);
-    
-    __real_write(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
-
-    cmd_fd.events = POLLIN | POLLPRI;
-    cmd_fd.revents = 0;
-
-    rc = poll(&cmd_fd, 1, -1);
-    if (rc == 0) {
-        /*time out event*/
-        DEBUG("MD/read TMO: poll %d rq:\n", rq_cnt);
-        for (i = 0; i < rq_cnt; i++) {
-            DEBUG("fid %d: %ld(%ld)\n", rq_ptr[i].fid, rq_ptr[i].offset, rq_ptr[i].length);
-        }
-        return -ETIME;
-    } else if (rc > 0) {
-
-        if (cmd_fd.revents != 0) {
-            if (cmd_fd.revents == POLLIN) {
-                bytes_read = __real_read(cmd_fd.fd, cmd_buf, sizeof(cmd_buf));
-                if (*rc_ptr < 0) {
-                    DEBUG("error reading MD: %d\n", *rc_ptr);
-                    return -EIO;
-                } else if (!*rc_ptr) {
-                    DEBUG("no MD found\n");
-                    return -EIO;
-                }
-            } else {
-                DEBUG("unexpected event %d\n", cmd_fd.revents);
-                return -EIO;
-            }
-        } else {
-            DEBUG("revents == 0\n");
-            return -EAGAIN;
-        }
-    }
-    UPDATE_STATS(md_fg_stat, *rc_ptr, *rc_ptr*sizeof(fsmd_kv_t), start);
-
-    tot_sz = match_rq_and_read(read_req, count, md_ptr, *rc_ptr, tot_sz);
-    if (tot_sz < 0) {
-        printf("lf_read error\n");
-        return (int)tot_sz;
-    }
-
-    if (tot_sz) {
-        printf("residual length not 0: %ld\n", tot_sz);
-        return -ENODATA;
-    }
-
-    return 0;
-}
-
-
 ssize_t UNIFYCR_WRAP(pread)(int fd, void *buf, size_t count, off_t offset)
 {
     /* equivalent to read(), except that it shall read from a given
@@ -1712,26 +1521,14 @@ ssize_t UNIFYCR_WRAP(pread)(int fd, void *buf, size_t count, off_t offset)
         }
 
         size_t retcount;
-        if (fs_type == FAMFS) {
+        if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
             read_req_t tmp_req;
             tmp_req.buf = buf;
             tmp_req.fid = fd + unifycr_fd_limit;
             tmp_req.length = count;
             tmp_req.offset = offset;
-            int read_rc =  famfs_read(&tmp_req, 1);
-
-            if (read_rc == 0) {
-                return count;
-            } else {
-                return 0;
-            }
-        } else if (fs_type == UNIFYCR_LOG) {
-            read_req_t tmp_req;
-            tmp_req.buf = buf;
-            tmp_req.fid = fd + unifycr_fd_limit;
-            tmp_req.length = count;
-            tmp_req.offset = offset;
-            int read_rc =  unifycr_fd_logreadlist(&tmp_req, 1);
+            tmp_req.lid = unifycr_get_meta_from_fid(fd)->loid;
+            int read_rc =  fd_iface->fd_logreadlist(&tmp_req, 1);
 
             if (read_rc == 0) {
                 return count;
@@ -1834,7 +1631,7 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
         }
 
         /* truncate the file */
-        int rc = unifycr_fid_truncate(fid, length);
+        int rc = fd_iface->fid_truncate(fid, length);
         if (rc != UNIFYCR_SUCCESS) {
             errno = EIO;
             return -1;
@@ -1848,9 +1645,7 @@ int UNIFYCR_WRAP(ftruncate)(int fd, off_t length)
     }
 }
 
-static int allow_merge = 0; /* disabled until we come up with liniaresation algo */
-
-static int unifycr_fsync(void)
+int unifycr_fsync(int fd __attribute__((unused)))
 {
     if (!*unifycr_indices.ptr_num_entries)
         return 0;
@@ -1861,10 +1656,7 @@ static int unifycr_fsync(void)
         if (__real_fsync(unifycr_spilloverblock))
             return -1; /* EIO */
 
-    if (fs_type == FAMFS && allow_merge)
-        famfs_merge_md();
-
-    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
+    if (fs_type == UNIFYCR_LOG) {
         /*put indices to key-value store*/
         int cmd = COMM_META;
         memcpy(cmd_buf, &cmd, sizeof(int));
@@ -1926,7 +1718,8 @@ int UNIFYCR_WRAP(fsync)(int fd)
         }
 
         /* transfer ("flush") all modified in-core data to backend device */
-        return unifycr_fsync();
+        return fd_iface->fd_fsync(fd);
+
     } else {
         MAP_OR_FAIL(fsync);
         int ret = UNIFYCR_REAL(fsync)(fd);
@@ -2028,11 +1821,17 @@ void *UNIFYCR_WRAP(mmap)(void *addr, size_t length, int prot, int flags,
             }
         }
 
+        if (fs_type == FAMFS) {
+            fprintf(stderr, "Function not yet supported @ %s:%d\n", __FILE__, __LINE__);
+            errno = ENOSYS;
+            return MAP_FAILED;
+        }
+
         /* TODO: do we need to extend file if offset+length goes past current end? */
 
         /* check that we don't copy past the end of the file */
         off_t last_byte = offset + length;
-        off_t file_size = unifycr_fid_size(fid);
+        off_t file_size = fd_iface->fid_size(fid);
         if (last_byte > file_size) {
             /* trying to copy past the end of the file, so
              * adjust the total amount to be copied */
@@ -2064,7 +1863,9 @@ int UNIFYCR_WRAP(munmap)(void *addr, size_t length)
     return ENODEV;
 }
 
-int UNIFYCR_WRAP(msync)(void *addr, size_t length, int flags)
+int UNIFYCR_WRAP(msync)(void *addr __attribute__((unused)),
+    size_t length __attribute__((unused)),
+    int flags __attribute__((unused)))
 {
     /* TODO: need to keep track of all the mmaps that are linked to
      * a given file before this function can be implemented*/
@@ -2108,6 +1909,8 @@ int UNIFYCR_WRAP(close)(int fd)
 {
     /* check whether we should intercept this file descriptor */
     if (unifycr_intercept_fd(&fd)) {
+        int rc;
+
         DEBUG("closing fd %d\n", fd);
 
         /* TODO: what to do if underlying file has been deleted? */
@@ -2120,23 +1923,44 @@ int UNIFYCR_WRAP(close)(int fd)
         }
 
         /* transfer ("flush") all modified in-core data to backend device */
-        if(unifycr_fsync())
-		return -1; /* EIO */
+
+        rc = fd_iface->fd_fsync(fd);
+        if (rc) {
+            DEBUG("ERROR %d syncing fd:%d - %m", rc, fd);
+            errno = EIO;
+            return -1;
+        }
 
         /* close the file id */
-        int close_rc = unifycr_fid_close(fid);
+        int close_rc = fd_iface->fid_close(fid);
         if (close_rc != UNIFYCR_SUCCESS) {
             errno = EIO;
             return -1;
         }
+
+        /* reinitialize file descriptor to indicate that
+         * it is no longer associated with a file,
+         * not technically needed but may help catch bugs */
+        unifycr_fd_init(fd);
+
         DUMP_STATS(LF_RD_STATS_FN, lf_rd_stat);
         DUMP_STATS(LF_WR_STATS_FN, lf_wr_stat);
+        DUMP_STATS(FD_SYN_STATS_FN, fd_syn_stat);
+        DUMP_STATS(FD_EXT_STATS_FN, fd_ext_stat);
+        DUMP_STATS(FD_WR_STATS_FN, fd_wr_stat);
+        DUMP_STATS(WR_MAP_STATS_FN, wr_map_stat);
+        DUMP_STATS(WR_UPD_STATS_FN, wr_upd_stat);
+        DUMP_STATS(WR_CMT_STATS_FN, wr_cmt_stat);
+        DUMP_STATS(MD_LG_STATS_FN, md_lg_stat);
         DUMP_STATS(MD_FP_STATS_FN, md_fp_stat);
         DUMP_STATS(MD_FG_STATS_FN, md_fg_stat);
+        DUMP_STATS(MD_AP_STATS_FN, md_ap_stat);
+        DUMP_STATS(MD_AG_STATS_FN, md_ag_stat);
+        DUMP_STATS(TEST1_STATS_FN, test1_stat);
 
         /* TODO: free file descriptor */
 
-        return 0;
+        return rc;
     } else {
         MAP_OR_FAIL(close);
         int ret = UNIFYCR_REAL(close)(fd);

@@ -15,6 +15,26 @@
 
 #define W_QUEUE_MAX_SIZE 128
 
+typedef enum w_type_ {
+	W_T_LOAD = 0,
+	W_T_ENCODE,
+	W_T_DECODE,
+	W_T_VERIFY,
+	W_T_EXIT,
+	W_T_NONE,
+} W_TYPE_t;
+
+static inline const char *cmd2str(W_TYPE_t type)
+{
+        switch(type) {
+        case W_T_LOAD:  return "LOAD";
+        case W_T_ENCODE:return "ENCODE";
+        case W_T_DECODE:return "DECODE";
+        case W_T_VERIFY:return "VERIFY";
+        default:        return "Unknown";
+        }
+}
+
 typedef struct n_work_ {
 	QUEUE		node;
 	enum w_type_	type;

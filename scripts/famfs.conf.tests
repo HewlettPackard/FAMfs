@@ -1,0 +1,78 @@
+[unifycr]
+chunk_bits = 20
+chunk_mem = 0
+index_buf_size = 20M
+fattr_buf_size = 1M
+debug = off
+fs_type = famfs ; "famfs" (default), "unifycr" or "both"
+# cache_wr = on ; turn on write cache, default: off
+# cache_rd = on ; turn on metadata cache on read, default: off
+
+[log]
+verbosity = 0 ; the highest level:7
+dir = /dev/shm
+file = log
+
+[meta]
+server_ratio = 1
+range_size = 1048576
+db_path = /dev/shm
+
+[spillover]
+size = 2G
+data_dir = /dev/shm
+meta_dir = /dev/shm
+
+[ionode]
+id = 0 ; this is a default
+# uuid
+z_node = io1
+topo = "1.1.5"
+geo = "R2.Ch1.FS1.N1"
+# host = "node01" ; node's hostname or IP
+mds = 1 ; run one MD server on this ionode
+force_helper = true ; there's only node in the test configuration!
+
+[mddevice]
+pk = 1
+size = 1M
+offset = 1023M
+
+[devices]
+extent_size = 1G
+emulated = true ; force FAM module emulation
+pk = 0 ; default
+size = 16G ; default device size
+offset = 0 ; default
+### libfabric ###
+# fabric =
+# domain =
+# port =
+# provider = zhpe ; default:sockets
+memreg = "basic,local" ; basic|local|basic,local|scalable, default:basic
+progress = manual ; auto|manual|default, default:auto
+use_cq = true ; use completion queue instead of counters
+timeout = 30*1000 ; 30 sec
+single_ep = off ; use single EP per domain, default:on
+
+[device] # FAM module or emulated FAM
+id = 1 ; Unique device id
+uuid = {bcc3b223-75d5-47e7-8788-a7afdbd95e63} ; version 4 UUID
+z_node = memory11
+topo = "1.1.5.1"
+geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
+failed = false ; default
+url = "zhpe:///ion1" ; default
+pk = 0 ; libfabric persistent key
+# size = 130064M ; overrides the default
+
+[ag] # Allocation group
+devices = [1] ; List of famid
+# geo = "R2.Ch1.FS2.Node-1.C5" ; MFW model
+
+[layout]
+# Default layout
+id = 0 ; optional: layout ids starts with zero
+name = "1D:1M"
+# devices = [1] ; optional list of device IDs
+

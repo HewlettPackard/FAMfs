@@ -32,7 +32,6 @@
 #include "unifycr_const.h"
 
 FILE *dbg_stream = NULL;
-char dbg_line[GEN_STR_LEN] = {0};
 
 int dbg_open(char *fname)
 {

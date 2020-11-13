@@ -40,7 +40,6 @@
  * Please also read this file LICENSE.CRUISE
  */
 
-#include "unifycr-runtime-config.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -61,30 +60,38 @@
 #define __USE_GNU
 #include <pthread.h>
 
-#include "famfs_global.h"
 #include "unifycr-internal.h"
+#include "unifycr-fixed.h"
+#include "unifycr-stack.h"
+#include "unifycr-sysio.h" /* UNIFYCR_REAL(pwrite) */
+#include "unifycr.h" /* fs_type_t */
+
+#include "famfs_env.h"
+#include "famfs_error.h"
+#include "famfs_global.h"
+#include "famfs_stripe.h"
+#include "famfs_stats.h"
+#include "f_layout.h"
+#include "f_helper.h"
+#include "famfs_rbq.h"
+#include "famfs_lf_cqprogress.h"
+
+#include "fam_stripe.h"
+#include "lf_client.h"
+
 
 extern int dbgrank;
 extern unifycr_index_buf_t unifycr_indices;
 extern unifycr_fattr_buf_t unifycr_fattrs;
 extern void *unifycr_superblock;
 extern unsigned long unifycr_max_index_entries;
-extern int unifycr_spillover_max_chunks;
+extern long unifycr_spillover_max_chunks;
 
-#include "famfs_stats.h"
-#include "famfs_env.h"
-#include "fam_stripe.h"
-#include "lf_client.h"
-
-/* FAM */
-extern LFS_CTX_t *lfs_ctx;
-
-//static uint64_t wevents = 1;
 
 //
 // =================================
 //
-
+#if 0
 /* given a file id and logical chunk id, return pointer to meta data
  * for specified chunk, return NULL if not found */
 static unifycr_chunkmeta_t *unifycr_get_chunkmeta(int fid, int cid)
@@ -102,6 +109,7 @@ static unifycr_chunkmeta_t *unifycr_get_chunkmeta(int fid, int cid)
     /* failed to find file or chunk id is out of range */
     return (unifycr_chunkmeta_t *)NULL;
 }
+#endif
 
 /* ---------------------------------------
  * Operations on file chunks
@@ -135,11 +143,6 @@ static inline void *unifycr_compute_chunk_buf(
     return (void *)buf;
 }
 
-static inline int physical_chunk_id(const unifycr_filemeta_t *meta, int logical_id)
-{
-    return meta->chunk_meta[logical_id].id;
-}
-
 /* given a chunk id and an offset within that chunk, return the offset
  * in the spillover file corresponding to that location */
 static inline off_t unifycr_compute_spill_offset(
@@ -168,7 +171,7 @@ static inline off_t unifycr_compute_spill_offset(
 }
 
 /* allocate a new chunk for the specified file and logical chunk id */
-static int unifycr_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
+static int unifycr_chunk_alloc(unifycr_filemeta_t *meta, int chunk_id)
 {
     /* get pointer to chunk meta data */
     unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
@@ -234,7 +237,7 @@ static int unifycr_chunk_alloc(int fid, unifycr_filemeta_t *meta, int chunk_id)
     return UNIFYCR_SUCCESS;
 }
 
-static int unifycr_chunk_free(int fid, unifycr_filemeta_t *meta, int chunk_id)
+static int unifycr_chunk_free(unifycr_filemeta_t *meta, int chunk_id)
 {
     /* get pointer to chunk meta data */
     unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
@@ -304,7 +307,7 @@ static int unifycr_chunk_read(
  * @param slice_range: the slice size of the key-value store
  * @return index_set: the set of split indices
  * */
-int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
+static int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
                         long slice_range)
 {
 
@@ -349,386 +352,28 @@ int unifycr_split_index(md_index_t *cur_idx, index_set_t *index_set,
             }
 
             index_set->idxes[index_set->count].fid = cur_idx->fid;
+            index_set->idxes[index_set->count].loid = cur_idx->loid;
             index_set->idxes[index_set->count].file_pos = cur_slice_start;
             index_set->idxes[index_set->count].length = slice_range;
             index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
-            if (fs_type == FAMFS) {
-                index_set->idxes[index_set->count].nid = cur_idx->nid;
-                index_set->idxes[index_set->count].cid = cur_idx->cid;
-            }
+            index_set->idxes[index_set->count].sid = cur_idx->sid;
             cur_mem_pos += index_set->idxes[index_set->count].length;
 
             cur_slice_start = cur_slice_end + 1;
             cur_slice_end = cur_slice_start + slice_range - 1;
             index_set->count++;
-
         }
 
         index_set->idxes[index_set->count].fid = cur_idx->fid;
+        index_set->idxes[index_set->count].loid = cur_idx->loid;
         index_set->idxes[index_set->count].file_pos = cur_slice_start;
         index_set->idxes[index_set->count].length = cur_idx_end - cur_slice_start + 1;
         index_set->idxes[index_set->count].mem_pos = cur_mem_pos;
-        if (fs_type == FAMFS) {
-            index_set->idxes[index_set->count].nid = cur_idx->nid;
-            index_set->idxes[index_set->count].cid = cur_idx->cid;
-        }
-
+        index_set->idxes[index_set->count].sid = cur_idx->sid;
         index_set->count++;
     }
 
     return 0;
-}
-
-famfs_mr_list_t known_mrs = {0, NULL};
-
-#define FAMFS_MR_AU 8
-#define LMR_BASE_KEY 1000000
-
-int famfs_buf_reg(char *buf, size_t len, void **rid) {
-    struct fid_mr *mr;
-    N_PARAMS_t *par = lfs_ctx->lfs_params;
-    LF_CL_t    **srv = par->lf_clients;
-    int i, j;
-
-    if (fs_type != FAMFS)
-        return -EINVAL;
-
-    // if local registration is not enabled, do nothing
-    if (!par->lf_mr_flags.local) 
-        return 0;
-
-    if (!known_mrs.cnt) {
-        known_mrs.regs = (lf_mreg_t *)calloc(FAMFS_MR_AU, sizeof(lf_mreg_t));
-        if (!known_mrs.regs) {
-            err("memory alloc failure");
-            return -ENOMEM;
-        }
-        known_mrs.cnt = FAMFS_MR_AU;
-        i = 0;
-    } else {
-        for (i = 0; i < known_mrs.cnt; i++) 
-            if (!known_mrs.regs[i].buf) 
-                break;
-        if (i == known_mrs.cnt) {
-            known_mrs.regs = (lf_mreg_t *)realloc(known_mrs.regs, known_mrs.cnt*sizeof(lf_mreg_t));
-            if (!known_mrs.regs) {
-                err("memory realloc failure");
-                return -ENOMEM;
-            }
-            bzero(&known_mrs.regs[i], sizeof(lf_mreg_t)*FAMFS_MR_AU);
-            known_mrs.cnt += FAMFS_MR_AU;
-        }
-    }
-    unsigned long my_key = LMR_BASE_KEY + par->node_id*10000 + local_rank_idx*100 + i;
-    int n = par->fam_cnt*par->node_servers;
-    known_mrs.regs[i].mreg = (struct fid_mr **)calloc(n, sizeof(struct fid_mr *));
-    known_mrs.regs[i].desc = (void **)calloc(n, sizeof(void *));
-    known_mrs.regs[i].buf = buf;
-    known_mrs.regs[i].len = len;
-    for (j = 0; j < n; j++) {
-        ON_FI_ERR_RET(fi_mr_reg(srv[j]->domain, buf, len, FI_READ | FI_WRITE, 0, my_key, 0, &known_mrs.regs[i].mreg[j], NULL), "cln fi_mr_reg failed");
-        known_mrs.regs[i].desc[j] = fi_mr_desc(known_mrs.regs[i].mreg[j]);
-    }
-
-    if (rid) 
-        *rid = (void *)&known_mrs.regs[i];
-
-    return 0;
-}
-
-int famfs_buf_unreg(void *rid) {
-    N_PARAMS_t *par = lfs_ctx->lfs_params;
-    int j;
-
-    if (!par->lf_mr_flags.local)
-        return 0;
-
-    lf_mreg_t *mr = (lf_mreg_t *)rid;
-    for (j = 0; j < par->fam_cnt*par->node_servers; j++)
-        ON_FI_ERR_RET(fi_close(&mr->mreg[j]->fid), "cln fi_close failed");
-
-    free(mr->mreg);
-    free(mr->desc);
-    mr->buf = 0;
-    mr->len = 0;
-
-    return 0;
-}
-
-static void *lookup_mreg(char *buf, size_t len, int nid) {
-    N_PARAMS_t *pr = lfs_ctx->lfs_params;
-    int i; 
-
-    if (!pr->lf_mr_flags.local)
-        return NULL;
-
-    for (i = 0; i < known_mrs.cnt; i++) 
-        if (buf >= known_mrs.regs[i].buf && buf + len <= known_mrs.regs[i].buf + known_mrs.regs[i].len) 
-            break;
-
-    return i == known_mrs.cnt ? NULL : known_mrs.regs[i].desc[nid];
-}
-
-struct fid_ep   *saved_ep;
-fi_addr_t       *saved_adr;
-off_t           saved_off;
-
-int lf_write(char *buf, size_t len,  int chunk_phy_id, off_t chunk_offset, int *trg_ni, off_t *trg_off)
-{
-    N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
-    N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
-    char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
-    N_CHUNK_t *chunk;
-    LF_CL_t *node;
-    struct famsim_stats *stats_fi_wr;
-    struct fid_cntr *cntr = NULL;
-    fi_addr_t *tgt_srv_addr;
-    struct fid_ep *tx_ep = NULL;
-    struct fid_cq *tx_cq = NULL;
-    //size_t transfer_sz;
-    off_t off;
-    //int i, blocks;
-    ssize_t wcnt;
-    uint64_t *event, evnt;
-    int dst_node, rc = 0;
-    ALLOCA_CHUNK_PR_BUF(pr_buf);
-
-    /* to FAM chunk */
-    chunk = get_fam_chunk(chunk_phy_id, fam_stripe, &dst_node);
-    if (chunk == NULL) {
-	DEBUG("%d chunk:%d - ENOSPC\n", lfs_params->node_id, chunk_phy_id);
-	errno = ENOSPC;
-	return UNIFYCR_ERR_NOSPC;
-    }
-    ASSERT(chunk->lf_client_idx < lfs_params->fam_cnt * lfs_params->node_servers);
-    node = lfs_params->lf_clients[chunk->lf_client_idx];
-
-    /* Do RMA synchronous write */
-    tgt_srv_addr = &node->tgt_srv_addr[0];
-    tx_ep = node->tx_epp[0];
-
-    if (lfs_params->use_cq) {
-        tx_cq = node->tx_cqq[0];
-        evnt = 0;
-        event = &evnt;
-    } else {
-        cntr = node->wcnts[0];
-        chunk->w_event = fi_cntr_read(cntr);
-        event = &chunk->w_event;
-    }
-
-    //transfer_sz = params->transfer_sz;
-    //int blocks = len / transfer_sz;
-    ASSERT(chunk_offset + len <= unifycr_chunk_size);
-    ASSERT(dst_node == node->node_id);
-    ASSERT(dst_node < lfs_params->fam_cnt);
-    if (trg_ni)
-        *trg_ni = dst_node;
-    off = chunk_offset + 1ULL * fam_stripe->stripe_in_part * lfs_params->chunk_sz;
-    if (trg_off)
-        *trg_off = off;
-    off += node->dst_virt_addr;
-
-    stats_fi_wr = lfs_ctx->famsim_stats_fi_wr;
-    STATS_START(start);
-
-    //for (i = 0; i < blocks; i++) {
-    DEBUG("%d: write chunk:%d @%jd to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%016lx mr_key:%lu",
-        lfs_params->node_id, chunk_phy_id, chunk_offset,
-        fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
-        dst_node, node->partition,
-        len, node->local_desc[0], off, node->mr_key);
-
-    famsim_stats_start(famsim_ctx, stats_fi_wr);
-
-    do {
-        rc = fi_write(tx_ep, buf, len, lookup_mreg(buf, len, chunk->lf_client_idx),
-                      *tgt_srv_addr, off, node->mr_key, (void*)buf);
-        if (rc == 0) {
-            (*event)++;
-            break;
-        } else if (rc < 0 && rc != -FI_EAGAIN)
-            break;
-
-        if (lfs_params->use_cq) {
-            int ret;
-
-            wcnt = 0;
-            ret = lf_check_progress(tx_cq, &wcnt);
-            if (ret < 0) {
-                rc = ret;
-                err("lf_check_progress error:%d - %m", rc);
-                break;
-            }
-            if (wcnt)
-                (*event)--;
-        }
-    } while (rc == -FI_EAGAIN);
-    /* TODO: Return I/O error */
-    ON_FI_ERROR(rc, "%d (%s): fi_write failed on FAM module %d(p%d)",
-                    lfs_params->node_id, nodelist[lfs_params->node_id],
-                    dst_node, fam_stripe->partition);
-
-    if (fam_stripe->extent == 0 && fam_stripe->stripe_in_part == 0)
-        famsim_stats_stop(stats_fi_wr, 1);
-    else
-        famsim_stats_pause(stats_fi_wr);
-
-	//off += transfer_sz;
-	//buf += transfer_sz;
-    //}
-
-    if (!lfs_params->use_cq) {
-        rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
-        if (rc == -FI_ETIMEDOUT) {
-            err("%d (%s): lf_write timeout chunk:%d to %u/%u/%s on FAM module %d(p%d) len:%zu off:%016lx",
-                lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
-                fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                dst_node, node->partition, len, off);
-        } else if (rc) {
-            err("%d (%s): lf_write chunk:%d has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
-                    lfs_params->node_id, nodelist[lfs_params->node_id], chunk_phy_id,
-                    fi_cntr_readerr(cntr), rc,
-                    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                    dst_node, node->partition,
-                    fi_cntr_read(cntr), *event);
-            ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
-        }
-    } else {
-        wcnt = *event;
-        do {
-            rc = lf_check_progress(tx_cq, &wcnt);
-        } while (rc == 0 && wcnt > 0);
-        // if (rc == 0) *event = 0;
-    }
-
-    UPDATE_STATS(lf_wr_stat, 1, len, start);
-
-    return rc;
-}
-
-int lf_fam_read(char *buf, size_t len, off_t fam_off, int nid, unsigned long cid)
-{
-    N_PARAMS_t *lfs_params = lfs_ctx->lfs_params;
-    N_STRIPE_t *fam_stripe = lfs_ctx->fam_stripe;
-    //char *const *nodelist = lfs_params->clientlist? lfs_params->clientlist : lfs_params->nodelist;
-    N_CHUNK_t *chunk;
-    LF_CL_t *node;
-    struct fid_cntr *cntr = NULL;
-    fi_addr_t *tgt_srv_addr;
-    struct fid_ep *tx_ep = NULL;
-    struct fid_cq *tx_cq = NULL;
-    //size_t transfer_sz;
-    //int i, blocks;
-    ssize_t wcnt;
-    uint64_t *event, evnt;
-    int src_node, rc = 0;
-    ALLOCA_CHUNK_PR_BUF(pr_buf);
-
-    /* to FAM chunk */
-    chunk = get_fam_chunk(cid, fam_stripe, &src_node);
-    if (chunk == NULL) {
-	DEBUG("%d chunk:%jd - ENOSPC\n", lfs_params->node_id, cid);
-	errno = ENOSPC;
-	return UNIFYCR_ERR_NOSPC;
-    }
-
-    node = lfs_params->lf_clients[nid];
-    ASSERT(src_node == node->node_id);
-    ASSERT(src_node == nid);
-
-    /* Do RMA synchronous read */
-    tgt_srv_addr = &node->tgt_srv_addr[0];
-    tx_ep = node->tx_epp[0];
-
-    if (lfs_params->use_cq) {
-        tx_cq = node->tx_cqq[0];
-        evnt = 0;
-        event = &evnt;
-    } else {
-        cntr = node->rcnts[0];
-        chunk->r_event = fi_cntr_read(cntr);
-        event = &chunk->r_event;
-    }
-    //transfer_sz = params->transfer_sz;
-    //int blocks = len / transfer_sz;
-    /*
-    ASSERT(chunk_offset + len <= unifycr_chunk_size);
-    ASSERT(dst_node < lfs_params->fam_cnt);
-    */
-
-    STATS_START(start);
-
-    off_t coff = fam_off - 1ULL*fam_stripe->stripe_in_part*lfs_params->chunk_sz;
-    fam_off += node->dst_virt_addr;
-    DEBUG("%d: read chunk:%jd @%lu to %u/%u/%s(@%lu) on FAM module %d(p%d) len:%zu desc:%p off:%016lx mr_key:%lu",
-	  lfs_params->node_id, cid, coff,
-	  fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity), (unsigned long)*tgt_srv_addr,
-	  src_node, node->partition,
-	  len, node->local_desc[0], fam_off, node->mr_key);
-
-    do {
-        rc = fi_read(tx_ep, buf, len, lookup_mreg(buf, len, nid),
-                     *tgt_srv_addr, fam_off, node->mr_key, (void*)buf);
-        if (rc == 0) {
-            (*event)++;
-            break;
-        } else if (rc < 0 && rc != -FI_EAGAIN)
-            break;
-
-        if (lfs_params->use_cq) {
-            int ret;
-
-            wcnt = 0;
-            ret = lf_check_progress(tx_cq, &wcnt);
-            if (ret < 0) {
-                rc = ret;
-                err("lf_check_progress error:%d - %m", rc);
-                break;
-            }
-            if (wcnt)
-                (*event)--;
-        }
-    } while (rc == -FI_EAGAIN);
-    /* TODO: Return I/O error */
-    ON_FI_ERROR(rc, "%d: fi_read failed on FAM module %d(p%d)",
-                    lfs_params->node_id, src_node, fam_stripe->partition);
-
-    if (!lfs_params->use_cq) {
-        rc = fi_cntr_wait(cntr, *event, lfs_params->io_timeout_ms);
-        if (rc == -FI_ETIMEDOUT) {
-            err("%d: lf_read timeout chunk:%jd to %u/%u/%s on FAM module %d(p%d) len:%zu off:%jd",
-                lfs_params->node_id, cid,
-                fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                src_node, node->partition, len, fam_off);
-        } else if (rc) {
-            err("%d: lf_read chunk:%jd has %lu error(s):%d to %u/%u/%s on FAM module %d(p%d) cnt:%lu/%lu",
-                    lfs_params->node_id, cid,
-                    fi_cntr_readerr(cntr), rc,
-                    fam_stripe->extent, fam_stripe->stripe_in_part, pr_chunk(pr_buf, chunk->data, chunk->parity),
-                    src_node, node->partition,
-                    fi_cntr_read(cntr), *event);
-            ON_FI_ERROR(fi_cntr_seterr(cntr, 0), "failed to reset counter error!");
-        }
-    } else {
-        wcnt = *event;
-        do {
-            rc = lf_check_progress(tx_cq, &wcnt);
-        } while (rc == 0 && wcnt > 0);
-        // if (rc == 0) *event = 0;
-    }
-
-    UPDATE_STATS(lf_rd_stat, 1, len, start);
-
-    return rc;
-}
-
-static inline long off_in_chunk(long foff) {
-    return foff - ((foff >> unifycr_chunk_bits) << unifycr_chunk_bits);
-}
-
-static inline long chunk_num(long foff) {
-    return foff >> unifycr_chunk_bits;
 }
 
 
@@ -743,9 +388,6 @@ static int unifycr_logio_chunk_write(
     const void *buf,         /* buffer holding data to be written */
     size_t count)            /* number of bytes to write */
 {
-    int my_node;
-    off_t my_off;
-
     /* get chunk meta data */
     unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[chunk_id]);
     /* determine location of chunk */
@@ -759,15 +401,16 @@ static int unifycr_logio_chunk_write(
         cur_idx.file_pos = pos;
         cur_idx.mem_pos = chunk_buf - unifycr_chunks;
         cur_idx.length = count;
+        cur_idx.loid = 0;
 
         /* find the corresponding file attr entry and update attr*/
-        unifycr_fattr_t tmp_meta_entry;
+        f_fattr_t tmp_meta_entry;
         tmp_meta_entry.fid = fid;
-        unifycr_fattr_t *ptr_meta_entry
-            = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
+        f_fattr_t *ptr_meta_entry
+            = (f_fattr_t *)bsearch(&tmp_meta_entry,
                                          unifycr_fattrs.meta_entry,
                                          *unifycr_fattrs.ptr_num_entries,
-                                         sizeof(unifycr_fattr_t), compare_fattr);
+                                         sizeof(f_fattr_t), compare_fattr);
         if (ptr_meta_entry !=  NULL) {
             ptr_meta_entry->file_attr.st_size = pos + count;
         }
@@ -781,14 +424,14 @@ static int unifycr_logio_chunk_write(
 
         int i = 0;
         if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
-            < unifycr_max_index_entries) {
+            < (long)unifycr_max_index_entries) {
             /*coalesce contiguous indices*/
 
             if (*unifycr_indices.ptr_num_entries >= 1) {
                 md_index_t *ptr_last_idx =
                     &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
                 if (ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
-                    ptr_last_idx->file_pos + ptr_last_idx->length
+                    ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length
                     == tmp_index_set.idxes[0].file_pos) {
                     if (ptr_last_idx->file_pos / unifycr_key_slice_range
                         == tmp_index_set.idxes[0].file_pos / unifycr_key_slice_range) {
@@ -805,14 +448,11 @@ static int unifycr_logio_chunk_write(
                     tmp_index_set.idxes[i].mem_pos;
                 unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
                     tmp_index_set.idxes[i].length;
-
-
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].loid = 0;
                 unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
                     = tmp_index_set.idxes[i].fid;
                 (*unifycr_indices.ptr_num_entries)++;
             }
-
-
 
         } else {
             /*TOdO:swap out existing metadata buffer to disk*/
@@ -820,157 +460,79 @@ static int unifycr_logio_chunk_write(
 
     } else if (chunk_meta->location == CHUNK_LOCATION_SPILLOVER) {
 	int i;
-        int chunk_phy_id = 0;
         off_t spill_offset = 0;
 
         /* spill over to a file, so write to file descriptor */
         MAP_OR_FAIL(pwrite);
-        if (fs_type != FAMFS) {
-            spill_offset = unifycr_compute_spill_offset(meta, chunk_id, chunk_offset);
-            /*  printf("spill_offset is %ld, count:%ld, chunk_offset is %ld\n",
-                      spill_offset, count, chunk_offset);
-              fflush(stdout); */
-            ssize_t rc = __real_pwrite(unifycr_spilloverblock, buf, count, spill_offset);
-            if (rc < 0)  {
-                perror("pwrite failed");
-            }
-        } else {
-
-            /*  FAMFS: FAM chunk id */
-            /* *FIXME* we need linearisation algo for this to work: fam_pos != file_pos :( */
-            //chunk_id = chunk_num(pos);
-            //chunk_offset = off_in_chunk(pos);
-
-            chunk_phy_id = physical_chunk_id(meta, chunk_id);
-            DEBUG("%d: write %zu bytes chunk:%d phy_chunk:%d @%lu\n",
-                  lfs_ctx->lfs_params->node_id, count, chunk_id, chunk_phy_id, chunk_offset);
-            int rc = lf_write((char *)buf, count, chunk_phy_id, chunk_offset, &my_node, &my_off);
-            if (rc) {
-                /* Print the real error code */
-                ioerr("lf-write failed ret:%d", rc);
-                /* Report ENOSPC or EIO */
-                if (rc != UNIFYCR_ERR_NOSPC)
-                    rc = UNIFYCR_FAILURE;
-                return rc;
-            }
-
+        spill_offset = unifycr_compute_spill_offset(meta, chunk_id, chunk_offset);
+        /*  printf("spill_offset is %ld, count:%ld, chunk_offset is %ld\n",
+                   spill_offset, count, chunk_offset);
+            fflush(stdout); */
+        ssize_t rc = UNIFYCR_REAL(pwrite)(unifycr_spilloverblock, buf, count, spill_offset);
+        if (rc < 0)  {
+            perror("pwrite failed");
         }
 
         /* find the corresponding file attr entry and update attr*/
         md_index_t cur_idx;
-        unifycr_fattr_t tmp_meta_entry;
+        f_fattr_t tmp_meta_entry;
         tmp_meta_entry.fid = fid;
-        unifycr_fattr_t *ptr_meta_entry
-            = (unifycr_fattr_t *)bsearch(&tmp_meta_entry,
+        f_fattr_t *ptr_meta_entry
+            = (f_fattr_t *)bsearch(&tmp_meta_entry,
                                          unifycr_fattrs.meta_entry, *unifycr_fattrs.ptr_num_entries,
-                                         sizeof(unifycr_fattr_t), compare_fattr);
+                                         sizeof(f_fattr_t), compare_fattr);
         if (ptr_meta_entry !=  NULL) {
             ptr_meta_entry->file_attr.st_size = pos + count;
         }
         cur_idx.fid = ptr_meta_entry->gfid;
         cur_idx.file_pos = pos;
         cur_idx.length = count;
-
-        if (fs_type != FAMFS) {
-
-            cur_idx.mem_pos = spill_offset + unifycr_max_chunks * (1 << unifycr_chunk_bits);
+        cur_idx.loid = 0;
+        cur_idx.mem_pos = spill_offset + unifycr_max_chunks * (1 << unifycr_chunk_bits);
 
 
-            /*split the write requests larger than unifycr_key_slice_range into
-             * the ones smaller than unifycr_key_slice_range
-             * */
-            unifycr_split_index(&cur_idx, &tmp_index_set,
-                                unifycr_key_slice_range);
-            i = 0;
-            if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
-                < unifycr_max_index_entries) {
-                /*coalesce contiguous indices*/
+        /*split the write requests larger than unifycr_key_slice_range into
+         * the ones smaller than unifycr_key_slice_range
+         * */
+        unifycr_split_index(&cur_idx, &tmp_index_set,
+                            unifycr_key_slice_range);
+        i = 0;
+        if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
+            < (long)unifycr_max_index_entries) {
+            /*coalesce contiguous indices*/
 
-                if (*unifycr_indices.ptr_num_entries >= 1) {
-                    md_index_t *ptr_last_idx =
-                        &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
-                    if (ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
-                        ptr_last_idx->file_pos + ptr_last_idx->length
-                        == tmp_index_set.idxes[0].file_pos) {
-                        if (ptr_last_idx->file_pos / unifycr_key_slice_range
-                            == tmp_index_set.idxes[0].file_pos / unifycr_key_slice_range) {
-                            ptr_last_idx->length  += tmp_index_set.idxes[0].length;
-                            i++;
-                        }
+            if (*unifycr_indices.ptr_num_entries >= 1) {
+                md_index_t *ptr_last_idx =
+                    &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
+                if (ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
+                    ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length
+                    == tmp_index_set.idxes[0].file_pos) {
+                    if (ptr_last_idx->file_pos / unifycr_key_slice_range
+                        == tmp_index_set.idxes[0].file_pos / unifycr_key_slice_range) {
+                        ptr_last_idx->length  += tmp_index_set.idxes[0].length;
+                        i++;
                     }
                 }
-
-                for (; i < tmp_index_set.count; i++) {
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].file_pos =
-                        tmp_index_set.idxes[i].file_pos;
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].mem_pos =
-                        tmp_index_set.idxes[i].mem_pos;
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
-                        tmp_index_set.idxes[i].length;
-
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
-                        = tmp_index_set.idxes[i].fid;
-                    (*unifycr_indices.ptr_num_entries)++;
-                }
-
-            } else {
-                /*Todo:page out existing metadata buffer to disk*/
             }
 
-        /* TOdo: check return code for errors */
+            for (; i < tmp_index_set.count; i++) {
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].file_pos =
+                    tmp_index_set.idxes[i].file_pos;
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].mem_pos =
+                    tmp_index_set.idxes[i].mem_pos;
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
+                    tmp_index_set.idxes[i].length;
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].loid = 0;
+                unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
+                    = tmp_index_set.idxes[i].fid;
+                (*unifycr_indices.ptr_num_entries)++;
+            }
+
         } else {
-
-            cur_idx.mem_pos = my_off;
-            cur_idx.nid = my_node; 
-            cur_idx.cid = chunk_phy_id;
-
-            /*split the write requests larger than unifycr_key_slice_range into
-             * the ones smaller than unifycr_key_slice_range
-             * */
-            unifycr_split_index(&cur_idx, &tmp_index_set,
-                                unifycr_key_slice_range);
-            i = 0;
-            if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
-                < unifycr_max_index_entries) {
-                /*coalesce contiguous indices*/
-
-                if (*unifycr_indices.ptr_num_entries >= 1) {
-                    md_index_t *ptr_last_idx = &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
-                    if (ptr_last_idx->fid == tmp_index_set.idxes[0].fid &&
-                        ptr_last_idx->file_pos + ptr_last_idx->length
-                        == tmp_index_set.idxes[0].file_pos) {
-                        if (ptr_last_idx->file_pos / unifycr_key_slice_range
-                            == tmp_index_set.idxes[0].file_pos / unifycr_key_slice_range) {
-                            ptr_last_idx->length  += tmp_index_set.idxes[0].length;
-                            i++;
-                        }
-                    }
-                }
-                for (; i < tmp_index_set.count; i++) {
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].file_pos =
-                        tmp_index_set.idxes[i].file_pos;
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].mem_pos =
-                        tmp_index_set.idxes[i].mem_pos;
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].length =
-                        tmp_index_set.idxes[i].length;
-
-                    unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].fid
-                        = tmp_index_set.idxes[i].fid;
-                    if (fs_type == FAMFS) {
-                        unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].cid = 
-                            tmp_index_set.idxes[i].cid;
-                        unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries].nid = 
-                            tmp_index_set.idxes[i].nid;
-                    }
-                    (*unifycr_indices.ptr_num_entries)++;
-                }
-
-            } else {
-                /*Todo:page out existing metadata buffer to disk*/
-            }
+            /*Todo:page out existing metadata buffer to disk*/
+        }
 
         /* TOdo: check return code for errors */
-        }
     } else {
         /* unknown chunk type */
         DEBUG("unknown chunk type in read\n");
@@ -979,69 +541,6 @@ static int unifycr_logio_chunk_write(
 
     /* assume read was successful if we get to here */
     return UNIFYCR_SUCCESS;
-}
-
-static int cmp_md(const void *ap, const void *bp) {
-    md_index_t *mda = (md_index_t *)ap, *mdb = (md_index_t *)bp;
-
-    if (mda->fid > mdb->fid)
-        return 1;
-    else if (mda->fid < mdb->fid)
-        return -1;
-    if (mda->nid > mdb->nid)
-        return 1;
-    else if (mda->nid < mdb->nid)
-        return -1;
-    if (mda->cid > mdb->cid)
-        return 1;
-    else if (mda->cid < mdb->cid)
-        return -1;
-    if (mda->file_pos > mdb->file_pos)
-        return 1;
-    else if (mda->file_pos < mdb->file_pos)
-        return -1;
-    return 0;
-}
-
-static inline int same_chunk(md_index_t *a,  md_index_t *b) {
-    return (a->fid == b->fid  && a->cid == b->cid && a->nid == b->nid);
-}
-
-void famfs_merge_md() {
-    md_index_t *mdp = unifycr_indices.index_entry;
-    off_t     *nrp = unifycr_indices.ptr_num_entries;
-
-    if (*nrp <= 1)
-        return;
-
-    // first, or MD by file id and offset in it
-    off_t i, j = 0, n = *nrp;
-    qsort(mdp, n, sizeof(md_index_t), cmp_md);
-
-    // merge sequential requests within same chunk
-    for (i = 1; i < n; i++) {
-        md_index_t *a = &mdp[j], *b =  &mdp[i];
-        if (same_chunk(a, b) && b->file_pos == a->file_pos + a->length) {
-            a->length += b->length;
-            b->length = 0;
-            if (a->mem_pos > b->mem_pos)
-                a->mem_pos = b->mem_pos;
-        } else {
-            j++;
-        }
-    }
-
-    // now compress MD to get rid of 0 length records
-    for (i = 0, j = 0; i < n; i++) {
-        if (mdp[j].length == 0) {
-            if (mdp[i].length == 0)
-                continue;
-            mdp[j] = mdp[i];
-        }
-        j++;
-    }
-    if (j < i)
-        *nrp = j;
 }
 
 /* read data from specified chunk id, chunk offset, and count into user buffer,
@@ -1088,8 +587,8 @@ static int unifycr_chunk_write(
  * --------------------------------------- */
 
 /* if length is greater than reserved space, reserve space up to length */
-int unifycr_fid_store_fixed_extend(int fid, unifycr_filemeta_t *meta,
-                                   off_t length)
+int unifycr_fid_store_fixed_extend(int fid __attribute__((unused)),
+    unifycr_filemeta_t *meta, off_t length)
 {
     /* determine whether we need to allocate more chunks */
     off_t maxsize = meta->chunks << unifycr_chunk_bits;
@@ -1103,7 +602,7 @@ int unifycr_fid_store_fixed_extend(int fid, unifycr_filemeta_t *meta,
                 return UNIFYCR_ERR_NOSPC;
             }
             /* allocate a new chunk */
-            int rc = unifycr_chunk_alloc(fid, meta, meta->chunks);
+            int rc = unifycr_chunk_alloc(meta, meta->chunks);
             if (rc != UNIFYCR_SUCCESS) {
                 DEBUG("failed to allocate chunk\n");
                 return UNIFYCR_ERR_NOSPC;
@@ -1119,8 +618,8 @@ int unifycr_fid_store_fixed_extend(int fid, unifycr_filemeta_t *meta,
 }
 
 /* if length is shorter than reserved space, give back space down to length */
-int unifycr_fid_store_fixed_shrink(int fid, unifycr_filemeta_t *meta,
-                                   off_t length)
+int unifycr_fid_store_fixed_shrink(int fid __attribute__((unused)),
+    unifycr_filemeta_t *meta, off_t length)
 {
     /* determine the number of chunks to leave after truncating */
     off_t num_chunks = 0;
@@ -1131,15 +630,15 @@ int unifycr_fid_store_fixed_shrink(int fid, unifycr_filemeta_t *meta,
     /* clear off any extra chunks */
     while (meta->chunks > num_chunks) {
         meta->chunks--;
-        unifycr_chunk_free(fid, meta, meta->chunks);
+        unifycr_chunk_free(meta, meta->chunks);
     }
 
     return UNIFYCR_SUCCESS;
 }
 
 /* read data from file stored as fixed-size chunks */
-int unifycr_fid_store_fixed_read(int fid, unifycr_filemeta_t *meta, off_t pos,
-                                 void *buf, size_t count)
+int unifycr_fid_store_fixed_read(int fid __attribute__((unused)),
+    unifycr_filemeta_t *meta, off_t pos, void *buf, size_t count)
 {
     int rc;
 

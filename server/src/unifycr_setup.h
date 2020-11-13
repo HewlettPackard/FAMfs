@@ -33,5 +33,5 @@
 extern int *local_rank_lst;
 extern int rank, size;
 extern arraylist_t *app_config_list;
-extern int invert_sock_ids[MAX_NUM_CLIENTS];
+extern int invert_qids[MAX_NUM_CLIENTS];
 #endif

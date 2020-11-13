@@ -55,6 +55,7 @@ double msgputtime=0;
 struct mdhim_rm_t *client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
 
 	int return_code;
+	int msg_id = pm->basem.msg_id;
 	struct mdhim_rm_t *rm;       
 
 	gettimeofday(&msgputstart, NULL);
@@ -68,7 +69,14 @@ struct mdhim_rm_t *client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
 	gettimeofday(&msgputend, NULL);
 	msgputtime += 1000000*(msgputend.tv_sec-msgputstart.tv_sec) + msgputend.tv_usec - msgputstart.tv_usec;
 
-	return_code = receive_client_response(md, pm->basem.server_rank, (void **) &rm);
+	return_code = receive_client_response(md, pm->basem.server_rank, pm->basem.index, (void **) &rm);
+	// If the receive the response address to another thread
+	if (return_code == MDHIM_SUCCESS && msg_id != rm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error got/expect msg_id %d/%d index_id %d/%d type:%d/%d",
+		     md->mdhim_rank, rm->basem.msg_id, msg_id, rm->basem.index, pm->basem.index,
+		     rm->basem.mtype, pm->basem.mtype);
+		return_code = MDHIM_ERROR;
+	}
 	// If the receive did not succeed then log the error code and return MDHIM_ERROR
 	if (return_code != MDHIM_SUCCESS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error: %d from server while receiving "
@@ -96,8 +104,10 @@ struct mdhim_rm_t *client_put(struct mdhim_t *md, struct mdhim_putm_t *pm) {
  * @return return_message structure with ->error = MDHIM_SUCCESS or MDHIM_ERROR
  */
 struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index, 
-				struct mdhim_bputm_t **bpm_list) {
+				struct mdhim_basem_t **bpm_list)
+{
 	int return_code;
+	int msg_id = 0, first = 1;
 	struct mdhim_brm_t *brm_head, *brm_tail, *brm;
 	struct mdhim_rm_t **rm_list, *rm;
 	unsigned int i, num_srvs;
@@ -110,7 +120,14 @@ struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index,
 			continue;
 		}
 
-		srvs[num_srvs] = bpm_list[i]->basem.server_rank;
+		if (first) {
+			first = 0;
+			if (bpm_list[i]->mtype == MDHIM_BULK_PUT2)
+				msg_id = ((struct mdhim_bput2m_t *)bpm_list[i])->seg.seg_msg_id;
+			else
+				msg_id = bpm_list[i]->msg_id;
+		}
+		srvs[num_srvs] = bpm_list[i]->server_rank;
 		num_srvs++;
 	}
 
@@ -133,7 +150,7 @@ struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index,
 	
 	rm_list = malloc(sizeof(struct mdhim_rm_t *) * num_srvs);
 	memset(rm_list, 0, sizeof(struct mdhim_rm_t *) * num_srvs);
-	return_code = receive_all_client_responses(md, srvs, num_srvs, (void ***) &rm_list);
+	return_code = receive_all_client_responses(md, srvs, num_srvs, index->id, (void ***) &rm_list);
 	// If the receives did not succeed then log the error code and return MDHIM_ERROR
 	if (return_code != MDHIM_SUCCESS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error: %d from server while receiving "
@@ -143,6 +160,13 @@ struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index,
 	brm_head = brm_tail = NULL;
 	for (i = 0; i < num_srvs; i++) {
 		rm = rm_list[i];
+		// If the receive the response address to another thread
+		if (rm && msg_id != rm->basem.msg_id) {
+			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error msg_id %d (expect %d) index_id %d type:%d",
+			     md->mdhim_rank, rm->basem.msg_id, msg_id, rm->basem.index, rm->basem.mtype);
+			free(rm);
+			rm = NULL;
+		}
 		if (!rm) {
 		  mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
 		       "Error: did not receive a response message in client_bput",  
@@ -154,6 +178,7 @@ struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index,
 		brm = malloc(sizeof(struct mdhim_brm_t));
 		brm->error = rm->error;
 		brm->basem.mtype = rm->basem.mtype;
+		brm->basem.msg_id = rm->basem.msg_id;
 		brm->basem.server_rank = rm->basem.server_rank;
 		free(rm);
 
@@ -184,6 +209,7 @@ struct mdhim_brm_t *client_bput(struct mdhim_t *md, struct index_t *index,
 struct mdhim_bgetrm_t *client_bget(struct mdhim_t *md, struct index_t *index, 
 				   struct mdhim_bgetm_t **bgm_list) {
 	int return_code;
+	int msg_id = 0, first = 1;
 	struct mdhim_bgetrm_t *bgrm_head, *bgrm_tail, *bgrm;
 	struct mdhim_bgetrm_t **bgrm_list;
 	unsigned int i, num_srvs;
@@ -196,6 +222,16 @@ struct mdhim_bgetrm_t *client_bget(struct mdhim_t *md, struct index_t *index,
 			continue;
 		}
 
+		if (first) {
+			msg_id = bgm_list[i]->basem.msg_id;
+			first = 0;
+		} else if (msg_id != bgm_list[i]->basem.msg_id) {
+			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error IN msg_id %d/%d index_id %d type:%d",
+			     md->mdhim_rank, bgm_list[i]->basem.msg_id, msg_id, bgm_list[i]->basem.index,
+			     bgm_list[i]->basem.mtype);
+			num_srvs = 0;
+			break;
+		}
 		srvs[num_srvs] = bgm_list[i]->basem.server_rank;
 		num_srvs++;
 	}
@@ -219,7 +255,7 @@ struct mdhim_bgetrm_t *client_bget(struct mdhim_t *md, struct index_t *index,
 	
 	bgrm_list = malloc(sizeof(struct mdhim_bgetrm_t *) * num_srvs);
 	memset(bgrm_list, 0, sizeof(struct mdhim_bgetrm_t *) * num_srvs);
-	return_code = receive_all_client_responses(md, srvs, num_srvs, (void ***) &bgrm_list);
+	return_code = receive_all_client_responses(md, srvs, num_srvs, index->id, (void ***) &bgrm_list);
 	// If the receives did not succeed then log the error code and return MDHIM_ERROR
 	if (return_code != MDHIM_SUCCESS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error: %d from server while receiving "
@@ -236,6 +272,13 @@ struct mdhim_bgetrm_t *client_bget(struct mdhim_t *md, struct index_t *index,
 	bgrm_head = bgrm_tail = NULL;
 	for (i = 0; i < num_srvs; i++) {
 		bgrm = bgrm_list[i];
+		// If the receive the response address to another thread
+		if (bgrm && msg_id != bgrm->basem.msg_id) {
+			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error msg_id %d (expect %d) index_id %d type:%d",
+			     md->mdhim_rank, bgrm->basem.msg_id, msg_id, bgrm->basem.index, bgrm->basem.mtype);
+			free(bgrm);
+			bgrm = NULL;
+		}
 		if (!bgrm) {
 		  mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
 		       "Error: did not receive a response message in client_bget",  
@@ -270,6 +313,7 @@ struct mdhim_bgetrm_t *client_bget(struct mdhim_t *md, struct index_t *index,
 struct mdhim_bgetrm_t *client_bget_op(struct mdhim_t *md, struct mdhim_getm_t *gm) {
 
 	int return_code;
+	int msg_id = gm->basem.msg_id;
 	struct mdhim_bgetrm_t *brm;
 	
 	return_code = send_rangesrv_work(md, gm->basem.server_rank, gm);
@@ -280,7 +324,13 @@ struct mdhim_bgetrm_t *client_bget_op(struct mdhim_t *md, struct mdhim_getm_t *g
 		return NULL;
 	}
 
-	return_code = receive_client_response(md, gm->basem.server_rank, (void **) &brm);
+	return_code = receive_client_response(md, gm->basem.server_rank, gm->basem.index, (void **) &brm);
+	// If the receive the response address to another thread
+	if (return_code == MDHIM_SUCCESS && msg_id != gm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error got/expect msg_id %d/%d index_id %d/%d type:%d/%d",
+		     md->mdhim_rank, brm->basem.msg_id, msg_id, brm->basem.index, gm->basem.index, brm->basem.mtype, gm->basem.mtype);
+		return_code = MDHIM_ERROR;
+	}
 	// If the receive did not succeed then log the error code and return MDHIM_ERROR
 	if (return_code != MDHIM_SUCCESS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error: %d from server while receiving "
@@ -302,6 +352,7 @@ struct mdhim_bgetrm_t *client_bget_op(struct mdhim_t *md, struct mdhim_getm_t *g
 struct mdhim_rm_t *client_delete(struct mdhim_t *md, struct mdhim_delm_t *dm) {
 
 	int return_code;
+	int msg_id = dm->basem.msg_id;
 	struct mdhim_rm_t *rm;       
 
 	return_code = send_rangesrv_work(md, dm->basem.server_rank, dm);
@@ -312,7 +363,13 @@ struct mdhim_rm_t *client_delete(struct mdhim_t *md, struct mdhim_delm_t *dm) {
 		return NULL;
 	}
 
-	return_code = receive_client_response(md, dm->basem.server_rank, (void **) &rm);
+	return_code = receive_client_response(md, dm->basem.server_rank, dm->basem.index, (void **) &rm);
+	// If the receive the response address to another thread
+	if (return_code == MDHIM_SUCCESS && msg_id != dm->basem.msg_id) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error got/expect msg_id %d/%d index_id %d/%d type:%d/%d",
+		     md->mdhim_rank, rm->basem.msg_id, msg_id, rm->basem.index, dm->basem.index, rm->basem.mtype, dm->basem.mtype);
+		return_code = MDHIM_ERROR;
+	}
 	// If the receive did not succeed then log the error code and return MDHIM_ERROR
 	if (return_code != MDHIM_SUCCESS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error: %d from server while receiving "
@@ -334,6 +391,7 @@ struct mdhim_rm_t *client_delete(struct mdhim_t *md, struct mdhim_delm_t *dm) {
 struct mdhim_brm_t *client_bdelete(struct mdhim_t *md, struct index_t *index, 
 				   struct mdhim_bdelm_t **bdm_list) {
 	int return_code;
+	int msg_id = 0, first = 1;
 	struct mdhim_brm_t *brm_head, *brm_tail, *brm;
 	struct mdhim_rm_t **rm_list, *rm;
 	unsigned int i, num_srvs;
@@ -346,6 +404,16 @@ struct mdhim_brm_t *client_bdelete(struct mdhim_t *md, struct index_t *index,
 			continue;
 		}
 
+		if (first) {
+			msg_id = bdm_list[i]->basem.msg_id;
+			first = 0;
+		} else if (msg_id != bdm_list[i]->basem.msg_id) {
+			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error IN msg_id %d/%d index_id %d type:%d",
+			     md->mdhim_rank, bdm_list[i]->basem.msg_id, msg_id, bdm_list[i]->basem.index,
+			     bdm_list[i]->basem.mtype);
+			num_srvs = 0;
+			break;
+		}
 		srvs[num_srvs] = bdm_list[i]->basem.server_rank;
 		num_srvs++;
 	}
@@ -361,7 +429,7 @@ struct mdhim_brm_t *client_bdelete(struct mdhim_t *md, struct index_t *index,
 	
 	rm_list = malloc(sizeof(struct mdhim_rm_t *) * num_srvs);
 	memset(rm_list, 0, sizeof(struct mdhim_rm_t *) * num_srvs);
-	return_code = receive_all_client_responses(md, srvs, num_srvs, (void ***) &rm_list);
+	return_code = receive_all_client_responses(md, srvs, num_srvs, index->id, (void ***) &rm_list);
 	// If the receives did not succeed then log the error code and return MDHIM_ERROR
 	if (return_code != MDHIM_SUCCESS) {
 		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error: %d from server while receiving "
@@ -371,6 +439,13 @@ struct mdhim_brm_t *client_bdelete(struct mdhim_t *md, struct index_t *index,
 	brm_head = brm_tail = NULL;
 	for (i = 0; i < num_srvs; i++) {
 		rm = rm_list[i];
+		// If the receive the response address to another thread
+		if (rm && msg_id != rm->basem.msg_id) {
+			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - Error msg_id %d (expect %d) index_id %d type:%d",
+			     md->mdhim_rank, rm->basem.msg_id, msg_id, rm->basem.index, rm->basem.mtype);
+			free(rm);
+			rm = NULL;
+		}
 		if (!rm) {
 		  mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
 		       "Error: did not receive a response message in client_bdel",  
@@ -382,6 +457,7 @@ struct mdhim_brm_t *client_bdelete(struct mdhim_t *md, struct index_t *index,
 		brm = malloc(sizeof(struct mdhim_brm_t));
 		brm->error = rm->error;
 		brm->basem.mtype = rm->basem.mtype;
+		brm->basem.msg_id = rm->basem.msg_id;
 		brm->basem.server_rank = rm->basem.server_rank;
 		free(rm);
 

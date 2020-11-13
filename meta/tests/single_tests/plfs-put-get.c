@@ -123,8 +123,9 @@ int main(int argc, char **argv) {
 	}
 	key = get_key(rec->logical_offset);
 	printf("Inserting key: %llu\n", key);
-	brm = mdhimPut(md, &key, sizeof(key), 
-		      rec, sizeof(struct plfs_record), NULL, NULL);
+	brm = mdhimPut(md, md->primary_index,
+		       &key, sizeof(key),
+		       rec, sizeof(struct plfs_record), NULL, NULL);
 	if (!brm || brm->error) {
 		printf("Error inserting key/value into MDHIM\n");
 	} else {

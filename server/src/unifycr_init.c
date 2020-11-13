@@ -56,7 +56,13 @@
 #include "famfs_error.h"
 #include "famfs_maps.h"
 #include "lf_client.h"
-
+#include "famfs_rbq.h"
+#include "f_pool.h"
+#include "f_layout.h"
+#include "famfs_maps.h"
+#include "f_allocator.h"
+#include "mpi_utils.h"
+#include "f_helper.h"
 
 int *local_rank_lst;
 int local_rank_cnt;
@@ -68,7 +74,7 @@ arraylist_t *app_config_list;
 pthread_t data_thrd;
 arraylist_t *thrd_list;
 
-int invert_sock_ids[MAX_NUM_CLIENTS]; /*records app_id for each sock_id*/
+int invert_qids[MAX_NUM_CLIENTS]; /*records app_id for each qid*/
 int log_print_level = LOG_WARN;
 
 unifycr_cfg_t server_cfg;
@@ -76,37 +82,17 @@ static LFS_CTX_t *lfs_ctx_p = NULL;
 
 extern char *mds_vec;
 extern int  num_mds;
+extern struct mdhim_t *md;
 
-int mds_by_name() {
-    static char **nlist = NULL;
-    static int ncnt = 0;
-    char *ev;
+extern pthread_spinlock_t cntfy_lock;
 
-    if (ncnt < 0)
-        return -1;
+f_rbq_t *rplyq[MAX_NUM_CLIENTS];
+f_rbq_t *cmdq[F_CMDQ_MAX];
+f_rbq_t *admq;
+volatile int exit_flag = 0;
 
-    if (!(ev = getenv("FAMFS_MDS_LIST")))
-        return  ncnt = -1;
-
-    if (!ncnt) {
-        int m = 64;
-        char *tok, *p = ev;
-        nlist = (char **)malloc(m*sizeof(char *));
-
-        while ((tok = strsep(&p, ", "))) {
-            nlist[ncnt++] = tok;
-            if (ncnt == m) {
-                m += 64;
-                nlist = (char **)realloc(nlist, m*sizeof(char *));
-            }
-        }
-    }
-
-    return find_my_node(nlist, ncnt, NULL) >= 0;
-}
-
-int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
-    int i, n = 0;
+static int make_node_vec(char **vec_p, int wsize, int rank, int is_member) {
+    int i, rc, n = 0;
     char *vec;
 
     if (!(vec = malloc(wsize))) {
@@ -115,10 +101,14 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
     }
     memset(vec, 0, wsize);
     MPI_Barrier(MPI_COMM_WORLD);
-    vec[rank] = (char) is_member();
-    ON_ERROR(MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
-             vec, 1, MPI_BYTE, MPI_COMM_WORLD),
-            "MPI_Allgather");
+    vec[rank] = (char) is_member;
+    rc = MPI_Allgather(MPI_IN_PLACE, 1, MPI_BYTE,
+                       vec, 1, MPI_BYTE, MPI_COMM_WORLD);
+    if (rc) {
+        LOG(LOG_ERR, "MPI_Allgather error %d", rc);
+        return 0;
+    }
+
     for (i = 0; i < wsize; i++) {
         if (vec[i] < 0) {
             free(vec);
@@ -139,14 +129,24 @@ int make_node_vec(char **vec_p, int wsize, int rank, int (*is_member)(void)) {
     return n;
 }
 
+extern int num_fds;
+long max_recs_per_slice;
+
+extern pthread_t al_thrd[F_CMDQ_MAX];
+extern pthread_t cm_thrd;
+
 int main(int argc, char *argv[])
 {
+    F_POOL_t *pool;
     mdhim_options_t *db_opts = NULL;
     char dbg_fname[GEN_STR_LEN] = {0};
     int provided;
     int rc;
     bool daemon;
     long l;
+    f_svcrq_t acmd;
+    char qname[MAX_RBQ_NAME];
+    pthread_t lo_thrd[F_CMDQ_MAX], ntfy_thrd;
 
     rc = unifycr_config_init(&server_cfg, argc, argv);
     if (rc != 0)
@@ -160,178 +160,346 @@ int main(int argc, char *argv[])
     rc = configurator_bool_val(server_cfg.unifycr_daemonize, &daemon);
     if (rc != 0)
 	exit(1);
+    if (server_cfg.log_file == NULL)
+        exit(1);
     if (daemon)
 	daemonize();
 
     rc = MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
-
     if (rc != MPI_SUCCESS)
-        exit(1);
+        goto _err;
 
     rc = MPI_Comm_rank(MPI_COMM_WORLD, &glb_rank);
     if (rc != MPI_SUCCESS)
-        exit(1);
+        goto _err;
 
     rc = MPI_Comm_size(MPI_COMM_WORLD, &glb_size);
     if (rc != MPI_SUCCESS)
-        exit(1);
+        goto _err;
 
     rc = CountTasksPerNode(glb_rank, glb_size);
     if (rc < 0)
-        exit(1);
+        goto _err;
 
-    local_rank_idx = find_rank_idx(glb_rank, local_rank_lst,
-                                   local_rank_cnt);
+    local_rank_idx = find_rank_idx(glb_rank, local_rank_lst, local_rank_cnt);
 
     /* UNIFYCR_DEFAULT_LOG_FILE */
-    if (server_cfg.log_file == NULL)
-        exit(1);
-    sprintf(dbg_fname, "%s-%d", server_cfg.log_file, glb_rank);
-
+    sprintf(dbg_fname, "%s/%s-%d",
+            server_cfg.log_dir, server_cfg.log_file, glb_rank);
     rc = dbg_open(dbg_fname);
     if (rc != ULFS_SUCCESS)
-        LOG(LOG_ERR, "%s", ULFS_str_errno(rc));
+        fprintf(stderr, "%s", ULFS_str_errno(rc));
+    LOG(LOG_INFO, "log started");
+
+    if ((rc = f_set_layouts_info(&server_cfg)) ||
+	(rc = create_lfs_ctx(&lfs_ctx_p)))
+    {
+        printf("srv failed to load configuration: %d\n", rc);
+        return rc;
+    }
+    pool = lfs_ctx_p->pool;
+    assert( pool ); /* f_set_layouts_info() must set 'pool' or fail */
+    /* DEBUG */
+    if (log_print_level > 0 && glb_rank == 0) {
+	unifycr_config_print(&server_cfg, NULL);
+	printf("%s\n", pool->mynode.hostname);
+	f_print_layouts();
+	printf("\n");
+    }
+
+    /* Create MPI communicator for IO nodes */
+    pool->zero_ion_rank = mpi_split_world(&pool->ionode_comm,
+				NodeIsIOnode(&pool->mynode), 1,
+				glb_rank, glb_size);
+    if (pool->zero_ion_rank < 0) {
+	err("Check IO node config: node hostname or IP!");
+	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOENV));
+	rc = ULFS_ERROR_NOENV;
+    }
 
     rc = meta_init_conf(&server_cfg, &db_opts);
     if (rc != 0) {
-        LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
-        exit(1);
+        LOG(LOG_ERR, "meta_init_conf error:%d - %s", rc, ULFS_str_errno(ULFS_ERROR_MDINIT));
+        rc = ULFS_ERROR_MDINIT;
+        goto _err;
     }
 
     app_config_list = arraylist_create();
     if (app_config_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
-        exit(1);
+        rc = ULFS_ERROR_NOMEM;
+        goto _err;
     }
 
     thrd_list = arraylist_create();
     if (thrd_list == NULL) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_NOMEM));
-        exit(1);
+        rc = ULFS_ERROR_NOMEM;
+        goto _err;
     }
 
-    rc = sock_init_server(local_rank_idx);
-    if (rc != 0) {
-        LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_SOCKET));
-        exit(1);
+    if (PoolFAMFS(pool)) {
+	/* Create admin queue on all nodes */
+	sprintf(qname, "%s-admin", F_CMDQ_NAME);
+	if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &admq, 1))) {
+	    LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
+	    rc = ULFS_ERROR_GENERAL;
+	    goto _err;
+	}
+
+	if (pool->info.layouts_count > F_CMDQ_MAX) {
+	    LOG(LOG_ERR, "too many layouts: %d - not enough work queues",
+		pool->info.layouts_count);
+	    rc = ULFS_ERROR_NOENV;
+	    goto _err;
+	}
+
+	/* Create command queues and start layout threads only on compute nodes */
+        pthread_spin_init(&cntfy_lock, PTHREAD_PROCESS_PRIVATE);
+	bzero(rplyq, sizeof(rplyq));
+	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
+
+	    bzero(lo_thrd, sizeof(lo_thrd));
+	    for (int i = 0; i < pool->info.layouts_count; i++) {
+		F_LAYOUT_t *lo = f_get_layout(i);
+
+		if (lo == NULL) {
+		    LOG(LOG_ERR, "get layout [%d] info\n", i);
+		    rc = ULFS_ERROR_NOENV;
+		    goto _err;
+		}
+		sprintf(qname, "%s-%s", F_CMDQ_NAME, lo->info.name);
+		if ((rc = f_rbq_create(qname, sizeof(f_svcrq_t), F_MAX_CMDQ, &cmdq[i], 1))) {
+		    LOG(LOG_ERR, "rbq %s create: %s", qname, strerror(-rc));
+		    goto _err;
+		}
+		LOG(LOG_INFO, "layout %d:%s queue %s created", i, lo->info.name, qname);
+		if ((rc = pthread_create(&lo_thrd[i], NULL, f_command_thrd, cmdq[i]))) {
+		    LOG(LOG_ERR, "LO %s svc thread create failed", lo->info.name);
+		    goto _err;
+		}
+	    }
+            if ((rc = pthread_create(&ntfy_thrd, NULL, f_notify_thrd, NULL))) {
+                LOG(LOG_ERR, "ntfy thread create failed");
+                goto _err;
+            }
+	}
     }
 
-    if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank, mds_by_name)) > 0) {
+    /* we DO NOT support multiple instances of famfs demon on one node */
+    ASSERT(local_rank_idx == 0);
+
+    if (PoolUNIFYCR(pool)) {
+	rc = sock_init_server(local_rank_idx);
+	if (rc != 0) {
+	    LOG(LOG_ERR, "sock_init_server error:%d - %s", rc, ULFS_str_errno(ULFS_ERROR_SOCKET));
+	    goto _err;
+	}
+    }
+
+    if ((rc = make_node_vec(&mds_vec, glb_size, glb_rank,
+			    NodeHasMDS(&pool->mynode))) > 0)
+    {
         LOG(LOG_INFO, "MDS vector constructed with %d members\n", rc);
         num_mds = rc;
     } else if (rc < 0) {
         LOG(LOG_ERR, "Error obtaining MDS vector");
+	rc = ULFS_ERROR_GENERAL;
+	goto _err;
     } else {
         num_mds = 0;
     }
 
-    rc = f_set_layout_info(&server_cfg);
-    if (rc != 0) {
-	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_CFG));
-	exit(1);
-    }
-
     /* Fork LF server process if FAM emulation is required */
-    char *lfs_cmd = getstr(LFS_COMMAND);
-    if (lfs_cmd) {
-	rc = lfs_emulate_fams(lfs_cmd, glb_rank, glb_size, &lfs_ctx_p);
+    if (PoolFAMEmul(pool)) {
+	rc = lfs_emulate_fams(glb_rank, glb_size, lfs_ctx_p);
 	if (rc) {
 	    LOG(LOG_ERR, "%d/%d: Failed to start FAM emulation: %d",
 		glb_rank, glb_size, rc);
-		exit(1);
+		goto _err;;
 	}
     }
 
-    /*launch the service manager*/
-    rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
-    if (rc != 0) {
-        LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_THRDINIT));
-        exit(1);
+    if (PoolUNIFYCR(pool)) {
+	/* launch the service manager */
+	rc = pthread_create(&data_thrd, NULL, sm_service_reads, NULL);
+	if (rc != 0) {
+	    LOG(LOG_ERR, "pthread_create error:%d - %s",
+		rc, ULFS_str_errno(ULFS_ERROR_THRDINIT));
+	    rc = ULFS_ERROR_THRDINIT;
+	    goto _err;
+	}
+
+	/*wait for the service manager to connect to the
+	 *request manager so that they can exchange control
+	 *information*/
+	rc = sock_wait_cli_cmd();
+	if (rc != ULFS_SUCCESS) {
+	    int ret = sock_handle_error(rc);
+	    if (ret != 0) {
+		LOG(LOG_ERR, "%s",
+		    ULFS_str_errno(ret));
+		goto _err;
+	    }
+	} else {
+	    int qid = sock_get_id();
+	    if (qid != 0) {
+		goto _err;
+	    }
+	}
     }
 
-    /*wait for the service manager to connect to the
-     *request manager so that they can exchange control
-     *information*/
-    if (log_print_level > 0) {
-        printf("unifycrd is running\n");
-    }
+    if (pool->verbose > 0) {
+	printf("%s: FAMFS server is running\n", pool->mynode.hostname);
 
-
-    rc = sock_wait_cli_cmd();
-    if (rc != ULFS_SUCCESS) {
-        int ret = sock_handle_error(rc);
-        if (ret != 0) {
-            LOG(LOG_ERR, "%s",
-                ULFS_str_errno(ret));
-            exit(1);
-        }
-    } else {
-        int sock_id = sock_get_id();
-        if (sock_id != 0) {
-            exit(1);
-        }
+	/* set MDHIM debug level */
+	int mlog_priority = pool->verbose;
+	if (mlog_priority > 7)
+	    mlog_priority = 7;
+	mlog_priority = 7 - mlog_priority;
+	db_opts->debug_level &= ~MLOG_PRIMASK;
+	db_opts->debug_level |= mlog_priority << MLOG_PRISHIFT;
+        if (pool->verbose > 7)
+	    db_opts->debug_level |= MLOG_DBG;
     }
 
     rc = meta_init_store(db_opts);
     if (rc != 0) {
         LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
-        exit(1);
+        goto _err;
     }
+    /* Set MDHIM slicing and key hash stripe size lookup table */
+    max_recs_per_slice = db_opts->max_recs_per_slice;
+    size_t *stripe_sizes = NULL;
+    if ((rc = f_get_lo_stripe_sizes(pool, &stripe_sizes)) < 0) {
+	LOG(LOG_ERR, "%s", ULFS_str_errno(ULFS_ERROR_MDINIT));
+	goto _err;
+    }
+    mdhimSetSliceSizes(md->primary_index, stripe_sizes, rc);
+    free(stripe_sizes);
 
     rc = meta_register_fam(lfs_ctx_p);
     if (rc != ULFS_SUCCESS) {
-	LOG(LOG_ERR, "%s reg FAM", ULFS_str_errno(rc));
-	exit(1);
+	LOG(LOG_ERR, "meta_register_fam error:%d - %s", rc, ULFS_str_errno(rc));
+	goto _err;
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
-    {
-        char fname[256];
-        sprintf(fname, "/tmp/unifycrd.running.%d", getpid());
-        int flag = open(fname, O_RDWR | O_CREAT, 0644);
-        close(flag);
+
+    if (PoolFAMFS(pool)) {
+	/* Open libfabric domain and connect to all pool devices */
+	if ((rc = lf_clients_init(pool))) {
+	    LOG(LOG_ERR, "%d: node %s failed to initialize libfabric device(s), error:%d",
+		glb_rank, pool->mynode.hostname, rc);
+	    goto _err;
+	}
+
+	/* Start allocator threads on IO nodes only */
+	if (NodeIsIOnode(&pool->mynode)) {
+	    rc = f_start_allocator_threads();
+	    if (rc != ULFS_SUCCESS) {
+		LOG(LOG_ERR, "%s error starting allocator threads", strerror(-rc));
+	        goto _err;
+	    }
+	}
+
+	/* Perform f_ah_init on all nodes, it will start appropriate threads for that node */
+	if ((rc = f_ah_init(pool))) {
+	    LOG(LOG_ERR, "error startting helper threads");
+	    rc = ULFS_ERROR_GENERAL;
+	    goto _err;
+	}
+	LOG(LOG_DBG, "helper threads started");
+#if 0 /* 1: test helper */
+	LOG(LOG_DBG, "+++ TESTING +++");
+	if (!NodeIsIOnode(&pool->mynode) || NodeForceHelper(&pool->mynode)) {
+            LOG(LOG_DBG, "+++ EXECUTING SELF TEST +++");
+	    usleep(500);
+	    if ((rc = f_test_helper(pool)))
+		LOG(LOG_ERR, "error %d in f_test_helper", rc);
+	}
+#endif
     }
 
-    while (1) {
-        rc = sock_wait_cli_cmd();
-        if (rc != ULFS_SUCCESS) {
-            int sock_id = sock_get_error_id();
-            if (sock_id == 1) {
-                /* received exit command from the
-                 * service manager
-                 * thread.
-                 * */
-                unifycr_exit();
-                break;
-            }
+    /* Create file for automated testing */
+    char fname[256];
+    mode_t old_umask = umask(S_IRWXG);
+    sprintf(fname, "/tmp/" F_DAEMON_NM ".running.%d", getpid());
+    umask(0111);
+    int flag = open(fname, O_RDWR | O_CREAT, 0666);
+    close(flag);
+    umask(old_umask);
 
-            int ret = sock_handle_error(rc);
-            if (ret != 0) {
-                LOG(LOG_ERR, "%s",
-                    ULFS_str_errno(ret));
-                exit(1);
-            }
+    if (PoolFAMFS(pool)) {
+	while (1) {
+	    if (exit_flag) {
+		LOG(LOG_INFO, "exit flag set");
+		break;
+	    }
+	    if ((rc = f_rbq_pop(admq, &acmd, RBQ_TMO_4EVER))) {
+		LOG(LOG_FATAL, "svc rbq pop failed: %s(%d)", strerror(-rc), rc);
+		goto _err;
+	    }
 
-        } else {
-            int sock_id = sock_get_id();
-            /*sock_id is 0 if it is a listening socket*/
-            if (sock_id != 0) {
-                char *cmd = sock_get_cmd_buf(sock_id);
-                int cmd_rc = delegator_handle_command(cmd, sock_id,
-						db_opts->max_recs_per_slice);
-                if (cmd_rc != ULFS_SUCCESS) {
-                    LOG(LOG_ERR, "%s",
-                        ULFS_str_errno(cmd_rc));
-                    return cmd_rc;
-                }
-            }
-        }
-
+	    if ((rc = f_srv_process_cmd(&acmd, admq->rbq->name, 1))) {
+		LOG(LOG_ERR, "srv_process_cmd error:%d - %s", rc, ULFS_str_errno(rc));
+		continue;
+	    }
+	}
     }
+
+    /* TODO: Support fs_type=both with delegator command handler thread */
+    if (PoolUNIFYCR(pool)) {
+	while (1) {
+	    rc = sock_wait_cli_cmd();
+	    if (rc != ULFS_SUCCESS) {
+		int qid = sock_get_error_id();
+		if (qid == 1) {
+		    /* received exit command from the
+		     * service manager
+		     * thread.
+		     * */
+		    LOG(LOG_INFO, "Exit cmd!");
+		    break;
+		}
+
+		int ret = sock_handle_error(rc);
+		if (ret != 0) {
+		    LOG(LOG_ERR, "%s",
+			ULFS_str_errno(ret));
+		    goto _err;
+		}
+
+	    } else {
+		int qid = sock_get_id();
+		/*qid is 0 if it is a listening socket*/
+		if (qid != 0) {
+		    char *cmd = sock_get_cmd_buf(qid);
+		    int cmd_rc = delegator_handle_command(cmd, qid,
+							  max_recs_per_slice);
+		    if (cmd_rc != ULFS_SUCCESS) {
+			LOG(LOG_ERR, "%s",
+			    ULFS_str_errno(cmd_rc));
+			return cmd_rc;
+		    }
+		}
+	    }
+	}
+    }
+
+    unifycr_exit();
 
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Finalize();
-    return 0;
+    return rc;
+
+_err:
+    err("famfs error:%d", rc);
+    unifycr_exit();
+
+    LOG(LOG_FATAL, "Exiting with error:%d - %s", rc, ULFS_str_errno(rc));
+    MPI_Abort(MPI_COMM_WORLD, (rc>0)?rc:-rc);
+    exit(1); /* never reach this point */
 }
 
 /**
@@ -546,41 +714,44 @@ static int compare_name_rank_pair(const void *a, const void *b)
 
 static int unifycr_exit()
 {
+    int i, j;
     int rc = ULFS_SUCCESS;
 
-    /* notify the threads of request manager to exit*/
-    int i, j;
-    for (i = 0; i < arraylist_size(thrd_list); i++) {
-        thrd_ctrl_t *tmp_ctrl =
-            (thrd_ctrl_t *)arraylist_get(thrd_list, i);
-        pthread_mutex_lock(&tmp_ctrl->thrd_lock);
+    F_POOL_t *pool = lfs_ctx_p->pool;
+    if (PoolUNIFYCR(pool)) {
+	/* notify the threads of request manager to exit*/
+	for (i = 0; i < arraylist_size(thrd_list); i++) {
+	    thrd_ctrl_t *tmp_ctrl =
+		(thrd_ctrl_t *)arraylist_get(thrd_list, i);
+	    pthread_mutex_lock(&tmp_ctrl->thrd_lock);
 
-        if (!tmp_ctrl->has_waiting_delegator) {
-            tmp_ctrl->has_waiting_dispatcher = 1;
-            pthread_cond_wait(&tmp_ctrl->thrd_cond, &tmp_ctrl->thrd_lock);
-            tmp_ctrl->exit_flag = 1;
-            tmp_ctrl->has_waiting_dispatcher = 0;
-            free(tmp_ctrl->del_req_set);
-            free(tmp_ctrl->del_req_stat->req_stat);
-            free(tmp_ctrl->del_req_stat);
-            pthread_cond_signal(&tmp_ctrl->thrd_cond);
+	    if (!tmp_ctrl->has_waiting_delegator) {
+		tmp_ctrl->has_waiting_dispatcher = 1;
+		pthread_cond_wait(&tmp_ctrl->thrd_cond, &tmp_ctrl->thrd_lock);
+		tmp_ctrl->exit_flag = 1;
+		tmp_ctrl->has_waiting_dispatcher = 0;
+		free(tmp_ctrl->del_req_set);
+		free(tmp_ctrl->del_req_stat->req_stat);
+		free(tmp_ctrl->del_req_stat);
+		pthread_cond_signal(&tmp_ctrl->thrd_cond);
 
-        } else {
-            tmp_ctrl->exit_flag = 1;
+	    } else {
+		tmp_ctrl->exit_flag = 1;
 
-            free(tmp_ctrl->del_req_set);
-            free(tmp_ctrl->del_req_stat->req_stat);
-            free(tmp_ctrl->del_req_stat);
+		free(tmp_ctrl->del_req_set);
+		free(tmp_ctrl->del_req_stat->req_stat);
+		free(tmp_ctrl->del_req_stat);
 
-            pthread_cond_signal(&tmp_ctrl->thrd_cond);
-        }
-        pthread_mutex_unlock(&tmp_ctrl->thrd_lock);
+		pthread_cond_signal(&tmp_ctrl->thrd_cond);
+	    }
+	    pthread_mutex_unlock(&tmp_ctrl->thrd_lock);
 
-        void *status;
-        pthread_join(tmp_ctrl->thrd, &status);
+	    void *status;
+	    pthread_join(tmp_ctrl->thrd, &status);
+	}
+
+	arraylist_free(thrd_list);
     }
-
-    arraylist_free(thrd_list);
 
     /* sanitize the shared memory and delete the log files
      * */
@@ -623,6 +794,46 @@ static int unifycr_exit()
         }
     }
 
+    if (PoolFAMFS(pool)) {
+        exit_flag = 1;
+        f_svcrq_t c = {.opcode = CMD_QUIT, .cid = 0};
+        f_ah_ntfy_t nq = {.op = F_NTFY_QUIT, .lid = 0};
+        int me;
+
+        // shutdown command threads
+        for (int i = 0; i < pool->info.layouts_count; i++)
+            if (cmdq[i])
+                f_rbq_push(cmdq[i], &c, RBQ_TMO_1S);
+
+        // tell close-notify thread to quit
+        MPI_Comm_rank(pool->helper_comm, &me);
+        MPI_Send(&nq, sizeof(nq), MPI_BYTE, me, F_TAG_NTFY, pool->helper_comm);
+
+        // destroy layout-specific command queues
+        for (int i = 0; i < pool->info.layouts_count; i++) {
+            if (cmdq[i]) {
+                if ((rc = f_rbq_destroy(cmdq[i]))) {
+		    LOG(LOG_ERR, "helper queue %d destroy: %d", i, rc);
+		}
+	    }
+	}
+
+        // close server's side of client reply queues
+        for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+            if (rplyq[i])
+                f_rbq_close(rplyq[i]);
+
+        // destroy admin command queue
+        f_rbq_destroy(admq);
+
+        if (f_ah_shutdown(pool))
+            LOG(LOG_ERR, "helper did not exit cleanly");
+
+        if (NodeIsIOnode(&pool->mynode)) {
+	    f_stop_allocator_threads();
+        }
+    }
+
     /* shutdown the metadata service */
     meta_sanitize(); /* mdhim_options_destroy(db_opts) */
     /* notify the service threads to exit*/
@@ -631,11 +842,11 @@ static int unifycr_exit()
      * for acks*/
     sock_sanitize();
 
-    /* Close FAM emulation fabric */
+    /* Signal child to quit (if FAM emulation) */
     free_lfs_ctx(&lfs_ctx_p);
 
-    /* Allocated at common lib: free F_LAYOUT_INFO_t */
-    f_free_layout_info();
+    /* Free pool and all layout structures */
+    rc = f_free_layouts_info();
 
     /* Allocated at main(): free unifycr_cfg_t */
     unifycr_config_free(&server_cfg);

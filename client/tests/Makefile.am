@@ -1,10 +1,15 @@
 libexec_PROGRAMS = test_write_gotcha test_read_gotcha test_write_static test_read_static
 libexec_PROGRAMS += test_prw_gotcha test_prw_static
 
-AM_CFLAGS = -Wall
+AM_CFLAGS	=	-Wall $(MPI_CFLAGS)
 
-test_gotcha_ldadd = ../src/libfamfs_gotcha.la -lmpi
-test_static_ldadd = ../src/libfamfs.la -lmpi
+test_gotcha_ldadd =	../src/libfamfs_gotcha.la \
+			$(top_builddir)/common/src/libfamfs_meta.la \
+			-L$(top_builddir)/userspace-rcu/src/.libs -lurcu-qsbr -lurcu-cds \
+			-lmpi
+test_static_ldadd =	../src/.libs/libfamfs.la \
+			-L$(top_builddir)/userspace-rcu/src/.libs \
+			-lmpi
 test_static_ldflags = -static $(CP_WRAPPERS) $(AM_LDFLAGS)
 test_cppflags = $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) -I$(top_srcdir)/client/src -I$(top_srcdir)/common/src
 # fabtest_cppflags = $(AM_CPPFLAGS) $(COMMON_CPPFLAGS) $(LIBFABRIC_CFLAGS) -I$(top_srcdir)/client/src -I$(top_srcdir)/common/src

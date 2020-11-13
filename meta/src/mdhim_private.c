@@ -35,13 +35,16 @@
  */
 
 #include <stdlib.h>
+#include <stdio.h>
+#include <sys/time.h>
+
 #include "mdhim.h"
 #include "client.h"
 #include "local_client.h"
 #include "partitioner.h"
 #include "indexes.h"
-#include <stdio.h>
-#include <sys/time.h>
+#include "famfs_error.h"
+
 
 struct timeval localgetstart, localgetend;
 double localgettime=0;
@@ -97,7 +100,7 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 		if ((rl = get_range_servers(md, lookup_index, value, value_len)) == 
 		    NULL) {
 			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
-			     "Error while determining range server in mdhimBPut", 
+			     "Error while determining range server in _put_record",
 			     md->mdhim_rank);
 			return NULL;
 		}
@@ -127,6 +130,7 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 		pm->value = value;
 		pm->value_len = value_len;
 		pm->basem.server_rank = rl->ri->rank;
+		pm->basem.msg_id = next_index_msg_id(md, put_index);
 		pm->basem.index = put_index->id;
 		pm->basem.index_type = put_index->type;
 
@@ -151,6 +155,7 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 		} else {
 			//Send the message through the network as this message is for another rank
 			rm = client_put(md, pm);
+			rm->basem.msg_id = pm->basem.msg_id;
  /*
  gettimeofday(&en, NULL);
  timersub(&en, &st0, &tm);
@@ -184,6 +189,7 @@ struct mdhim_brm_t *_create_brm(struct mdhim_rm_t *rm) {
 	brm->error = rm->error;
 	brm->basem.mtype = rm->basem.mtype;
 	brm->basem.index = rm->basem.index;
+	brm->basem.msg_id = rm->basem.msg_id;
 	brm->basem.index_type = rm->basem.index_type;
 	brm->basem.server_rank = rm->basem.server_rank;
 
@@ -225,6 +231,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 	} else {
 		lookup_index = index;
 	}
+	int msg_id = next_index_msg_id(md, put_index);
 
 	//Check to see that we were given a sane amount of records
 	if (num_keys > MAX_BULK_OPS) {
@@ -233,6 +240,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		     md->mdhim_rank);
 		return NULL;
 	}
+ int n_loc=0, n_rem=0;
 
 	//The message to be sent to ourselves if necessary
 	lbpm = NULL;
@@ -253,8 +261,8 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		if (put_index->type == LOCAL_INDEX) {
 			if ((rl = get_range_servers(md, lookup_index, values[i], value_lens[i])) == 
 			    NULL) {
-				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
-				     "Error while determining range server in mdhimBPut", 
+				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
+				     "Error while determining range server in bput_records",
 				     md->mdhim_rank);
 				continue;
 			}
@@ -262,9 +270,8 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 			gettimeofday(&localrangestart, NULL);
 			if ((rl = get_range_servers(md, lookup_index, keys[i], key_lens[i])) == 
 			    NULL) {
-				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
-				     "Error while determining range server in mdhimBPut", 
-				     md->mdhim_rank);
+				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
+				     "Error while determining range server in bput_records",				     md->mdhim_rank);
 				continue;
 			}
 			gettimeofday(&localrangeend, NULL);
@@ -277,9 +284,11 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		while (rl) {
 			gettimeofday(&localbpmstart, NULL);
 			if ((int)rl->ri->rank != md->mdhim_rank) {
+ n_rem++;
 				//Set the message in the list for this range server
 				bpm = bpm_list[rl->ri->rangesrv_num - 1];
 			} else {
+ n_loc++;
 				//Set the local message
 				bpm = lbpm;
 			}
@@ -297,6 +306,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 				bpm->num_keys = 0;
 				bpm->basem.server_rank = rl->ri->rank;
 				bpm->basem.mtype = MDHIM_BULK_PUT;
+				bpm->basem.msg_id = msg_id;
 				bpm->basem.index = put_index->id;
 				bpm->basem.index_type = put_index->type;
 				if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -331,7 +341,7 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		localcpyend.tv_usec - localcpystart.tv_usec;
 
 	//Make a list out of the received messages to return
-	brm_head = client_bput(md, put_index, bpm_list);
+	brm_head = client_bput(md, put_index, (struct mdhim_basem_t **)bpm_list);
 	if (lbpm) {
 		rm = local_client_bput(md, lbpm);
                 if (rm) {
@@ -357,6 +367,100 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 
 	free(bpm_list);
 
+ mlog(MDHIM_CLIENT_INFO, "BPUT  index:%d msg_id:%d n_loc:%d n_rem:%d num_keys:%d", index->id, msg_id, n_loc, n_rem, num_keys);
+	//Return the head of the list
+	return brm_head;
+}
+
+struct mdhim_brm_t *bput2_records(struct mdhim_t *md, struct index_t *index,
+				  struct mdhim_bput2m_t *message)
+{
+	struct mdhim_bput2m_t *bpm, **bpm_list;
+	fsmd_kv_t *kv;
+	struct mdhim_brm_t *brm_head;
+	uint32_t *rs_num, rangesrv_num, *kv_num;
+	int num_keys, key_len, num_rangesrvs, i;
+
+	ASSERT( index->type != LOCAL_INDEX );
+	int msg_id = next_index_msg_id(md, index);
+	message->seg.seg_msg_id = msg_id;
+
+	//Check to see that we were given a sane amount of records
+	num_keys = message->seg.num_keys;
+	if (num_keys > MAX_BULK_OPS) {
+		mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - " 
+		     "To many bulk operations requested in mdhimBGetOp", 
+		     md->mdhim_rank);
+		return NULL;
+	}
+
+	key_len = message->seg.key_len;
+	num_rangesrvs = index->num_rangesrvs;
+
+	//array of number of KVs per RS
+	kv_num = (uint32_t *) calloc(num_rangesrvs, sizeof(uint32_t));
+	//array of range server numbers per KV
+	rs_num = (uint32_t *) malloc(num_keys*sizeof(uint32_t));
+
+	//Create an array of bulk put messages that holds one bulk message per range server
+	bpm_list = calloc(num_rangesrvs, sizeof(struct mdhim_bput2m_t *));
+
+	/* Go through each of the records to find the range server(s) the record belongs to.
+	   If there is not a bulk message in the array for the range server the key belongs to, 
+	   then it is created.  Otherwise, the data is added to the existing message in the array.*/
+	kv = &message->seg.kvs[0];
+	for (i = 0; i < num_keys && i < MAX_BULK_OPS; i++, kv++) {
+		//Get the range server this key will be sent to
+		if ((rangesrv_num = get_range_server(md, index, &kv->k, key_len)) == 0) {
+			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
+			     "Error while determining range server in bput_records", md->mdhim_rank);
+			continue;
+		}
+		rs_num[i] = --rangesrv_num;
+		kv_num[rangesrv_num]++;
+	}
+
+	kv = &message->seg.kvs[0];
+	for (i = 0; i < num_keys && i < MAX_BULK_OPS; i++, kv++) {
+		rangesrv_info *ri;
+
+		rangesrv_num = rs_num[i];
+		int nkeys = kv_num[rangesrv_num];
+		if (nkeys == 0)
+			continue;
+
+		//Create the message in the list for this range server
+		bpm = bpm_list[rangesrv_num];
+		if (!bpm) {
+			bpm = malloc(mdhim_bput2m_alloc_sz(nkeys));
+			if (bpm == NULL) {
+				free(rs_num);
+				mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - OOM", md->mdhim_rank);
+				return NULL;
+			}
+			bpm_list[rangesrv_num] = bpm;
+			memcpy(bpm, message, mdhim_bput2m_alloc_sz(0));
+			bpm->seg.num_keys = 0;
+
+			rangesrv_num++;
+			HASH_FIND_INT(index->rangesrvs_by_num, &rangesrv_num, ri);
+			int server_rank = ri->rank;
+			ASSERT( server_rank != md->mdhim_rank );
+			bpm->basem.server_rank = server_rank;
+		}
+
+		//Add KV to the message for this range server
+		bpm->seg.kvs[bpm->seg.num_keys++] = *kv;
+	}
+	free(rs_num);
+	free(kv_num);
+
+	//Make a list out of the received messages to return and free up messages sent
+	brm_head = client_bput(md, index, (struct mdhim_basem_t **)bpm_list);
+	free(bpm_list);
+
+	mlog(MDHIM_CLIENT_INFO, "BPUT2 msg_id:%d num_keys:%d", msg_id, num_keys);
+
 	//Return the head of the list
 	return brm_head;
 }
@@ -369,6 +473,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 	struct mdhim_bgetrm_t *bgrm_head, *lbgrm;
 	int i;
 	rangesrv_list *rl = NULL, *rlp;
+	int msg_id = next_index_msg_id(md, index);
 
 	//The message to be sent to ourselves if necessary
 	lbgm = NULL;
@@ -387,7 +492,6 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 		if ((op == MDHIM_GET_EQ || op == MDHIM_GET_PRIMARY_EQ || op == MDHIM_RANGE_BGET) &&
 		    index->type != LOCAL_INDEX &&
 		    (rl = get_range_servers(md, index, keys[i], key_lens[i])) == NULL) {
-			printf("here\n"); fflush(stdout);
 			mlog(MDHIM_CLIENT_CRIT, "MDHIM Rank: %d - "
 			     "Error while determining range server in mdhimBget",
 			     md->mdhim_rank);
@@ -426,6 +530,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 				bgm->basem.server_rank = rl->ri->rank;
 				bgm->basem.mtype = MDHIM_BULK_GET;
 				bgm->op = (op == MDHIM_GET_PRIMARY_EQ) ? MDHIM_GET_EQ : op;
+				bgm->basem.msg_id = msg_id;
 				bgm->basem.index = index->id;
 				bgm->basem.index_type = index->type;
 				if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -434,7 +539,7 @@ struct mdhim_bgetrm_t *_bget_records(struct mdhim_t *md, struct index_t *index,
 					lbgm = bgm;
 				}
 			}
-		
+
 			//Add the key, lengths, and data to the message
 			bgm->keys[bgm->num_keys] = keys[i];
 			bgm->key_lens[bgm->num_keys] = key_lens[i];
@@ -493,6 +598,7 @@ struct mdhim_bgetrm_t *_bget_range_records(struct mdhim_t *md, struct index_t *i
 	struct mdhim_bgetrm_t *bgrm_head, *lbgrm;
 	unsigned int i;
 	rangesrv_list *rl = NULL, *rlp;
+	int msg_id = next_index_msg_id(md, index);
 
 	gettimeofday(&localgetstart, NULL);
 	//The message to be sent to ourselves if necessary
@@ -539,6 +645,7 @@ struct mdhim_bgetrm_t *_bget_range_records(struct mdhim_t *md, struct index_t *i
 			bgm->basem.server_rank = rl->ri->rank;
 			bgm->basem.mtype = MDHIM_BULK_GET;
 			bgm->op = MDHIM_GET_NEXT;
+			bgm->basem.msg_id = msg_id;
 			bgm->basem.index = index->id;
 			bgm->basem.index_type = index->type;
 			if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -616,6 +723,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 	struct mdhim_rm_t *rm;
 	int i;
 	rangesrv_list *rl;
+	int msg_id = next_index_msg_id(md, index);
 
 	//The message to be sent to ourselves if necessary
 	lbdm = NULL;
@@ -665,6 +773,7 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 			bdm->num_keys = 0;
 			bdm->basem.server_rank = rl->ri->rank;
 			bdm->basem.mtype = MDHIM_BULK_DEL;
+			bdm->basem.msg_id = msg_id;
 			bdm->basem.index = index->id;
 			bdm->basem.index_type = index->type;
 			if ((int)rl->ri->rank != md->mdhim_rank) {
@@ -685,8 +794,10 @@ struct mdhim_brm_t *_bdel_records(struct mdhim_t *md, struct index_t *index,
 	if (lbdm) {
 		rm = local_client_bdelete(md, lbdm);
 		brm = malloc(sizeof(struct mdhim_brm_t));
+		/* TODO: Add check for brm==NULL when ENOMEM */
 		brm->error = rm->error;
 		brm->basem.mtype = rm->basem.mtype;
+		brm->basem.msg_id = rm->basem.msg_id;
 		brm->basem.index = rm->basem.index;
 		brm->basem.index_type = rm->basem.index_type;
 		brm->basem.server_rank = rm->basem.server_rank;

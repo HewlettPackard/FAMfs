@@ -12,9 +12,11 @@
 
 #include "famfs_lf_connect.h"
 #include "famfs_global.h"
+#include "f_pool.h"
 
 
 typedef struct lfs_shm_ {
+	size_t		shm_size;	/* this structure's size */
 	int		lfs_ready;	/* 1: tell parent that server is ready */
 	int		quit_lfs;	/* 1: tell child to quit */
 	pthread_mutex_t	lock_ready;	/* shared mutex for ready condition */
@@ -27,15 +29,14 @@ typedef struct lfs_shm_ {
 } LFS_SHM_t;
 
 typedef struct lfs_ctx_ {
-	N_PARAMS_t	*lf_params;	/* LF clients */
+	F_POOL_t	*pool;		/* famfs pool structure, reference */
 	/* FAM emulation only */
 	pid_t		child_pid;	/* pid of child process or zero */
         struct lfs_shm_	*lfs_shm;	/* shared data */
 } LFS_CTX_t;
 
-
-int lfs_emulate_fams(char * const cmdline, int rank, int size,
-    LFS_CTX_t **lfs_ctx_pp);
+int create_lfs_ctx(LFS_CTX_t **lfs_ctx_p);
+int lfs_emulate_fams(int rank, int size, LFS_CTX_t *lfs_ctx);
 int meta_register_fam(LFS_CTX_t *lfs_ctx);
 void free_lfs_ctx(LFS_CTX_t **lfs_ctx_p);
 

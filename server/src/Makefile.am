@@ -1,13 +1,17 @@
-bin_PROGRAMS = unifycrd
+bin_PROGRAMS = famfsd
 
 AM_CPPFLAGS = -I$(top_srcdir)/meta/src \
               -I$(top_srcdir)/meta/src/uthash \
               -I$(top_srcdir)/meta/src/Mlog2 \
-              -I$(top_srcdir)/common/src
+              -I$(top_srcdir)/common/src \
+	      -I$(top_srcdir)/userspace-rcu/include \
+	      -I$(top_srcdir)/userspace-rcu/src \
+              -I$(top_srcdir)/node/isa-l/include \
+              -I$(top_srcdir)/node/isa-l/erasure_code/erasure_code
 
-AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS)
+AM_CFLAGS = -Wall $(LIBFABRIC_CFLAGS) $(MPI_CFLAGS) -mcx16
 
-unifycrd_SOURCES = arraylist.c \
+famfsd_SOURCES   = arraylist.c \
                    arraylist.h \
                    unifycr_cmd_handler.c \
                    unifycr_cmd_handler.h \
@@ -29,16 +33,32 @@ unifycrd_SOURCES = arraylist.c \
                    unifycr_setup.h \
                    lf_client.c \
                    lf_client.h \
-                   log.h
+                   log.h \
+		   f_allocator.c \
+		   f_allocator.h \
+		   f_layout_ctl.c \
+		   f_layout_ctl.h \
+	           f_helper.h \
+        	   f_helper.c \
+		   f_encode_recovery.h \
+		   f_encode_recovery.c \
+		   f_recovery.h \
+		   f_recovery.c \
+                   f_ec.h \
+                   f_ec.c
 
 # Preprocessor options for inlined code from common/src/famfs_bbitops.h
-unifycrd_CPPFLAGS = -mbmi2 -funroll-loops --param max-completely-peel-times=64 $(AM_CPPFLAGS)
+famfsd_CPPFLAGS = -mbmi2 -fms-extensions \
+		    -funroll-loops --param max-completely-peel-times=64 $(AM_CPPFLAGS)
 
-unifycrd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS)
+famfsd_LDFLAGS = -static $(LIBFABRIC_LIBS) $(MPI_CLDFLAGS) \
+                   -L$(top_builddir)/node/isa-l/.libs
 
-unifycrd_LDADD = $(top_builddir)/userspace-rcu/src/liburcu.la \
+famfsd_LDADD = $(top_builddir)/userspace-rcu/src/liburcu.la \
                  $(top_builddir)/meta/src/libmdhim.la \
                  $(top_builddir)/common/src/libfamfs_common.la \
-                 $(LEVELDB_LIBS)
+		 $(top_builddir)/common/src/libfamfs_meta.la \
+                 $(LEVELDB_LIBS) \
+		 -lurcu-qsbr -lurcu-cds -latomic -lisal
 
 CLEANFILES = $(bin_PROGRAMS)

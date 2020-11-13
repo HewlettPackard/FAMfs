@@ -52,11 +52,18 @@
 #include <sys/time.h>
 #include <aio.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include <unifycr.h>
 
 #include "famfs_stats.h"
 
+
+//#define FAMFS_EXPLICIT_LO	/* Uncomment to set LAYOUT explicitly in path */
+#define MOUNT_POINT	"/tmp/mnt"
+#ifdef FAMFS_EXPLICIT_LO
+#define LAYOUT		"1D:1M"
+#endif
 
 #define GEN_STR_LEN 1024
 
@@ -66,12 +73,18 @@
 
 struct timeval read_start, read_end;
 double read_time = 0;
+double *read_times = NULL;
 
-struct timeval write_start, write_end;
+struct timeval write_start;
 double write_time = 0;
+double pwrite_time = 0; /* sync time not included */
+double *write_times = NULL;
 
 struct timeval meta_start, meta_end;
 double meta_time = 0;
+
+struct timeval op_start, op_end; /* write or read time, including open and close */
+double op_time = 0;
 
 typedef struct {
   int fid;
@@ -83,23 +96,25 @@ typedef struct {
 
 int main(int argc, char *argv[]) {
 
-    static const char * opts = "b:s:t:f:p:u:M:D:S:w:r:i:v:W:GRC:V";
+    static const char * opts = "b:s:t:f:p:u:M:m:dD:S:w:r:i:v:W:GRC:VU:";
     char tmpfname[GEN_STR_LEN+11], fname[GEN_STR_LEN];
-    long blk_sz = 0, seg_num = 1, tran_sz = 1024*1024, read_sz = 0;
-    //long num_reqs;
+    char mount_point[GEN_STR_LEN] = { 0 };
+    long blk_sz = 0, seg_num = 1, tran_sz = 0, read_sz = 0, write_sz = 0;
     int pat = 0, c, rank_num, rank, fd, \
             to_unmount = 0;
-    int mount_burstfs = 1, direct_io = 0, sequential_io = 0, write_only = 0;
+    int mount_burstfs = 1, direct_io = 0, sequential_io = 0;
+    int shutdown = 0;
     int initialized, provided, rrc = MPI_SUCCESS;
     int gbuf = 0, mreg = 0;
     off_t ini_off = 0;
     void *rid;
     int vmax = 0;
     int vfy = 0;
-    ssize_t warmup = 0;
+    ssize_t ret, warmup = 0;
     struct famsim_stats *famsim_stats_send, *famsim_stats_recv;
     int carbon_stats = 0; /* Only on Carbon: CPU instruction stats */
     int fam_cnt = 0; /* Number of FAMs */
+    int unifycr_fs = FAMFS;
 
     //MPI_Init(&argc, &argv);
     MPI_Initialized(&initialized);
@@ -123,7 +138,7 @@ int main(int argc, char *argv[]) {
         printf("MPI_Comm_rank failed\n");
         exit(1);
     }
-    print0("startng test_pwr\n");
+    print0("startng test_prw\n");
 
 #define ULFS_MAX_FILENAME 128
     char hostname[ULFS_MAX_FILENAME] = {0};
@@ -136,7 +151,7 @@ int main(int argc, char *argv[]) {
                blk_sz = getv(optarg); break;
             case 's': /*number of blocks each process writes*/
                seg_num = getv(optarg); break;
-            case 't': /*size of each write*/
+            case 't': /*default size of each read and write*/
                tran_sz = getv(optarg); break;
             case 'r': /*size of each read*/
                read_sz= getv(optarg); break;
@@ -148,12 +163,16 @@ int main(int argc, char *argv[]) {
                to_unmount = atoi(optarg); break; /*0: not unmount after finish 1: unmount*/
             case 'M':
                mount_burstfs = atoi(optarg); break; /* 0: Don't mount burstfs */
+            case 'm':
+               strcpy(mount_point, optarg); break;
+            case 'd':
+               shutdown++; break; /* call fs shutdown() on exit (after unmount) */
             case 'D':
                direct_io = atoi(optarg); break; /* 1: Open with O_DIRECT */
             case 'S':
                sequential_io = atoi(optarg); break; /* 1: Write/read blocks sequentially */
             case 'w':
-               write_only = atoi(optarg); break;
+               write_sz = getv(optarg); break; /* size of each write */
             case 'v':
                vmax = atoi(optarg); break;
             case 'G':
@@ -168,19 +187,29 @@ int main(int argc, char *argv[]) {
                carbon_stats = atoi(optarg); break; /* 1: Enable stats */
             case 'V':
                vfy++; break;
+            case 'U':
+               unifycr_fs = atoi(optarg); break; /* 2: FAMFS, 1: UNIFYCR_LOG */
         }
     }
-    if (read_sz == 0)
+    if (read_sz == 0 && write_sz == 0) {
         read_sz = tran_sz;
+        write_sz = tran_sz;
+    }
     if (blk_sz == 0)
         blk_sz = tran_sz;
 
-    if (rank == 0) printf(" %s, %s, %s I/O, %s block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
+    /* choose fs type: UNIFYCR_LOG or FAMFS */
+    fs_type_t fs = unifycr_fs;
+    if (!fs_supported(fs)) {
+        printf(" fs type %d not supported - check configuration file!\n", fs);
+        exit(1);
+    }
+
+    if (rank == 0) printf(" %s, %s, %s I/O, transfer block size:%ldW/%ldR segment:%ld hdr off=%lu\n",
         (pat)? "N-N" : ((seg_num > 1)? "strided":"segmented"),
         (direct_io)? "direct":"buffered",
         (sequential_io)? "sequential":"randomized",
-        (write_only)? "W":"W/R",
-        tran_sz, read_sz, blk_sz, ini_off);
+        write_sz, read_sz, blk_sz, ini_off);
 
     famsim_stats_init(&famsim_ctx, carbon_stats?"/tmp":NULL, "famsim", rank);
     if (carbon_stats != 0) {
@@ -194,22 +223,61 @@ int main(int argc, char *argv[]) {
     famsim_stats_send = famsim_stats_create(famsim_ctx, FAMSIM_STATS_SEND);
     famsim_stats_recv = famsim_stats_create(famsim_ctx, FAMSIM_STATS_RECV);
 
+    int rc = 0;
     if (mount_burstfs) {
-        print0("mount unifycr\n");
-        unifycr_mount("/tmp/mnt", rank, rank_num, 0, 3);
+
+        /* mount point is given as a part of file name? */
+        char *p = strstr(fname, "::");
+        if (p) {
+            strcpy(tmpfname, fname);
+            p = strrchr(tmpfname, '/');
+            if (!p) {
+                print0("Bad file name!\n");
+                exit(1);
+            }
+            *p = 0;
+            strcpy(mount_point, tmpfname);
+
+        } else if (!*mount_point) {
+            /* use defaults */
+            sprintf(tmpfname, "%s", MOUNT_POINT);
+#ifdef FAMFS_EXPLICIT_LO
+            if (fs == FAMFS)
+                sprintf(tmpfname, "%s::%s", LAYOUT, MOUNT_POINT);
+#endif
+            strcpy(mount_point, tmpfname);
+        } else
+            strcpy(tmpfname, mount_point);
+        /* insert layout prefix to file name */
+        if (p == NULL && fs == FAMFS) {
+            p = strstr(tmpfname, "::");
+            if (p) {
+                strcpy(p+2, fname);
+                strcpy(fname, tmpfname);
+            }
+        }
+
+        print0("mount unifycr at %s\n", mount_point);
+        rc = unifycr_mount(mount_point, rank, rank_num, 0, fs);
+        if (rc) {
+            fprintf(stderr, "mount (fs:%d) error:%d - %m\n", fs, rc);
+            exit(1);
+        }
         if (famsim_ctx)
             fam_cnt = famsim_ctx->fam_cnt;
     } else
         to_unmount = 0;
 
-    int rc = 0;
+    /* Add layout name if FAMFS */
+    print0("File name is %s\n", fname)
+
     char *buf;
     size_t len;
     if (gbuf) {
         len = blk_sz*seg_num;
         buf = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     } else {
-        len = max(tran_sz, read_sz);
+        len = max(write_sz, read_sz);
         rc = posix_memalign((void**)&buf, getpagesize(), max(len,1024*1024));
         if (rc) {
             printf("posix_memalign error:%d - %m\n", rc);
@@ -221,16 +289,34 @@ int main(int argc, char *argv[]) {
         printf("[%02d] can't allocate %luMiB of  memory\n", rank, len/1024/1024);
         exit(1);
     }
-    memset(buf, 0, max(tran_sz, read_sz));
+    memset(buf, 0, len);
+
+    char sfn[256];
+    mode_t old_umask = umask(S_IRWXG);
+    sprintf(sfn, "/tmp/famfs_stat_file.%d.csv", getpid());
+    umask(0111);
+    FILE *stat_file = fopen(sfn, "w");
+    umask(old_umask);
+    char *names = NULL;
+    if (rank == 0) {
+	names = malloc(rank_num*ULFS_MAX_FILENAME);
+    }
+    MPI_Gather(hostname, ULFS_MAX_FILENAME, MPI_CHAR, names, ULFS_MAX_FILENAME, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+    if (write_sz == 0)
+	goto only_read;
+    if (rank == 0)
+	write_times = malloc(rank_num*sizeof(double));
 
     if (warmup) {
+        rc = 1;
         print0("warming up...\n");
         printv("%02d warming up\n", rank);
         sprintf(tmpfname, "%s-%d.warmup", fname, rank);
         fd = open(tmpfname, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             printf("%02d warm-up file %s open failure\n", rank, fname);
-            exit(1);
+            goto _exit;
         }
         while (warmup > 0) {
             off_t off = 0;
@@ -238,7 +324,7 @@ int main(int argc, char *argv[]) {
 
             if (l < 0) {
                 printf("%02d warm-up file %s write error\n", rank, fname);
-                exit(1);
+                goto _exit;
             }
             warmup -= l;
             off += l;
@@ -250,7 +336,8 @@ int main(int argc, char *argv[]) {
        rc = famfs_buf_reg(buf, len, &rid);
        if (rc) {
            printf("%02d buf register error %d\n", rank, rc);
-           exit(1);
+           rc = 1;
+           goto _exit;
        }
     }
 
@@ -263,20 +350,21 @@ int main(int argc, char *argv[]) {
     }
 
     print0("opening files\n");
+    gettimeofday(&op_start, NULL);
 
     int flags = O_RDWR | O_CREAT | O_TRUNC;
     if (direct_io)
         flags |= O_DIRECT;
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        printf("%02d open file %s failure\n", rank, tmpfname);
+        printf("%02d open file '%s' failure - %m\n", rank, tmpfname);
         fflush(stdout);
         return -1;
     }
     if (direct_io)
         fsync(fd);
-   
-    long i, j; 
+
+    long i, j;
     unsigned long offset, lw_off = 0, *p;
     char *bufp = buf;
     offset = 0;
@@ -287,27 +375,27 @@ int main(int argc, char *argv[]) {
 
     for (i = 0; i < seg_num; i++) {
         long jj;
-        for (jj = 0; jj < blk_sz/tran_sz; jj++) {
+        for (jj = 0; jj < blk_sz/write_sz; jj++) {
             if (sequential_io) {
                 j = jj;
             } else {
-                j = (blk_sz/tran_sz - 1) - 2*jj; /* reverse */
+                j = (blk_sz/write_sz - 1) - 2*jj; /* reverse */
                 if (j < 0)
-                    j += (blk_sz/tran_sz - 1);
+                    j += (blk_sz/write_sz - 1);
             }
             if (pat == 0)
-                offset = i*rank_num*blk_sz + rank*blk_sz + j*tran_sz;
+                offset = i*rank_num*blk_sz + rank*blk_sz + j*write_sz;
             else if (pat == 1)
-                offset = i*blk_sz + j*tran_sz;
+                offset = i*blk_sz + j*write_sz;
 
             int k;
             lw_off = 0;
 
-            if (gbuf) 
-                bufp = buf + i*blk_sz + j*tran_sz;
+            if (gbuf)
+                bufp = buf + i*blk_sz + j*write_sz;
 
-            for (k = 0; vfy && k < tran_sz/sizeof(unsigned long); k++) {
-                if (gbuf) 
+            for (k = 0; vfy && k < write_sz/sizeof(unsigned long); k++) {
+                if (gbuf)
                     p = &(((unsigned long *)bufp)[k]);
                 else
                     p = &(((unsigned long*)buf)[k]);
@@ -319,7 +407,7 @@ int main(int argc, char *argv[]) {
 
             famsim_stats_start(famsim_ctx, famsim_stats_send);
 
-            ssize_t bcount = pwrite(fd, bufp, tran_sz, offset);
+            ssize_t bcount = pwrite(fd, bufp, write_sz, offset);
 
             /* TODO: Ensure tran_sz equals to the chunk size */
             if (i==0 && jj<(fam_cnt/rank_num))
@@ -329,12 +417,12 @@ int main(int argc, char *argv[]) {
 
             if (bcount < 0) {
                 printf("%02d write failure - %m\n", rank);
-                fflush(stdout);
-                exit(1);
-            } else if (bcount != tran_sz) {
+                rc = 1;
+                goto _exit;
+            } else if (bcount != write_sz) {
                 printf("%02d write failure - %zd bytes written\n", rank, bcount);
-                fflush(stdout);
-                exit(1);
+                rc = 1;
+                goto _exit;
             }
         }
     }
@@ -347,10 +435,10 @@ int main(int argc, char *argv[]) {
     meta_time += 1000000*(meta_end.tv_sec - meta_start.tv_sec) + 
         meta_end.tv_usec - meta_start.tv_usec;
     meta_time /= 1000000;
-    gettimeofday(&write_end, NULL);
-    write_time += 1000000*(write_end.tv_sec - write_start.tv_sec) + 
-        write_end.tv_usec - write_start.tv_usec;
+    write_time += 1000000*(meta_end.tv_sec - write_start.tv_sec) + 
+        meta_end.tv_usec - write_start.tv_usec;
     write_time = write_time/1000000;
+    pwrite_time = write_time - meta_time; /* fsync time not included */
 
 
     close(fd);
@@ -360,9 +448,15 @@ int main(int argc, char *argv[]) {
         rc = system("echo 1 > /proc/sys/vm/drop_caches");
         if (rc) {
             printf("Faied to drop caches:%d - %m\n", rc);
-            exit(1);
+            rc = 1;
+            goto _exit;
         }
     }
+    gettimeofday(&op_end, NULL);
+    op_time += 1000000*(op_end.tv_sec - op_start.tv_sec) + 
+        op_end.tv_usec - op_start.tv_usec;
+    op_time /= 1000000;
+
     MPI_Barrier(MPI_COMM_WORLD);
     print0("closed files\n");
 
@@ -374,8 +468,14 @@ int main(int argc, char *argv[]) {
     double max_write_time;
     MPI_Reduce(&write_time, &max_write_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
+    double max_pwrite_time;
+    MPI_Reduce(&pwrite_time, &max_pwrite_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
     double min_write_bw;
     min_write_bw=(double)blk_sz*seg_num*rank_num/1048576/ max_write_time;
+
+    double agg_write_time;
+    MPI_Reduce(&write_time, &agg_write_time,  1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
     double agg_meta_time;
     MPI_Reduce(&meta_time, &agg_meta_time,  1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -383,39 +483,36 @@ int main(int argc, char *argv[]) {
     double max_meta_time;
     MPI_Reduce(&meta_time, &max_meta_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
+    double max_op_time;
+    MPI_Reduce(&op_time, &max_op_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    MPI_Gather(&write_time, 1, MPI_DOUBLE, write_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    if (rank == 0)
+        for (i=0; i<rank_num; i++)
+            fprintf(stat_file, "%ld,%s,W,%ld,%lf\n", i, names+i*ULFS_MAX_FILENAME, write_sz, write_times[i]);
+
     /* write out FAM simulator stats */
     famsim_stats_stop(famsim_stats_send, 1);
 
     if (rank == 0) {
-        printf("### Aggregate Write BW is %lfMB/s, Min Write BW is %lfMB/s\n",
+        printf("###  Aggregate Write BW is %.3lf MiB/s, Min Write BW is %.3lf MiB/s\n",
                 agg_write_bw, min_write_bw);
-        printf("Per-process sync time %lf sec, Max %lf sec\n",
-                agg_meta_time / rank_num, max_meta_time);
+        printf("#### Aggregate true write BW is %.3lf MiB/s, incl. open/close - %.3lf MiB/s\n",
+                (double)blk_sz*rank_num*seg_num/1048576/max_pwrite_time,
+                (double)blk_sz*rank_num*seg_num/1048576/max_op_time);
+        printf("Per-process write time %lf sec, sync time %lf sec, Max %lf sec\n",
+                (agg_write_time-agg_meta_time)/rank_num, agg_meta_time/rank_num, max_meta_time);
         fflush(stdout);
     }
-    //free(buf);
 
-    //MPI_Finalize();
+only_read:
     MPI_Barrier(MPI_COMM_WORLD);
-    if (write_only) {
-        MPI_Finalize();
-        exit(0);
+    if (read_sz == 0) {
+        rc = 0;
+        goto _exit;
     }
-
-    //num_reqs = blk_sz*seg_num/tran_sz;
-    //char *read_buf = malloc(blk_sz * seg_num); /*read buffer*/
-    //char *read_buf; /*read buffer*/
-    /*
-    if (direct_io)
-            posix_memalign((void**)&read_buf, getpagesize(), blk_sz);
-    else
-            read_buf = malloc(blk_sz);
-
-    if (to_unmount) {
-            unifycr_mount("/tmp/mnt", rank, rank_num,\
-                    0, 3);
-    }
-    */
+    if (rank == 0)
+	read_times = malloc(rank_num*sizeof(double));
 
     if (pat == 1) {
         sprintf(tmpfname, "%s%d", fname, rank);
@@ -430,10 +527,11 @@ int main(int argc, char *argv[]) {
         flags = O_RDONLY;
 
     print0("open for read\n");
+    gettimeofday(&op_start, NULL);
 
     fd = open(tmpfname, flags, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        printf("%02d open file failure\n", rank);
+        printf("%02d open file '%s' for read failure - %m\n", rank, tmpfname);
         fflush(stdout);
         return -1;
     }
@@ -446,6 +544,7 @@ int main(int argc, char *argv[]) {
     printv("%02d reading\n", rank);
 
     long vcnt, e = 0;
+    bufp = buf;
     //long cursor;
     offset = 0;
     for (i = 0; i < seg_num; i++) {
@@ -470,23 +569,27 @@ int main(int argc, char *argv[]) {
             int k;
             lw_off = 0;
 
-            if (gbuf) 
+            if (gbuf)
                 bufp = buf + i*blk_sz + j*read_sz;
 
             famsim_stats_start(famsim_ctx, famsim_stats_recv);
-            rc = pread(fd, bufp, read_sz, offset);
+            ret = pread(fd, bufp, read_sz, offset);
             famsim_stats_pause(famsim_stats_recv);
-            if (rc < 0) {
-                printf("%02d read failure\n", rank);
-                fflush(stdout);
-                return -1;
+            if (ret < 0) {
+                printf("%02d read failure - %m\n", rank);
+                rc = 1;
+                goto _exit;
+            } else if (ret != read_sz) {
+                printf("%02d read failure, %zd bytes read\n", rank, ret);
+                rc = 1;
+                goto _exit;
             }
 
             vcnt = 0;
             for (k = 0; vfy && k < read_sz/sizeof(unsigned long); k++) {
                 //unsigned long *p = &(((unsigned long*)(read_buf + cursor))[k]);
-               
-                if (gbuf) 
+
+                if (gbuf)
                     p = &(((unsigned long *)bufp)[k]);
                 else
                     p = &(((unsigned long*)buf)[k]);
@@ -525,6 +628,11 @@ int main(int argc, char *argv[]) {
     read_time = read_time/1000000;
 
     close(fd);
+    gettimeofday(&op_end, NULL);
+    op_time += 1000000*(op_end.tv_sec - op_start.tv_sec) + 
+        op_end.tv_usec - op_start.tv_usec;
+    op_time /= 1000000;
+
     MPI_Barrier(MPI_COMM_WORLD);
 
     /* write out FAM simulator stats */
@@ -541,23 +649,47 @@ int main(int argc, char *argv[]) {
 
     double read_bw = (double)blk_sz*seg_num/1048576/read_time;
     double agg_read_bw;
+    long e_sum;
 
     double max_read_time, min_read_bw;
     MPI_Reduce(&read_bw, &agg_read_bw, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&read_time, &max_read_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&e, &e_sum, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&op_time, &max_op_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    MPI_Gather(&read_time, 1, MPI_DOUBLE, read_times, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    if (rank == 0)
+        for (i=0; i<rank_num; i++)
+            fprintf(stat_file, "%ld,%s,R,%ld,%lf\n", i, names+i*ULFS_MAX_FILENAME, read_sz, read_times[i]);
 
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
-        printf("### Aggregate Read BW is %lfMB/s, Min Read BW is %lf\n", agg_read_bw,  min_read_bw);
+        if (e_sum)
+            fprintf(stderr, "Data verification errors: %ld\n", e_sum);
+
+        printf("###  Aggregate Read BW is %.3lf MiB/s\n", agg_read_bw);
+        printf("#### Aggregate true read BW is %.3lf MiB/s, incl. open/close - %.3lf MiB/s\n",
+                min_read_bw,
+                (double)blk_sz*seg_num*rank_num/1048576/max_op_time);
         fflush(stdout);
     }
 
-    // *** this will only free libfabric context and WILL NOT shut down servers
-    if (to_unmount)
-        unifycr_unmount();
+    if (to_unmount) {
+	    if ((rc = unifycr_unmount()))
+		fprintf(stderr, "error on FS unmount: %d\n", rc);
+    }
+    if (shutdown && rank == 0) {
+	    if ((rc = unifycr_shutdown()))
+		fprintf(stderr, "error on FS shutdown: %d\n", rc);
+    }
+    if (e_sum)
+        rc = 1; /* data verification failure */
 
     famsim_stats_free(famsim_ctx);
 
+_exit:
+    fflush(stdout);
+    fclose(stat_file);
     MPI_Finalize();
     exit(rc);
 }

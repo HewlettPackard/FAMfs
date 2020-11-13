@@ -202,8 +202,8 @@ static void mlog_dmesg_mbuf(char **b1p, int *b1len, char **b2p, int *b2len)
     /* if the buffer wasn't full, we need to adjust the pointers */
     skip = ((struct mlog_mbhead *)mst.mb)->mbh_len -
            ((struct mlog_mbhead *)mst.mb)->mbh_cnt;
-    if (skip >= *b1len) {       /* skip entire first buffer? */
-        skip -= *b1len;
+    if (skip >= (uint32_t)*b1len) {       /* skip entire first buffer? */
+        skip -= (uint32_t)*b1len;
         *b1p = *b2p;
         *b2p = 0;
         *b1len = *b2len;
@@ -512,8 +512,8 @@ static void vmlog(int flags, const char *fmt, va_list ap)
     char facstore[16], *facstr;
     struct timeval tv;
     struct tm *tm;
-    int hlen_pt1, hlen, mlen, tlen, thisflag;
-    int resid;
+    size_t hlen_pt1, hlen, mlen, tlen, resid;
+    int thisflag;
     char *m1, *m2;
     int m1len, m2len, ncpy;
     //since we ignore any potential errors in MLOG let's always re-set 
@@ -581,10 +581,10 @@ static void vmlog(int flags, const char *fmt, va_list ap)
      * ok, first, put the header into b[]
      */
     hlen = snprintf(b, sizeof(b),
-                    "%04d/%02d/%02d-%02d:%02d:%02d.%02ld %s %s ",
+                    "%04d/%02d/%02d-%02d:%02d:%02d.%03ld %s %s ",
                     tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
                     tm->tm_hour, tm->tm_min, tm->tm_sec,
-                    (long int)tv.tv_usec / 10000, mst.uts.nodename,
+                    (long int)tv.tv_usec / 1000, mst.uts.nodename,
                     mlog_xst.tag);
     hlen_pt1 = hlen;    /* save part 1 length */
     if (hlen < sizeof(b)) {
@@ -598,7 +598,7 @@ static void vmlog(int flags, const char *fmt, va_list ap)
      */
     if (hlen + 1 >= sizeof(b)) {
         mlog_unlock();      /* drop lock, this is the only early exit */
-        fprintf(stderr, "mlog: header overflowed %zd byte buffer (%d)\n",
+        fprintf(stderr, "mlog: header overflowed %zd byte buffer (%zu)\n",
                 sizeof(b), hlen + 1);
         errno = save_errno;
         return;
@@ -1115,7 +1115,10 @@ int mlog_setlogmask(int facility, int mask)
 void mlog_setmasks(char *mstr, int mlen0)
 {
     char *m, *current, *fac, *pri, pbuf[8];
-    int mlen, facno, clen, elen, faclen, prilen, prino;
+    size_t faclen;
+    int mlen, facno, clen, elen, prino;
+    unsigned int prilen;
+
     /* not open? */
     if (!mlog_xst.tag) {
         return;
@@ -1182,7 +1185,7 @@ void mlog_setmasks(char *mstr, int mlen0)
         }
         if (prino == -1) {
             mlog(MLOG_ERR, "mlog_setmasks: %.*s: unknown priority %.*s",
-                 faclen, fac, prilen, pri);
+                 (int)faclen, fac, prilen, pri);
             continue;
         }
         /* process facility */
@@ -1205,7 +1208,7 @@ void mlog_setmasks(char *mstr, int mlen0)
             mlog_unlock();
             if (facno >= mlog_xst.fac_cnt) {
                 mlog(MLOG_ERR, "mlog_setmasks: unknown facility %.*s",
-                     faclen, fac);
+                     (int)faclen, fac);
                 continue;
             }
         }
@@ -1496,8 +1499,8 @@ int mlog_findmesgbuf(char *b, int len, char **b1p, int *b1l,
         *b2p = ptr + sizeof(mb);
         *b2l = mb.mbh_wp;
         skip = mb.mbh_len - mb.mbh_cnt;
-        if (skip > *b1l) {
-            skip -= *b1l;
+        if (skip > (uint32_t)*b1l) {
+            skip -= (uint32_t)*b1l;
             *b1p = *b2p;
             *b2p = 0;
             *b1l = *b2l;
