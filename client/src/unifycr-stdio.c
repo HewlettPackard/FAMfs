@@ -66,7 +66,7 @@
 #include "unifycr-internal.h"
 #include "unifycr-sysio.h"
 
-#include "famfs_global.h"
+#include "f_global.h"
 
 
 static int unifycr_fpos_enabled = 1; /* whether we can use fgetpos/fsetpos */

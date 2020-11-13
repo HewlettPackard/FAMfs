@@ -8,8 +8,8 @@
 #include <malloc.h>
 #include <sys/mman.h>
 
-#include "famfs_env.h"
-#include "famfs_error.h"
+#include "f_env.h"
+#include "f_error.h"
 #include "lf_connect.h"
 #include "w_pool.h"
 

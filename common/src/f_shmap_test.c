@@ -13,7 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "famfs_bitmap.h"
+#include "f_bitmap.h"
 #include "f_map.h"
 #include "f_layout.h"
 
@@ -22,7 +22,7 @@
 #define RND_REPS	1000	/* number of passes for random test */
 #define BOS_PAGE_MAX	4	/* max BoS page size, in kernel pages */
 //#define MEM_KEY_BITS	64	/* in-memory maps: max global entry bits */
-#define MEM_KEY_BITS	31	/* in-memory maps: max global entry bits */
+#define MEM_KEY_BITS	31	/* in-memory maps: FAMFS limit to global entry bits */
 #define NR_READERS	3	/* number of readers */
 #define NR_SPAWNS (NR_READERS+1)
 

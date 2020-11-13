@@ -22,9 +22,9 @@
 
 #include <mpi.h>
 
-#include "famfs_env.h"
-#include "famfs_stats.h"
-#include "famfs_stripe.h"
+#include "f_env.h"
+#include "f_stats.h"
+#include "f_stripe.h"
 
 #include "lf_connect.h"
 #include "node.h"

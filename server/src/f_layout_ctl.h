@@ -7,7 +7,7 @@
 #ifndef F_LAYOUT_CTL_H
 #define F_LAYOUT_CTL_H
 
-#include "famfs_bitmap.h"
+#include "f_bitmap.h"
 
 /*
  * Mark pool device failed and update the slabmap wherever that device us used

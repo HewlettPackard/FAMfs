@@ -8,8 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-//#include "famfs_bbitops.h"
-#include "famfs_bbitmap.h"
+#include "f_bbitmap.h"
 
 
 int main (void) {

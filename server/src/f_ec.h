@@ -9,9 +9,8 @@
 
 #include <sys/time.h>
 #include <linux/types.h>
-//#include <stdint.h>
 
-#include "famfs_stats.h"
+#include "f_stats.h"
 
 #ifndef u64
 #define u64 __u64

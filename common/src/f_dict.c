@@ -8,8 +8,8 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-#include "famfs_env.h"
-#include "famfs_ktypes.h"
+#include "f_env.h"
+#include "f_ktypes.h"
 #include "f_dict.h"
 
 void f_dict_free(F_DICT_t *d) {

@@ -13,8 +13,8 @@
 #include <sys/mman.h>
 
 #include "f_map.h"
-#include "famfs_bitmap.h"
-#include "famfs_error.h"
+#include "f_bitmap.h"
+#include "f_error.h"
 #include "list.h"
 
 
@@ -160,7 +160,6 @@ static F_MAP_t *map_alloc(int key_size)
 	if (map) {
 		map->bosses = cds_ja_new(key_size); /* Usually 64-bit key */
 		pthread_spin_init(&map->bosl_lock, PTHREAD_PROCESS_PRIVATE);
-		//pthread_mutex_init(&map->pu_lock, NULL);
 	}
 	return map;
 }
@@ -178,7 +177,6 @@ static int map_free(F_MAP_t *map)
 		return ret;
 	rcu_quiescent_state();
 	pthread_spin_destroy(&map->bosl_lock);
-	//pthread_mutex_destroy(&map->pu_lock);
 	if (map->shm != F_MAPMEM_SHARED_S)
 		free(map);
 	return 0;
@@ -314,12 +312,10 @@ static void copy_pu_to_bosl(F_BOSL_t *bosl_to, uint64_t pu_to,
 	assert(pu_to < F_MAP_MAX_BOS_PUS);
 	assert(pu_to < map->geometry.bosl_pu_count);
 	size = f_map_pu_size(map);
-	//from = buf_from + f_map_pu_p_sz(map, pu_from, from);
 	to   = bosl_to->page + f_map_pu_p_sz(map, pu_to, to);
 
 	/* No lock! */
 	memcpy(to, from, size);
-	//bosl_to->loaded = 1;
 }
 
 /* Copy one PU from BoS @pu_from to 'buf' @pu_to.
@@ -1290,11 +1286,6 @@ int f_map_delete_bosl(F_MAP_t *map, F_BOSL_t *bosl)
 {
 	uint64_t length = map->bosl_entries;
 	int ret;
-
-	/* FIXME
-	if ((ret = put_bosl(bosl)))
-		return ret;
-	*/
 
 	rcu_read_lock();
 	ret = cds_ja_del(map->bosses, bosl->entry0 / length,

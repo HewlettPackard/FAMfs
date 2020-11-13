@@ -1,5 +1,5 @@
-#ifndef FAMFS_RBQ_H
-#define FAMFS_RBQ_H
+#ifndef F_RBQ_H
+#define F_RBQ_H
 
 #define MAX_RBQ_NAME 32
 #include <semaphore.h>

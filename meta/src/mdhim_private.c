@@ -43,7 +43,7 @@
 #include "local_client.h"
 #include "partitioner.h"
 #include "indexes.h"
-#include "famfs_error.h"
+#include "f_error.h"
 
 
 struct timeval localgetstart, localgetend;
@@ -75,12 +75,6 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 	int ret;
 	struct mdhim_putm_t *pm;
 	struct index_t *lookup_index, *put_index;
- /*
- struct timeval st0, st, tidx, en, tm, tm1, tm2, tm3;
- gettimeofday(&st0, NULL);
- mlog(MDHIM_CLIENT_INFO, " _put_record, key:%08x key_len:%d val:%16s value_len:%d",
-  *((unsigned int*)key), key_len, (char*)value, value_len);
- */
 
 	put_index = index;
 	if (index->type == LOCAL_INDEX) {
@@ -91,9 +85,6 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 	} else {
 		lookup_index = index;
 	}
- /*
- gettimeofday(&tidx, NULL);
- */
 
 	//Get the range server this key will be sent to
 	if (put_index->type == LOCAL_INDEX) {
@@ -136,35 +127,14 @@ struct mdhim_rm_t *_put_record(struct mdhim_t *md, struct index_t *index,
 
 		//Test if I'm a range server
 		ret = im_range_server(put_index);
- /*
- gettimeofday(&st, NULL);
- */
 
 		//If I'm a range server and I'm the one this key goes to, send the message locally
 		if (ret && md->mdhim_rank == pm->basem.server_rank) {
 			rm = local_client_put(md, pm);
- /*
- gettimeofday(&en, NULL);
- timersub(&en, &st0, &tm);
- timersub(&tidx, &st0, &tm1);
- timersub(&st, &tidx, &tm2);
- timersub(&en, &st, &tm3);
- mlog(MDHIM_CLIENT_INFO, " _put_record local_client_put  err:%d time total:%ld indx:%ld rnge:%ld put:%ld\n",
-  rm->error, tm.tv_usec, tm1.tv_usec, tm2.tv_usec, tm3.tv_usec);
- */
 		} else {
 			//Send the message through the network as this message is for another rank
 			rm = client_put(md, pm);
 			rm->basem.msg_id = pm->basem.msg_id;
- /*
- gettimeofday(&en, NULL);
- timersub(&en, &st0, &tm);
- timersub(&tidx, &st0, &tm1);
- timersub(&st, &tidx, &tm2);
- timersub(&en, &st, &tm3);
- mlog(MDHIM_CLIENT_INFO, " _put_record client_put to:%d err:%d time total:%ld indx:%ld rnge:%ld put:%ld\n",
-  rl->ri->rank, rm->error, tm.tv_usec, tm1.tv_usec, tm2.tv_usec, tm3.tv_usec);
- */
 			free(pm);
 		}
 
@@ -240,7 +210,6 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		     md->mdhim_rank);
 		return NULL;
 	}
- int n_loc=0, n_rem=0;
 
 	//The message to be sent to ourselves if necessary
 	lbpm = NULL;
@@ -284,11 +253,9 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 		while (rl) {
 			gettimeofday(&localbpmstart, NULL);
 			if ((int)rl->ri->rank != md->mdhim_rank) {
- n_rem++;
 				//Set the message in the list for this range server
 				bpm = bpm_list[rl->ri->rangesrv_num - 1];
 			} else {
- n_loc++;
 				//Set the local message
 				bpm = lbpm;
 			}
@@ -367,7 +334,6 @@ struct mdhim_brm_t *_bput_records(struct mdhim_t *md, struct index_t *index,
 
 	free(bpm_list);
 
- mlog(MDHIM_CLIENT_INFO, "BPUT  index:%d msg_id:%d n_loc:%d n_rem:%d num_keys:%d", index->id, msg_id, n_loc, n_rem, num_keys);
 	//Return the head of the list
 	return brm_head;
 }

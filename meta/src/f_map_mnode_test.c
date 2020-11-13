@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include <mpi.h>
 
-#include "famfs_bitmap.h"
+#include "f_bitmap.h"
 #include "f_map.h"
 #include "f_pool.h"
 #include "f_layout.h"

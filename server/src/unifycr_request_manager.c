@@ -32,7 +32,7 @@
 #include <time.h>
 #include <string.h>
 
-#include "famfs_global.h"
+#include "f_global.h"
 
 #include "log.h"
 #include "unifycr_request_manager.h"

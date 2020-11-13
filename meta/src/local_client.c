@@ -38,7 +38,7 @@
 #include "mdhim.h"
 #include "local_client.h"
 
-#include "famfs_error.h"
+#include "f_error.h"
 #include "list.h"
 
 

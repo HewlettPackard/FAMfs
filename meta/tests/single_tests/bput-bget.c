@@ -9,7 +9,7 @@
 //#define KEYS 100
 //#define TOTAL 100000000
 //#define GEN_STR_LEN 1024
-#include "famfs_global.h"
+#include "f_global.h"
 
 extern double memgettime, ssdgettime;
 extern double imemgettime, maytime;

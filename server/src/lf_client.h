@@ -10,8 +10,8 @@
 #include <stddef.h>
 #include <pthread.h>
 
-#include "famfs_lf_connect.h"
-#include "famfs_global.h"
+#include "f_lf_connect.h"
+#include "f_global.h"
 #include "f_pool.h"
 
 

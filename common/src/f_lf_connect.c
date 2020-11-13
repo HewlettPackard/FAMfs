@@ -21,10 +21,9 @@
 #include <rdma/fi_rma.h>
 
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_lf_connect.h"
-#include "famfs_lf_cqprogress.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_lf_connect.h"
 
 
 static int lf_verbosity = 0;

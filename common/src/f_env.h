@@ -4,8 +4,8 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_ENV_H
-#define FAMFS_ENV_H
+#ifndef F_ENV_H
+#define F_ENV_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -300,4 +300,4 @@ static inline int str2argv(char *str, char **argv, int argmax) {
 #define ION_HW_MASK	0xff
 
 
-#endif /* FAMFS_ENV_H */
+#endif /* F_ENV_H */

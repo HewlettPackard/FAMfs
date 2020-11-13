@@ -52,7 +52,7 @@
 #include "uthash.h"
 
 #include "list.h"
-#include "famfs_error.h"
+#include "f_error.h"
 
 
 int recv_counter = 0;

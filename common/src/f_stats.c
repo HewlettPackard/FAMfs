@@ -9,8 +9,8 @@
 #include <stdio.h>
 #include <fcntl.h>
 
-#include "famfs_stats.h"
-#include "famfs_error.h"
+#include "f_stats.h"
+#include "f_error.h"
 
 
 struct famsim_stat_ctx *famsim_ctx = NULL;

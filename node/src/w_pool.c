@@ -8,8 +8,7 @@
 #include <stdlib.h>
 #include <malloc.h>
 
-//#include "famfs_env.h" /* TODO: Remove timespecadd macro! */
-#include "famfs_error.h"
+#include "f_error.h"
 #include "w_pool.h"
 
 #define timespecadd(t, inc)				\

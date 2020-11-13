@@ -15,8 +15,8 @@
 #include "erasure_code.h"
 #include "raid.h"
 
-#include "famfs_env.h"
-#include "famfs_stats.h"
+#include "f_env.h"
+#include "f_stats.h"
 #include "ec_perf.h"
 
 #define MMAX        64

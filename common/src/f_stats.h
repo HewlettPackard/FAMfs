@@ -4,14 +4,14 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_STATS_H
-#define FAMFS_STATS_H
+#ifndef F_STATS_H
+#define F_STATS_H
 
 #include <pthread.h>
 #include <stdint.h>
 #include <sys/time.h>
 
-#include "famfs_env.h"
+#include "f_env.h"
 #include "list.h"		/* Doubly linked list */
 
 
@@ -240,4 +240,4 @@ static inline void famsim_stats_free(struct famsim_stat_ctx *ctx) { (void)ctx; }
 
 #endif /* HAVE_FAM_SIM == 1 */
 
-#endif  /* FAMFS_STATS_H */
+#endif  /* F_STATS_H */

@@ -8,10 +8,10 @@
  * This source code is licensed under the GNU General Public License,
  * Version 2.  See the file COPYING for more details.
  */
-#include "famfs_ktypes.h"
-#include "famfs_bitmap.h"
-#include "famfs_bbitmap.h"
-#include "famfs_bbitops.h"
+#include "f_ktypes.h"
+#include "f_bitmap.h"
+#include "f_bbitmap.h"
+#include "f_bbitops.h"
 
 #include <assert.h>
 #include <errno.h>

@@ -7,7 +7,7 @@
 #ifndef LF_TEST_H
 #define LF_TEST_H
 
-#include "famfs_stripe.h"
+#include "f_stripe.h"
 #include "lf_connect.h"
 #include "ec_perf.h"
 

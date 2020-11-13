@@ -10,7 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "famfs_bitmap.h"
+#include "f_bitmap.h"
 #include "f_map.h"
 
 

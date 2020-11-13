@@ -3,10 +3,10 @@
  *
  * Written by: Dmitry Ivanov
  */
-#ifndef FAMFS_BITOPS_H_
-#define FAMFS_BITOPS_H_
+#ifndef F_BITOPS_H_
+#define F_BITOPS_H_
 
-#include "famfs_ktypes.h"
+#include "f_ktypes.h"
 
 #define BIT(nr)			(1UL << (nr))
 #define BIT_NR_IN_LONG(nr)	((nr) % BITS_PER_LONG)
@@ -15,7 +15,7 @@
 #define BIT_WORD64(nr)		((nr) / (unsigned)BITS_PER_LONG)
 #define BITS_PER_BYTE		8
 #define BITS_PER_INT		(BITS_PER_BYTE*sizeof(int))
-// BITS_PER_LONG - See famfs_ktypes.h
+// BITS_PER_LONG - See f_ktypes.h
 #define BITS_TO_BYTES(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE)
 #define BITS_TO_LONGS(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
 #define BITMAP_LAST_WORD_MASK(nbits) (~0UL >> (-(nbits) & (BITS_PER_LONG - 1)))
@@ -24,38 +24,6 @@
 static __always_inline unsigned long __ffs(unsigned long word) {
 	return __builtin_ctzl(word);
 }
-#if 0
-static __always_inline unsigned long __ffs(unsigned long word)
-{
-	int num = 0;
-
-#if BITS_PER_LONG == 64
-	if ((word & 0xffffffff) == 0) {
-		num += 32;
-		word >>= 32;
-	}
-#endif
-	if ((word & 0xffff) == 0) {
-		num += 16;
-		word >>= 16;
-	}
-	if ((word & 0xff) == 0) {
-		num += 8;
-		word >>= 8;
-	}
-	if ((word & 0xf) == 0) {
-		num += 4;
-		word >>= 4;
-	}
-	if ((word & 0x3) == 0) {
-		num += 2;
-		word >>= 2;
-	}
-	if ((word & 0x1) == 0)
-		num += 1;
-	return num;
-}
-#endif
 
 static __always_inline int fls(int x)
 {
@@ -89,38 +57,6 @@ static __always_inline int fls(int x)
 static __always_inline unsigned long __fls(unsigned long word) {
 	return BITS_PER_LONG - 1 - __builtin_clzl(word);
 }
-#if 0
-static __always_inline unsigned long __fls(unsigned long word)
-{
-	int num = BITS_PER_LONG - 1;
-
-#if BITS_PER_LONG == 64
-	if (!(word & (~0ul << 32))) {
-		num -= 32;
-		word <<= 32;
-	}
-#endif
-	if (!(word & (~0ul << (BITS_PER_LONG-16)))) {
-		num -= 16;
-		word <<= 16;
-	}
-	if (!(word & (~0ul << (BITS_PER_LONG-8)))) {
-		num -= 8;
-		word <<= 8;
-	}
-	if (!(word & (~0ul << (BITS_PER_LONG-4)))) {
-		num -= 4;
-		word <<= 4;
-	}
-	if (!(word & (~0ul << (BITS_PER_LONG-2)))) {
-		num -= 2;
-		word <<= 2;
-	}
-	if (!(word & (~0ul << (BITS_PER_LONG-1))))
-		num -= 1;
-	return num;
-}
-#endif
 
 #if BITS_PER_LONG == 32
 static __always_inline int fls64(u64 x)
@@ -699,4 +635,4 @@ static inline int name ## what(struct var *v) \
 { return test_bit(flag, &v->io.flags); }
 
 
-#endif /* FAMFS_BITOPS_H_ */
+#endif /* F_BITOPS_H_ */

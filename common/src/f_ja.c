@@ -11,52 +11,9 @@
 #include <unistd.h>
 
 #include "f_ja.h"
-#include "famfs_error.h"
-#include "famfs_ktypes.h"
+#include "f_error.h"
+#include "f_ktypes.h"
 #include "list.h"
-
-#if 0
-static int ja_insert(F_JUDY_t *ja, uint64_t entry, F_JA_NODE_t **n_p)
-{
-	F_JA_NODE_t *n = NULL;
-	struct cds_ja_node *node;
-	int ret = 0;
-
-	rcu_read_lock();
-	node = cds_ja_lookup(ja, entry);
-	if (node) {
-		*n_p = container_of(node, F_JA_NODE_t, node);
-		rcu_read_unlock();
-
-		return -EEXIST;
-	}
-	rcu_read_unlock();
-
-	if (!n) {
-		n = (F_JA_NODE_t *) calloc(1, sizeof(F_JA_NODE_t));
-		if (!n)
-			return -ENOMEM;
-	}
-
-	rcu_read_lock();
-	node = cds_ja_add_unique(ja, entry, &n->node);
-	if (unlikely(node != &n->node)) {
-		call_rcu(&n->head, node_free_cb);
-		n = container_of(node, F_JA_NODE_t, node);
-		rcu_read_unlock();
-
-		ret = -EEXIST;
-		goto _ret;
-	}
-	rcu_read_unlock();
-
-_ret:
-	//rcu_quiescent_state();
-	if (n_p)
-		*n_p = n;
-	return ret;
-}
-#endif
 
 static void node_free_cb(struct rcu_head *head)
 {

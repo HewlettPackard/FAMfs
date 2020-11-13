@@ -4,8 +4,8 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_ERROR_H
-#define FAMFS_ERROR_H
+#ifndef F_ERROR_H
+#define F_ERROR_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,5 +89,5 @@ do {                                             \
 #define err(str, ...) fprintf(stderr, str "\n", ## __VA_ARGS__)
 #define ioerr(str, ...) fprintf(stderr, "%s: " str " - %m\n", __FUNCTION__, ## __VA_ARGS__)
 
-#endif /* ifndef FAMFS_ERROR_H */
+#endif /* ifndef F_ERROR_H */
 

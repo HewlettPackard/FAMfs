@@ -9,9 +9,9 @@
 
 #include <stddef.h>
 
-#include "famfs_lf_connect.h"
-#include "famfs_stripe.h"
-#include "famfs_stats.h"
+#include "f_lf_connect.h"
+#include "f_stripe.h"
+#include "f_stats.h"
 #include "f_pool.h"
 
 

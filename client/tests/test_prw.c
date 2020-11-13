@@ -56,7 +56,7 @@
 
 #include <unifycr.h>
 
-#include "famfs_stats.h"
+#include "f_stats.h"
 
 
 //#define FAMFS_EXPLICIT_LO	/* Uncomment to set LAYOUT explicitly in path */

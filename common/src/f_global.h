@@ -1,11 +1,11 @@
-#ifndef FAMFS_GLOBAL_H_
-#define FAMFS_GLOBAL_H_
+#ifndef F_GLOBAL_H_
+#define F_GLOBAL_H_
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <inttypes.h>
 
-#include "famfs_env.h"
+#include "f_env.h"
 
 
 #define GEN_STR_LEN 1024

@@ -12,7 +12,7 @@
 #include <inttypes.h>
 #include <uuid/uuid.h>
 
-#include "famfs_env.h"
+#include "f_env.h"
 
 
 /*

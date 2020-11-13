@@ -10,8 +10,8 @@
 #include <malloc.h>
 #include <sys/types.h>
 
-#include "famfs_env.h"
-#include "famfs_error.h"
+#include "f_env.h"
+#include "f_error.h"
 #include "mpi_utils.h"
 
 

@@ -3,13 +3,13 @@
  *
  * Written by: Dmitry Ivanov
  */
-#ifndef FAMFS_BBITMAP_H_
-#define FAMFS_BBITMAP_H_
+#ifndef F_BBITMAP_H_
+#define F_BBITMAP_H_
 
 #ifndef __ASSEMBLY__
 
-#include "famfs_ktypes.h"
-#include "famfs_bbitops.h"
+#include "f_ktypes.h"
+#include "f_bbitops.h"
 
 /*
  * bbitmaps provide bifold bit arrays that consume one or more unsigned
@@ -196,15 +196,6 @@ static inline int bbitmap_weight(const unsigned long *src, unsigned int pset, in
 	return __bbitmap_weight(src, pset, 0, nbits);
 }
 
-#if 0
-static inline int bitmap_parse(const char *buf, unsigned int buflen,
-			unsigned long *maskp, int nmaskbits)
-{
-	return __bitmap_parse(buf, buflen, 0, maskp, nmaskbits);
-}
-#endif
-
-
 #endif /* __ASSEMBLY__ */
 
-#endif /* FAMFS_BBITMAP_H_ */
+#endif /* F_BBITMAP_H_ */

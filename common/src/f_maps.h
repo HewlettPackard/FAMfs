@@ -4,17 +4,17 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_MAPS_H_
-#define FAMFS_MAPS_H_
+#ifndef F_MAPS_H_
+#define F_MAPS_H_
 
 #include <sys/types.h>
 #include <stdint.h>
 #include <inttypes.h>
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_ktypes.h"
-#include "famfs_bbitmap.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_ktypes.h"
+#include "f_bbitmap.h"
 #include "f_dict.h"
 
 
@@ -319,7 +319,7 @@ static inline void f_stripe_destroy(F_STRIPE_HEAD_t *h)
 }
 #endif
 
-/* FAMFS configutation access; defined in famfs_maps.c */
+/* FAMFS configutation access; defined in f_maps.c */
 struct f_pool_;
 struct f_layout_;
 struct f_layout_info_;
@@ -385,4 +385,4 @@ int f_db_bdel(int map_id, void **keys, size_t size);
     _Static_assert( sizeof(F_EXTENT_ENTRY_t) == 8,	"F_EXTENT_ENTRY_t");
     _Static_assert( sizeof(FVAR_KVPAIR_t) == 24,	"FVAR_KVPAIR_t");
 
-#endif /* FAMFS_MAPS_H_ */
+#endif /* F_MAPS_H_ */

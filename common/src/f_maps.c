@@ -6,13 +6,13 @@
 
 #include <uuid/uuid.h>
 
-#include "famfs_env.h"
-#include "famfs_error.h"
+#include "f_env.h"
+#include "f_error.h"
 #include "f_pool.h"
 #include "f_layout.h"
-#include "famfs_maps.h"
-#include "famfs_lf_connect.h"
-#include "famfs_configurator.h"
+#include "f_maps.h"
+#include "f_lf_connect.h"
+#include "f_configurator.h"
 #include "mpi_utils.h"
 
 
@@ -1247,28 +1247,6 @@ void f_print_layouts(void) {
 	printf("  Layout partition:%u\n", lo->lp->part_num);
     }
 }
-
-#if 0
-/* Is 'hostname' in IO nodes list? If NULL, check my node name */
-int f_host_is_ionode(const char *hostname)
-{
-    if (hostname)
-	return !!get_ionode_info(pool, hostname);
-
-    return pool && NodeIsIOnode(&pool->mynode);
-}
-
-/* Is 'hostname' a MD server? If NULL, check my node name */
-int f_host_is_mds(const char *hostname)
-{
-    if (hostname) {
-	F_IONODE_INFO_t *info = get_ionode_info(pool, hostname);
-
-	return info && info->mds;
-    }
-    return pool && NodeHasMDS(&pool->mynode);
-}
-#endif
 
 int f_get_lo_stripe_sizes(F_POOL_t *p, size_t **stripe_sz_per_lo) {
     F_LAYOUT_t *lo;

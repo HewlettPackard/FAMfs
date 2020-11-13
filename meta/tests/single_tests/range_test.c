@@ -45,7 +45,7 @@
 
 #define MANIFEST_FILE_NAME "/mdhim_manifest_"
 //#define GEN_STR_LEN 1024
-#include "famfs_global.h"
+#include "f_global.h"
 
 
 struct timeval putstart, putend;

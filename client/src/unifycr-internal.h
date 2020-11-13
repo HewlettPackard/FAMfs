@@ -66,26 +66,18 @@
 #include "utlist.h"
 #include "uthash.h"
 
-#include "famfs_global.h"
-#include "famfs_configurator.h"
+#include "f_global.h"
+#include "f_configurator.h"
 
 
 /* TODO: Move common defs to another file ---> */
-#if 1
-/* holds debug level for unifycr, this defaults to zero
- * in unifycr_init, but can be changed at runtime by setting
- * the UNIFYCR_DEBUG env variable to a value greater than 1
- */
 
 /* eventually could decouple these so there could be
  * more or less file descriptors than files, but for
  * now they're the same
  */
 #define UNIFYCR_MAX_FILEDESCS    ( UNIFYCR_MAX_FILES )
-
-
 #define UNIFYCR_STREAM_BUFSIZE   ( 1 * 1024 * 1024 )
-
 #define UNIFYCR_SUPERBLOCK_KEY   ( 4321 )
 
 // const for unifycr
@@ -94,7 +86,6 @@
 #define UNIFYCR_MAX_READ_CNT 1048576
 
 /* <--- */
-#endif
 
 /* -------------------------------
  * Defines and types
@@ -548,13 +539,6 @@ int unifycr_fid_create_directory(const char *path);
  * all bytes are assumed to exist, so checks on file size should be
  * done before calling this routine */
 int unifycr_fid_read(int fid, off_t pos, void *buf, size_t count);
-
-#if 0
-/* write count bytes from buf into file starting at offset pos,
- * all bytes are assumed to be allocated to file, so file should
- * be extended before calling this routine */
-int unifycr_fid_write(int fid, off_t pos, const void *buf, size_t count);
-#endif
 
 /* given a file id, write zero bytes to region of specified offset
  * and length, assumes space is already reserved */

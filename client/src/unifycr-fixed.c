@@ -66,17 +66,15 @@
 #include "unifycr-sysio.h" /* UNIFYCR_REAL(pwrite) */
 #include "unifycr.h" /* fs_type_t */
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_global.h"
-#include "famfs_stripe.h"
-#include "famfs_stats.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_global.h"
+#include "f_stripe.h"
+#include "f_stats.h"
 #include "f_layout.h"
 #include "f_helper.h"
-#include "famfs_rbq.h"
-#include "famfs_lf_cqprogress.h"
-
-#include "fam_stripe.h"
+#include "f_rbq.h"
+#include "f_stripe.h"
 #include "lf_client.h"
 
 
@@ -87,29 +85,6 @@ extern void *unifycr_superblock;
 extern unsigned long unifycr_max_index_entries;
 extern long unifycr_spillover_max_chunks;
 
-
-//
-// =================================
-//
-#if 0
-/* given a file id and logical chunk id, return pointer to meta data
- * for specified chunk, return NULL if not found */
-static unifycr_chunkmeta_t *unifycr_get_chunkmeta(int fid, int cid)
-{
-    /* lookup file meta data for specified file id */
-    unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
-    if (meta != NULL) {
-        /* now lookup chunk meta data for specified chunk id */
-        if (cid >= 0 && cid < unifycr_max_chunks) {
-            unifycr_chunkmeta_t *chunk_meta = &(meta->chunk_meta[cid]);
-            return chunk_meta;
-        }
-    }
-
-    /* failed to find file or chunk id is out of range */
-    return (unifycr_chunkmeta_t *)NULL;
-}
-#endif
 
 /* ---------------------------------------
  * Operations on file chunks

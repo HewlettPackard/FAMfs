@@ -3,11 +3,11 @@
  *
  * Written by: Dmitry Ivanov
  */
-#ifndef FAMFS_BBITOPS_H_
-#define FAMFS_BBITOPS_H_
+#ifndef F_BBITOPS_H_
+#define F_BBITOPS_H_
 
-#include "famfs_ktypes.h"
-#include "famfs_bitops.h"
+#include "f_ktypes.h"
+#include "f_bitops.h"
 
 
 #define BBITS_PER_LONG		(BITS_PER_LONG >> 1)
@@ -563,5 +563,5 @@ static __always_inline unsigned int atomic_test_and_set_bbit_pattern(int nr, uns
 	return BBITS_VAL2PAT(atomic_test_and_set_bbit(nr, val, addr));
 }
 
-#endif /* FAMFS_BBITOPS_H_ */
+#endif /* F_BBITOPS_H_ */
 

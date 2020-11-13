@@ -39,7 +39,7 @@
 
 #include <stdint.h>
 
-#include "famfs_configurator.h"
+#include "f_configurator.h"
 
 #ifdef __cplusplus
 extern "C"

@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
-#include "famfs_configurator.h"
+#include "f_configurator.h"
 #include "arraylist.h"
 
 typedef enum {
@@ -70,8 +70,6 @@ typedef struct {
     int src_thrd;
     int src_dbg_rank;
     int arrival_time;
-//    int fam_cid;
-//    int fam_nid;
     uint64_t fam_sid;
 } send_msg_t;
 

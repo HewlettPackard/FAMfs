@@ -9,15 +9,14 @@
 #include <stdlib.h>
 #include <strings.h>
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "fam_stripe.h"
-#include "famfs_maps.h"
-#include "famfs_stats.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_stripe.h"
+#include "f_maps.h"
+#include "f_stats.h"
 #include "f_pool.h"
 #include "f_layout.h"
-#include "famfs_lf_connect.h"
-#include "famfs_lf_cqprogress.h"
+#include "f_lf_connect.h"
 
 /* If defined: limit send queue depth when CQ is used */
 //#define IBV_SQ_WR_DEPTH 0 /* 1..8; 0 - sync I/O */

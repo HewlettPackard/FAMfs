@@ -67,20 +67,20 @@
 #include "unifycr.h" /* fs_type_t */
 
 #include "famfs.h"
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_global.h"
-#include "famfs_stats.h"
-#include "fam_stripe.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_global.h"
+#include "f_stats.h"
+#include "f_stripe.h"
 #include "lf_client.h"
-#include "famfs_rbq.h"
-#include "famfs_bitmap.h"
-#include "famfs_maps.h" /* DEBUG_LVL macro */
+#include "f_rbq.h"
+#include "f_bitmap.h"
+#include "f_maps.h" /* DEBUG_LVL macro */
 #include "f_map.h"
 #include "f_pool.h"
 #include "f_layout.h"
 #include "f_helper.h"
-#include "famfs_rbq.h"
+#include "f_rbq.h"
 #include "seg_tree.h"
 #include "f_ja.h"
 
@@ -222,107 +222,6 @@ static void clear_index(void)
     *unifycr_indices.ptr_num_entries = 0;
 }
 
-#if 0
-/* Add the metadata for a single write to the index */
-static int add_write_meta_to_index(unifycr_filemeta_t* meta,
-                                   off_t file_pos,
-                                   unsigned long stripe,
-                                   off_t offset,
-                                   size_t length)
-{
-    /* add write extent to our segment trees */
-    if (famfs_local_extents) {
-        /* record write extent in our local cache */
-        seg_tree_add(&meta->extents,
-                     file_pos,
-                     file_pos + length - 1,
-                     offset,
-                     stripe);
-    }
-
-    /*
-     * We want to make sure this write will not overflow the maximum
-     * number of index entries we can sync with server. A write can at most
-     * create two new nodes in the seg_tree. If we're close to potentially
-     * filling up the index, sync it out.
-     */
-    unsigned long count_before = seg_tree_count(&meta->extents_sync);
-    if (count_before >= (unifycr_max_index_entries - 2)) {
-        /* this will flush our segments, sync them, and set the running
-         * segment count back to 0 */
-        famfs_sync(meta->fid);
-    }
-
-    /* store the write in our segment tree used for syncing with server. */
-    seg_tree_add(&meta->extents_sync,
-                 file_pos,
-                 file_pos + length - 1,
-                 offset,
-                 stripe);
-
-    /* we have new metadata that needs to be synced with the server */
-    meta->needs_sync = 1;
-
-    return UNIFYCR_SUCCESS;
-}
-
-/*
- * Remove all entries in the current index and re-write it using the write
- * metadata stored in the target file's extents_sync segment tree. This only
- * re-writes the metadata in the index. All the actual data is still kept
- * in the write log and will be referenced correctly by the new metadata.
- *
- * After this function is done, 'unifycr_indices' will have been totally
- * re-written. The writes in the index will be flattened, non-overlapping,
- * and sequential. The extents_sync segment tree will be cleared.
- *
- * This function is called when we sync our extents with the server.
- *
- * Returns maximum write log offset for synced extents.
- */
-off_t famfs_rewrite_index_from_seg_tree(unifycr_filemeta_t* meta)
-{
-   /* get pointer to index buffer */
-    md_index_t* indexes = unifycr_indices.index_entry;
-
-    /* Erase the index before we re-write it */
-    clear_index();
-
-    /* count up number of entries we wrote to buffer */
-    unsigned long idx = 0;
-
-    /* record maximum write log offset */
-    off_t max_log_offset = 0;
-
-    int gfid = meta->gfid;
-
-    seg_tree_rdlock(&meta->extents_sync);
-
-    /* For each write in this file's seg_tree ... */
-    struct seg_tree_node* node = NULL;
-    while ((node = seg_tree_iter(&meta->extents_sync, node))) {
-           indexes[idx].file_pos = node->start;
-        indexes[idx].mem_pos  = node->ptr;
-        indexes[idx].length   = node->end - node->start + 1;
-        indexes[idx].fid      = gfid;
-        indexes[idx].loid     = meta->loid;
-        indexes[idx].sid      = node->stripe;
-        idx++;
-        if ((off_t)(node->end) > max_log_offset) {
-            max_log_offset = (off_t) node->end;
-        }
-    }
-    seg_tree_unlock(&meta->extents_sync);
-    /* All done processing this files writes.  Clear its seg_tree */
-    seg_tree_clear(&meta->extents_sync);
-
-    /* record total number of entries in index buffer */
-    *unifycr_indices.ptr_num_entries = idx;
-
-    return max_log_offset;
-}
-#endif
-
 /* add metadata (write indexes) to meta->extents tree;
  * keep record of committed stripes */
 static void cache_write_indexes(unifycr_filemeta_t* meta)
@@ -428,10 +327,6 @@ static int famfs_sync(int target_fid)
         }
 
         if (meta->needs_sync) {
-#if 0
-            /* write contents from segment tree to index buffer */
-            (void)famfs_rewrite_index_from_seg_tree(meta);
-#endif
 
             /* if there are no index entries, we've got nothing to sync */
             if (*unifycr_indices.ptr_num_entries == 0) {
@@ -798,12 +693,7 @@ static int fid_store_alloc(int fid) {
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
     if ((meta != NULL) && (meta->fid == fid)) {
         meta->storage = FILE_STORAGE_LOGIO;
-#if 0
-        /* Initialize our segment tree that will record our writes */
-        int rc = seg_tree_init(&meta->extents_sync);
-        if (rc != 0)
-            return rc;
-#endif
+
         /* Initialize our segment tree to track extents for all writes
          * by this process, can be used to read back local data */
         if (famfs_local_extents) {
@@ -827,10 +717,7 @@ static int fid_store_free(int fid) {
     unifycr_filemeta_t *meta = unifycr_get_meta_from_fid(fid);
     if ((meta != NULL) && (meta->fid == fid)) {
         meta->storage = FILE_STORAGE_NULL;
-#if 0
-        /* Free our write seg_tree */
-        seg_tree_destroy(&meta->extents_sync);
-#endif
+
         /* Free our extent seg_tree */
         if (famfs_local_extents)
             seg_tree_destroy(&meta->extents);
@@ -1378,153 +1265,6 @@ static int famfs_fid_unlink(int fid)
     return UNIFYCR_SUCCESS;
 }
 
-#if 0
-/* ---------------------------------------
- * Operations to mount file system
- * --------------------------------------- */
-
-/* initialize our global pointers into the given superblock */
-static void *unifycr_init_pointers(void *superblock)
-{
-    char *ptr = (char *) superblock;
-
-    /* jump over header (right now just a uint32_t to record
-     * magic value of 0xdeadbeef if initialized */
-    ptr += sizeof(uint32_t);
-
-    /* stack to manage free file ids */
-    free_fid_stack = ptr;
-    ptr += unifycr_stack_bytes(unifycr_max_files);
-
-    /* record list of file names */
-    unifycr_filelist = (unifycr_filename_t *) ptr;
-    ptr += unifycr_max_files * sizeof(unifycr_filename_t);
-
-    /* array of file meta data structures */
-    unifycr_filemetas = (unifycr_filemeta_t *) ptr;
-    ptr += unifycr_max_files * sizeof(unifycr_filemeta_t);
-
-    /* array of chunk meta data strucutres for each file */
-    unifycr_chunkmetas = (unifycr_chunkmeta_t *) ptr;
-    ptr += unifycr_max_files * unifycr_max_chunks * sizeof(unifycr_chunkmeta_t);
-
-    if (unifycr_use_spillover) {
-        ptr += unifycr_max_files * unifycr_spillover_max_chunks * sizeof(
-                   unifycr_chunkmeta_t);
-    }
-    /* stack to manage free memory data chunks */
-    free_chunk_stack = ptr;
-    ptr += unifycr_stack_bytes(unifycr_max_chunks);
-
-    if (unifycr_use_spillover) {
-        /* stack to manage free spill-over data chunks */
-        free_spillchunk_stack = ptr;
-        ptr += unifycr_stack_bytes(unifycr_spillover_max_chunks);
-    }
-
-    /* Only set this up if we're using memfs */
-    if (unifycr_use_memfs) {
-        /* round ptr up to start of next page */
-        unsigned long long ull_ptr  = (unsigned long long) ptr;
-        unsigned long long ull_page = (unsigned long long) unifycr_page_size;
-        unsigned long long num_pages = ull_ptr / ull_page;
-        if (ull_ptr > num_pages * ull_page) {
-            ptr = (char *)((num_pages + 1) * ull_page);
-        }
-
-        /* pointer to start of memory data chunks */
-        unifycr_chunks = ptr;
-        ptr += unifycr_max_chunks * unifycr_chunk_size;
-    } else {
-        unifycr_chunks = NULL;
-    }
-
-    /* pointer to the log-structured metadata structures*/
-    if ((fs_type == UNIFYCR_LOG) || (fs_type == FAMFS)) {
-        unifycr_indices.ptr_num_entries = (long *)ptr;
-
-        ptr += unifycr_page_size;
-        unifycr_indices.index_entry = (md_index_t *)ptr;
-
-
-        /*data structures  to record the global metadata*/
-        ptr += unifycr_max_index_entries * sizeof(md_index_t);
-        unifycr_fattrs.ptr_num_entries = (long *)ptr;
-        ptr += unifycr_page_size;
-        unifycr_fattrs.meta_entry = (f_fattr_t *)ptr;
-    }
-    return ptr;
-}
-
-/* initialize data structures for first use */
-static int unifycr_init_structures()
-{
-    int i;
-    for (i = 0; i < unifycr_max_files; i++) {
-        /* indicate that file id is not in use by setting flag to 0 */
-        unifycr_filelist[i].in_use = 0;
-
-        /* set pointer to array of chunkmeta data structures */
-        unifycr_filemeta_t *filemeta = &unifycr_filemetas[i];
-
-        unifycr_chunkmeta_t *chunkmetas;
-        if (!unifycr_use_spillover) {
-            chunkmetas = &(unifycr_chunkmetas[unifycr_max_chunks * i]);
-        } else
-            chunkmetas = &(unifycr_chunkmetas[(unifycr_max_chunks +
-                                               unifycr_spillover_max_chunks) * i]);
-        filemeta->chunk_meta = chunkmetas;
-    }
-
-    unifycr_stack_init(free_fid_stack, unifycr_max_files);
-
-    unifycr_stack_init(free_chunk_stack, unifycr_max_chunks);
-
-    if (unifycr_use_spillover) {
-        unifycr_stack_init(free_spillchunk_stack, unifycr_spillover_max_chunks);
-    }
-
-    if (fs_type == UNIFYCR_LOG || fs_type == FAMFS) {
-        *(unifycr_indices.ptr_num_entries) = 0;
-        *(unifycr_fattrs.ptr_num_entries) = 0;
-    }
-    DEBUG("Meta-stacks initialized!");
-
-    return UNIFYCR_SUCCESS;
-}
-
-static int unifycr_get_spillblock(size_t size, const char *path)
-{
-    void *scr_spillblock = NULL;
-    int spillblock_fd;
-
-    mode_t perms = unifycr_getmode(0);
-
-    //MAP_OR_FAIL(open);
-    spillblock_fd = __real_open(path, O_RDWR | O_CREAT | O_EXCL, perms);
-    if (spillblock_fd < 0) {
-
-        if (errno == EEXIST) {
-            /* spillover block exists; attach and return */
-            spillblock_fd = __real_open(path, O_RDWR);
-        } else {
-            perror("open() in unifycr_get_spillblock() failed");
-            return -1;
-        }
-    } else {
-        /* new spillover block created */
-        /* TODO: align to SSD block size*/
-
-        /*temp*/
-        off_t rc = __real_lseek(spillblock_fd, size, SEEK_SET);
-        if (rc < 0) {
-            perror("lseek failed");
-        }
-    }
-
-    return spillblock_fd;
-}
-#endif
 
 /* ---------------------------------------
  * APIs exposed to external libraries

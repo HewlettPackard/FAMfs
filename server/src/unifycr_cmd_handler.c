@@ -35,7 +35,7 @@
 #include <string.h>
 #include <errno.h>
 #include "log.h"
-#include "famfs_global.h"
+#include "f_global.h"
 #include "unifycr_global.h"
 #include "unifycr_cmd_handler.h"
 #include "unifycr_request_manager.h"
@@ -43,7 +43,7 @@
 #include "unifycr_const.h"
 #include "unifycr_sock.h"
 #include "unifycr_metadata.h"
-#include "famfs_rbq.h"
+#include "f_rbq.h"
 #include "f_pool.h"
 #include "f_layout.h"
 #include "f_helper.h"

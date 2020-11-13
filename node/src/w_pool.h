@@ -11,7 +11,7 @@
 #include <pthread.h>
 
 #include "queue.h"
-#include "famfs_env.h"
+#include "f_env.h"
 
 #define W_QUEUE_MAX_SIZE 128
 

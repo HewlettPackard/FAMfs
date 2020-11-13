@@ -35,7 +35,7 @@
 #include <sys/syscall.h>
 #include <sys/time.h>
 
-#include "famfs_ktypes.h" // time_get_ts, timespec_sub macros
+#include "f_ktypes.h" // time_get_ts, timespec_sub macros
 
 extern FILE *dbg_stream;
 extern int glb_rank;

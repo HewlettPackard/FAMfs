@@ -12,8 +12,8 @@
 #include <limits.h>
 
 #include "list.h"
-#include "famfs_env.h"
-#include "famfs_ktypes.h"
+#include "f_env.h"
+#include "f_ktypes.h"
 
 #define W_QUEUE_MAX_SIZE INT_MAX
 
@@ -49,12 +49,7 @@ typedef struct f_work_ {
 	enum f_wtype_		type;
 	void			*params;
 } F_WORK_t;
-/*
-typedef struct n_status_ {
-	QUEUE		node;
-	int		status;
-} N_STATUS_t;
-*/
+
 typedef struct f_wthread_ {
 	int			id;
 	pthread_t		pthread;
@@ -87,7 +82,6 @@ typedef struct f_wpool_ {
 	atomic_t	in_flight;
 	F_WQUEUE_t	queues[F_WP_NR];
 	int		queue_max_size;
-//	w_func_		w_fn;
 	int		size;
 	volatile int	shutdown;
 	int		any_done_only;	/* 1: wait for all done only */

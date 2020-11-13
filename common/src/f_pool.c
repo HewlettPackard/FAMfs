@@ -11,25 +11,11 @@
 #include <string.h>
 #include <malloc.h>
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_lf_connect.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_lf_connect.h"
 #include "f_pool.h"
 
-
-#if 0
-/* Lookup pool device in pool->devlist by IO node index and FAM position in the node */
-F_POOL_DEV_t *f_ionode_pos_to_pdev(F_POOL_t *p, int ion_idx, int idx)
-{
-    F_POOL_DEV_t *pdev;
-
-    for_each_pool_dev(p, pdev) {
-	if (pdev->ionode_idx == ion_idx && pdev->idx_in_ion == idx)
-	    return pdev;
-    }
-    return NULL;
-}
-#endif
 
 /* Convert pool device index in devlist[] to this device index in info.pdev_indexes[],
   i.e. reverse lookup in info.pdev_indexes[] */

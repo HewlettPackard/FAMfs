@@ -18,8 +18,7 @@
 #include <rdma/fi_rma.h>
 #include <rdma/fi_ext_zhpe.h>
 
-#include "famfs_env.h"
-//#include "famfs_ktypes.h"
+#include "f_env.h"
 
 
 #define node2service(base, node_id, part_id) (base + part_id + node_id*100)
@@ -164,6 +163,7 @@ void lf_client_free(LF_CL_t *client);
 int lf_servers_init(LF_SRV_t ***lf_servers_p, N_PARAMS_t *params, int rank);
 int lf_srv_init(LF_SRV_t *priv);
 void lf_srv_free(LF_SRV_t *priv);
+ssize_t lf_check_progress(struct fid_cq *cq, ssize_t *cmp);
 
 /* defined in util.c */
 int arg_parser(int argc, char **argv, int verbose, int client_rank_size, N_PARAMS_t **params_p);

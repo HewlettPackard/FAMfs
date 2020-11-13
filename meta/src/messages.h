@@ -44,7 +44,7 @@ extern "C"
 #endif
 #include "range_server.h"
 #include "list.h"
-#include "famfs_global.h"
+#include "f_global.h"
 
 /* Message Types */
 

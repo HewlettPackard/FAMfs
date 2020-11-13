@@ -7,12 +7,9 @@
 #include <unistd.h>
 #include <stddef.h>
 #include <stdio.h>
-//#include <stdlib.h>
 #include <string.h>
 #include <malloc.h>
 
-//#include "famfs_env.h"
-//#include "famfs_error.h"
 #include "f_layout.h"
 #include "f_map.h"
 

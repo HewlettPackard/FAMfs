@@ -69,13 +69,11 @@
 #include "unifycr.h" /* fs_type_t */
 
 #include "famfs.h"
-#include "famfs_stats.h"
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_global.h"
-#include "famfs_rbq.h"
-//#include "f_layout.h"
-//#include "f_helper.h"
+#include "f_stats.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_global.h"
+#include "f_rbq.h"
 
 //
 // === libfabric stuff =============

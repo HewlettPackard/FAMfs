@@ -7,7 +7,7 @@
 #ifndef F_RECOVERY_H
 #define F_RECOVERY_H
 
-#include "famfs_stats.h"
+#include "f_stats.h"
 #include "f_ec.h"
 
 #define F_RC_MAX_IO_SIZE	(16*MiB)	/* Max recovery I/O size */

@@ -6,13 +6,13 @@
  * Copyright (c) 2018 - Michael J. Brim
  * Copyright (c) 2017-2018, HPE - Oleg Neverovitch, Dmitry Ivanov
  */
-# include <assert.h>
-# include <ctype.h>
-# include <errno.h>
-# include <stddef.h>
-# include <stdlib.h>
-# include <string.h>
-# include <stdint.h>
+#include <assert.h>
+#include <ctype.h>
+#include <errno.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
 
 #include <getopt.h>   // getopt_long()
 #include <sys/stat.h> // stat()
@@ -21,8 +21,7 @@
 
 #include "ini.h"
 #include "tinyexpr.h"
-#include "famfs_configurator.h"
-
+#include "f_configurator.h"
 
 #define UNIFYCR_CFG_MAX_MSG 1024
 
@@ -1189,11 +1188,6 @@ int f_uuid_parse(const char *s, uuid_t uu)
 	return 0; /* null string is Ok */
     if (*s == '{')
 	s++;
-    /*
-    rc = sscanf(s, "%08X-%04hX-%04hX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
-	&u.d1, &u.d2, &u.d3, &u.d4[0], &u.d4[1],
-	&u.d4[2], &u.d4[3], &u.d4[4], &u.d4[5], &u.d4[6], &u.d4[7]);
-    */
     rc = sscanf(s, "%02hhX%02hhX%02hhX%02hhX-%02hhX%02hhX-%02hhX%02hhX-%02hhX%02hhX-%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX",
 	&u.d1[0], &u.d1[1], &u.d1[2], &u.d1[3],
 	&u.d2[0], &u.d2[1], &u.d3[0], &u.d3[1],
@@ -1201,10 +1195,6 @@ int f_uuid_parse(const char *s, uuid_t uu)
 	&u.d4[2], &u.d4[3], &u.d4[4], &u.d4[5], &u.d4[6], &u.d4[7]);
     if (rc == 0)
 	return -1;
-    /*
-    if (rc == 11) {
-	if ((u.d3 & 0xf000) == 0x4000 && (u.d4[0] & 0xc0) == 0x80)
-    */
     if (rc == 16) {
 	if ((u.d3[0] & 0xf0) == 0x40 && (u.d4[0] & 0xc0) == 0x80)
 	{

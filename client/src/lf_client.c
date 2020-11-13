@@ -7,17 +7,16 @@
 
 #include "unifycr-internal.h" /* client-specific DEBUG,DEBUG_LVL macros; UNIFYCR_SUCCESS */
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_global.h"
-#include "famfs_maps.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_global.h"
+#include "f_maps.h"
 #include "f_pool.h"
 #include "f_layout.h"
 #include "f_map.h"
 #include "f_helper.h"
-
 #include "lf_client.h"
-#include "fam_stripe.h"
+#include "f_stripe.h"
 #include "famfs.h"
 
 

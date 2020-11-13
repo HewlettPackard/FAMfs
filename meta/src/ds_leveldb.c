@@ -41,8 +41,8 @@
 #include <sys/time.h>
 #include "ds_leveldb.h"
 
-#include "famfs_global.h"
-#include "famfs_error.h"
+#include "f_global.h"
+#include "f_error.h"
 
 
 struct timeval dbputstart, dbputend;

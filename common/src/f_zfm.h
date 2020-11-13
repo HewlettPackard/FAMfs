@@ -4,8 +4,8 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_ZFM_H
-#define FAMFS_ZFM_H
+#ifndef F_ZFM_H
+#define F_ZFM_H
 
 /* GenZ fabric manager data: ION or FAM */
 typedef struct f_zfm_ {
@@ -15,5 +15,5 @@ typedef struct f_zfm_ {
 	char		*geo;		/* geolocation; MFW model */
 } F_ZFM_t;
 
-#endif /* FAMFS_ZFM_H */
+#endif /* F_ZFM_H */
 

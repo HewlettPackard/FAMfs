@@ -4,8 +4,8 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_LF_CONNECT_H
-#define FAMFS_LF_CONNECT_H
+#ifndef F_LF_CONNECT_H
+#define F_LF_CONNECT_H
 
 #include <stdbool.h>
 #include <string.h>
@@ -21,11 +21,11 @@
 #include <rdma/fi_errno.h>
 #include <uuid/uuid.h>
 
-#include "famfs_env.h"
-#include "famfs_ktypes.h"
-#include "famfs_bitops.h"
-#include "famfs_zfm.h"
-#include "famfs_error.h"
+#include "f_env.h"
+#include "f_ktypes.h"
+#include "f_bitops.h"
+#include "f_zfm.h"
+#include "f_error.h"
 
 
 /* libfabric domain structure: that could be per device or per process */
@@ -117,7 +117,7 @@ typedef struct lf_info_ {
 } LF_INFO_t;
 
 
-/* defined in famfs_lf_connect.c */
+/* defined in f_lf_connect.c */
 #define LF_CLIENT false	/* bool const for f_domain_open/f_conn_open: libfabric client */
 #define LF_SERVER true	/* libfabric server */
 int f_domain_open(LF_DOM_t **dom_p, LF_INFO_t *info, const char *node,
@@ -127,7 +127,7 @@ int f_conn_open(FAM_DEV_t *fdev, LF_DOM_t *domain, LF_INFO_t *info,
 int f_conn_enable(struct fid_ep *ep, struct fi_info *fi);
 int f_domain_close(LF_DOM_t **domain_p);
 int f_conn_close(FAM_DEV_t *d);
-
+ssize_t lf_check_progress(struct fid_cq *cq, ssize_t *cmp);
 
 #define FI_ERROR_LOG(err, msg, ...)       \
     do {                                  \
@@ -171,5 +171,5 @@ int f_conn_close(FAM_DEV_t *d);
 /* TODO: Move me to debug.h */
 #define DEBUG_LF(lvl, fmt, ...) DEBUG_LVL_(lf_verbosity, lvl, fmt, ## __VA_ARGS__)
 
-#endif /* FAMFS_LF_CONNECT_H */
+#endif /* F_LF_CONNECT_H */
 

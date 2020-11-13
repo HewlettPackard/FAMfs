@@ -38,7 +38,7 @@
 #include "arraylist.h"
 #include "unifycr_const.h"
 #include "unifycr_global.h"
-#include "famfs_global.h"
+#include "f_global.h"
 
 #define MANIFEST_FILE_NAME "mdhim_manifest_"
 #define F_MD_IDX_MAPS_START 3 /* map indexes start with 3 (unifycr_indexes) */

@@ -89,10 +89,9 @@
 #include "unifycr-stack.h"
 #include "unifycr.h" /* fs_type_t */
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_stats.h"
-//#include "famfs_global.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_stats.h"
 #include "famfs.h"
 
 
@@ -236,14 +235,6 @@ typedef struct {
 } name_rank_pair_t;
 
 typedef f_fattr_t unifycr_fattr_t;
-#if 0
-typedef struct {
-    int fid;
-    int gfid;
-    char filename[UNIFYCR_MAX_FILENAME];
-    struct stat file_attr;
-} unifycr_fattr_t;
-#endif
 
 static int get_del_cnt();
 static int compare_int(const void *a, const void *b);

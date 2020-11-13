@@ -3,13 +3,13 @@
  *
  * Written by: Dmitry Ivanov
  */
-#ifndef FAMFS_BITMAP_H_
-#define FAMFS_BITMAP_H_
+#ifndef F_BITMAP_H_
+#define F_BITMAP_H_
 
 #ifndef __ASSEMBLY__
 
-#include "famfs_ktypes.h"
-#include "famfs_bitops.h"
+#include "f_ktypes.h"
+#include "f_bitops.h"
 
 /*
  * bitmaps provide bit arrays that consume one or more unsigned
@@ -50,16 +50,6 @@
  * bitmap_find_next_zero_area(buf, len, pos, n, mask)	Find bit free area
  * bitmap_shift_right(dst, src, n, nbits)	*dst = *src >> n
  * bitmap_shift_left(dst, src, n, nbits)	*dst = *src << n
- * bitmap_remap(dst, src, old, new, nbits)	*dst = map(old, new)(src)
- * bitmap_bitremap(oldbit, old, new, nbits)	newbit = map(old, new)(oldbit)
- * bitmap_onto(dst, orig, relmap, nbits)	*dst = orig relative to relmap
- * bitmap_fold(dst, orig, sz, nbits)		dst bits = orig bits mod sz
- * bitmap_scnprintf(buf, len, src, nbits)	Print bitmap src to buf
- * bitmap_parse(buf, buflen, dst, nbits)	Parse bitmap dst from kernel buf
- * bitmap_parse_user(ubuf, ulen, dst, nbits)	Parse bitmap dst from user buf
- * bitmap_scnlistprintf(buf, len, src, nbits)	Print bitmap src as list to buf
- * bitmap_parselist(buf, dst, nbits)		Parse bitmap dst from kernel buf
- * bitmap_parselist_user(buf, dst, nbits)	Parse bitmap dst from user buf
  * bitmap_find_free_region(bitmap, bits, order)	Find and allocate bit region
  * bitmap_release_region(bitmap, pos, order)	Free specified bit region
  * bitmap_allocate_region(bitmap, pos, order)	Allocate specified bit region
@@ -90,18 +80,18 @@
 #define DECLARE_BITMAP(name,bits) \
          unsigned long name[BITS_TO_LONGS(bits)]
 
-/*
- * Allocation and deallocation of bitmap.
- * Provided in lib/bitmap.c to avoid circular dependency.
- */
-extern unsigned long *bitmap_alloc(size_t nbits);
-extern unsigned long *bitmap_zalloc(size_t nbits);
-extern void bitmap_free(unsigned long *bitmap);
+#define BITMAP_FIRST_WORD_MASK(start) (~0UL << ((start) % BITS_PER_LONG))
+
+#define small_const_nbits(nbits) \
+	(__builtin_constant_p(nbits) && (nbits) <= BITS_PER_LONG)
+
 
 /*
  * lib/bitmap.c provides these functions:
  */
-
+extern unsigned long *bitmap_alloc(size_t nbits);
+extern unsigned long *bitmap_zalloc(size_t nbits);
+extern void bitmap_free(unsigned long *bitmap);
 extern int __bitmap_empty(const unsigned long *bitmap, int bits);
 extern int __bitmap_full(const unsigned long *bitmap, int bits);
 extern int __bitmap_equal(const unsigned long *bitmap1,
@@ -136,43 +126,11 @@ extern unsigned long bitmap_find_next_zero_area(unsigned long *map,
 					 unsigned long start,
 					 unsigned int nr,
 					 unsigned long align_mask);
-
-extern int bitmap_scnprintf(char *buf, unsigned int len,
-			const unsigned long *src, int nbits);
-extern int __bitmap_parse(const char *buf, unsigned int buflen, int is_user,
-			unsigned long *dst, int nbits);
-extern int bitmap_parse_user(const char __user *ubuf, unsigned int ulen,
-			unsigned long *dst, int nbits);
-extern int bitmap_scnlistprintf(char *buf, unsigned int len,
-			const unsigned long *src, int nbits);
-extern int bitmap_parselist(const char *buf, unsigned long *maskp,
-			int nmaskbits);
-extern int bitmap_parselist_user(const char __user *ubuf, unsigned int ulen,
-			unsigned long *dst, int nbits);
-extern void bitmap_remap(unsigned long *dst, const unsigned long *src,
-		const unsigned long *old, const unsigned long *new, int bits);
-extern int bitmap_bitremap(int oldbit,
-		const unsigned long *old, const unsigned long *new, int bits);
-extern void bitmap_onto(unsigned long *dst, const unsigned long *orig,
-		const unsigned long *relmap, int bits);
-extern void bitmap_fold(unsigned long *dst, const unsigned long *orig,
-		int sz, int bits);
 extern int bitmap_find_free_region(unsigned long *bitmap, int bits, int order);
 extern void bitmap_release_region(unsigned long *bitmap, int pos, int order);
 extern int bitmap_allocate_region(unsigned long *bitmap, int pos, int order);
 extern int bitmap_ord_to_pos(const unsigned long *bitmap, int n, int bits);
 
-#define BITMAP_FIRST_WORD_MASK(start) (~0UL << ((start) % BITS_PER_LONG))
-#if 0
-#define BITMAP_LAST_WORD_MASK(nbits)					\
-(									\
-	((nbits) % BITS_PER_LONG) ?					\
-		(1UL<<((nbits) % BITS_PER_LONG))-1 : ~0UL		\
-)
-#endif
-
-#define small_const_nbits(nbits) \
-	(__builtin_constant_p(nbits) && (nbits) <= BITS_PER_LONG)
 
 static inline void bitmap_zero(unsigned long *dst, int nbits)
 {
@@ -316,14 +274,6 @@ static inline void bitmap_shift_left(unsigned long *dst,
 		__bitmap_shift_left(dst, src, n, nbits);
 }
 
-#if 0
-static inline int bitmap_parse(const char *buf, unsigned int buflen,
-			unsigned long *maskp, int nmaskbits)
-{
-	return __bitmap_parse(buf, buflen, 0, maskp, nmaskbits);
-}
-#endif
-
 #endif /* __ASSEMBLY__ */
 
-#endif /* FAMFS_BITMAP_H_ */
+#endif /* F_BITMAP_H_ */

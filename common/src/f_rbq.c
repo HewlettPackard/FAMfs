@@ -14,7 +14,9 @@
 #include <string.h>
 #include <sched.h>
 #include <pthread.h>
-#include "famfs_rbq.h"
+
+#include "f_rbq.h"
+
 
 int f_rbq_create(char *name, uint64_t esize, uint64_t ecnt, f_rbq_t **qp, int force) {
     int         fd;

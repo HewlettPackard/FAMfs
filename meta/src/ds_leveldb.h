@@ -46,7 +46,7 @@
 #include "mdhim.h"
 #include "partitioner.h"
 #include "data_store.h"
-#include "famfs_global.h"
+#include "f_global.h"
 
 #define UNIFYCR_FID(key)    (*(unsigned long *)(&(((fsmd_key_t*)(key))->fid)))
 #define UNIFYCR_OFFSET(key) (*(long *)(&(((fsmd_key_t*)(key))->offset)))

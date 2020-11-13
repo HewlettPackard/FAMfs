@@ -15,9 +15,9 @@
 #include <limits.h>
 #include <ifaddrs.h>
 
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_lf_connect.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_lf_connect.h"
 
 
 /* x^4 + x + 1 -- CRC-4/ITU-T G.704 Poly -- fast table algorithm */

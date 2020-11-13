@@ -7,8 +7,8 @@
  * Copyright (c) 2017-2019, HPE - Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_CONFIGURATOR_H
-#define FAMFS_CONFIGURATOR_H
+#ifndef F_CONFIGURATOR_H
+#define F_CONFIGURATOR_H
 
 /* Configurator unifies config files, environment variables, and command-line
  * arguments into a set of simple preprocessor definitions that capture the
@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <uuid/uuid.h>
 
-#include "famfs_env.h"
+#include "f_env.h"
 
 
 #ifndef TMPDIR
@@ -262,4 +262,4 @@ static inline int configurator_get_sec_size(unifycr_cfg_t *cfg,
     _Static_assert( sizeof(uuid_t) == 16,	"uuid_t");
     _Static_assert( sizeof(uuid_t)*2+4+1 == F_UUID_BUF_SIZE, "uuid_t BUF_SIZE");
 
-#endif /* FAMFS_CONFIGURATOR_H */
+#endif /* F_CONFIGURATOR_H */

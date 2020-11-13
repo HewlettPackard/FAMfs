@@ -12,10 +12,10 @@
 #include <inttypes.h>
 #include <pthread.h>
 
-#include "famfs_env.h"
-#include "famfs_ktypes.h"
-#include "famfs_bitops.h"
-#include "famfs_lfa.h"
+#include "f_env.h"
+#include "f_ktypes.h"
+#include "f_bitops.h"
+#include "f_lfa.h"
 #include "f_map.h"
 #include "f_dict.h"
 #include "f_wpool.h"

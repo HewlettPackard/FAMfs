@@ -4,8 +4,8 @@
  * Written by: Oleg Neverovitch, Dmitry Ivanov
  */
 
-#ifndef FAMFS_LFA_H
-#define FAMFS_LFA_H
+#ifndef F_LFA_H
+#define F_LFA_H
 
 #include <string.h>
 #include <stdio.h>
@@ -20,9 +20,6 @@
 #include <rdma/fi_ext_zhpe.h>
 #include <rdma/fi_atomic.h>
 
-//#include <mpi.h>
-
-//#include "famfs_env.h"
 
 #define F_LFA_MAX_AVB  1024UL               // max size of atomic vector (bytes)
 #define F_LFA_MAX_BLOB 8UL                  // max number of atmoic blobs

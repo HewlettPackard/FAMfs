@@ -9,8 +9,8 @@
 #include <stdlib.h>
 #include <malloc.h>
 
-#include "famfs_env.h" 
-#include "famfs_error.h"
+#include "f_env.h" 
+#include "f_error.h"
 #include "f_wpool.h"
 
 static int wpool_wait(F_WPOOL_t* wpool);

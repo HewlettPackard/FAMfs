@@ -14,17 +14,15 @@
 #include <getopt.h>
 #include <malloc.h>
 #include <sys/mman.h>
-//#include <sys/sysinfo.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-//#include <limits.h>
 
-#include "famfs_error.h"
-#include "famfs_env.h"
+#include "f_error.h"
+#include "f_env.h"
 #include "log.h"
 #include "lf_client.h"
 #include "unifycr_metadata.h"
-#include "famfs_maps.h"
+#include "f_maps.h"
 #include "f_pool.h"
 #include "mpi_utils.h"
 

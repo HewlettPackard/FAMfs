@@ -11,11 +11,10 @@
 #include <inttypes.h>
 #include <pthread.h>
 
-#include "famfs_global.h"
-#include "famfs_maps.h"
+#include "f_global.h"
+#include "f_maps.h"
 #include "list.h"
 #include "f_ja.h" /* F_JUDY_t sparse array */
-
 
 #include <urcu-qsbr.h>
 //#include <urcu-call-rcu.h>

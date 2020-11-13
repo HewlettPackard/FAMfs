@@ -1,7 +1,7 @@
 #include <sched.h>
 #include <unistd.h>
-#include "famfs_lfa.h"
-#include "famfs_bitops.h"
+#include "f_lfa.h"
+#include "f_bitops.h"
 
 #define ON_FIERR(action, onerr, msg, ...)   \
     do {                                    \

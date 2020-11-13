@@ -13,10 +13,10 @@
 #include <pthread.h>
 #include <mpi.h>
 
-#include "famfs_env.h"
-#include "famfs_bitops.h"
-#include "famfs_zfm.h"
-#include "famfs_lfa.h"
+#include "f_env.h"
+#include "f_bitops.h"
+#include "f_zfm.h"
+#include "f_lfa.h"
 #include "f_dict.h"
 #include "list.h"
 
@@ -37,7 +37,7 @@
 	     _i < p->mynode.emul_devs; _i++, pd++)
 
 
-/* defined in famfs_lf_connect.h */
+/* defined in f_lf_connect.h */
 struct lf_info_;
 struct lf_dom_;
 

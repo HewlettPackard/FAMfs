@@ -40,7 +40,7 @@
 #include <ifaddrs.h>
 #include <signal.h>
 
-#include "famfs_global.h"
+#include "f_global.h"
 #include "unifycr_metadata.h"
 #include "log.h"
 #include "unifycr_debug.h"
@@ -52,14 +52,13 @@
 #include "unifycr_cmd_handler.h"
 #include "unifycr_service_manager.h"
 #include "unifycr_request_manager.h"
-#include "famfs_env.h"
-#include "famfs_error.h"
-#include "famfs_maps.h"
+#include "f_env.h"
+#include "f_error.h"
+#include "f_maps.h"
 #include "lf_client.h"
-#include "famfs_rbq.h"
+#include "f_rbq.h"
 #include "f_pool.h"
 #include "f_layout.h"
-#include "famfs_maps.h"
 #include "f_allocator.h"
 #include "mpi_utils.h"
 #include "f_helper.h"

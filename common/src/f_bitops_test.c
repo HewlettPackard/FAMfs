@@ -8,8 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 
-//#include "famfs_bitops.h"
-#include "famfs_bitmap.h"
+#include "f_bitmap.h"
 
 #define passes		3	/* Number of test passes */
 #define rnd_passes	1000	/* Number of random test passes */
