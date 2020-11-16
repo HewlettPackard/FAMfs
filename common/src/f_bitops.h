@@ -6,7 +6,7 @@
 #ifndef F_BITOPS_H_
 #define F_BITOPS_H_
 
-#include "f_ktypes.h"
+#include "f_ktypes.h"		/* BITS_PER_LONG */
 
 #define BIT(nr)			(1UL << (nr))
 #define BIT_NR_IN_LONG(nr)	((nr) % BITS_PER_LONG)
@@ -15,7 +15,6 @@
 #define BIT_WORD64(nr)		((nr) / (unsigned)BITS_PER_LONG)
 #define BITS_PER_BYTE		8
 #define BITS_PER_INT		(BITS_PER_BYTE*sizeof(int))
-// BITS_PER_LONG - See f_ktypes.h
 #define BITS_TO_BYTES(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE)
 #define BITS_TO_LONGS(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
 #define BITMAP_LAST_WORD_MASK(nbits) (~0UL >> (-(nbits) & (BITS_PER_LONG - 1)))
@@ -125,20 +124,16 @@ static __inline__ int get_count_order(unsigned int count)
 #define __const_hweight16(w) (__const_hweight8(w)  + __const_hweight8((w)  >> 8 ))
 #define __const_hweight32(w) (__const_hweight16(w) + __const_hweight16((w) >> 16))
 #define __const_hweight64(w) (__const_hweight32(w) + __const_hweight32((w) >> 32))
+#define hweight64(w) (__const_hweight64(w))
 
 /*
  * Generic interface.
  */
-#define hweight8(w)  (__const_hweight8(w))
-#define hweight16(w) (__const_hweight16(w))
-#define hweight32(w) (__const_hweight32(w))
-#define hweight64(w) (__const_hweight64(w))
 
 static __always_inline unsigned long hweight_long(unsigned long w)
 {
     return __builtin_constant_p( w )?
-	(sizeof(w) == 4 ? hweight32(w) : hweight64(w)) :
-	(unsigned) __builtin_popcountl(w);
+	hweight64(w) : (unsigned) __builtin_popcountl(w);
 }
 
 /**

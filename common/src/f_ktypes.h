@@ -36,63 +36,26 @@ typedef unsigned uint128_t __attribute__ ((mode (TI)));
 _Static_assert( __builtin_types_compatible_p(typeof(dev_t), unsigned long), \
 		"dev_t");
 
-#define swab16(X) __builtin_bswap16(X)
-#define swab32(X) __builtin_bswap32(X)
-#define swab64(X) __builtin_bswap64(X)
-
-typedef unsigned fmode_t;
-typedef unsigned oom_flags_t;
-
-static inline int WARN_ON_ONCE(int val) { if(val != 0) printf("WARN_ON_ONCE\n"); return val; }
-static inline int WARN_ON(int val) { if(val != 0) printf("WARN_ON\n"); return val; }
+#define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
+#define ROUNDUP(x, y) ((((x) + ((y) - 1)) / (y)) * (y))
 
 //RCU
 #define rcu_dereference_raw(p) (rcu_dereference(p))
 #define __must_check __attribute__((warn_unused_result))
 #define __force
-#define __user
-#define __pure                          __attribute__((pure))
 #define __aligned(x)                    __attribute__((aligned(x)))
 #define __printf(a, b)                  __attribute__((format(printf, a, b)))
-#define __scanf(a, b)                   __attribute__((format(scanf, a, b)))
-#define  noinline                       __attribute__((noinline))
-//#define __attribute_const__             __attribute__((__const__))
-#define __maybe_unused                  __attribute__((unused))
 #define __always_unused                 __attribute__((unused))
 
 #define PAGE_SIZE (4096)
 #define PAGE_SHIFT (12)
 #define PAGE_MASK       (~(PAGE_SIZE-1))
-#define MSEC_PER_SEC    1000L
-#define USEC_PER_MSEC   1000L
-#define NSEC_PER_USEC   1000L
-#define NSEC_PER_MSEC   1000000L
-#define USEC_PER_SEC    1000000L
-#define NSEC_PER_SEC    1000000000L
-#define FSEC_PER_SEC    1000000000000000LL
-
 #define __ALIGN_KERNEL(x, a)            __ALIGN_KERNEL_MASK(x, (typeof(x))(a) - 1)
 #define __ALIGN_KERNEL_MASK(x, mask)    (((x) + (mask)) & ~(mask))
 #define __ALIGN_MASK(x, mask)   __ALIGN_KERNEL_MASK((x), (mask))
-#define ALIGN(x, a)             __ALIGN_KERNEL((x), (a))
-#define PAGE_ALIGN(addr) ALIGN(addr, PAGE_SIZE)
-#define PTR_ALIGN(p, a)         ((typeof(p))ALIGN((unsigned long)(p), (a)))
-#define IS_ALIGNED(x, a)                (((x) & ((typeof(x))(a) - 1)) == 0)
 
-#define FIELD_SIZEOF(t, f) (sizeof(((t*)0)->f))
-#define ARRAY_SIZE(arr) (sizeof(arr)/sizeof(arr[0]))
-#define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
-#define ROUNDUP(x, y) ((((x) + ((y) - 1)) / (y)) * (y))
-#define DIV_ROUND_CLOSEST(x, divisor)(                  \
-		{                                                       \
-	typeof(divisor) __divisor = divisor;            \
-	(((x) + ((__divisor) / 2)) / (__divisor));      \
-		}                                                       \
-)
-#define ACCESS_ONCE(x) (*(volatile typeof(x) *)&(x))
-
+//atomics
 typedef struct { int32_t counter; } atomic_t;
-
 #define atomic_read(a) ((a)->counter)
 #define atomic_set(a,b) ((a)->counter = (b))
 #define atomic_test_and_set(a) (__atomic_test_and_set(&(a)->counter, __ATOMIC_SEQ_CST))
@@ -103,15 +66,6 @@ typedef struct { int32_t counter; } atomic_t;
 #define atomic_dec(a) ((void)atomic_dec_return(a))
 #define atomic_inc_and_test(a) (atomic_inc_return(a) == 0)
 #define atomic_dec_and_test(a) (atomic_dec_return(a) == 0)
-
-/* Memory and compiler barriers */
-#ifndef cmm_barrier
-#define cmm_barrier()   __asm__ __volatile__ ("" : : : "memory")
-#endif
-
-#ifndef cmm_mb
-#define cmm_mb()    __asm__ __volatile__ ("mfence":::"memory")
-#endif
 
 //struct timespec
 #define time_get_ts(p_timespec) (clock_gettime(CLOCK_MONOTONIC_RAW, p_timespec))
@@ -127,6 +81,7 @@ typedef struct { int32_t counter; } atomic_t;
 	} while (0)
 #endif
 
+//ERR
 #define MAX_ERRNO       4095
 #define likely(x)	__builtin_expect(!!(x), 1)
 #define unlikely(x)	__builtin_expect(!!(x), 0)
@@ -176,28 +131,6 @@ static inline int __must_check PTR_ERR_OR_ZERO(__force const void *ptr)
 /*
  * Arithmetics
  */
-
-/* Get floating point exponent - see arch/ia64/include/uapi/asm/gcc_intrin.h */
-#define ia64_getf_exp(x)					\
-({								\
-	long ia64_intri_res;					\
-	asm ("getf.exp %0=%1" : "=r"(ia64_intri_res) : "f"(x));	\
-	ia64_intri_res;						\
-})
-
-/* Linux get page order - borrowed from arch/ia64/include/asm/page.h */
-static inline int get_order(unsigned long size)
-{
-	long double d = size - 1;
-	long order;
-
-	order = ia64_getf_exp(d);
-	order = order - PAGE_SHIFT - 0xffff + 1;
-	if (order < 0)
-		order = 0;
-	return order;
-}
-
 #define const_ilog2(n)				\
 (						\
 	__builtin_constant_p(n) ? (		\

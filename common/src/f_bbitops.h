@@ -110,15 +110,6 @@ static inline unsigned int bb_pset_ffu(unsigned int pset) {
 	return (unsigned int)--ffz;
 }
 
-/* Return the most significant set bit number in 'pset': 0..3 */
-static inline unsigned int bb_pset_log2(unsigned int pset) {
-	/* Empty set (0) defaults to all-ones pattern, BB_PAT11 */
-	if ((pset &= (unsigned int) BB_PAT_MASK))
-		pset = BB_PAT11;
-	/* log2 = w - 1 - clz */
-	return (unsigned int)ilog2(pset);
-}
-
 /* Return the number of patterns in set: 1..3 */
 static inline unsigned int bb_pset_count(unsigned int pset) {
 	return __builtin_popcount(pset);
@@ -196,7 +187,6 @@ static __always_inline unsigned long bb_expand(unsigned int bitmap,
 	unsigned long mask;
 
 	/* Encode bitmap to 2D Morton */
-	/* TODO: Fill in "zero" tetrals */
 	mask = (unsigned long)bitmap;
 /* PDEP,PEXT take 18c on AMD - Avoid parallel bit instructions!
 	mask = _pdep_u64((unsigned long)bitmap, BBITS_MASK_W(BBIT_01));
@@ -320,8 +310,6 @@ static inline unsigned long find_next_unset_bbit(const unsigned long *addr,
 	unsigned long result, tmp;
 	unsigned long bitmap, bitmask;
 	unsigned int off;
-
-	/* TODO: Optimize for PAT01|PAT11 case */
 
 	/* Return 'size' if the pattern set empty or invalid */
 	if (offset >= size)
