@@ -338,6 +338,7 @@ static int famfs_sync(int target_fid)
 
             F_LAYOUT_t *lo = f_get_layout(meta->loid);
             ASSERT(lo);
+            size_t key_slice_range = lo->info.stripe_sz;
 
             /* uncommited stripe? */
             unifycr_chunkmeta_t *stripe = meta->chunk_meta;
@@ -353,6 +354,10 @@ static int famfs_sync(int target_fid)
                     goto io_err;
                 }
 
+                /* forced fsync: commit full stripes only */
+                if ((target_fid == -1) && stripe->data_w < key_slice_range)
+                    continue;
+
                 if ((ret = f_ah_commit_stripe(lo, s))) {
                     ERROR("fid:%d in layout %s - error %d committed stripe %lu",
                           fid, lo->info.name, ret, s);
@@ -365,7 +370,8 @@ static int famfs_sync(int target_fid)
                           (stripe->data_w < lo->info.stripe_sz)?"partial":"", s);
             }
 
-            if ((ret = invalidate_stripe_cache(fid, lo, meta))) {
+            if ((target_fid != -1) && (ret = invalidate_stripe_cache(fid, lo, meta)))
+            {
                 ERROR("fid:%d in layout %s - failed to drop %u stripes",
                       fid, lo->info.name, meta->stripes);
                 goto io_err;
@@ -1800,7 +1806,7 @@ static int f_stripe_write(
     }
     stripe->data_w += count;
 
-    /* Commit full stipe */
+    /* Commit full stripe */
     if (stripe->data_w >= key_slice_range) {
         ASSERT( stripe->data_w == key_slice_range );
         ASSERT( stripe->f.in_use == 1 );
@@ -1852,67 +1858,69 @@ static int f_stripe_write(
 
     int i = 0;
     if (*(unifycr_indices.ptr_num_entries) + tmp_index_set.count
-        < (long)unifycr_max_index_entries) {
-        /*coalesce contiguous indices*/
+        >= (long)unifycr_max_index_entries)
+    {
+        /* force MD sync */
+        meta->needs_sync = 1;
+        famfs_sync(-1);
+        /* TODO: Implement fsync in background */
+        DEBUG_LVL(3, "Warning: Insufficient MD buffer size may affect the performance!");
+    }
+    ASSERT( *(unifycr_indices.ptr_num_entries) + tmp_index_set.count
+           < (long)unifycr_max_index_entries );
 
-        if (*unifycr_indices.ptr_num_entries >= 1) {
-            md_index_t *ptr_last_idx = &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
+    /*coalesce contiguous indices*/
 
-            if (ptr_last_idx->sid == cur->sid &&
-                ptr_last_idx->fid == cur->fid &&
-                ptr_last_idx->loid == cur->loid)
-            {
-                off_t prev_e = ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length;
+    if (*unifycr_indices.ptr_num_entries >= 1) {
+        md_index_t *ptr_last_idx = &unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries - 1];
 
-                if (prev_e == cur->file_pos) {
-                    off_t slice_b = (ptr_last_idx->file_pos / key_slice_range + 1) * key_slice_range;
-                    off_t cur_e = prev_e + (ssize_t)cur->length;
+        if (ptr_last_idx->sid == cur->sid &&
+            ptr_last_idx->fid == cur->fid &&
+            ptr_last_idx->loid == cur->loid)
+        {
+            off_t prev_e = ptr_last_idx->file_pos + (ssize_t)ptr_last_idx->length;
 
-                    /* if new range end is in the next slice */
-                    if (cur_e > slice_b) {
-                        off_t adj = slice_b - prev_e;
+            if (prev_e == cur->file_pos) {
+                off_t slice_b = (ptr_last_idx->file_pos / key_slice_range + 1) * key_slice_range;
+                off_t cur_e = prev_e + (ssize_t)cur->length;
 
-                        /* extend former range upto slice boundary */  
-                        ptr_last_idx->length += adj;
-                        ASSERT( ptr_last_idx->length < key_slice_range );
+                /* if new range end is in the next slice */
+                if (cur_e > slice_b) {
+                    off_t adj = slice_b - prev_e;
 
-                        /* adjust new range to the slice boundary */
-                        cur->file_pos = slice_b;
-                        cur->mem_pos += adj;
-                        cur->length -= adj;
-                        ASSERT( cur->length < key_slice_range );
+                    /* extend former range upto slice boundary */  
+                    ptr_last_idx->length += adj;
+                    ASSERT( ptr_last_idx->length < key_slice_range );
 
-                    } else {
-                        /* both in the same slice, coalesce */
-                        ptr_last_idx->length += cur->length;
-                        ASSERT( ptr_last_idx->length <= key_slice_range );
-                        i++;
-                    }
+                    /* adjust new range to the slice boundary */
+                    cur->file_pos = slice_b;
+                    cur->mem_pos += adj;
+                    cur->length -= adj;
+                    ASSERT( cur->length < key_slice_range );
+
+                } else {
+                    /* both in the same slice, coalesce */
+                    ptr_last_idx->length += cur->length;
+                    ASSERT( ptr_last_idx->length <= key_slice_range );
+                    i++;
                 }
             }
         }
-        for (; i < tmp_index_set.count; i++) {
-            unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries] = tmp_index_set.idxes[i];
-            (*unifycr_indices.ptr_num_entries)++;
-        }
-
-    } else {
-        /*Todo:page out existing metadata buffer to disk*/
-           ERROR("Possible data loss! Please increase index_buf_size=%lu (max %lu entries)",
-                 unifycr_max_index_entries*sizeof(md_index_t), unifycr_max_index_entries);
+    }
+    for (; i < tmp_index_set.count; i++) {
+        unifycr_indices.index_entry[*unifycr_indices.ptr_num_entries] = tmp_index_set.idxes[i];
+        (*unifycr_indices.ptr_num_entries)++;
     }
 
-        /* find the corresponding file attr entry and update attr*/
-        f_fattr_t tmp_meta_entry;
-        tmp_meta_entry.fid = fid;
-        f_fattr_t *ptr_meta_entry
-            = (f_fattr_t *)bsearch(&tmp_meta_entry,
+    /* find the corresponding file attr entry and update attr*/
+    f_fattr_t tmp_meta_entry;
+    tmp_meta_entry.fid = fid;
+    f_fattr_t *ptr_meta_entry = (f_fattr_t *)bsearch(&tmp_meta_entry,
                                          unifycr_fattrs.meta_entry,
                                          *unifycr_fattrs.ptr_num_entries,
                                          sizeof(f_fattr_t), compare_fattr);
-        if (ptr_meta_entry !=  NULL) {
-            ptr_meta_entry->file_attr.st_size = pos + count;
-        }
+    if (ptr_meta_entry !=  NULL)
+        ptr_meta_entry->file_attr.st_size = pos + count;
 
     meta->needs_sync = 1;
 

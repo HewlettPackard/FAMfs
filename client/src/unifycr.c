@@ -103,8 +103,11 @@ static int unifycr_fpos_enabled   = 1;  /* whether we can use fgetpos/fsetpos */
 unifycr_cfg_t client_cfg;
 
 int fs_type = UNIFYCRFS;
+
+/* FIXME: Make both MD buffers per-layout */
 unifycr_index_buf_t unifycr_indices;
 unifycr_fattr_buf_t unifycr_fattrs;
+
 static size_t
 unifycr_index_buf_size;   /* size of metadata log for log-structured io*/
 static size_t unifycr_fattr_buf_size;
