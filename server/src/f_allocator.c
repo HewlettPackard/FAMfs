@@ -2864,14 +2864,14 @@ static void check_layout_devices(F_LAYOUT_t *lo)
 		}
 	}
 	if (!rc && atomic_read(&lp->degraded_slabs)) { 
-		/*  Replace all failed extents */
-		rc = f_replace(lo, F_PDI_NONE, F_PDI_NONE); 
-		if (rc) LOG(LOG_WARN, "%s[%d]: error %s replacing failed extents", 
-				lo->info.name, lp->part_num, strerror(rc));
-
-		/* Check and release degraded and not used slabs prior to recovery */
+		/* Check and release degraded and unused slabs prior to ireplace and recovery */
 		rc = process_degraded_slabs(lp);
 		if (rc) LOG(LOG_WARN, "%s[%d]: error %s processing degraded slabs", 
+				lo->info.name, lp->part_num, strerror(rc));
+
+		/*  Replace all failed extents in degraded slabs */
+		rc = f_replace(lo, F_PDI_NONE, F_PDI_NONE); 
+		if (rc) LOG(LOG_WARN, "%s[%d]: error %s replacing failed extents", 
 				lo->info.name, lp->part_num, strerror(rc));
 
 		/* Kick off data recovery */
@@ -3185,6 +3185,7 @@ static void *f_allocator_thread(void *ctx)
 	F_POOL_t *pool = lo->pool;
 	F_LO_PART_t *lp = lo->lp;
 	int *rcbuf;
+        struct timespec ts = now();
 	int ion_cnt, ion_rank, i;
 	int rc = 0;
 
@@ -3258,7 +3259,9 @@ static void *f_allocator_thread(void *ctx)
 		pthread_mutex_unlock(&lp->lock_ready);
 		pthread_cond_signal(&lp->cond_ready);
 		if (log_print_level > 0) { 
-			printf("%s[%d]: allocator thread is ready\n", lo->info.name, lp->part_num);
+			printf("%s[%d]: allocator thread is ready, allocated/degraded/failed slabs: %d/%d/%d, start time: %lu\n", 
+				lo->info.name, lp->part_num, atomic_read(&lp->allocated_slabs), atomic_read(&lp->degraded_slabs),
+				atomic_read(&lp->failed_slabs), elapsed(&ts));
 			print_layout_devices(lo);
 		}
 		/* Wake-up recovery thread if needed */
