@@ -656,9 +656,6 @@ ssize_t lf_check_progress(struct fid_cq *cq, ssize_t *cmp) {
     if (count < 0)
 	return -FI_EAVAIL;
 
-    /* Check both tx and rx sides to make progress.
-     * FIXME: Should rx be necessary for one-sided?
-     */
     rc = lf_completions(cq, count, NULL, NULL);
     if (rc >= 0) {
 	if (count == 0)

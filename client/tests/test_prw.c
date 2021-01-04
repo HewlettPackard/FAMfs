@@ -409,7 +409,6 @@ int main(int argc, char *argv[]) {
 
             ssize_t bcount = pwrite(fd, bufp, write_sz, offset);
 
-            /* TODO: Ensure tran_sz equals to the chunk size */
             if (i==0 && jj<(fam_cnt/rank_num))
                 famsim_stats_stop(famsim_stats_send, 1);
             else
