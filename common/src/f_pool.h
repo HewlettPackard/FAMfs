@@ -1,5 +1,21 @@
 /*
- * Copyright (c) 2019, HPE
+ * (C) Copyright 2019-2020 Hewlett Packard Enterprise Development LP
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to:
+ *
+ *   Free Software Foundation, Inc.
+ *   51 Franklin Street, Fifth Floor
+ *   Boston, MA 02110-1301, USA.
  *
  * Written by: Dmitry Ivanov
  */
@@ -216,7 +232,6 @@ typedef struct f_pool_ {
     int			zero_ion_rank;	/* rank in COMM_WORLD of zero rank in ionode_comm */
     int			dbg_rank;	/* FAMfs client rank */
     int			verbose;	/* debug flag */
-//    uint32_t	nparts;		/* layout partition number estimate */
     uint32_t		pool_ags;	/* allocation group array size; also this is
 					a size of 1st dimention of pool devices array */
     uint32_t		ag_devs;	/* size of the pool device array, 2nd dimension */
@@ -228,10 +243,8 @@ typedef struct f_pool_ {
     F_IONODE_INFO_t	*ionodes;	/* array of IO node info of .ionode_count size */
     char		**ionodelist;	/* reference to ionode hostnames */
     struct {
-	unsigned long	    flags;	/* f_pool_flags */
+	      unsigned long	    flags;	/* f_pool_flags */
     }			io;
-//    pthread_t		*fpoold;	/* pool background thread */
-//    pthread_spinlock_t	rpoold_lock;	/* rpoold start/stop lock */
 } F_POOL_t;
 
 /* Flag specs for f_pool */
