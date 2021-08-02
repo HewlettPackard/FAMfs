@@ -65,9 +65,14 @@ has not yet been implemented but could easily be added to the existing EDR frame
    git submodule update --recursive --remote
 ```
 
-Note: Ensure you have "diff.submodule" property set in your git config to "log":
+Note1: Ensure you have "diff.submodule" property set in your git config to "log":
 ```
    git config --global diff.submodule "log"
+```
+
+Note2: Apply patches from patches folder to URCU and IOR packages:
+```
+   cd userspace-rcu; patch -p0 < userspace-rcu.PIC; patch -p0 < userspace-rcu.stack_corruption_snapshot_n
 ```
 
 ## Set ENV

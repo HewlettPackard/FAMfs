@@ -1,0 +1,13 @@
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 0cd41e1..9fdbfb5 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -6,7 +6,7 @@ AM_LDFLAGS=-version-info $(URCU_LIBRARY_VERSION)
+ if USE_CYGWIN
+ AM_LDFLAGS+=-no-undefined
+ endif
+-AM_CFLAGS=-Wall
++AM_CFLAGS=-Wall -fPIC -fno-semantic-interposition
+ 
+ include_HEADERS = urcu.h urcu-bp.h urcu-call-rcu.h urcu-defer.h \
+ 		urcu-pointer.h urcu-qsbr.h urcu-flavor.h
