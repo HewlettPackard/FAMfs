@@ -3,5 +3,5 @@
 	url = git@github.com:intel/isa-l.git
 [submodule "userspace-rcu"]
 	path = userspace-rcu
-	url = git@github.com:ivadmitry/userspace-rcu.git
+	url = git@github.com:urcu/userspace-rcu.git
 	branch = urcu/rcuja-simple-int
