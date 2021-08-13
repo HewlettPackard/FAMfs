@@ -1,7 +1,6 @@
-[submodule "node/isa-l"]
-	path = node/isa-l
-	url = git@github.com:intel/isa-l.git
 [submodule "userspace-rcu"]
 	path = userspace-rcu
 	url = git@github.com:urcu/userspace-rcu.git
-	branch = urcu/rcuja-simple-int
+[submodule "isa-l"]
+	path = isa-l
+	url = git@github.com:intel/isa-l.git
