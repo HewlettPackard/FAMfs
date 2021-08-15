@@ -523,8 +523,10 @@ static int range_server_bput2(struct mdhim_t *md, struct index_t *index,
 
 	gettimeofday(&resp_put_comm_start, NULL);
 
+	/* TODO: Allow this assert if not running on a single node */
+	//ASSERT( source != md->mdhim_rank ); /* message isn't coming from myself */
+
 	//Send response remotely (send_locally_or_remote)
-	ASSERT( source != md->mdhim_rank ); /* message isn't coming from myself */
 	ret = send_client_response(md, source, brm, &sizebuf, &sendbuf);
 	free(sendbuf);
 
