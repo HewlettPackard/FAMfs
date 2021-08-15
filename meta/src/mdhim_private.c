@@ -431,7 +431,9 @@ struct mdhim_brm_t *bput2_records(struct mdhim_t *md, struct index_t *index,
 			rangesrv_num++;
 			HASH_FIND_INT(index->rangesrvs_by_num, &rangesrv_num, ri);
 			int server_rank = ri->rank;
-			ASSERT( server_rank != md->mdhim_rank );
+			/* TODO: Allow the assert if !IOnodeForceHelper(f_get_pool()->ionodes)
+			i.e. if not running on a single node */
+			//ASSERT( server_rank != md->mdhim_rank );
 			bpm->basem.server_rank = server_rank;
 		}
 
