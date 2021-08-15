@@ -58,7 +58,25 @@ Both encoding and recovery processes share the same EDR framework and are
 performed on IO-nodes with user configurable priorities. Data verification
 has not yet been implemented but could easily be added to the existing EDR framework.
 ```
-## Checkout
+## Install dependencies
+```
+   git clone https://github.com/google/leveldb.git
+   cd leveldb && git checkout -b ver_1.20 a53934a3ae1244679 && make
+   cp -R include/leveldb ${TEST_DIR}/include/leveldb
+   cp out-shared/libleveldb.so.1.20 ${TEST_DIR}/lib
+   cp out-static/libleveldb.a ${TEST_DIR}/lib
+   cd ..
+
+   git clone https://github.com/LLNL/GOTCHA.git gotcha
+   cd gotcha && git checkout tags/0.0.2 -b tag_0.0.2
+   ( cd ${TEST_DIR}; ln -s lib lib64 )
+   mkdir -p build && cd build && cmake -DCMAKE_INSTALL_PREFIX=/shared/divanov/test_di .. && make install && echo Ok
+   cd ../..
+
+   dnf install yasm
+   dnf install perl-Test-Harness
+```
+## Checkout FAMfs
 ```
    git clone https://github.com/HewlettPackard/FAMfs.git
    cd FAMfs; git submodule init
@@ -72,7 +90,9 @@ Note1: Ensure you have "diff.submodule" property set in your git config to "log"
 
 Note2: Apply patches from patches folder to URCU and IOR packages:
 ```
-   cd userspace-rcu; patch -p0 < userspace-rcu.PIC; patch -p0 < userspace-rcu.stack_corruption_snapshot_n
+   cd userspace-rcu
+   patch -p1 < ../patches/userspace-rcu.PIC
+   patch -p1 < ../patches/userspace-rcu.stack_corruption_snapshot_n
 ```
 
 ## Set ENV
@@ -85,7 +105,7 @@ For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PA
    export LD_LIBRARY_PATH="${TEST_DIR}/lib:${LD_LIBRARY_PATH}"
    export PKG_CONFIG_PATH="${TEST_DIR}/lib/pkgconfig:${PKG_CONFIG_PATH}"
    export PATH="${TEST_DIR}/bin:$PATH"
-   cd <path_to_FAMfs>; source scripts/setup-env
+   cd <path_to_FAMfs>
 ```
 
 ## Configure FAMfs

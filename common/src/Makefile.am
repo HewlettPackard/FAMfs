@@ -68,8 +68,14 @@ tests: ${unit_tests}
 test: $(addsuffix .run,$(unit_tests))
 
 # Build rule to run tests
+
+## for openmpi:
+.EXPORT_ALL_VARIABLES:
+f_shmap_test.run: OMPI_ALLOW_RUN_AS_ROOT_CONFIRM = 1
+f_shmap_test.run: OMPI_ALLOW_RUN_AS_ROOT = 1
+
 f_shmap_test.run: f_shmap_test
-	mpirun ./$<
+	mpirun -host localhost:5 -n 1 ./$<
 	@echo Completed run: $<
 
 %.run: %
