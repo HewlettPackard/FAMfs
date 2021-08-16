@@ -5,8 +5,7 @@ AM_CFLAGS	=	-Wall $(MPI_CFLAGS)
 
 test_gotcha_ldadd =	../src/libfamfs_gotcha.la \
 			$(top_builddir)/common/src/libfamfs_meta.la \
-			-L$(top_builddir)/userspace-rcu/src/.libs -lurcu-qsbr -lurcu-cds \
-			-lmpi
+			-lurcu-qsbr -lurcu-cds -lmpi
 test_static_ldadd =	../src/.libs/libfamfs.la \
 			-L$(top_builddir)/userspace-rcu/src/.libs \
 			-lmpi
