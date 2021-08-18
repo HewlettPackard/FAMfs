@@ -1,0 +1,86 @@
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 037433c..d9307c8 100755
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -76,6 +76,8 @@ endif
+ 
+ if USE_POSIX_AIORI
+ extraSOURCES += aiori-POSIX.c
++extraLDADD   += -lfamfs_gotcha -lfamfs_meta
++extraLDADD   += -lurcu-qsbr -lurcu-cds -lmpi
+ endif
+ 
+ if USE_AIO_AIORI
+diff --git a/src/aiori-POSIX.c b/src/aiori-POSIX.c
+index 72f7f53..b476c79 100755
+--- a/src/aiori-POSIX.c
++++ b/src/aiori-POSIX.c
+@@ -56,6 +56,7 @@
+ #include "utilities.h"
+ 
+ #include "aiori-POSIX.h"
++#include "unifycr.h"
+ 
+ #ifdef HAVE_GPU_DIRECT
+ typedef long long loff_t;
+@@ -122,6 +123,8 @@ option_help * POSIX_options(aiori_mod_opt_t ** init_backend_options, aiori_mod_o
+     o->lustre_start_ost = -1;
+     o->beegfs_numTargets = -1;
+     o->beegfs_chunkSize = -1;
++    o->famfs = 0;
++    o->mountpoint = NULL;
+   }
+ 
+   *init_backend_options = (aiori_mod_opt_t*) o;
+@@ -146,6 +149,8 @@ option_help * POSIX_options(aiori_mod_opt_t ** init_backend_options, aiori_mod_o
+ #ifdef HAVE_GPU_DIRECT
+     {0, "gpuDirect",        "allocate I/O buffers on the GPU", OPTION_FLAG, 'd', & o->gpuDirect},
+ #endif
++    {0, "posix.famfs", "FAMfs", OPTION_FLAG, 'd', & o->famfs},
++    {0, "posix.mountpoint" , "FAMfs mountpoint", OPTION_OPTIONAL_ARGUMENT, 's', & o->mountpoint},
+     LAST_OPTION
+   };
+   option_help * help = malloc(sizeof(h));
+@@ -206,6 +211,8 @@ int POSIX_check_params(aiori_mod_opt_t * param){
+     ERR("GPUDirect support is not compiled");
+   }
+ #endif
++  if (o->famfs)
++    o->famfs = FAMFS;
+   return 0;
+ }
+ 
+@@ -754,10 +761,18 @@ void POSIX_Initialize(aiori_mod_opt_t * options){
+ #ifdef HAVE_GPU_DIRECT
+   CUfileError_t err = cuFileDriverOpen();
+ #endif
++  posix_options_t *o = (posix_options_t *)options;
++  if (o->famfs) {
++    int size;
++    MPI_CHECK(MPI_Comm_size(testComm, &size), "cannot get size");
++    unifycr_mount(o->mountpoint, rank, size, 0, o->famfs);
++  }
+ }
+ 
+ void POSIX_Finalize(aiori_mod_opt_t * options){
+ #ifdef HAVE_GPU_DIRECT
+   CUfileError_t err = cuFileDriverClose();
+ #endif
++  if (((posix_options_t *)options)->famfs)
++    unifycr_unmount();
+ }
+diff --git a/src/aiori-POSIX.h b/src/aiori-POSIX.h
+index b2f556a..1293bfb 100644
+--- a/src/aiori-POSIX.h
++++ b/src/aiori-POSIX.h
+@@ -23,6 +23,10 @@ typedef struct{
+   int beegfs_numTargets;           /* number storage targets to use */
+   int beegfs_chunkSize;            /* srtipe pattern for new files */
+   int gpuDirect;
++
++  /* FAMfs */
++  int famfs;                    /* famfs mount type */
++  char *mountpoint;            /* famfs mount point */
+ } posix_options_t;
+ 
+ void POSIX_Sync(aiori_mod_opt_t * param);

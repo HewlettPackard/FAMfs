@@ -93,6 +93,7 @@ Note2: Apply patches from patches folder to URCU and IOR packages:
    cd userspace-rcu
    patch -p1 < ../patches/userspace-rcu.PIC
    patch -p1 < ../patches/userspace-rcu.stack_corruption_snapshot_n
+   patch -p1 < ../patches/ior.add_FAMfs_to_POSIX
 ```
 
 ## Set ENV
