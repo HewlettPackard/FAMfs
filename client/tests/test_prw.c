@@ -697,9 +697,10 @@ only_read:
 
     min_read_bw=(double)blk_sz*seg_num*rank_num/1048576/max_read_time;
     if (rank == 0) {
-        if (e_sum)
+        if (e_sum) {
             fprintf(stderr, "Data verification errors: %ld\n", e_sum);
-
+            rc = 1; /* data verification failure */
+        }
         printf("###  Aggregate Read BW is %.3lf MiB/s\n", agg_read_bw);
         printf("#### Aggregate true read BW is %.3lf MiB/s, incl. open/close - %.3lf MiB/s\n",
                 min_read_bw,
@@ -715,14 +716,14 @@ only_read:
 	    if ((rc = unifycr_shutdown()))
 		fprintf(stderr, "error on FS shutdown: %d\n", rc);
     }
-    if (e_sum)
+    if (e)
         rc = 1; /* data verification failure */
 
     famsim_stats_free(famsim_ctx);
 
 _exit:
     if (rc)
-        printf("%s: FAILED rc=%d\n", hostname, rc);
+        printf("%s:[%d] FAILED rc=%d\n", hostname, rank, rc);
     else
         print0("SUCCESS\n");
     fflush(stdout);
