@@ -245,6 +245,7 @@ export SRV_LOG=${PWD}/server.log
 ### DEFAULTS ###
 ExtSize="1G"
 tstFileName="/tmp/mnt/abc"
+tstFileMnt="/tmp/mnt"
 oSERVERS="$all_h"
 oCLIENTS="$all_c"
 oRANKS="1,2,4,8,16"
@@ -408,6 +409,7 @@ case "${oFStype^^}" in
 esac
 if [[ "$oAPP" =~ ior ]]; then
   ((tIOR=1))
+  ((fstype==2)) || { echo "Wrong fs type:$oFStype"; exit 1; }
 else
   ((fstype<1)) && { echo "Wrong fs type:$oFStype"; exit 1; }
 fi
@@ -667,7 +669,7 @@ for ((si = 0; si < ${#SrvIter[*]}; si++)); do
                         export tStopServer=$((iPattern==nPatterns-1 && k==vCycles-1))
 
                         ((tIOR)) \
-                          && opts="-o ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $ITR --famfs.fstype $fstype -a famfs -g $oExtraOpt" \
+                          && opts="-o ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $ITR -a POSIX --posix.famfs --posix.mountpoint $tstFileMnt -g $oExtraOpt" \
                           || opts="-f ${tstFileName} $BLK $SEG $WSZ $RSZ $VFY $PTR $SEQ $WUP -U $fstype -D 0 -u 1 $oExtraOpt"
                         opts=( $(echo $opts) )
                         TEST_OPTS=${opts[*]} # jam whitespaces

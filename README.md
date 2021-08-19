@@ -59,6 +59,7 @@ performed on IO-nodes with user configurable priorities. Data verification
 has not yet been implemented but could easily be added to the existing EDR framework.
 ```
 ## Install dependencies
+Ensure you have installed the dependencies: yasm (or masm), openmpi (or mpich), leveldb, gotcha, libfabric (zhpe-support, zhpe-libfabric and probably zhpe-driver) and perl-Test-Harness.
 ```
    git clone https://github.com/google/leveldb.git
    cd leveldb && git checkout -b ver_1.20 a53934a3ae1244679 && make
@@ -97,8 +98,7 @@ Note2: Apply patches from patches folder to URCU and IOR packages:
 ```
 
 ## Set ENV
-Ensure you have installed the dependencies: yasm (or masm), mpich, leveldb, gotcha, libfabric (zhpe-support, zhpe-libfabric and probably zhpe-driver).
-For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PATH and PATH to corresponding path in your test folder. Then source the additional envioronment variables from 'scripts/setup-env' file in FAMfs folder.
+For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PATH and PATH to corresponding path in your test folder.
 ```
    export TEST_DIR=<my_test_dir>
    export CPPFLAGS+=" -I${TEST_DIR}/include"
@@ -108,9 +108,12 @@ For compiling FAMfs please set CPPFLAGS, LDFLAGS, PKG_CONFIG_PATH, LD_LIBRARY_PA
    export PATH="${TEST_DIR}/bin:$PATH"
    cd <path_to_FAMfs>
 ```
-
-## Configure FAMfs
-Configure and build the package:
+When using openmpi, ensure the envioronment variables are exported to MPI instances.
+```
+echo "-x PATH -x LD_LIBRARY_PATH" > ompi.opts
+```
+## Install FAMfs
+Configure, build and install the FAMfs package:
 ```
    make distclean; ./autogen.sh && ./configure --prefix=$TEST_DIR --disable-debug --with-gotcha=$TEST_DIR && echo Ok
    make clean; make -j install && echo Ok
@@ -127,7 +130,21 @@ Run the regression and unit tests:
 ## Run Server
 Copy FAMFS configuration file (scripts/famfs.conf.example) to /etc or the current directory: famfs.conf
 Edit ionodes, devices, device sections in the configuration file upon your needs.
-Run FAMS server daemon:
+Run FAMfs server:
 ```
    mpirun -host 127.0.0.1 famfsd
 ```
+An example of running FAMfs server in Cluster:
+```
+   /usr/lib64/openmpi/bin/mpirun -host node01,node02 -tune ompi.opts --mca btl tcp,self famfsd
+```
+An example of running FAMfs client test in Cluster:
+```
+   /usr/lib64/openmpi/bin/mpirun -host node02:4 -np 4 -tune ompi.opts --mca btl tcp,self client/tests/test_prw_gotcha -f /tmp/mnt/abc -b $((4*1048576)) -s 1 -t $((1048576)) -u 0 -p 0 -D 0 -S 1 -V 1
+```
+An example of running IOR test:
+```
+   /usr/lib64/openmpi/bin/mpirun -host node02:4 -np 4 -tune ompi.opts --mca btl tcp,self ior -a POSIX --posix.famfs --posix.mountpoint '/tmp/mnt' -i5 -Cge -vv -wWr -F -t256k -b1m -o '/tmp/mnt/abc'
+```
+If IOR complains about invalid argument, check the ior.add_FAMfs_to_POSIX patch has been applied to the source before IOR build.
+
