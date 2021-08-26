@@ -3,6 +3,7 @@
 FAMfs s a Gen-Z based distributed fabric attached memory (FAM) filesystem
 which is optimized for HPC applications using checkpoint/restart as a mechanism
 to tolerate cluster components failures.
+This work has been supported in part by the U.S. Department of Energy under LLNS Subcontract B621301.
 
 The FAMfs primary design goal is to achieve a write performance that saturates
 the underlying FAM media. This is done by eliminating contention between the writer
